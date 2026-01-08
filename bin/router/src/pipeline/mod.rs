@@ -33,11 +33,17 @@ use crate::{
         parser::{parse_operation_with_cache, ParseResult},
         progressive_override::request_override_context,
         query_plan::{plan_operation_with_cache, QueryPlanResult},
+        request_extensions::{
+            write_graphql_operation_metric_identity, write_graphql_response_metric_status,
+            write_request_body_size,
+        },
         validation::validate_operation_with_cache,
     },
     schema_state::SchemaState,
     shared_state::RouterSharedState,
 };
+
+use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 
 pub mod authorization;
 pub mod body_read;
@@ -53,6 +59,7 @@ pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
+pub mod request_extensions;
 pub mod usage_reporting;
 pub mod validation;
 
@@ -82,6 +89,7 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
+        write_request_body_size(req, body_bytes.len() as u64);
         http_server_request_span.record_body_size(body_bytes.len());
 
         let mut plugin_req_state = None;
@@ -106,6 +114,8 @@ pub async fn graphql_request_handler(
                 return Ok(response);
             }
         };
+
+        write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
 
         let client_name = req
             .headers()
@@ -165,6 +175,12 @@ pub async fn graphql_request_handler(
             &parser_payload,
         )
         .await?;
+
+        write_graphql_operation_metric_identity(
+                    req,
+                    normalize_payload.operation_indentity.name.clone(),
+                    Some(normalize_payload.operation_indentity.operation_type),
+                );
 
         if req.method() == Method::GET {
             if let Some(OperationKind::Mutation) =
@@ -245,6 +261,12 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
+        write_graphql_response_metric_status(req, if pipeline_result.error_count > 0 {
+                    GraphQLResponseStatus::Error
+                } else {
+                    GraphQLResponseStatus::Ok
+                });
+
         if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
                     usage_reporting::collect_usage_report(
                         supergraph.supergraph_schema.clone(),
@@ -265,14 +287,14 @@ pub async fn graphql_request_handler(
                                                 // Thus, this expect should never panic.
                                                 "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
                                             ),
-                        pipeline_result .error_count,
+                        pipeline_result.error_count,
                     )
                     .await;
                 }
 
         let mut response_builder = web::HttpResponse::Ok();
 
-        if let Some(response_headers_aggregator) = pipeline_result .response_headers_aggregator {
+        if let Some(response_headers_aggregator) = pipeline_result.response_headers_aggregator {
             response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
         }
 
@@ -283,6 +305,9 @@ pub async fn graphql_request_handler(
     }
     .instrument(operation_span.clone())
     .await
+    .inspect_err(|_| {
+      write_graphql_response_metric_status(req, GraphQLResponseStatus::Error);
+    })
 }
 
 #[inline]

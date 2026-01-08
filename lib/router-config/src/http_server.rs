@@ -50,6 +50,14 @@ impl HttpServerConfig {
         format!("{}:{}", self.host, self.port)
     }
 
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
     pub fn graphql_endpoint(&self) -> &str {
         &self.graphql_endpoint
     }

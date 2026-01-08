@@ -1,9 +1,11 @@
+use hive_router_internal::telemetry::traces::spans::attributes::HIVE_KIND;
 use opentelemetry_proto::tonic::resource::v1::Resource;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Display;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
 
+use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::{
     TraceService, TraceServiceServer,
 };
@@ -11,6 +13,10 @@ use opentelemetry_proto::tonic::collector::trace::v1::{
     ExportTraceServiceRequest, ExportTraceServiceResponse,
 };
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
+use opentelemetry_proto::tonic::common::v1::KeyValue;
+use opentelemetry_proto::tonic::metrics::v1::{
+    metric::Data as MetricData, number_data_point::Value as NumberDataPointValue, NumberDataPoint,
+};
 use opentelemetry_proto::tonic::trace::v1::{Span, Status};
 use prost::Message;
 use tonic::{Request, Response, Status as TonicStatus};
@@ -21,15 +27,9 @@ pub use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 /// Those ports are reserved for other services used in e2e tests.
 static FORBIDDEN_PORTS: &[u16] = &[80, 443, 8080, 8443, 4000, 4200, 3000];
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Baggage {
     pub map: HashMap<String, String>,
-}
-
-impl PartialEq for Baggage {
-    fn eq(&self, other: &Self) -> bool {
-        self.map == other.map
-    }
 }
 
 impl<const N: usize> From<[(String, String); N]> for Baggage {
@@ -164,7 +164,7 @@ impl CollectedTrace {
     pub fn span_by_hive_kind_one(&self, hive_kind: &str) -> &CollectedSpan {
         let found = self.spans.iter().find(|span| {
             span.attributes
-                .get("hive.kind")
+                .get(HIVE_KIND)
                 .map(|v| v == hive_kind)
                 .unwrap_or(false)
         });
@@ -175,7 +175,7 @@ impl CollectedTrace {
     pub fn has_span_by_hive_kind(&self, hive_kind: &str) -> bool {
         self.spans.iter().any(|span| {
             span.attributes
-                .get("hive.kind")
+                .get(HIVE_KIND)
                 .map(|v| v == hive_kind)
                 .unwrap_or(false)
         })
@@ -199,6 +199,158 @@ pub struct CollectedResource {
     pub attributes: BTreeMap<String, String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct CollectedMetric {
+    pub name: String,
+    pub resource_attributes: BTreeMap<String, String>,
+    pub data: CollectedMetricData,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NumberMetricKind {
+    Counter,
+    Gauge,
+}
+
+#[derive(Clone, Debug)]
+pub enum CollectedMetricData {
+    Number {
+        kind: NumberMetricKind,
+        points: Vec<CollectedMetricDataPoint>,
+    },
+    Histogram {
+        points: Vec<CollectedHistogramPoint>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum SeriesKind {
+    Counter,
+    Gauge,
+    Histogram,
+}
+
+#[derive(Clone, Debug)]
+pub struct CollectedMetricDataPoint {
+    pub attributes: BTreeMap<String, String>,
+    pub value: f64,
+    pub start_time_unix_nano: u64,
+    pub time_unix_nano: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct CollectedHistogramPoint {
+    pub attributes: BTreeMap<String, String>,
+    pub count: u64,
+    pub sum: f64,
+    pub start_time_unix_nano: u64,
+    pub time_unix_nano: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct CollectedMetrics {
+    latest_by_series: BTreeMap<SeriesKey, LatestSeriesPoint>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SeriesKey {
+    name: String,
+    kind: SeriesKind,
+    attrs: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+enum LatestSeriesPoint {
+    Number {
+        value: f64,
+        start_time_unix_nano: u64,
+        time_unix_nano: u64,
+    },
+    Histogram {
+        count: u64,
+        sum: f64,
+        start_time_unix_nano: u64,
+        time_unix_nano: u64,
+    },
+}
+
+impl CollectedMetrics {
+    pub fn new(metrics: Vec<CollectedMetric>) -> Self {
+        let latest_by_series = build_latest_series_index(&metrics);
+        Self { latest_by_series }
+    }
+
+    pub fn latest_counter(&self, name: &str, attrs: &[(&str, &str)]) -> f64 {
+        self.latest_number(name, SeriesKind::Counter, attrs)
+    }
+
+    pub fn has_counter(&self, name: &str, attrs: &[(&str, &str)]) -> bool {
+        self.has_series(name, SeriesKind::Counter, attrs)
+    }
+
+    pub fn has_gauge(&self, name: &str, attrs: &[(&str, &str)]) -> bool {
+        self.has_series(name, SeriesKind::Gauge, attrs)
+    }
+
+    pub fn has_histogram(&self, name: &str, attrs: &[(&str, &str)]) -> bool {
+        self.has_series(name, SeriesKind::Histogram, attrs)
+    }
+
+    pub fn latest_histogram_count_sum(&self, name: &str, attrs: &[(&str, &str)]) -> (u64, f64) {
+        self.latest_by_series
+            .iter()
+            .filter_map(|(key, point)| {
+                if key.name != name
+                    || key.kind != SeriesKind::Histogram
+                    || !attributes_match_subset(&key.attrs, attrs)
+                {
+                    return None;
+                }
+
+                match point {
+                    LatestSeriesPoint::Histogram { count, sum, .. } => Some((*count, *sum)),
+                    LatestSeriesPoint::Number { .. } => None,
+                }
+            })
+            .fold((0, 0.0), |(acc_count, acc_sum), (count, sum)| {
+                (acc_count + count, acc_sum + sum)
+            })
+    }
+
+    fn latest_number(&self, name: &str, kind: SeriesKind, attrs: &[(&str, &str)]) -> f64 {
+        self.latest_by_series
+            .iter()
+            .filter_map(|(key, point)| {
+                if key.name != name
+                    || key.kind != kind
+                    || !attributes_match_subset(&key.attrs, attrs)
+                {
+                    return None;
+                }
+
+                match point {
+                    LatestSeriesPoint::Number { value, .. } => Some(*value),
+                    LatestSeriesPoint::Histogram { .. } => None,
+                }
+            })
+            .sum()
+    }
+
+    fn has_series(&self, name: &str, kind: SeriesKind, attrs: &[(&str, &str)]) -> bool {
+        self.latest_by_series.iter().any(|(key, _)| {
+            key.name == name && key.kind == kind && attributes_match_subset(&key.attrs, attrs)
+        })
+    }
+
+    pub fn latest_attribute_names(&self, name: &str) -> BTreeSet<String> {
+        self.latest_by_series
+            .iter()
+            .filter(|(key, _)| key.name == name)
+            .flat_map(|(key, _)| key.attrs.keys().cloned())
+            .collect()
+    }
+}
+
 /// A simplified event representation
 #[derive(Clone, Debug)]
 pub struct CollectedEvent {
@@ -209,14 +361,14 @@ pub struct CollectedEvent {
 /// Shared storage for traces and requests
 /// Handles merging spans from multiple requests with the same trace_id
 /// Preserves insertion order for both requests and traces
-struct TraceStorage {
+struct TracesStorage {
     requests: Arc<Mutex<Vec<OtlpRequest>>>,
     traces: Arc<Mutex<Vec<CollectedTrace>>>,
 }
 
-impl TraceStorage {
+impl TracesStorage {
     fn new() -> Self {
-        TraceStorage {
+        TracesStorage {
             requests: Arc::new(Mutex::new(Vec::new())),
             traces: Arc::new(Mutex::new(Vec::new())),
         }
@@ -281,9 +433,30 @@ impl TraceStorage {
     }
 }
 
+struct MetricsStorage {
+    metrics: Arc<Mutex<Vec<CollectedMetric>>>,
+}
+
+impl MetricsStorage {
+    fn new() -> Self {
+        MetricsStorage {
+            metrics: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    async fn merge_export_request(&self, export_req: &ExportMetricsServiceRequest) {
+        let metrics = extract_metrics(export_req);
+        self.metrics.lock().await.extend(metrics);
+    }
+
+    async fn metrics(&self) -> Vec<CollectedMetric> {
+        self.metrics.lock().await.clone()
+    }
+}
+
 /// gRPC service implementation for OTLP trace collection
 struct GrpcTraceCollector {
-    storage: Arc<TraceStorage>,
+    storage: Arc<TracesStorage>,
 }
 
 #[tonic::async_trait]
@@ -334,7 +507,8 @@ impl TraceService for GrpcTraceCollector {
 pub struct OtlpCollector {
     pub http_address: String,
     pub grpc_address: String,
-    storage: Arc<TraceStorage>,
+    traces_storage: Arc<TracesStorage>,
+    metrics_storage: Arc<MetricsStorage>,
     _http_handle: Option<std::thread::JoinHandle<()>>,
     _grpc_handle: Option<tokio::task::JoinHandle<()>>,
     grpc_shutdown_tx: Option<oneshot::Sender<()>>,
@@ -342,11 +516,13 @@ pub struct OtlpCollector {
 
 impl OtlpCollector {
     pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
-        let storage = Arc::new(TraceStorage::new());
+        let traces_storage = Arc::new(TracesStorage::new());
+        let metrics_storage = Arc::new(MetricsStorage::new());
 
-        let (http_address, http_handle) = Self::start_http_server(storage.clone()).await?;
+        let (http_address, http_handle) =
+            Self::start_http_server(traces_storage.clone(), metrics_storage.clone()).await?;
         let (grpc_address, grpc_handle, grpc_shutdown_tx) =
-            Self::start_grpc_server(storage.clone()).await?;
+            Self::start_grpc_server(traces_storage.clone()).await?;
 
         println!("OTLP HTTP collector server started on {}", http_address);
         println!("OTLP gRPC collector server started on {}", grpc_address);
@@ -354,7 +530,8 @@ impl OtlpCollector {
         Ok(OtlpCollector {
             http_address,
             grpc_address,
-            storage,
+            traces_storage,
+            metrics_storage,
             _http_handle: Some(http_handle),
             _grpc_handle: Some(grpc_handle),
             grpc_shutdown_tx: Some(grpc_shutdown_tx),
@@ -362,7 +539,8 @@ impl OtlpCollector {
     }
 
     async fn start_http_server(
-        storage: Arc<TraceStorage>,
+        traces_storage: Arc<TracesStorage>,
+        metrics_storage: Arc<MetricsStorage>,
     ) -> Result<(String, std::thread::JoinHandle<()>), Box<dyn std::error::Error>> {
         // Binding to port 0 tell the OS to assign a random available port.
         let server = loop {
@@ -382,8 +560,14 @@ impl OtlpCollector {
         };
         let address_str = format!("http://{}", server.server_addr());
 
-        let storage_clone = storage.clone();
+        let traces_storage_clone = traces_storage.clone();
+        let metrics_storage_clone = metrics_storage.clone();
         let handle = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime for OTLP HTTP collector");
+
             for mut request in server.incoming_requests() {
                 let method = request.method().to_string();
                 let path = request.url().to_string();
@@ -399,14 +583,22 @@ impl OtlpCollector {
 
                 println!("Captured OTLP HTTP request: {} {}", method, path);
 
-                let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
-                    // Try to decode and merge traces
-                    if let Ok(export_req) = ExportTraceServiceRequest::decode(body.as_slice()) {
-                        storage_clone.merge_export_request(&export_req).await;
+                    if path.ends_with("/v1/traces") {
+                        if let Ok(export_req) = ExportTraceServiceRequest::decode(body.as_slice()) {
+                            traces_storage_clone.merge_export_request(&export_req).await;
+                        }
+                    }
+                    if path.ends_with("/v1/metrics") {
+                        if let Ok(export_req) = ExportMetricsServiceRequest::decode(body.as_slice())
+                        {
+                            metrics_storage_clone
+                                .merge_export_request(&export_req)
+                                .await;
+                        }
                     }
 
-                    storage_clone
+                    traces_storage_clone
                         .add_request(OtlpRequest {
                             method,
                             path,
@@ -425,7 +617,7 @@ impl OtlpCollector {
     }
 
     async fn start_grpc_server(
-        storage: Arc<TraceStorage>,
+        traces_storage: Arc<TracesStorage>,
     ) -> Result<
         (String, tokio::task::JoinHandle<()>, oneshot::Sender<()>),
         Box<dyn std::error::Error>,
@@ -440,7 +632,9 @@ impl OtlpCollector {
         };
         let grpc_address = format!("http://{}", addr);
 
-        let trace_service = GrpcTraceCollector { storage };
+        let trace_service = GrpcTraceCollector {
+            storage: traces_storage,
+        };
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
@@ -464,8 +658,12 @@ impl OtlpCollector {
         Ok((grpc_address, handle, shutdown_tx))
     }
 
-    pub fn http_endpoint(&self) -> String {
-        self.http_address.clone()
+    pub fn http_traces_endpoint(&self) -> String {
+        format!("{}/v1/traces", self.http_address)
+    }
+
+    pub fn http_metrics_endpoint(&self) -> String {
+        format!("{}/v1/metrics", self.http_address)
     }
 
     pub fn grpc_endpoint(&self) -> String {
@@ -473,15 +671,19 @@ impl OtlpCollector {
     }
 
     pub async fn request_at(&self, request_idx: usize) -> Option<OtlpRequest> {
-        self.storage.request_at(request_idx).await
+        self.traces_storage.request_at(request_idx).await
     }
 
     pub async fn is_empty(&self) -> bool {
-        self.storage.is_empty().await
+        self.traces_storage.is_empty().await
     }
 
     pub async fn traces(&self) -> Vec<CollectedTrace> {
-        self.storage.traces().await
+        self.traces_storage.traces().await
+    }
+
+    pub async fn metrics_view(&self) -> CollectedMetrics {
+        CollectedMetrics::new(self.metrics_storage.metrics().await)
     }
 }
 
@@ -500,40 +702,313 @@ fn extract_trace_id(span: &Span) -> String {
 }
 
 fn extract_spans(request: &ExportTraceServiceRequest) -> Vec<Span> {
-    let mut spans = Vec::new();
+    request
+        .resource_spans
+        .iter()
+        .flat_map(|resource_span| resource_span.scope_spans.iter())
+        .flat_map(|scope_span| scope_span.spans.iter().cloned())
+        .collect()
+}
 
-    for resource_span in &request.resource_spans {
-        for scope_span in &resource_span.scope_spans {
-            for span in &scope_span.spans {
-                spans.push(span.clone());
+fn extract_resource(request: &ExportTraceServiceRequest) -> Vec<Resource> {
+    request
+        .resource_spans
+        .iter()
+        .filter_map(|resource_span| resource_span.resource.clone())
+        .collect()
+}
+
+fn extract_metrics(request: &ExportMetricsServiceRequest) -> Vec<CollectedMetric> {
+    let mut metrics = Vec::new();
+
+    for resource_metrics in &request.resource_metrics {
+        let resource_attributes = resource_metrics
+            .resource
+            .as_ref()
+            .map(|resource| CollectedResource::from(resource).attributes)
+            .unwrap_or_default();
+
+        for scope_metrics in &resource_metrics.scope_metrics {
+            for metric in &scope_metrics.metrics {
+                if let Some(data) = &metric.data {
+                    match data {
+                        MetricData::Sum(sum) => collect_number_metrics(
+                            &metric.name,
+                            &resource_attributes,
+                            NumberMetricKind::Counter,
+                            &sum.data_points,
+                            &mut metrics,
+                        ),
+                        MetricData::Gauge(gauge) => collect_number_metrics(
+                            &metric.name,
+                            &resource_attributes,
+                            NumberMetricKind::Gauge,
+                            &gauge.data_points,
+                            &mut metrics,
+                        ),
+                        MetricData::Histogram(histogram) => collect_histogram_metrics(
+                            &metric.name,
+                            &resource_attributes,
+                            &histogram.data_points,
+                            &mut metrics,
+                        ),
+                        MetricData::ExponentialHistogram(histogram) => {
+                            collect_exponential_histogram_metrics(
+                                &metric.name,
+                                &resource_attributes,
+                                &histogram.data_points,
+                                &mut metrics,
+                            )
+                        }
+                        MetricData::Summary(_) => {}
+                    }
+                }
             }
         }
     }
 
-    spans
+    metrics
 }
 
-fn extract_resource(request: &ExportTraceServiceRequest) -> Vec<Resource> {
-    let mut resources = Vec::new();
-
-    for resource_span in &request.resource_spans {
-        if let Some(resource) = &resource_span.resource {
-            resources.push(resource.clone());
+fn collect_number_metrics(
+    name: &str,
+    resource_attributes: &BTreeMap<String, String>,
+    kind: NumberMetricKind,
+    data_points: &[NumberDataPoint],
+    metrics: &mut Vec<CollectedMetric>,
+) {
+    let mut number_data_points = Vec::new();
+    for point in data_points {
+        if let Some(value) = number_data_point_value(point) {
+            number_data_points.push(CollectedMetricDataPoint {
+                attributes: attributes_from_kvlist(&point.attributes),
+                value,
+                start_time_unix_nano: point.start_time_unix_nano,
+                time_unix_nano: point.time_unix_nano,
+            });
         }
     }
 
-    resources
+    if number_data_points.is_empty() {
+        return;
+    }
+
+    metrics.push(CollectedMetric {
+        name: name.to_string(),
+        resource_attributes: resource_attributes.clone(),
+        data: CollectedMetricData::Number {
+            kind,
+            points: number_data_points,
+        },
+    });
+}
+
+fn collect_histogram_metrics(
+    name: &str,
+    resource_attributes: &BTreeMap<String, String>,
+    data_points: &[opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint],
+    metrics: &mut Vec<CollectedMetric>,
+) {
+    let mut histogram_data_points = Vec::new();
+    for point in data_points {
+        let sum = point.sum.unwrap_or_default();
+        histogram_data_points.push(CollectedHistogramPoint {
+            attributes: attributes_from_kvlist(&point.attributes),
+            count: point.count,
+            sum,
+            start_time_unix_nano: point.start_time_unix_nano,
+            time_unix_nano: point.time_unix_nano,
+        });
+    }
+
+    if histogram_data_points.is_empty() {
+        return;
+    }
+
+    metrics.push(CollectedMetric {
+        name: name.to_string(),
+        resource_attributes: resource_attributes.clone(),
+        data: CollectedMetricData::Histogram {
+            points: histogram_data_points,
+        },
+    });
+}
+
+fn collect_exponential_histogram_metrics(
+    name: &str,
+    resource_attributes: &BTreeMap<String, String>,
+    data_points: &[opentelemetry_proto::tonic::metrics::v1::ExponentialHistogramDataPoint],
+    metrics: &mut Vec<CollectedMetric>,
+) {
+    let mut histogram_data_points = Vec::new();
+    for point in data_points {
+        let sum = point.sum.unwrap_or_default();
+        histogram_data_points.push(CollectedHistogramPoint {
+            attributes: attributes_from_kvlist(&point.attributes),
+            count: point.count,
+            sum,
+            start_time_unix_nano: point.start_time_unix_nano,
+            time_unix_nano: point.time_unix_nano,
+        });
+    }
+
+    if histogram_data_points.is_empty() {
+        return;
+    }
+
+    metrics.push(CollectedMetric {
+        name: name.to_string(),
+        resource_attributes: resource_attributes.clone(),
+        data: CollectedMetricData::Histogram {
+            points: histogram_data_points,
+        },
+    });
+}
+
+fn number_data_point_value(point: &NumberDataPoint) -> Option<f64> {
+    match point.value {
+        Some(NumberDataPointValue::AsDouble(value)) => Some(value),
+        Some(NumberDataPointValue::AsInt(value)) => Some(value as f64),
+        None => None,
+    }
+}
+
+fn attributes_from_kvlist(attributes: &[KeyValue]) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    for kv in attributes {
+        let key = &kv.key;
+        if let Some(value) = &kv.value {
+            map.insert(key.clone(), format_attribute_value(value));
+        }
+    }
+    map
+}
+
+fn merged_attributes(
+    resource_attributes: &BTreeMap<String, String>,
+    point_attributes: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut merged = resource_attributes.clone();
+    for (key, value) in point_attributes {
+        merged.insert(key.clone(), value.clone());
+    }
+    merged
+}
+
+fn attributes_match_subset(attributes: &BTreeMap<String, String>, subset: &[(&str, &str)]) -> bool {
+    subset
+        .iter()
+        .all(|(key, value)| attributes.get(*key).map(String::as_str) == Some(*value))
+}
+
+fn should_replace_latest(
+    current: &LatestSeriesPoint,
+    incoming_time: u64,
+    incoming_start: u64,
+) -> bool {
+    let (current_time, current_start) = match current {
+        LatestSeriesPoint::Number {
+            time_unix_nano,
+            start_time_unix_nano,
+            ..
+        }
+        | LatestSeriesPoint::Histogram {
+            time_unix_nano,
+            start_time_unix_nano,
+            ..
+        } => (*time_unix_nano, *start_time_unix_nano),
+    };
+
+    incoming_time > current_time
+        || (incoming_time == current_time && incoming_start > current_start)
+}
+
+fn build_latest_series_index(
+    metrics: &[CollectedMetric],
+) -> BTreeMap<SeriesKey, LatestSeriesPoint> {
+    use std::collections::btree_map::Entry;
+
+    let mut index = BTreeMap::new();
+
+    for metric in metrics {
+        match &metric.data {
+            CollectedMetricData::Number { kind, points } => {
+                let series_kind = match kind {
+                    NumberMetricKind::Counter => SeriesKind::Counter,
+                    NumberMetricKind::Gauge => SeriesKind::Gauge,
+                };
+
+                for point in points {
+                    let key = SeriesKey {
+                        name: metric.name.clone(),
+                        kind: series_kind.clone(),
+                        attrs: merged_attributes(&metric.resource_attributes, &point.attributes),
+                    };
+
+                    let incoming = LatestSeriesPoint::Number {
+                        value: point.value,
+                        start_time_unix_nano: point.start_time_unix_nano,
+                        time_unix_nano: point.time_unix_nano,
+                    };
+
+                    match index.entry(key) {
+                        Entry::Vacant(entry) => {
+                            entry.insert(incoming);
+                        }
+                        Entry::Occupied(mut entry)
+                            if should_replace_latest(
+                                entry.get(),
+                                point.time_unix_nano,
+                                point.start_time_unix_nano,
+                            ) =>
+                        {
+                            entry.insert(incoming);
+                        }
+                        Entry::Occupied(_) => {}
+                    }
+                }
+            }
+            CollectedMetricData::Histogram { points } => {
+                for point in points {
+                    let key = SeriesKey {
+                        name: metric.name.clone(),
+                        kind: SeriesKind::Histogram,
+                        attrs: merged_attributes(&metric.resource_attributes, &point.attributes),
+                    };
+
+                    let incoming = LatestSeriesPoint::Histogram {
+                        count: point.count,
+                        sum: point.sum,
+                        start_time_unix_nano: point.start_time_unix_nano,
+                        time_unix_nano: point.time_unix_nano,
+                    };
+
+                    match index.entry(key) {
+                        Entry::Vacant(entry) => {
+                            entry.insert(incoming);
+                        }
+                        Entry::Occupied(mut entry)
+                            if should_replace_latest(
+                                entry.get(),
+                                point.time_unix_nano,
+                                point.start_time_unix_nano,
+                            ) =>
+                        {
+                            entry.insert(incoming);
+                        }
+                        Entry::Occupied(_) => {}
+                    }
+                }
+            }
+        }
+    }
+
+    index
 }
 
 impl From<&Span> for CollectedSpan {
     fn from(span: &Span) -> Self {
-        let mut attributes = BTreeMap::new();
-        for kv in &span.attributes {
-            let key = &kv.key;
-            if let Some(value) = &kv.value {
-                attributes.insert(key.clone(), format_attribute_value(value));
-            }
-        }
+        let attributes = attributes_from_kvlist(&span.attributes);
 
         let events = span
             .events
@@ -569,15 +1044,9 @@ impl From<&Span> for CollectedSpan {
 
 impl From<&Resource> for CollectedResource {
     fn from(resource: &Resource) -> Self {
-        let mut attributes = BTreeMap::new();
-        for kv in &resource.attributes {
-            let key = &kv.key;
-            if let Some(value) = &kv.value {
-                attributes.insert(key.clone(), format_attribute_value(value));
-            }
+        Self {
+            attributes: attributes_from_kvlist(&resource.attributes),
         }
-
-        Self { attributes }
     }
 }
 

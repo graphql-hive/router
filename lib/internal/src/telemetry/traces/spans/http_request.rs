@@ -9,6 +9,7 @@ use ntex::http::body::MessageBody;
 use std::borrow::{Borrow, Cow};
 use tracing::{field::Empty, info_span, record_all, Level, Span};
 
+use crate::http::{HttpMethodAsStr, HttpUriAsStr, HttpVersionAsStr};
 use crate::telemetry::traces::{
     disabled_span, is_level_enabled,
     spans::{
@@ -55,10 +56,11 @@ impl HttpServerRequestSpan {
                 None => (None, None),
             };
 
-        let request_method = Cow::Borrowed(request.method());
+        let request_method = request.method().as_static_str();
         let header_user_agent = request.headers().get(USER_AGENT);
         let url = Cow::Borrowed(request.uri());
-        let protocol_version = version_to_protocol_version_attr(request.version());
+        let protocol_version = request.version().as_static_str();
+        let url_scheme = url.scheme_static_str();
 
         // We follow the HTTP server span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server
@@ -76,9 +78,9 @@ impl HttpServerRequestSpan {
             "server.port" = server_port,
             "url.full" = %url,
             "url.path" = url.path(),
-            "url.scheme" = url.scheme_str(),
+            "url.scheme" = url_scheme,
             "http.request.body.size" = Empty,
-            "http.request.method" = request_method.as_str(),
+            "http.request.method" = request_method,
             "network.protocol.version" = protocol_version,
             "user_agent.original" = header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
@@ -157,12 +159,13 @@ impl HttpClientRequestSpan {
         }
 
         let request_body_size = request.size_hint().upper().map(|v| v as usize);
-        let request_method = Cow::Borrowed(request.method());
+        let request_method = request.method().as_static_str();
         let header_user_agent = request.headers().get(USER_AGENT).map(Cow::Borrowed);
         let url = Cow::Borrowed(request.uri());
-        let protocol_version = version_to_protocol_version_attr(request.version());
+        let protocol_version = request.version().as_static_str();
         let server_address = request.uri().host();
         let server_port = request.uri().port_u16();
+        let url_scheme = request.uri().scheme_static_str();
 
         // We follow the HTTP client span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client
@@ -180,9 +183,9 @@ impl HttpClientRequestSpan {
             "server.port" = server_port,
             "url.full" = %url,
             "url.path" = url.path(),
-            "url.scheme" = url.scheme_str(),
+            "url.scheme" = url_scheme,
             "http.request.body.size" = request_body_size,
-            "http.request.method" = request_method.as_str(),
+            "http.request.method" = request_method,
             "network.protocol.version" = protocol_version,
             "user_agent.original" = header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
@@ -257,10 +260,11 @@ impl HttpInflightRequestSpan {
         let server_port = url.port_u16();
 
         let request_body_size = Some(body_bytes.len());
-        let request_method = Cow::Borrowed(method);
+        let request_method = method.as_static_str();
         let header_user_agent = headers.get(USER_AGENT).map(Cow::Borrowed);
         let url = Cow::Borrowed(url);
-        let protocol_version = version_to_protocol_version_attr(http::Version::HTTP_11);
+        let protocol_version = http::Version::HTTP_11.as_static_str();
+        let url_scheme = url.scheme_static_str();
 
         // We follow the HTTP client span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client
@@ -282,9 +286,9 @@ impl HttpInflightRequestSpan {
             "server.port" = server_port,
             "url.full" = %url,
             "url.path" = url.path(),
-            "url.scheme" = url.scheme_str(),
+            "url.scheme" = url_scheme,
             "http.request.body.size" = request_body_size,
-            "http.request.method" = request_method.as_str(),
+            "http.request.method" = request_method,
             "network.protocol.version" = protocol_version,
             "user_agent.original" = header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
@@ -341,15 +345,5 @@ impl HttpInflightRequestSpan {
             "otel.status_code" = "Error",
             "error.type" = 500,
         );
-    }
-}
-
-fn version_to_protocol_version_attr(version: http::Version) -> Option<&'static str> {
-    match version {
-        http::Version::HTTP_10 => Some("1.0"),
-        http::Version::HTTP_11 => Some("1.1"),
-        http::Version::HTTP_2 => Some("2"),
-        http::Version::HTTP_3 => Some("3"),
-        _ => None,
     }
 }

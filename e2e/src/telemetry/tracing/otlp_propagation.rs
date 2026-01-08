@@ -15,7 +15,7 @@ async fn test_otlp_http_trace_context_propagation() {
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = SubgraphsServer::start().await;
 
@@ -129,7 +129,7 @@ async fn test_otlp_http_baggage_propagation() {
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = SubgraphsServer::start().await;
 
@@ -220,7 +220,7 @@ async fn test_otlp_http_b3_propagation() {
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = SubgraphsServer::start().await;
 
@@ -338,7 +338,7 @@ async fn test_otlp_http_jaeger_propagation() {
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = SubgraphsServer::start().await;
 

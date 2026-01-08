@@ -4,8 +4,13 @@ use tonic::{
     metadata::{MetadataKey, MetadataMap},
     transport::ClientTlsConfig,
 };
+use vrl::core::Value;
 
-use crate::telemetry::error::TelemetryError;
+use crate::{
+    expressions::{CompileExpression, ExecutableProgram},
+    telemetry::error::TelemetryError,
+};
+use hive_router_config::primitives::value_or_expression::ValueOrExpression;
 
 pub(super) fn build_metadata(
     headers: HashMap<String, String>,
@@ -38,5 +43,61 @@ pub(super) fn build_tls_config(
         Some(tls_config) => ClientTlsConfig::try_from(tls_config)
             .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string())),
         None => Ok(ClientTlsConfig::default()),
+    }
+}
+
+pub(super) fn resolve_string_map(
+    map: &HashMap<String, ValueOrExpression<String>>,
+    context_prefix: &str,
+) -> Result<HashMap<String, String>, TelemetryError> {
+    map.iter()
+        .map(|(k, v)| {
+            let value = resolve_value_or_expression(v, &format!("{} '{}'", context_prefix, k))?;
+            Ok((k.clone(), value))
+        })
+        .collect()
+}
+
+pub fn evaluate_expression_as_string(
+    expression: &str,
+    context: &str,
+) -> Result<String, TelemetryError> {
+    Ok(expression
+        // compile
+        .compile_expression(None)
+        .map_err(|e| {
+            TelemetryError::TracesExporterSetup(format!(
+                "Failed to compile {} expression: {}",
+                context, e
+            ))
+        })?
+        // execute
+        .execute(Value::Null) // no input context as we are in setup phase
+        .map_err(|e| {
+            TelemetryError::TracesExporterSetup(format!(
+                "Failed to execute {} expression: {}",
+                context, e
+            ))
+        })?
+        // coerce
+        .as_str()
+        .ok_or_else(|| {
+            TelemetryError::TracesExporterSetup(format!(
+                "{} expression must return a string",
+                context
+            ))
+        })?
+        .to_string())
+}
+
+pub fn resolve_value_or_expression(
+    value_or_expr: &ValueOrExpression<String>,
+    context: &str,
+) -> Result<String, TelemetryError> {
+    match value_or_expr {
+        ValueOrExpression::Value(v) => Ok(v.clone()),
+        ValueOrExpression::Expression { expression } => {
+            evaluate_expression_as_string(expression, context)
+        }
     }
 }

@@ -10,7 +10,7 @@ use futures_util::TryStreamExt;
 use hive_router::{
     configure_app_from_config, configure_ntex_app, init_rustls_crypto_provider,
     invoke_shutdown_hooks, plugins::plugins_service::PluginService, telemetry::Telemetry, BoxError,
-    PluginRegistry, RouterSharedState, SchemaState,
+    PluginRegistry, RouterPaths, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use hive_router_internal::background_tasks::BackgroundTasksManager;
@@ -202,7 +202,7 @@ pub struct TestRouterApp<T> {
     pub app: Pipeline<T>,
     pub shared_state: Arc<RouterSharedState>,
     pub schema_state: Arc<SchemaState>,
-    pub bg_tasks_manager: BackgroundTasksManager,
+    pub bg_tasks_manager: Arc<BackgroundTasksManager>,
     pub telemetry: Telemetry,
     // List of dependencies to hold until shutdown of the router
     pub _dependencies: Vec<Box<dyn Any>>,
@@ -243,6 +243,11 @@ async fn _init_router_from_config(
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let http_config = router_config.http.clone();
     let graphql_path = http_config.graphql_endpoint();
+    let prometheus = telemetry
+        .prometheus
+        .as_ref()
+        .and_then(|prom| prom.to_attached());
+
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
         telemetry.context.clone(),
@@ -251,12 +256,15 @@ async fn _init_router_from_config(
     )
     .await?;
 
+    let paths = RouterPaths::new(graphql_path.to_string());
+    paths.detect_conflicts(&prometheus)?;
+
     let ntex_app = test::init_service(
         web::App::new()
             .middleware(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(|m| configure_ntex_app(m, graphql_path)),
+            .configure(|m| configure_ntex_app(m, &paths, prometheus)),
     )
     .await;
 
@@ -264,7 +272,7 @@ async fn _init_router_from_config(
         app: ntex_app,
         shared_state,
         schema_state,
-        bg_tasks_manager,
+        bg_tasks_manager: Arc::new(bg_tasks_manager),
         telemetry,
         _dependencies: vec![Box::new(subscription_guard)],
     })
@@ -313,25 +321,41 @@ impl<T> Drop for TestRouterApp<T> {
 }
 
 fn shutdown_telemetry_sync(telemetry: &Telemetry) {
-    let Some(provider) = telemetry.provider.clone() else {
-        return;
-    };
+    let traces_provider = telemetry.traces_provider.clone();
+    let metrics_provider = telemetry.metrics_provider.clone();
 
     let dispatch = tracing::dispatcher::get_default(|current| current.clone());
     let handle = std::thread::spawn(move || {
         tracing::dispatcher::with_default(&dispatch, || {
-            tracing::info!(
-                component = "telemetry",
-                layer = "provider",
-                "shutdown scheduled"
-            );
-            let _ = provider.force_flush();
-            let _ = provider.shutdown();
-            tracing::info!(
-                component = "telemetry",
-                layer = "provider",
-                "shutdown completed"
-            );
+            if let Some(provider) = traces_provider {
+                tracing::info!(
+                    component = "telemetry",
+                    layer = "provider",
+                    "shutdown scheduled"
+                );
+                let _ = provider.force_flush();
+                let _ = provider.shutdown();
+                tracing::info!(
+                    component = "telemetry",
+                    layer = "provider",
+                    "shutdown completed"
+                );
+            }
+
+            if let Some(provider) = metrics_provider {
+                tracing::info!(
+                    component = "telemetry",
+                    layer = "metrics",
+                    "shutdown scheduled"
+                );
+                let _ = provider.force_flush();
+                let _ = provider.shutdown();
+                tracing::info!(
+                    component = "telemetry",
+                    layer = "metrics",
+                    "shutdown completed"
+                );
+            }
         });
     });
     let _ = handle.join();

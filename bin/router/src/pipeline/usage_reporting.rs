@@ -11,10 +11,8 @@ use hive_router_config::{
     telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
     usage_reporting::UsageReportingConfig,
 };
-use hive_router_internal::{
-    background_tasks::{BackgroundTask, BackgroundTasksManager},
-    telemetry::resolve_value_or_expression,
-};
+use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
+use hive_router_internal::telemetry::utils::resolve_value_or_expression;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use rand::prelude::*;
 use tokio_util::sync::CancellationToken;
