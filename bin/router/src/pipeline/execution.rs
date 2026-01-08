@@ -7,6 +7,9 @@ use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLExecuteSpan, GraphQLOperationSpan,
+};
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
@@ -15,6 +18,7 @@ use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use ntex::web::HttpRequest;
+use tracing::Instrument;
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
@@ -39,6 +43,7 @@ pub async fn execute_plan(
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
     planned_request: &PlannedRequest<'_>,
+    span: &GraphQLOperationSpan,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
@@ -94,6 +99,8 @@ pub async fn execute_plan(
         None
     };
 
+    let execute_span = GraphQLExecuteSpan::new();
+
     execute_query_plan(QueryPlanExecutionContext {
         query_plan: planned_request.query_plan_payload,
         projection_plan: &planned_request.normalized_payload.projection_plan,
@@ -110,7 +117,9 @@ pub async fn execute_plan(
             .iter()
             .map(|e| e.into())
             .collect(),
+        span,
     })
+    .instrument(execute_span.span)
     .await
     .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);

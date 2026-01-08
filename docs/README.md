@@ -16,6 +16,7 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"hive":null,"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
 |[**usage\_reporting**](#usage_reporting)|`object`|Configuration for usage reporting to GraphQL Hive.<br/>Default: `{"accept_invalid_certs":false,"access_token":null,"buffer_size":1000,"client_name_header":"graphql-client-name","client_version_header":"graphql-client-version","connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%","target_id":null}`<br/>||
 
@@ -114,6 +115,27 @@ query_planner:
   allow_expose: false
   timeout: 10s
 supergraph: {}
+telemetry:
+  hive: null
+  resource:
+    attributes: {}
+  tracing:
+    collect:
+      max_attributes_per_event: 16
+      max_attributes_per_link: 32
+      max_attributes_per_span: 128
+      max_events_per_span: 128
+      parent_based_sampler: false
+      sampling: 1
+    exporters: []
+    instrumentation:
+      spans:
+        mode: spec_compliant
+    propagation:
+      b3: false
+      baggage: false
+      jaeger: false
+      trace_context: true
 traffic_shaping:
   all:
     dedupe_enabled: true
@@ -1826,6 +1848,479 @@ By default, an exponential backoff retry policy is used, with 10 attempts.
 
 ```yaml
 max_retries: 10
+
+```
+
+<a name="telemetry"></a>
+## telemetry: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**hive**](#telemetryhive)|`object`, `null`|||
+|[**resource**](#telemetryresource)|`object`|Default: `{"attributes":{}}`<br/>||
+|[**tracing**](#telemetrytracing)|`object`|Default: `{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+hive: null
+resource:
+  attributes: {}
+tracing:
+  collect:
+    max_attributes_per_event: 16
+    max_attributes_per_link: 32
+    max_attributes_per_span: 128
+    max_events_per_span: 128
+    parent_based_sampler: false
+    sampling: 1
+  exporters: []
+  instrumentation:
+    spans:
+      mode: spec_compliant
+  propagation:
+    b3: false
+    baggage: false
+    jaeger: false
+    trace_context: true
+
+```
+
+<a name="telemetryhive"></a>
+### telemetry\.hive: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**endpoint**||Default: `"https://api.graphql-hive.com/otel/v1/traces"`<br/>||
+|**target**||||
+|**token**||||
+|[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"},"enabled":true,"grpc":null,"http":null,"protocol":"http"}`<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="telemetryhivetracing"></a>
+#### telemetry\.hive\.tracing: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**batch\_processor**](#telemetryhivetracingbatch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
+|**enabled**|`boolean`|Default: `true`<br/>|no|
+|[**grpc**](#telemetryhivetracinggrpc)|`object`, `null`||no|
+|[**http**](#telemetryhivetracinghttp)|`object`, `null`||no|
+|**protocol**|`string`|Enum: `"grpc"`, `"http"`<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+batch_processor:
+  max_concurrent_exports: 1
+  max_export_batch_size: 512
+  max_export_timeout: 5s
+  max_queue_size: 2048
+  scheduled_delay: 5s
+enabled: true
+grpc: null
+http: null
+protocol: http
+
+```
+
+<a name="telemetryhivetracingbatch_processor"></a>
+##### telemetry\.hive\.tracing\.batch\_processor: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_concurrent\_exports**|`integer`|Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_batch\_size**|`integer`|Default: `512`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_timeout**|`string`|Default: `"5s"`<br/>||
+|**max\_queue\_size**|`integer`|Default: `2048`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**scheduled\_delay**|`string`|Default: `"5s"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+max_concurrent_exports: 1
+max_export_batch_size: 512
+max_export_timeout: 5s
+max_queue_size: 2048
+scheduled_delay: 5s
+
+```
+
+<a name="telemetryhivetracinggrpc"></a>
+##### telemetry\.hive\.tracing\.grpc: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**metadata**](#telemetryhivetracinggrpcmetadata)|`object`|Default: `{}`<br/>||
+|[**tls**](#telemetryhivetracinggrpctls)|`object`|Default: `{"ca":null,"cert":null,"domain_name":null,"key":null}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="telemetryhivetracinggrpcmetadata"></a>
+###### telemetry\.hive\.tracing\.grpc\.metadata: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="telemetryhivetracinggrpctls"></a>
+###### telemetry\.hive\.tracing\.grpc\.tls: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**ca**|`string`, `null`|The path to the Certificate Authority (CA) certificate file (PEM format) used to verify the server's certificate.<br/>||
+|**cert**|`string`, `null`|The path to the client's certificate file (PEM format).<br/>||
+|**domain\_name**|`string`, `null`|The domain name used to verify the server's TLS certificate.<br/>||
+|**key**|`string`, `null`|The path to the client's private key file.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+ca: null
+cert: null
+domain_name: null
+key: null
+
+```
+
+<a name="telemetryhivetracinghttp"></a>
+##### telemetry\.hive\.tracing\.http: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**headers**](#telemetryhivetracinghttpheaders)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="telemetryhivetracinghttpheaders"></a>
+###### telemetry\.hive\.tracing\.http\.headers: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="telemetryresource"></a>
+### telemetry\.resource: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**attributes**](#telemetryresourceattributes)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+attributes: {}
+
+```
+
+<a name="telemetryresourceattributes"></a>
+#### telemetry\.resource\.attributes: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="telemetrytracing"></a>
+### telemetry\.tracing: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**collect**](#telemetrytracingcollect)|`object`|Default: `{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1}`<br/>||
+|[**exporters**](#telemetrytracingexporters)|`array`|Default: <br/>||
+|[**instrumentation**](#telemetrytracinginstrumentation)|`object`|Default: `{"spans":{"mode":"spec_compliant"}}`<br/>||
+|[**propagation**](#telemetrytracingpropagation)|`object`|Default: `{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+collect:
+  max_attributes_per_event: 16
+  max_attributes_per_link: 32
+  max_attributes_per_span: 128
+  max_events_per_span: 128
+  parent_based_sampler: false
+  sampling: 1
+exporters: []
+instrumentation:
+  spans:
+    mode: spec_compliant
+propagation:
+  b3: false
+  baggage: false
+  jaeger: false
+  trace_context: true
+
+```
+
+<a name="telemetrytracingcollect"></a>
+#### telemetry\.tracing\.collect: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_attributes\_per\_event**|`integer`|Default: `16`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_attributes\_per\_link**|`integer`|Default: `32`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_attributes\_per\_span**|`integer`|Default: `128`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_events\_per\_span**|`integer`|Default: `128`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**parent\_based\_sampler**|`boolean`|Default: `false`<br/>||
+|**sampling**|`number`|Default: `1`<br/>Format: `"double"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+max_attributes_per_event: 16
+max_attributes_per_link: 32
+max_attributes_per_span: 128
+max_events_per_span: 128
+parent_based_sampler: false
+sampling: 1
+
+```
+
+<a name="telemetrytracingexporters"></a>
+#### telemetry\.tracing\.exporters\[\]: array
+
+**Items**
+
+   
+**Option 1 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**batch\_processor**](#option1batch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
+|**enabled**|`boolean`|Default: `true`<br/>|no|
+|**endpoint**||Default: `""`<br/>|no|
+|[**grpc**](#option1grpc)|`object`, `null`||no|
+|[**http**](#option1http)|`object`, `null`||no|
+|**kind**|`string`|Constant Value: `"otlp"`<br/>|yes|
+|**protocol**|`string`|Enum: `"grpc"`, `"http"`<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+batch_processor:
+  max_concurrent_exports: 1
+  max_export_batch_size: 512
+  max_export_timeout: 5s
+  max_queue_size: 2048
+  scheduled_delay: 5s
+enabled: true
+endpoint: ''
+grpc: null
+http: null
+
+```
+
+
+<a name="option1batch_processor"></a>
+## Option 1: batch\_processor: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_concurrent\_exports**|`integer`|Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_batch\_size**|`integer`|Default: `512`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_timeout**|`string`|Default: `"5s"`<br/>||
+|**max\_queue\_size**|`integer`|Default: `2048`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**scheduled\_delay**|`string`|Default: `"5s"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+max_concurrent_exports: 1
+max_export_batch_size: 512
+max_export_timeout: 5s
+max_queue_size: 2048
+scheduled_delay: 5s
+
+```
+
+<a name="option1grpc"></a>
+## Option 1: grpc: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**metadata**](#option1grpcmetadata)|`object`|Default: `{}`<br/>||
+|[**tls**](#option1grpctls)|`object`|Default: `{"ca":null,"cert":null,"domain_name":null,"key":null}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option1grpcmetadata"></a>
+### Option 1: grpc\.metadata: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="option1grpctls"></a>
+### Option 1: grpc\.tls: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**ca**|`string`, `null`|The path to the Certificate Authority (CA) certificate file (PEM format) used to verify the server's certificate.<br/>||
+|**cert**|`string`, `null`|The path to the client's certificate file (PEM format).<br/>||
+|**domain\_name**|`string`, `null`|The domain name used to verify the server's TLS certificate.<br/>||
+|**key**|`string`, `null`|The path to the client's private key file.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+ca: null
+cert: null
+domain_name: null
+key: null
+
+```
+
+<a name="option1http"></a>
+## Option 1: http: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**headers**](#option1httpheaders)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option1httpheaders"></a>
+### Option 1: http\.headers: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="telemetrytracinginstrumentation"></a>
+#### telemetry\.tracing\.instrumentation: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**spans**](#telemetrytracinginstrumentationspans)|`object`|Default: `{"mode":"spec_compliant"}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+spans:
+  mode: spec_compliant
+
+```
+
+<a name="telemetrytracinginstrumentationspans"></a>
+##### telemetry\.tracing\.instrumentation\.spans: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**mode**||Controls which semantic conventions are emitted on spans.<br/>Default: SpecCompliant (only stable attributes).<br/>Default: `"spec_compliant"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+mode: spec_compliant
+
+```
+
+<a name="telemetrytracingpropagation"></a>
+#### telemetry\.tracing\.propagation: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**b3**|`boolean`|Default: `false`<br/>||
+|**baggage**|`boolean`|Default: `false`<br/>||
+|**jaeger**|`boolean`|Default: `false`<br/>||
+|**trace\_context**|`boolean`|Default: `true`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+b3: false
+baggage: false
+jaeger: false
+trace_context: true
 
 ```
 

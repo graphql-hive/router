@@ -5,20 +5,26 @@ use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
 use futures::TryFutureExt;
+use hive_router_internal::telemetry::otel::opentelemetry::global::get_text_map_propagator;
+use hive_router_internal::telemetry::otel::opentelemetry::propagation::Injector;
+use hive_router_internal::telemetry::otel::opentelemetry::trace::{SpanContext, TraceContextExt};
+use hive_router_internal::telemetry::otel::tracing_opentelemetry::OpenTelemetrySpanExt;
+use hive_router_internal::telemetry::traces::spans::http_request::{
+    HttpClientRequestSpan, HttpInflightRequestSpan,
+};
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes, BytesMut};
-use http::HeaderMap;
-use http::HeaderValue;
+use http::{HeaderMap, HeaderName, HeaderValue};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
-use tracing::debug;
+use tracing::{debug, Instrument};
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -44,6 +50,11 @@ const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
 const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
+
+struct SubgraphExecutorErrorWithSpanContext {
+    error: SubgraphExecutorError,
+    span_context: Option<SpanContext>,
+}
 
 impl HTTPSubgraphExecutor {
     pub fn new(
@@ -139,64 +150,102 @@ impl HTTPSubgraphExecutor {
         body: Vec<u8>,
         headers: HeaderMap,
         timeout: Option<Duration>,
-    ) -> Result<SharedResponse, SubgraphExecutorError> {
+    ) -> Result<SharedResponse, SubgraphExecutorErrorWithSpanContext> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
             .version(Version::HTTP_11)
             .body(Full::new(Bytes::from(body)))
-            .map_err(|e| {
-                SubgraphExecutorError::RequestBuildFailure(self.endpoint.to_string(), e.to_string())
+            .map_err(|e| SubgraphExecutorErrorWithSpanContext {
+                error: SubgraphExecutorError::RequestBuildFailure(
+                    self.endpoint.to_string(),
+                    e.to_string(),
+                ),
+                span_context: None,
             })?;
 
         *req.headers_mut() = headers;
 
         debug!("making http request to {}", self.endpoint.to_string());
 
-        let res_fut = self.http_client.request(req).map_err(|e| {
-            SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+        let parent_context = tracing::Span::current().context();
+
+        // TODO: let's decide at some point if the tracing headers
+        //       should be part of the fingerprint or not.
+        get_text_map_propagator(|propagator| {
+            propagator.inject_context(&parent_context, &mut TraceHeaderInjector(req.headers_mut()));
         });
 
-        let res = if let Some(timeout_duration) = timeout {
-            tokio::time::timeout(timeout_duration, res_fut)
-                .await
-                .map_err(|_| {
-                    SubgraphExecutorError::RequestTimeout(
-                        self.endpoint.to_string(),
-                        timeout_duration.as_millis(),
-                    )
-                })?
-        } else {
-            res_fut.await
-        }?;
+        let http_request_span = HttpClientRequestSpan::from_request(&req);
+        let span = http_request_span.span.clone();
+        async {
+            let current_context = tracing::Span::current().context();
+            let span_context = current_context.span().span_context().clone();
+            let res_fut =
+                self.http_client
+                    .request(req)
+                    .map_err(|e| SubgraphExecutorErrorWithSpanContext {
+                        error: SubgraphExecutorError::RequestFailure(
+                            self.endpoint.to_string(),
+                            e.to_string(),
+                        ),
+                        span_context: Some(span_context.clone()),
+                    });
 
-        debug!(
-            "http request to {} completed, status: {}",
-            self.endpoint.to_string(),
-            res.status()
-        );
+            let res = if let Some(timeout_duration) = timeout {
+                tokio::time::timeout(timeout_duration, res_fut)
+                    .await
+                    .map_err(|_| SubgraphExecutorErrorWithSpanContext {
+                        error: SubgraphExecutorError::RequestTimeout(
+                            self.endpoint.to_string(),
+                            timeout_duration.as_millis(),
+                        ),
+                        span_context: Some(span_context.clone()),
+                    })?
+            } else {
+                res_fut.await
+            }?;
 
-        let (parts, body) = res.into_parts();
-        let body = body
-            .collect()
-            .await
-            .map_err(|e| {
-                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-            })?
-            .to_bytes();
+            http_request_span.record_response(&res);
 
-        if body.is_empty() {
-            return Err(SubgraphExecutorError::RequestFailure(
+            debug!(
+                "http request to {} completed, status: {}",
                 self.endpoint.to_string(),
-                "Empty response body".to_string(),
-            ));
-        }
+                res.status()
+            );
 
-        Ok(SharedResponse {
-            status: parts.status,
-            body,
-            headers: parts.headers,
-        })
+            let (parts, body) = res.into_parts();
+            let body = body
+                .collect()
+                .await
+                .map_err(|e| SubgraphExecutorErrorWithSpanContext {
+                    error: SubgraphExecutorError::RequestFailure(
+                        self.endpoint.to_string(),
+                        e.to_string(),
+                    ),
+                    span_context: Some(span_context.clone()),
+                })?
+                .to_bytes();
+
+            if body.is_empty() {
+                return Err(SubgraphExecutorErrorWithSpanContext {
+                    error: SubgraphExecutorError::RequestFailure(
+                        self.endpoint.to_string(),
+                        "Empty response body".to_string(),
+                    ),
+                    span_context: Some(span_context.clone()),
+                });
+            }
+
+            Ok(SharedResponse {
+                status: parts.status,
+                body,
+                headers: parts.headers,
+                span_context: span_context.clone(),
+            })
+        }
+        .instrument(span)
+        .await
     }
 
     fn error_to_graphql_bytes(&self, error: SubgraphExecutorError) -> Bytes {
@@ -224,7 +273,6 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
@@ -256,9 +304,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     headers: shared_response.headers,
                 },
                 Err(e) => {
-                    self.log_error(&e);
+                    self.log_error(&e.error);
                     HttpExecutionResponse {
-                        body: self.error_to_graphql_bytes(e),
+                        body: self.error_to_graphql_bytes(e.error),
                         headers: Default::default(),
                     }
                 }
@@ -266,44 +314,92 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }
 
         let fingerprint = request_fingerprint(&http::Method::POST, &self.endpoint, &headers, &body);
+        let span = HttpInflightRequestSpan::new(
+            &http::Method::POST,
+            &self.endpoint,
+            &headers,
+            &body,
+            fingerprint,
+        );
 
-        // Clone the cell from the map, dropping the lock from the DashMap immediately.
-        // Prevents any deadlocks.
-        let cell = self
-            .in_flight_requests
-            .entry(fingerprint)
-            .or_default()
-            .value()
-            .clone();
+        async {
+            // Clone the cell from the map, dropping the lock from the DashMap immediately.
+            // Prevents any deadlocks.
+            let cell = self
+                .in_flight_requests
+                .entry(fingerprint)
+                .or_default()
+                .value()
+                .clone();
 
-        let response_result = cell
-            .get_or_try_init(|| async {
-                let res = {
-                    // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
-                    // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
-                    let _permit = self.semaphore.acquire().await.unwrap();
-                    self._send_request(body, headers, timeout).await
-                };
-                // It's important to remove the entry from the map before returning the result.
-                // This ensures that once the OnceCell is set, no future requests can join it.
-                // The cache is for the lifetime of the in-flight request only.
-                self.in_flight_requests.remove(&fingerprint);
-                res
-            })
-            .await;
+            // Mark it as a joiner span by default.
+            let mut is_leader = false;
+            let response_result = cell
+                .get_or_try_init(|| async {
+                    // Override the span to be a leader span for this request.
+                    is_leader = true;
+                    let res = {
+                        // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
+                        // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
+                        let _permit = self.semaphore.acquire().await.unwrap();
+                        self._send_request(body, headers, timeout).await
+                    };
+                    // It's important to remove the entry from the map before returning the result.
+                    // This ensures that once the OnceCell is set, no future requests can join it.
+                    // The cache is for the lifetime of the in-flight request only.
+                    self.in_flight_requests.remove(&fingerprint);
+                    res
+                })
+                .await;
 
-        match response_result {
-            Ok(shared_response) => HttpExecutionResponse {
-                body: shared_response.body.clone(),
-                headers: shared_response.headers.clone(),
-            },
-            Err(e) => {
-                self.log_error(&e);
-                HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e.clone()),
-                    headers: Default::default(),
+            if is_leader {
+                span.record_as_leader();
+            } else {
+                span.record_as_joiner();
+            }
+
+            match response_result {
+                Ok(shared_response) => {
+                    span.record_response(&shared_response.body, &shared_response.status);
+                    if !is_leader {
+                        span.add_link_to_leader(&shared_response.span_context);
+                    }
+                    HttpExecutionResponse {
+                        body: shared_response.body.clone(),
+                        headers: shared_response.headers.clone(),
+                    }
+                }
+                Err(e) => {
+                    self.log_error(&e.error);
+                    if !is_leader {
+                        if let Some(span_context) = e.span_context {
+                            span.add_link_to_leader(&span_context);
+                        }
+                    }
+                    HttpExecutionResponse {
+                        body: self.error_to_graphql_bytes(e.error.clone()),
+                        headers: Default::default(),
+                    }
                 }
             }
         }
+        .instrument(span.clone())
+        .await
+    }
+}
+
+struct TraceHeaderInjector<'a>(pub &'a mut HeaderMap);
+
+impl<'a> Injector for TraceHeaderInjector<'a> {
+    fn set(&mut self, key: &str, value: String) {
+        let Ok(name) = HeaderName::from_bytes(key.as_bytes()) else {
+            return;
+        };
+
+        let Ok(val) = HeaderValue::from_str(&value) else {
+            return;
+        };
+
+        self.0.insert(name, val);
     }
 }

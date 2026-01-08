@@ -13,19 +13,53 @@ authors = ["The Guild"]
 
 [dependencies]
 hive-router-config = { path = "../router-config", version = "0.0.16" }
-tracing = { workspace = true }
 
 sonic-rs = { workspace = true }
 vrl = { workspace = true }
 humantime = "2.3.0"
 once_cell = "1.21.3"
 bytes = { workspace = true }
-http = { workspace = true }
+http = { workspace=true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
+ntex = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
+
+# telemetry
+opentelemetry = { workspace = true, features = ["trace"] }
+opentelemetry-appender-tracing = { workspace = true }
+opentelemetry-otlp = { workspace = true, features = [
+    "grpc-tonic",
+    "http-proto",
+    "logs",
+    "tls",
+    "tonic",
+    "trace",
+    "metrics",
+] }
+opentelemetry-stdout = { workspace = true, features = [
+    "trace",
+    "metrics",
+    "logs",
+] }
+opentelemetry_sdk = { workspace = true, features = [
+    "rt-tokio",
+    "logs",
+    "spec_unstable_metrics_views",
+    "experimental_trace_batch_span_processor_with_async_runtime"
+] }
+opentelemetry-jaeger-propagator = { workspace = true }
+opentelemetry-zipkin = { workspace = true }
+tracing = { workspace = true }
+tracing-opentelemetry.workspace = true
+tracing-subscriber = { workspace = true }
+tonic = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 tokio = { workspace = true }
 insta = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
