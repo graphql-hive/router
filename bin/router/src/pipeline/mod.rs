@@ -65,7 +65,7 @@ pub async fn graphql_request_handler(
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
 ) -> web::HttpResponse {
-    if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
+    if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE, None) {
         if shared_state.router_config.graphiql.enabled {
             return web::HttpResponse::Ok()
                 .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)
@@ -91,7 +91,7 @@ pub async fn graphql_request_handler(
             let response_headers = response.headers;
 
             let response_content_type: &'static HeaderValue =
-                if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
+                if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR, None) {
                     &APPLICATION_GRAPHQL_RESPONSE_JSON
                 } else {
                     &APPLICATION_JSON
@@ -118,7 +118,7 @@ pub async fn graphql_request_handler(
                 std::pin::Pin<
                     Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
                 >,
-            ) = if req.accepts_content_type(*TEXT_EVENT_STREAM) {
+            ) = if req.accepts_content_type(*TEXT_EVENT_STREAM, None) {
                 (
                     http::HeaderValue::from_static("text/event-stream"),
                     Box::pin(sse::create_stream(
@@ -126,8 +126,7 @@ pub async fn graphql_request_handler(
                         std::time::Duration::from_secs(10),
                     )),
                 )
-            } else if req.accepts_content_type(*MULTIPART_MIXED)
-                && req.accepts_content_type(r#"subscriptionSpec="1.0""#)
+            } else if req.accepts_content_type(*MULTIPART_MIXED, Some(r#"subscriptionSpec="1.0""#))
             {
                 (
                     http::HeaderValue::from_static("multipart/mixed;boundary=graphql"),
@@ -193,8 +192,9 @@ pub async fn execute_pipeline(
     );
 
     if is_subscription
-        && !req.accepts_content_type(*MULTIPART_MIXED)
-        && !req.accepts_content_type(*TEXT_EVENT_STREAM)
+        && !req.accepts_content_type(*MULTIPART_MIXED, None)
+        // considers both GraphQL's Incremental Delivery RFC and Apollo's Multipart HTTP
+        && !req.accepts_content_type(*TEXT_EVENT_STREAM, None)
     {
         return Err(
             req.new_pipeline_error(PipelineErrorVariant::SubscriptionNotSupportedOverTransport)

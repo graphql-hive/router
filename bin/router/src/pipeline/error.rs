@@ -33,7 +33,7 @@ pub trait PipelineErrorFromAcceptHeader {
 impl PipelineErrorFromAcceptHeader for HttpRequest {
     #[inline]
     fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
-        let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
+        let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR, None);
         PipelineError { accept_ok, error }
     }
 }

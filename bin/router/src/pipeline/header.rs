@@ -21,16 +21,31 @@ lazy_static! {
 }
 
 pub trait RequestAccepts {
-    fn accepts_content_type(&self, content_type: &str) -> bool;
+    /// Checks if the request's `Accept` header contains the given content type.
+    /// If `suffix` is provided, it ensures that the content type is accompanied by
+    /// the suffix like when matching exactly `Accept: multipart/mixed; spec="1.0"`
+    /// with `content_type = "multipart/mixed"` and `suffix = Some("spec="1.0")`.
+    /// When providing the suffix, the content-type and suffix must be in the same part of the
+    /// `Accept` header (comma-separated).
+    fn accepts_content_type(&self, content_type: &str, suffix: Option<&str>) -> bool;
 }
 
 impl RequestAccepts for HttpRequest {
     #[inline]
-    fn accepts_content_type(&self, content_type: &str) -> bool {
+    fn accepts_content_type(&self, content_type: &str, suffix: Option<&str>) -> bool {
         self.headers()
             .get(ACCEPT)
             .and_then(|value| value.to_str().ok())
-            .map(|s| s.contains(content_type))
+            .map(|s| match suffix {
+                None => s.contains(content_type),
+                // suffix needs to be alongside the content type itself, so we must split ","
+                // to avoid false positives like when checking `(multipart/mixed, spec="1.0")` with:
+                // `accept: multipart/mixed, text/event-stream;spec="1.0"`
+                Some(suffix) => s
+                    .split(',')
+                    .map(|part| part.trim())
+                    .any(|part| part.contains(content_type) && part.contains(suffix)),
+            })
             .unwrap_or(false)
     }
 }
