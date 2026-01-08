@@ -1,12 +1,10 @@
 use hive_router_config::telemetry::TelemetryConfig;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::{InstrumentationScope, KeyValue};
-// use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_sdk::{trace::IdGenerator, Resource};
 use tracing::Subscriber;
 use tracing_subscriber::registry::LookupSpan;
 
-// use crate::telemetry::logs::build_logs_provider;
 use crate::telemetry::traces::build_trace_provider;
 
 mod error;
