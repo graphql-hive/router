@@ -104,11 +104,19 @@ impl EnvVarOverrides {
         }
 
         if let Some(hive_access_token) = self.hive_access_token.take() {
-            config = config.set_override("usage_reporting.access_token", hive_access_token)?;
-            if let Some(hive_target) = self.hive_target.take() {
-                config = config.set_override("usage_reporting.target_id", hive_target)?;
-            }
+            config =
+                config.set_override("usage_reporting.access_token", hive_access_token.clone())?;
+            config = config.set_override("telemetry.hive.token", hive_access_token)?;
+        }
+
+        if let Some(hive_target) = self.hive_target.take() {
+            config = config.set_override("usage_reporting.target_id", hive_target.clone())?;
+            config = config.set_override("telemetry.hive.target", hive_target)?;
+        }
+
+        if self.hive_access_token.is_some() && self.hive_target.is_some() {
             config = config.set_override("usage_reporting.enabled", true)?;
+            config = config.set_override("telemetry.hive.tracing.enabled", true)?;
         }
 
         // GraphiQL overrides

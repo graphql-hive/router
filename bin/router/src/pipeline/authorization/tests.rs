@@ -18,7 +18,7 @@ use crate::pipeline::{
     authorization::{
         apply_authorization_to_operation, AuthorizationDecision, AuthorizationMetadata,
     },
-    normalize::GraphQLNormalizationPayload,
+    normalize::{GraphQLNormalizationPayload, OperationIdentity},
 };
 
 struct SupergraphTestData {
@@ -74,6 +74,11 @@ impl SupergraphTestData {
             operation_for_introspection: partitioned_operation
                 .introspection_operation
                 .map(Arc::new),
+            operation_indentity: OperationIdentity {
+                name: doc.operation_name.clone(),
+                operation_type: "query".to_string(),
+                client_document_hash: "".to_string(),
+            },
         };
 
         let jwt = if let Some(scopes) = scopes {

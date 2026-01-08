@@ -9,15 +9,12 @@ use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 use std::collections::HashMap;
 
-use tracing::{instrument, warn};
-
 use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
 use crate::utils::consts::{
     CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET,
     QUOTE, TRUE, TYPENAME_FIELD_NAME,
 };
 
-#[instrument(level = "trace", skip_all)]
 pub fn project_by_operation(
     data: &Value,
     errors: Vec<GraphQLError>,
