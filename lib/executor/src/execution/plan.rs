@@ -2,11 +2,18 @@ use std::collections::{BTreeSet, HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
-use hive_router_query_planner::planner::plan_nodes::{
-    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode, QueryPlan,
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
+};
+use hive_router_query_planner::{
+    planner::plan_nodes::{
+        ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode, QueryPlan,
+    },
+    state::supergraph_state::OperationKind,
 };
 use http::HeaderMap;
 use sonic_rs::ValueRef;
+use tracing::Instrument;
 
 use crate::{
     context::ExecutionContext,
@@ -55,6 +62,7 @@ pub struct QueryPlanExecutionContext<'exec> {
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
+    pub span: &'exec GraphQLOperationSpan,
 }
 
 pub struct PlanExecutionOutput {
@@ -98,7 +106,13 @@ pub async fn execute_query_plan<'exec>(
         })?;
 
     let final_response = &exec_ctx.final_response;
-    let error_count = exec_ctx.errors.len(); // Added for usage reporting
+    let error_count = exec_ctx.errors.len();
+    if error_count > 0 {
+        ctx.span.record_error_count(error_count);
+        ctx.span
+            .record_errors(|| exec_ctx.errors.iter().map(|e| e.into()).collect());
+    }
+
     let body = project_by_operation(
         final_response,
         exec_ctx.errors,
@@ -521,50 +535,79 @@ impl<'exec> Executor<'exec> {
         node: &'exec FetchNode,
         representations: Option<Vec<u8>>,
     ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
-        // TODO: We could optimize header map creation by caching them per service name
-        let mut headers_map = HeaderMap::new();
-        modify_subgraph_request_headers(
-            self.headers_plan,
-            &node.service_name,
-            self.client_request,
-            &mut headers_map,
-        )
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || Some(node.service_name.clone()),
-            affected_path: || None,
-        })?;
-        let variable_refs =
-            select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
+        let subgraph_operation_span = GraphQLSubgraphOperationSpan::new(
+            node.service_name.as_str(),
+            &node.operation.document_str,
+        );
 
-        let mut subgraph_request = SubgraphExecutionRequest {
-            query: node.operation.document_str.as_str(),
-            dedupe: self.dedupe_subgraph_requests,
-            operation_name: node.operation_name.as_deref(),
-            variables: variable_refs,
-            representations,
-            headers: headers_map,
-            extensions: None,
-        };
+        async {
+            // TODO: We could optimize header map creation by caching them per service name
+            let mut headers_map = HeaderMap::new();
+            modify_subgraph_request_headers(
+                self.headers_plan,
+                &node.service_name,
+                self.client_request,
+                &mut headers_map,
+            )
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: || Some(node.service_name.clone()),
+                affected_path: || None,
+            })?;
+            let variable_refs =
+                select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
 
-        if let Some(jwt_forwarding_plan) = &self.jwt_forwarding_plan {
-            subgraph_request.add_request_extensions_field(
-                jwt_forwarding_plan.extension_field_name.clone(),
-                jwt_forwarding_plan.extension_field_value.clone(),
-            );
-        }
+            let mut subgraph_request = SubgraphExecutionRequest {
+                query: node.operation.document_str.as_str(),
+                dedupe: self.dedupe_subgraph_requests,
+                operation_name: node.operation_name.as_deref(),
+                variables: variable_refs,
+                representations,
+                headers: headers_map,
+                extensions: None,
+            };
 
-        Ok(ExecutionJob::Fetch(FetchJob {
-            fetch_node_id: node.id,
-            subgraph_name: &node.service_name,
-            response: self
+            subgraph_operation_span.record_operation_identity(GraphQLSpanOperationIdentity {
+                name: subgraph_request.operation_name,
+                operation_type: match node.operation_kind {
+                    Some(OperationKind::Query) | None => "query",
+                    Some(OperationKind::Mutation) => "mutation",
+                    Some(OperationKind::Subscription) => "subscription",
+                },
+                client_document_hash: node.operation.hash.to_string().as_str(),
+            });
+
+            if let Some(jwt_forwarding_plan) = &self.jwt_forwarding_plan {
+                subgraph_request.add_request_extensions_field(
+                    jwt_forwarding_plan.extension_field_name.clone(),
+                    jwt_forwarding_plan.extension_field_value.clone(),
+                );
+            }
+
+            let response = self
                 .executors
                 .execute(&node.service_name, subgraph_request, self.client_request)
                 .await
                 .with_plan_context(LazyPlanContext {
                     subgraph_name: || Some(node.service_name.clone()),
                     affected_path: || None,
-                })?,
-        }))
+                })?;
+
+            if let Some(errors) = &response.errors {
+                if !errors.is_empty() {
+                    subgraph_operation_span.record_error_count(errors.len());
+                    subgraph_operation_span
+                        .record_errors(|| errors.iter().map(|e| e.into()).collect());
+                }
+            }
+
+            Ok(ExecutionJob::Fetch(FetchJob {
+                fetch_node_id: node.id,
+                subgraph_name: &node.service_name,
+                response,
+            }))
+        }
+        .instrument(subgraph_operation_span.clone())
+        .await
     }
 
     fn log_error(&self, error: &PlanExecutionError) {

@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
+    hash::{Hash, Hasher},
 };
+use xxhash_rust::xxh3::Xxh3;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -365,9 +367,12 @@ fn create_output_operation(
     let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
 
     let document_str = document.to_string();
+    let hash = hash_minified_query(&document_str);
+
     SubgraphFetchOperation {
         document,
         document_str,
+        hash,
     }
 }
 
@@ -411,6 +416,7 @@ impl FetchNode {
                 let document =
                     minify_operation(operation_def, supergraph).expect("Failed to minify");
                 let document_str = document.to_string();
+                let hash = hash_minified_query(&document_str);
 
                 FetchNode {
                     id: step.id,
@@ -421,6 +427,7 @@ impl FetchNode {
                     operation: SubgraphFetchOperation {
                         document,
                         document_str,
+                        hash,
                     },
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
@@ -587,4 +594,10 @@ impl PrettyDisplay for PlanNode {
             _ => Ok(()),
         }
     }
+}
+
+fn hash_minified_query(minified_query: &str) -> u64 {
+    let mut hasher = Xxh3::new();
+    minified_query.hash(&mut hasher);
+    hasher.finish()
 }
