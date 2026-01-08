@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::executors::dedupe::unique_leader_fingerprint;
 use crate::executors::map::InflightRequestsMap;
@@ -10,6 +10,8 @@ use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::response::subgraph_response::SubgraphResponse;
 use hive_router_config::HiveRouterConfig;
+use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
+use hive_router_internal::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
 use hive_router_internal::telemetry::TelemetryContext;
 
 use async_trait::async_trait;
@@ -55,6 +57,18 @@ const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
 const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
+
+struct FetchedSubgraphResponse<'a> {
+    response: SubgraphHttpResponse,
+    http_request_capture: HttpClientRequestStateCapture<'a>,
+    transport_duration: Duration,
+}
+
+struct HttpRequestTelemetryCapture<'a> {
+    capture: HttpClientRequestStateCapture<'a>,
+    response_body_size: u64,
+    transport_duration: Duration,
+}
 
 impl HTTPSubgraphExecutor {
     #[allow(clippy::too_many_arguments)]
@@ -154,25 +168,28 @@ impl HTTPSubgraphExecutor {
 pub struct SendRequestOpts<'a> {
     pub http_client: &'a HttpClient,
     pub endpoint: &'a http::Uri,
+    pub subgraph_name: &'a str,
     pub method: http::Method,
     pub body: Vec<u8>,
     pub headers: HeaderMap,
     pub timeout: Option<Duration>,
-    pub telemetry_context: Arc<TelemetryContext>,
+    pub telemetry_context: &'a Arc<TelemetryContext>,
 }
 
 async fn send_request<'a>(
     opts: SendRequestOpts<'a>,
-) -> Result<SubgraphHttpResponse, SubgraphExecutorError> {
+) -> Result<FetchedSubgraphResponse<'a>, SubgraphExecutorError> {
     let SendRequestOpts {
         http_client,
         endpoint,
+        subgraph_name,
         method,
         body,
         headers,
         timeout,
         telemetry_context,
     } = opts;
+    let request_body_size = body.len() as u64;
 
     let mut req = hyper::Request::builder()
         .method(method)
@@ -185,8 +202,14 @@ async fn send_request<'a>(
     debug!("making http request to {}", endpoint.to_string());
 
     let http_request_span = HttpClientRequestSpan::from_request(&req);
+    let mut http_request_capture = telemetry_context.metrics.http_client.capture_request(
+        &req,
+        request_body_size,
+        Some(subgraph_name),
+    );
+    let transport_started_at = Instant::now();
 
-    async {
+    let response: Result<SubgraphHttpResponse, SubgraphExecutorError> = async {
         // TODO: let's decide at some point if the tracing headers
         //       should be part of the fingerprint or not.
         telemetry_context.inject_context(&mut TraceHeaderInjector(req.headers_mut()));
@@ -196,12 +219,18 @@ async fn send_request<'a>(
         let res = if let Some(timeout_duration) = timeout {
             tokio::time::timeout(timeout_duration, res_fut)
                 .await
-                .map_err(|_| SubgraphExecutorError::RequestTimeout(timeout_duration.as_millis()))?
+                .map_err(|_| {
+                    SubgraphExecutorError::RequestTimeout(
+                        endpoint.to_string(),
+                        timeout_duration.as_millis(),
+                    )
+                })?
         } else {
             res_fut.await
         }?;
 
         http_request_span.record_response(&res);
+        http_request_capture.set_status_code(res.status().as_u16());
 
         debug!(
             "http request to {} completed, status: {}",
@@ -210,10 +239,21 @@ async fn send_request<'a>(
         );
 
         let (parts, body) = res.into_parts();
-        let body = body.collect().await?.to_bytes();
+        let body = body
+            .collect()
+            .await
+            .map_err(|err| {
+                SubgraphExecutorError::ResponseBodyReadFailure(
+                    endpoint.to_string(),
+                    err.to_string(),
+                )
+            })?
+            .to_bytes();
 
         if body.is_empty() {
-            return Err(SubgraphExecutorError::EmptyResponseBody);
+            return Err(SubgraphExecutorError::EmptyResponseBody(
+                subgraph_name.to_string(),
+            ));
         }
 
         Ok(SubgraphHttpResponse {
@@ -223,7 +263,21 @@ async fn send_request<'a>(
         })
     }
     .instrument(http_request_span.clone())
-    .await
+    .await;
+
+    let transport_duration = transport_started_at.elapsed();
+
+    match response {
+        Ok(response) => Ok(FetchedSubgraphResponse {
+            response,
+            http_request_capture,
+            transport_duration,
+        }),
+        Err(err) => {
+            http_request_capture.finish_error(err.error_code(), transport_duration);
+            Err(err)
+        }
+    }
 }
 
 pub enum DeduplicationHint {
@@ -291,6 +345,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }
 
         let mut deduplication_hint = DeduplicationHint::NotDeduped;
+        let mut http_request_capture = None;
 
         let mut response = match response {
             Some(resp) => resp,
@@ -298,18 +353,25 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 let send_request_opts = SendRequestOpts {
                     http_client: &self.http_client,
                     endpoint: &self.endpoint,
+                    subgraph_name: &self.subgraph_name,
                     method,
                     body,
                     headers: execution_request.headers,
                     timeout,
-                    telemetry_context: self.telemetry_context.clone(),
+                    telemetry_context: &self.telemetry_context,
                 };
 
                 if deduplicate_request {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    send_request(send_request_opts).await?
+                    let fetched_response = send_request(send_request_opts).await?;
+                    http_request_capture = Some(HttpRequestTelemetryCapture {
+                        capture: fetched_response.http_request_capture,
+                        response_body_size: fetched_response.response.body.len() as u64,
+                        transport_duration: fetched_response.transport_duration,
+                    });
+                    fetched_response.response
                 } else {
                     let fingerprint = send_request_opts.fingerprint();
 
@@ -320,7 +382,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                         &send_request_opts.body,
                     );
 
-                    let result: Result<SubgraphHttpResponse, SubgraphExecutorError> = async {
+                    let result: Result<_, SubgraphExecutorError> = async {
                         // Clone the cell from the map, dropping the lock from the DashMap immediately.
                         // Prevents any deadlocks.
                         let cell = self
@@ -330,6 +392,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                             .clone();
                         // Mark it as a joiner span by default.
                         let mut is_leader = false;
+                        let mut leader_http_request_capture = None;
                         let (shared_response, leader_id) = cell
                             .get_or_try_init(|| async {
                                 // Override the span to be a leader span for this request.
@@ -344,7 +407,16 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                                 // This ensures that once the OnceCell is set, no future requests can join it.
                                 // The cache is for the lifetime of the in-flight request only.
                                 self.in_flight_requests.remove(&fingerprint);
-                                res.map(|res| (res, unique_leader_fingerprint()))
+                                res.map(|fetched_response| {
+                                    leader_http_request_capture =
+                                        Some(HttpRequestTelemetryCapture {
+                                            capture: fetched_response.http_request_capture,
+                                            response_body_size: fetched_response.response.body.len()
+                                                as u64,
+                                            transport_duration: fetched_response.transport_duration,
+                                        });
+                                    (fetched_response.response, unique_leader_fingerprint())
+                                })
                             })
                             .await?;
 
@@ -363,12 +435,17 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                             is_leader,
                         };
 
-                        Ok(shared_response.clone())
+                        Ok((shared_response.clone(), leader_http_request_capture))
                     }
                     .instrument(inflight_span.clone())
                     .await;
 
-                    result?
+                    let (shared_response, leader_http_request_capture) = result?;
+                    if let Some(capture) = leader_http_request_capture {
+                        http_request_capture = Some(capture);
+                    }
+
+                    shared_response
                 }
             }
         };
@@ -395,8 +472,44 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             response = end_payload.response;
         }
 
-        response.deserialize_http_response()
+        let response_result = response.deserialize_http_response();
+        if let Some(mut http_request_capture) = http_request_capture {
+            finish_capture_from_subgraph_result(
+                &mut http_request_capture.capture,
+                http_request_capture.response_body_size,
+                http_request_capture.transport_duration,
+                &response_result,
+            );
+        }
+
+        response_result
     }
+}
+
+fn finish_capture_from_subgraph_result(
+    capture: &mut HttpClientRequestStateCapture<'_>,
+    response_body_size: u64,
+    transport_duration: Duration,
+    response_result: &Result<SubgraphResponse<'_>, SubgraphExecutorError>,
+) {
+    let error_code = response_result.as_ref().err().map(|err| err.error_code());
+    let graphql_response_status = if response_result.as_ref().is_ok_and(|response| {
+        response
+            .errors
+            .as_ref()
+            .is_none_or(|errors| errors.is_empty())
+    }) {
+        GraphQLResponseStatus::Ok
+    } else {
+        GraphQLResponseStatus::Error
+    };
+
+    capture.finish(
+        response_body_size,
+        transport_duration,
+        graphql_response_status,
+        error_code,
+    );
 }
 
 #[derive(Default, Clone)]

@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use crate::cache_state::{CacheHitMiss, EntryValueHitMissExt};
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::shared_state::RouterSharedState;
@@ -78,45 +79,37 @@ pub async fn validate_operation_with_cache(
             hasher.finish()
         };
 
-        let cache_hint;
+        let mut cache_hint = CacheHint::Hit;
 
         let mut errors = match errors {
-            Some(errors) => {
-                cache_hint = CacheHint::Hit;
-                errors
+            Some(errors) => errors,
+            None => {
+                let metrics = &schema_state.telemetry_context.metrics;
+                let validate_cache_capture = metrics.cache.validate.capture_request();
+                schema_state
+                    .validate_cache
+                    .entry(cache_key)
+                    .or_insert_with(async {
+                        let res = validate(
+                            &validation_schema.document,
+                            &validation_operation,
+                            &validation_plan,
+                        );
+                        Arc::new(res)
+                    })
+                    .await
+                    .into_value_with_hit_miss(|r| match r {
+                        CacheHitMiss::Hit => {
+                            validate_span.record_cache_hit(true);
+                            validate_cache_capture.finish_hit();
+                        }
+                        CacheHitMiss::Miss | CacheHitMiss::Error => {
+                            cache_hint = CacheHint::Miss;
+                            validate_span.record_cache_hit(false);
+                            validate_cache_capture.finish_miss();
+                        }
+                    })
             }
-            None => match schema_state.validate_cache.get(&cache_key).await {
-                Some(cached_validation) => {
-                    trace!(
-                        "validation result of hash {} has been loaded from cache",
-                        cache_key
-                    );
-                    cache_hint = CacheHint::Hit;
-                    validate_span.record_cache_hit(true);
-                    cached_validation
-                }
-                None => {
-                    trace!(
-                        "validation result of hash {} does not exists in cache",
-                        cache_key
-                    );
-                    cache_hint = CacheHint::Miss;
-                    validate_span.record_cache_hit(false);
-
-                    let res = validate(
-                        &validation_schema.document,
-                        &validation_operation,
-                        &validation_plan,
-                    );
-                    let arc_res = Arc::new(res);
-
-                    schema_state
-                        .validate_cache
-                        .insert(cache_key, arc_res.clone())
-                        .await;
-                    arc_res
-                }
-            },
         };
 
         if !on_end_callbacks.is_empty() {

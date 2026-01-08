@@ -25,7 +25,7 @@ use tracing::{info, warn};
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
     init_rustls_crypto_provider, invoke_shutdown_hooks, plugins::plugins_service::PluginService,
-    telemetry::Telemetry, PluginRegistry, RouterSharedState, SchemaState,
+    telemetry::Telemetry, PluginRegistry, RouterPaths, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use subgraphs::subgraphs_app;
@@ -542,11 +542,13 @@ impl Drop for TestRouterHandle {
         .join()
         .expect("shutdown hooks panicked");
 
-        // maybe shut down telemetry
-        if let Some(provider) = self.telemetry.provider.clone() {
-            let dispatch = tracing::dispatcher::get_default(|current| current.clone());
-            std::thread::spawn(move || {
-                tracing::dispatcher::with_default(&dispatch, || {
+        let traces_provider = self.telemetry.traces_provider.clone();
+        let metrics_provider = self.telemetry.metrics_provider.clone();
+        let dispatch = tracing::dispatcher::get_default(|current| current.clone());
+
+        std::thread::spawn(move || {
+            tracing::dispatcher::with_default(&dispatch, || {
+                if let Some(provider) = traces_provider {
                     tracing::info!(
                         component = "telemetry",
                         layer = "provider",
@@ -559,11 +561,26 @@ impl Drop for TestRouterHandle {
                         layer = "provider",
                         "shutdown completed"
                     );
-                });
-            })
-            .join()
-            .expect("tracing shutdown panicked");
-        }
+                }
+
+                if let Some(provider) = metrics_provider {
+                    tracing::info!(
+                        component = "telemetry",
+                        layer = "metrics",
+                        "shutdown scheduled"
+                    );
+                    let _ = provider.force_flush();
+                    let _ = provider.shutdown();
+                    tracing::info!(
+                        component = "telemetry",
+                        layer = "metrics",
+                        "shutdown completed"
+                    );
+                }
+            });
+        })
+        .join()
+        .expect("tracing shutdown panicked");
     }
 }
 
@@ -589,6 +606,10 @@ impl TestRouter<Built> {
         let (telemetry, subscriber) = Telemetry::init_testing_subscriber(&config)
             .expect("failed to initialize telemetry subscriber");
         let subscription_guard = tracing::subscriber::set_default(subscriber);
+        let prometheus = telemetry
+            .prometheus
+            .as_ref()
+            .and_then(|prom| prom.to_attached());
 
         let mut bg_tasks_manager = BackgroundTasksManager::new();
         let (shared_state, schema_state) = configure_app_from_config(
@@ -611,11 +632,18 @@ impl TestRouter<Built> {
 
         let serv_shared_state = shared_state.clone();
         let serv_schema_state = schema_state.clone();
-        let serv_graphql_path = self.graphql_path.clone();
+        let paths = RouterPaths::new(self.graphql_path.clone());
+        paths
+            .detect_conflicts(&prometheus)
+            .expect("failed to detect endpoint conflicts");
+
+        let serv_paths = paths.clone();
+        let serv_prometheus = prometheus.clone();
         let serv = test::server(move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
-            let serv_graphql_path = serv_graphql_path.clone();
+            let paths = serv_paths.clone();
+            let prometheus = serv_prometheus.clone();
 
             // set the tracing dispatch on the server thread. the guard is
             // intentionally leaked: dropping it would restore the no-op default
@@ -632,7 +660,7 @@ impl TestRouter<Built> {
                     .middleware(PluginService)
                     .state(shared_state)
                     .state(schema_state)
-                    .configure(|m| configure_ntex_app(m, serv_graphql_path.as_ref()))
+                    .configure(|m| configure_ntex_app(m, &paths, prometheus))
             }
         })
         .await;

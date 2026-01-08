@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock};
 
+use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
@@ -70,6 +71,9 @@ pub async fn plan_operation_with_cache(
             }
         };
 
+        let metrics = &schema_state.telemetry_context.metrics;
+        let plan_cache_capture = metrics.cache.plan.capture_request();
+
         let stable_override_context =
             StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
         let plan_cache_key =
@@ -83,9 +87,8 @@ pub async fn plan_operation_with_cache(
         plan_span.record_cache_hit(true);
         let mut plan = schema_state
             .plan_cache
-            .try_get_with(plan_cache_key, async {
-                cache_hint = CacheHint::Miss;
-                plan_span.record_cache_hit(false);
+            .entry(plan_cache_key)
+            .or_try_insert_with(async {
                 if is_pure_introspection {
                     return Ok(EMPTY_QUERY_PLAN.clone());
                 }
@@ -115,7 +118,20 @@ pub async fn plan_operation_with_cache(
                     )
                     .map(Arc::new)
             })
-            .await?;
+            .await
+            .map_err(PipelineError::from)
+            .into_result_with_hit_miss(|hit_miss| match hit_miss {
+                CacheHitMiss::Hit => {
+                    cache_hint = CacheHint::Hit;
+                    plan_span.record_cache_hit(true);
+                    plan_cache_capture.finish_hit();
+                }
+                CacheHitMiss::Miss | CacheHitMiss::Error => {
+                    cache_hint = CacheHint::Miss;
+                    plan_span.record_cache_hit(false);
+                    plan_cache_capture.finish_miss();
+                }
+            })?;
 
         if !on_end_callbacks.is_empty() {
             let mut end_payload = OnQueryPlanEndHookPayload {
