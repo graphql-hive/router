@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
@@ -61,6 +62,7 @@ pub struct QueryPlanExecutionContext<'exec> {
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
+    pub graphql_error_recorder: Option<GraphQLErrorMetricsRecorder>,
     pub initial_errors: Vec<GraphQLError>,
     pub span: &'exec GraphQLOperationSpan,
 }
@@ -107,10 +109,19 @@ pub async fn execute_query_plan<'exec>(
 
     let final_response = &exec_ctx.final_response;
     let error_count = exec_ctx.errors.len();
+
     if error_count > 0 {
         ctx.span.record_error_count(error_count);
         ctx.span
             .record_errors(|| exec_ctx.errors.iter().map(|e| e.into()).collect());
+        if let Some(error_recorder) = ctx.graphql_error_recorder.as_ref() {
+            error_recorder.record_errors(|| {
+                exec_ctx
+                    .errors
+                    .iter()
+                    .map(|err| err.extensions.code.as_deref())
+            });
+        }
     }
 
     let body = project_by_operation(

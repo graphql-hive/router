@@ -59,6 +59,7 @@ pub async fn read_body_stream(
                 .parse()
                 .map_err(|_| ReadBodyStreamError::InvalidContentLengthHeader)?;
             if content_length > max_size {
+                write_request_body_size(req, content_length as u64);
                 return Err(ReadBodyStreamError::PayloadTooLargeContentLength(max_size));
             }
             Some(content_length)
@@ -76,9 +77,35 @@ pub async fn read_body_stream(
     while let Some(chunk) = body_stream.try_next().await? {
         // limit max size of in-memory payload
         if chunk.len() > max_size.saturating_sub(body.len()) {
+            write_request_body_size(req, (body.len() + chunk.len()) as u64);
             return Err(ReadBodyStreamError::PayloadTooLargeBodyStream);
         }
         body.extend_from_slice(&chunk);
     }
     Ok(body.freeze())
+}
+
+/// Stores the request body size in bytes.
+///
+/// The value comes from either:
+/// - the `Content-Length` header
+/// - the streamed payload, measured from bytes read.
+///
+/// For streamed payloads, the recorded size is the number of bytes read up to
+/// the configured maximum.
+///
+/// Using `RequestBodySize` to store the size of the request body,
+/// helps to reduce complexity in code, as otherwise,
+/// we would have to return the size next within Err and Ok of `read_body_stream`.
+#[derive(Debug, Clone, Copy)]
+pub struct RequestBodySize(pub u64);
+
+#[inline]
+pub fn write_request_body_size(req: &HttpRequest, size: u64) {
+    req.extensions_mut().insert(RequestBodySize(size));
+}
+
+#[inline]
+pub fn read_request_body_size(req: &HttpRequest) -> Option<u64> {
+    req.extensions().get::<RequestBodySize>().map(|size| size.0)
 }

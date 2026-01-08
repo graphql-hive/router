@@ -35,7 +35,6 @@ impl BackgroundTasksManager {
     {
         info!("registering background task: {}", task.id());
         let child_token = self.cancellation_token.clone();
-
         self.arbiter.spawn(async move {
             task.run(child_token).await;
         });
@@ -48,12 +47,10 @@ impl BackgroundTasksManager {
         self.arbiter.spawn(f);
     }
 
-    pub fn shutdown(&mut self) {
+    pub fn shutdown(&self) {
         info!("shutdown triggered, stopping all background tasks...");
-
         self.cancellation_token.cancel();
         self.arbiter.stop();
-
         info!("all background tasks have been shut down gracefully.");
     }
 }
