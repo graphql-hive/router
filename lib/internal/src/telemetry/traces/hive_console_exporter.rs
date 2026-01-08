@@ -280,6 +280,11 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
                     .attributes
                     .push(KeyValue::new(*replacing_key, value));
             }
+
+            // Transfer timing of the http span to the graphql span,
+            // so that Hive Console shows correct duration for the operation
+            graphql_span.start_time = http_span.start_time;
+            graphql_span.end_time = http_span.end_time;
         }
     }
 
