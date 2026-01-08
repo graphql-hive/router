@@ -5,8 +5,6 @@ use crate::executors::dedupe::request_fingerprint;
 use crate::executors::dedupe::unique_leader_fingerprint;
 use crate::executors::map::InflightRequestsMap;
 use crate::response::subgraph_response::SubgraphResponse;
-use futures::TryFutureExt;
-
 use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes};
@@ -142,12 +140,39 @@ impl HTTPSubgraphExecutor {
         Ok(body)
     }
 
-    async fn _send_request(
+    async fn send_with_timeout(
+        &self,
+        req: hyper::Request<Full<Bytes>>,
+        timeout: Option<Duration>,
+    ) -> Result<hyper::Response<hyper::body::Incoming>, SubgraphExecutorError> {
+        let res_fut = self.http_client.request(req);
+
+        let Some(timeout_duration) = timeout else {
+            return res_fut.await.map_err(|e| {
+                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+            });
+        };
+
+        match tokio::time::timeout(timeout_duration, res_fut).await {
+            Ok(Ok(res)) => Ok(res),
+            Ok(Err(e)) => Err(SubgraphExecutorError::RequestFailure(
+                self.endpoint.to_string(),
+                e.to_string(),
+            )),
+            Err(_) => Err(SubgraphExecutorError::RequestTimeout(
+                self.endpoint.to_string(),
+                timeout_duration.as_millis(),
+            )),
+        }
+    }
+
+    async fn fetch_subgraph_response(
         &self,
         body: Vec<u8>,
         headers: HeaderMap,
         timeout: Option<Duration>,
     ) -> Result<HttpResponse, SubgraphExecutorError> {
+        let request_body_size = body.len() as u64;
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
@@ -159,37 +184,29 @@ impl HTTPSubgraphExecutor {
 
         *req.headers_mut() = headers;
 
-        debug!("making http request to {}", self.endpoint.to_string());
+        debug!("making http request to {}", self.endpoint);
 
         let http_request_span = HttpClientRequestSpan::from_request(&req);
+        let mut http_client_capture = self
+            .telemetry_context
+            .metrics
+            .http_client
+            .capture_request(&req, request_body_size);
 
         async {
             // TODO: let's decide at some point if the tracing headers
             //       should be part of the fingerprint or not.
             self.telemetry_context
                 .inject_context(&mut TraceHeaderInjector(req.headers_mut()));
-            let res_fut = self.http_client.request(req).map_err(|e| {
-                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-            });
 
-            let res = if let Some(timeout_duration) = timeout {
-                tokio::time::timeout(timeout_duration, res_fut)
-                    .await
-                    .map_err(|_| {
-                        SubgraphExecutorError::RequestTimeout(
-                            self.endpoint.to_string(),
-                            timeout_duration.as_millis(),
-                        )
-                    })?
-            } else {
-                res_fut.await
-            }?;
+            let res = self.send_with_timeout(req, timeout).await?;
 
             http_request_span.record_response(&res);
+            http_client_capture.set_status_code(res.status().as_u16());
 
             debug!(
                 "http request to {} completed, status: {}",
-                self.endpoint.to_string(),
+                self.endpoint,
                 res.status()
             );
 
@@ -198,14 +215,16 @@ impl HTTPSubgraphExecutor {
                 .collect()
                 .await
                 .map_err(|e| {
-                    SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+                    SubgraphExecutorError::ResponseBodyReadFailure(
+                        self.endpoint.to_string(),
+                        e.to_string(),
+                    )
                 })?
                 .to_bytes();
 
             if body.is_empty() {
-                return Err(SubgraphExecutorError::RequestFailure(
+                return Err(SubgraphExecutorError::EmptyResponseBody(
                     self.endpoint.to_string(),
-                    "Empty response body".to_string(),
                 ));
             }
 
@@ -217,6 +236,12 @@ impl HTTPSubgraphExecutor {
         }
         .instrument(http_request_span.clone())
         .await
+        .inspect(|res| {
+            http_client_capture.finish_success(res.body.len() as u64);
+        })
+        .inspect_err(|err| {
+            http_client_capture.finish_error(err.error_code());
+        })
     }
 }
 
@@ -238,7 +263,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            let shared_response = self._send_request(body, headers, timeout).await?;
+            let shared_response = self.fetch_subgraph_response(body, headers, timeout).await?;
             return shared_response.deserialize_http_response();
         }
 
@@ -266,7 +291,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                         // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                         // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                         let _permit = self.semaphore.acquire().await.unwrap();
-                        self._send_request(body, headers, timeout).await
+                        self.fetch_subgraph_response(body, headers, timeout).await
                     };
                     // It's important to remove the entry from the map before returning the result.
                     // This ensures that once the OnceCell is set, no future requests can join it.

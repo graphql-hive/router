@@ -35,6 +35,12 @@ pub enum SubgraphExecutorError {
     #[error("Request to subgraph \"{0}\" timed out after {1} milliseconds")]
     #[strum(serialize = "SUBGRAPH_REQUEST_TIMEOUT")]
     RequestTimeout(String, u128),
+    #[error("Failed to read response body from subgraph \"{0}\": {1}")]
+    #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_READ_FAILURE")]
+    ResponseBodyReadFailure(String, String),
+    #[error("Received empty response body from subgraph \"{0}\"")]
+    #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_EMPTY")]
+    EmptyResponseBody(String),
     #[error("Failed to deserialize subgraph response: {0}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE")]
     ResponseDeserializationFailure(String),

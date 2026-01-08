@@ -11,7 +11,7 @@ use hive_router_config::telemetry::hive::{
     is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig,
 };
 use hive_router_config::usage_reporting::UsageReportingConfig;
-use hive_router_internal::telemetry::resolve_value_or_expression;
+use hive_router_internal::telemetry::utils::resolve_value_or_expression;
 use hive_router_plan_executor::execution::{
     client_request_details::ClientRequestDetails, plan::PlanExecutionOutput,
 };

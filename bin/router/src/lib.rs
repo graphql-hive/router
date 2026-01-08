@@ -1,4 +1,5 @@
 pub mod background_tasks;
+mod cache_state;
 mod consts;
 pub mod error;
 mod http_utils;
@@ -22,6 +23,7 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     pipeline::{
+        body_read::read_request_body_size,
         error::PipelineError,
         graphql_request_handler,
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
@@ -31,11 +33,13 @@ use crate::{
             max_directives_rule::MaxDirectivesRule,
         },
     },
-    telemetry::HeaderExtractor,
+    telemetry::{HeaderExtractor, PrometheusAttached},
 };
 
+use crate::cache_state::{register_cache_size_observers, CacheState};
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
+use futures::FutureExt;
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
 use hive_router_internal::telemetry::{
@@ -58,100 +62,128 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
-    if let Some(supergraph) = schema_state.current_supergraph().as_ref() {
-        // If an early CORS response is needed, return it immediately.
-        if let Some(early_response) = app_state
-            .cors_runtime
-            .as_ref()
-            .and_then(|cors| cors.get_early_response(&request))
-        {
-            return early_response;
-        }
+    let http_request_capture = app_state
+        .telemetry_context
+        .metrics
+        .http_server
+        .capture_request(&request);
 
-        // agree on the response content type so that errors can be handled
-        // properly outside the request handler.
-        let response_mode = match request.negotiate() {
-            Ok(response_mode) => response_mode,
-            Err(err) => return err.into_response(None),
-        };
+    let response =
+        graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone()).await;
 
-        if response_mode == ResponseMode::GraphiQL {
-            if app_state.router_config.graphiql.enabled {
-                return web::HttpResponse::Ok()
-                    .header(CONTENT_TYPE, TEXT_HTML_MIME)
-                    .body(GRAPHIQL_HTML);
-            } else {
-                return web::HttpResponse::NotFound().into();
-            }
-        }
+    http_request_capture.finish(&response, read_request_body_size(&request));
 
-        let parent_ctx = app_state
-            .telemetry_context
-            .extract_context(&HeaderExtractor(request.headers()));
-        let root_http_request_span = HttpServerRequestSpan::from_request(&request);
-        let _ = root_http_request_span.set_parent(parent_ctx);
+    response
+}
 
-        async {
-            let timeout_fut = sleep(
-                app_state
-                    .router_config
-                    .traffic_shaping
-                    .router
-                    .request_timeout,
-            );
-            let req_handler_fut = graphql_request_handler(
-                &request,
-                body_stream,
-                &response_mode,
-                supergraph,
-                app_state.get_ref(),
-                schema_state.get_ref(),
-                &root_http_request_span,
-            );
-            let mut res = match select(timeout_fut, req_handler_fut).await {
-                // If the timeout future completes first, return a timeout error response.
-                Either::Left(_) => {
-                    let err = PipelineError::TimeoutError;
-                    return {
-                        tracing::error!("{}", err);
-                        err.into_response(Some(response_mode))
-                    };
-                }
-                // If the request handler future completes first, return its response.
-                Either::Right(Ok(response)) => response,
-                // If the request handler future completes first with an error, return the error response.
-                Either::Right(Err(err)) => {
-                    return {
-                        tracing::error!("{}", err);
-                        err.into_response(Some(response_mode))
-                    }
-                }
-            };
+async fn graphql_endpoint_dispatch(
+    request: &HttpRequest,
+    body_stream: web::types::Payload,
+    schema_state: web::types::State<Arc<SchemaState>>,
+    app_state: web::types::State<Arc<RouterSharedState>>,
+) -> web::HttpResponse {
+    let maybe_supergraph = schema_state.current_supergraph();
 
-            // Apply CORS headers to the final response if CORS is configured.
-            if let Some(cors) = app_state.cors_runtime.as_ref() {
-                cors.set_headers(&request, res.headers_mut());
-            }
-
-            root_http_request_span.record_response(&res);
-
-            res
-        }
-        .instrument(root_http_request_span.clone())
-        .await
-    } else {
+    let Some(supergraph) = maybe_supergraph.as_ref() else {
         warn!("No supergraph available yet, unable to process request");
 
-        web::HttpResponse::ServiceUnavailable()
+        return web::HttpResponse::ServiceUnavailable()
             .header(RETRY_AFTER, 10)
-            .finish()
+            .finish();
+    };
+
+    // If an early CORS response is needed, return it immediately.
+    if let Some(early_response) = app_state
+        .cors_runtime
+        .as_ref()
+        .and_then(|cors| cors.get_early_response(request))
+    {
+        return early_response;
     }
+
+    // agree on the response content type so that errors can be handled
+    // properly outside the request handler.
+    let response_mode = match request.negotiate() {
+        Ok(response_mode) => response_mode,
+        Err(err) => {
+            return err.into_response(None);
+        }
+    };
+
+    if response_mode == ResponseMode::GraphiQL {
+        if app_state.router_config.graphiql.enabled {
+            return web::HttpResponse::Ok()
+                .header(CONTENT_TYPE, TEXT_HTML_MIME)
+                .body(GRAPHIQL_HTML);
+        }
+
+        return web::HttpResponse::NotFound().finish();
+    }
+
+    let parent_ctx = app_state
+        .telemetry_context
+        .extract_context(&HeaderExtractor(request.headers()));
+    let http_server_span = HttpServerRequestSpan::from_request(request);
+    let _ = http_server_span.set_parent(parent_ctx);
+    let router_request_timeout = app_state
+        .router_config
+        .traffic_shaping
+        .router
+        .request_timeout;
+
+    async {
+        let timeout_fut = sleep(router_request_timeout);
+        let req_handler_fut = graphql_request_handler(
+            request,
+            body_stream,
+            &response_mode,
+            supergraph,
+            app_state.get_ref(),
+            schema_state.get_ref(),
+            &http_server_span,
+        );
+        let mut res = match select(timeout_fut, req_handler_fut).await {
+            // If the timeout future completes first, return a timeout error response.
+            Either::Left(_) => {
+                let err = PipelineError::TimeoutError;
+                return {
+                    tracing::error!("{}", err);
+                    err.into_response(Some(response_mode))
+                };
+            }
+            // If the request handler future completes first, return its response.
+            Either::Right(Ok(response)) => response,
+            // If the request handler future completes first with an error, return the error response.
+            Either::Right(Err(err)) => {
+                return {
+                    tracing::error!("{}", err);
+                    err.into_response(Some(response_mode))
+                }
+            }
+        };
+
+        // Apply CORS headers to the final response if CORS is configured.
+        if let Some(cors) = app_state.cors_runtime.as_ref() {
+            cors.set_headers(request, res.headers_mut());
+        }
+
+        res
+    }
+    .inspect(|res| {
+        http_server_span.record_response(res);
+    })
+    .instrument(http_server_span.clone())
+    .await
 }
 
 pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     let telemetry = telemetry::Telemetry::init_global(&router_config)?;
+    let prometheus = telemetry
+        .prometheus
+        .as_ref()
+        .and_then(|prom| prom.to_attached());
     info!("hive-router@{} starting...", ROUTER_VERSION);
     let http_config = router_config.http.clone();
     let addr = router_config.http.address();
@@ -165,10 +197,11 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
 
     let maybe_error = web::HttpServer::new(async move || {
         let lp_gql_path = http_config.graphql_endpoint().to_string();
+        let prometheus = prometheus.clone();
         web::App::new()
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(|m| configure_ntex_app(m, http_config.graphql_endpoint()))
+            .configure(|m| configure_ntex_app(m, http_config.graphql_endpoint(), prometheus))
             .default_service(web::to(move || landing_page_handler(lp_gql_path.clone())))
     })
     .bind(&addr)
@@ -203,10 +236,17 @@ pub async fn configure_app_from_config(
 
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
+    let cache_state = Arc::new(CacheState::new());
+
+    if router_config_arc.telemetry.metrics.is_enabled() {
+        register_cache_size_observers(telemetry_context_arc.clone(), cache_state.clone());
+    }
+
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,
         telemetry_context_arc.clone(),
         router_config_arc.clone(),
+        cache_state.clone(),
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
@@ -232,15 +272,31 @@ pub async fn configure_app_from_config(
         hive_usage_agent,
         validation_plan,
         telemetry_context_arc,
+        cache_state,
     )?);
 
     Ok((shared_state, schema_state_arc))
 }
 
-pub fn configure_ntex_app(cfg: &mut web::ServiceConfig, graphql_path: &str) {
+pub fn configure_ntex_app(
+    cfg: &mut web::ServiceConfig,
+    graphql_path: &str,
+    prometheus: Option<PrometheusAttached>,
+) {
     cfg.route(graphql_path, web::to(graphql_endpoint_handler))
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
+
+    if let Some(prom) = prometheus {
+        let registry = prom.registry;
+        cfg.route(
+            prom.endpoint.as_str(),
+            web::get().to(move || {
+                let registry = registry.clone();
+                async move { telemetry::build_metrics_response(&registry) }
+            }),
+        );
+    }
 }
 
 /// Initializes the rustls cryptographic provider for the entire process.

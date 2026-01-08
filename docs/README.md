@@ -18,7 +18,7 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"collect":{"interval":"1m","temporality":"cumulative"},"common":{"buckets":[],"resource":{"attributes":{}},"views":[]},"exporters":[]},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"request_timeout":"1m"}}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -123,6 +123,16 @@ telemetry:
     name_header: graphql-client-name
     version_header: graphql-client-version
   hive: null
+  metrics:
+    collect:
+      interval: 1m
+      temporality: cumulative
+    common:
+      buckets: []
+      resource:
+        attributes: {}
+      views: []
+    exporters: []
   resource:
     attributes: {}
   tracing:
@@ -1939,6 +1949,7 @@ max_retries: 10
 |----|----|-----------|--------|
 |[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
 |[**hive**](#telemetryhive)|`object`, `null`|||
+|[**metrics**](#telemetrymetrics)|`object`|Default: `{"collect":{"interval":"1m","temporality":"cumulative"},"common":{"buckets":[],"resource":{"attributes":{}},"views":[]},"exporters":[]}`<br/>||
 |[**resource**](#telemetryresource)|`object`|Default: `{"attributes":{}}`<br/>||
 |[**tracing**](#telemetrytracing)|`object`|Default: `{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}`<br/>||
 
@@ -1950,6 +1961,16 @@ client_identification:
   name_header: graphql-client-name
   version_header: graphql-client-version
 hive: null
+metrics:
+  collect:
+    interval: 1m
+    temporality: cumulative
+  common:
+    buckets: []
+    resource:
+      attributes: {}
+    views: []
+  exporters: []
 resource:
   attributes: {}
 tracing:
@@ -2111,6 +2132,289 @@ Example: ["IntrospectionQuery", "MeQuery"]
 **Items**
 
 **Item Type:** `string`  
+<a name="telemetrymetrics"></a>
+### telemetry\.metrics: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**collect**](#telemetrymetricscollect)|`object`|Default: `{"interval":"1m","temporality":"cumulative"}`<br/>||
+|[**common**](#telemetrymetricscommon)|`object`|Default: `{"buckets":[],"resource":{"attributes":{}},"views":[]}`<br/>||
+|[**exporters**](#telemetrymetricsexporters)|`array`|Default: <br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+collect:
+  interval: 1m
+  temporality: cumulative
+common:
+  buckets: []
+  resource:
+    attributes: {}
+  views: []
+exporters: []
+
+```
+
+<a name="telemetrymetricscollect"></a>
+#### telemetry\.metrics\.collect: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**interval**|`string`|Default: `"1m"`<br/>||
+|**temporality**|`string`|Default: `"cumulative"`<br/>Enum: `"cumulative"`, `"delta"`, `"low_memory"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+interval: 1m
+temporality: cumulative
+
+```
+
+<a name="telemetrymetricscommon"></a>
+#### telemetry\.metrics\.common: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**buckets**](#telemetrymetricscommonbuckets)|`number[]`|Default: <br/>||
+|[**resource**](#telemetrymetricscommonresource)|`object`|Default: `{"attributes":{}}`<br/>||
+|[**views**](#telemetrymetricscommonviews)|`object[]`|Default: <br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+buckets: []
+resource:
+  attributes: {}
+views: []
+
+```
+
+<a name="telemetrymetricscommonbuckets"></a>
+##### telemetry\.metrics\.common\.buckets\[\]: array
+
+**Items**
+
+**Item Type:** `number`  
+<a name="telemetrymetricscommonresource"></a>
+##### telemetry\.metrics\.common\.resource: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**attributes**](#telemetrymetricscommonresourceattributes)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+attributes: {}
+
+```
+
+<a name="telemetrymetricscommonresourceattributes"></a>
+###### telemetry\.metrics\.common\.resource\.attributes: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="telemetrymetricscommonviews"></a>
+##### telemetry\.metrics\.common\.views\[\]: array
+
+**Items**
+
+**Item Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**buckets**](#telemetrymetricscommonviewsbuckets)|`number[]`|Default: <br/>|no|
+|**kind**|`string`, `null`|Enum: `"counter"`, `"up_down_counter"`, `"histogram"`, `"observable_counter"`, `"observable_up_down_counter"`, `"gauge"`, `"observable_gauge"`, `null`<br/>|no|
+|**name**|`string`||yes|
+
+**Item Additional Properties:** not allowed  
+<a name="telemetrymetricscommonviewsbuckets"></a>
+###### telemetry\.metrics\.common\.views\[\]\.buckets\[\]: array
+
+**Items**
+
+**Item Type:** `number`  
+<a name="telemetrymetricsexporters"></a>
+#### telemetry\.metrics\.exporters\[\]: array
+
+**Items**
+
+   
+**Option 1 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**batch\_processor**](#option1batch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
+|**enabled**|`boolean`|Default: `true`<br/>|no|
+|**endpoint**||Default: `""`<br/>|no|
+|[**grpc**](#option1grpc)|`object`, `null`||no|
+|[**http**](#option1http)|`object`, `null`||no|
+|**kind**|`string`|Constant Value: `"otlp"`<br/>|yes|
+|**protocol**|`string`|Enum: `"grpc"`, `"http"`<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+batch_processor:
+  max_concurrent_exports: 1
+  max_export_batch_size: 512
+  max_export_timeout: 5s
+  max_queue_size: 2048
+  scheduled_delay: 5s
+enabled: true
+endpoint: ''
+grpc: null
+http: null
+
+```
+
+
+   
+**Option 2 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Default: `true`<br/>|no|
+|**kind**|`string`|Constant Value: `"prometheus"`<br/>|yes|
+|**listen**|`string`|Default: `"0.0.0.0:9464"`<br/>|no|
+|**path**|`string`|Default: `"/metrics"`<br/>|no|
+|**resource\_selector**||Default: `{"kind":"none"}`<br/>|no|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+enabled: true
+listen: 0.0.0.0:9464
+path: /metrics
+resource_selector:
+  kind: none
+
+```
+
+
+<a name="option1batch_processor"></a>
+## Option 1: batch\_processor: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_concurrent\_exports**|`integer`|Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_batch\_size**|`integer`|Default: `512`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_timeout**|`string`|Default: `"5s"`<br/>||
+|**max\_queue\_size**|`integer`|Default: `2048`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**scheduled\_delay**|`string`|Default: `"5s"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+max_concurrent_exports: 1
+max_export_batch_size: 512
+max_export_timeout: 5s
+max_queue_size: 2048
+scheduled_delay: 5s
+
+```
+
+<a name="option1grpc"></a>
+## Option 1: grpc: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**metadata**](#option1grpcmetadata)|`object`|Default: `{}`<br/>||
+|[**tls**](#option1grpctls)|`object`|Default: `{"ca":null,"cert":null,"domain_name":null,"key":null}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option1grpcmetadata"></a>
+### Option 1: grpc\.metadata: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="option1grpctls"></a>
+### Option 1: grpc\.tls: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**ca**|`string`, `null`|The path to the Certificate Authority (CA) certificate file (PEM format) used to verify the server's certificate.<br/>||
+|**cert**|`string`, `null`|The path to the client's certificate file (PEM format).<br/>||
+|**domain\_name**|`string`, `null`|The domain name used to verify the server's TLS certificate.<br/>||
+|**key**|`string`, `null`|The path to the client's private key file.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+ca: null
+cert: null
+domain_name: null
+key: null
+
+```
+
+<a name="option1http"></a>
+## Option 1: http: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**headers**](#option1httpheaders)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option1httpheaders"></a>
+### Option 1: http\.headers: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
 <a name="telemetryresource"></a>
 ### telemetry\.resource: object
 

@@ -12,6 +12,7 @@ use moka::Expiry;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
@@ -85,11 +86,14 @@ impl RouterSharedState {
         hive_usage_agent: Option<UsageAgent>,
         validation_plan: ValidationPlan,
         telemetry_context: Arc<TelemetryContext>,
+        cache_state: Arc<CacheState>,
     ) -> Result<Self, SharedStateError> {
+        let parse_cache = cache_state.parse_cache.clone();
+
         Ok(Self {
             validation_plan,
             headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
-            parse_cache: moka::future::Cache::new(1000),
+            parse_cache,
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             jwt_claims_cache: Cache::builder()
                 // High capacity due to potentially high token diversity.

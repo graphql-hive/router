@@ -69,13 +69,13 @@ pub enum PipelineError {
     FailedToParseExtensions(sonic_rs::Error),
     #[error("Failed to parse GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_FAILED")]
-    FailedToParseOperation(#[from] graphql_tools::parser::query::ParseError),
+    FailedToParseOperation(#[from] Arc<graphql_tools::parser::query::ParseError>),
     #[error("Failed to minify parsed GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
     FailedToMinifyParsedOperation(String),
     #[error("Failed to normalize GraphQL operation")]
     #[strum(serialize = "OPERATION_RESOLUTION_FAILURE")]
-    NormalizationError(#[from] NormalizationError),
+    NormalizationError(#[from] Arc<NormalizationError>),
     #[error("Failed to collect GraphQL variables: {0}")]
     #[strum(serialize = "BAD_USER_INPUT")]
     VariablesCoercionError(String),
@@ -131,6 +131,30 @@ pub enum PipelineError {
     #[error("Request timed out")]
     #[strum(serialize = "GATEWAY_TIMEOUT")]
     TimeoutError,
+}
+
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum ParserCacheError {
+    #[error("Failed to parse GraphQL operation: {0}")]
+    ParseError(Arc<graphql_tools::parser::query::ParseError>),
+    #[error("Failed to minify parsed GraphQL operation: {0}")]
+    MinifyError(String),
+    #[error("Validation errors")]
+    ValidationErrors(Arc<Vec<ValidationError>>),
+}
+
+impl From<Arc<ParserCacheError>> for PipelineError {
+    fn from(value: Arc<ParserCacheError>) -> Self {
+        match value.as_ref() {
+            ParserCacheError::ParseError(err) => PipelineError::FailedToParseOperation(err.clone()),
+            ParserCacheError::MinifyError(err) => {
+                PipelineError::FailedToMinifyParsedOperation(err.clone())
+            }
+            ParserCacheError::ValidationErrors(errs) => {
+                PipelineError::ValidationErrors(errs.clone())
+            }
+        }
+    }
 }
 
 impl PipelineError {
