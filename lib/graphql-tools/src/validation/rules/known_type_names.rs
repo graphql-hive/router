@@ -35,7 +35,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownTypeNames {
     ) {
         let TypeCondition::On(fragment_type_name) = &fragment_definition.type_condition;
 
-        if visitor_context.schema.type_by_name(fragment_type_name).is_none() && !fragment_type_name.starts_with("__") {
+        if visitor_context
+            .schema
+            .type_by_name(fragment_type_name)
+            .is_none()
+            && !fragment_type_name.starts_with("__")
+        {
             user_context.report_error(ValidationError {
                 error_code: self.error_code(),
                 locations: vec![fragment_definition.position],
@@ -51,7 +56,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownTypeNames {
         inline_fragment: &crate::static_graphql::query::InlineFragment,
     ) {
         if let Some(TypeCondition::On(fragment_type_name)) = &inline_fragment.type_condition {
-            if visitor_context.schema.type_by_name(fragment_type_name).is_none() && !fragment_type_name.starts_with("__") {
+            if visitor_context
+                .schema
+                .type_by_name(fragment_type_name)
+                .is_none()
+                && !fragment_type_name.starts_with("__")
+            {
                 user_context.report_error(ValidationError {
                     error_code: self.error_code(),
                     locations: vec![inline_fragment.position],
@@ -69,7 +79,8 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownTypeNames {
     ) {
         let base_type = variable_definition.var_type.inner_type();
 
-        if visitor_context.schema.type_by_name(base_type).is_none() && !base_type.starts_with("__") {
+        if visitor_context.schema.type_by_name(base_type).is_none() && !base_type.starts_with("__")
+        {
             user_context.report_error(ValidationError {
                 error_code: self.error_code(),
                 locations: vec![variable_definition.position],
