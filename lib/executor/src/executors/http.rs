@@ -245,7 +245,7 @@ async fn send_request<'a>(
 
             HttpResponse {
                 status: parts.status,
-                body: body.into(),
+                body,
                 headers: parts.headers.into(),
             }
         }
@@ -360,18 +360,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 pub struct HttpResponse {
     pub status: StatusCode,
     pub headers: Arc<HeaderMap>,
-    pub body: Arc<Bytes>,
-}
-
-// Zero-cost clone
-impl Clone for HttpResponse {
-    fn clone(&self) -> Self {
-        Self {
-            status: self.status,
-            headers: Arc::clone(&self.headers),
-            body: Arc::clone(&self.body),
-        }
-    }
+    pub body: Bytes,
 }
 
 impl HttpResponse {
@@ -389,7 +378,9 @@ impl HttpResponse {
         sonic_rs::from_slice(bytes_ref)
             .map_err(|err| SubgraphExecutorError::ResponseDeserializationFailure(err.to_string()))
             .map(|mut resp: SubgraphResponse<'a>| {
+                // This is Arc
                 resp.headers = Some(self.headers.clone());
+                // Zero cost of cloning Bytes
                 resp.bytes = Some(self.body.clone());
                 resp
             })
