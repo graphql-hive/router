@@ -4,7 +4,7 @@ use crate::{
     ast::{document::Document, hash::ast_hash},
     state::supergraph_state::TypeNode,
 };
-use graphql_parser::query as parser;
+use graphql_tools::parser::query as parser;
 use serde::{Deserialize, Serialize};
 
 use crate::{

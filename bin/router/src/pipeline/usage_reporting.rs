@@ -4,7 +4,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use graphql_parser::schema::Document;
+use graphql_tools::parser::schema::Document;
 use hive_console_sdk::agent::{AgentError, ExecutionReport, UsageAgent, UsageAgentExt};
 use hive_router_config::usage_reporting::UsageReportingConfig;
 use hive_router_plan_executor::execution::{

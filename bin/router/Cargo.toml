@@ -20,11 +20,10 @@ hive-router-query-planner = { path = "../../lib/query-planner", version = "2.1.5
 hive-router-plan-executor = { path = "../../lib/executor", version = "6.3.2" }
 hive-router-config = { path = "../../lib/router-config", version = "0.0.16" }
 hive-router-internal = { path = "../../lib/internal", version = "0.0.5" }
+graphql-tools =  { path = "../../lib/graphql-tools", version = "0.4.0" }
 
 tokio = { workspace = true }
 futures = { workspace = true }
-graphql-parser = { workspace = true }
-graphql-tools = { workspace = true }
 serde = { workspace = true }
 reqwest = { workspace = true }
 sonic-rs = { workspace = true }

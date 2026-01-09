@@ -5,6 +5,7 @@ members = [
   "lib/router-config",
   "lib/executor",
   "lib/node-addon",
+  "lib/graphql-tools",
   "bin/dev-cli",
   "bin/router",
   "e2e",

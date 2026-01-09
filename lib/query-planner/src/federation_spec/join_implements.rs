@@ -1,4 +1,4 @@
-use graphql_parser::query::Directive;
+use graphql_tools::parser::query::Directive;
 
 use super::directives::FederationDirective;
 
@@ -26,12 +26,14 @@ impl FederationDirective for JoinImplementsDirective {
         for (arg_name, arg_value) in &directive.arguments {
             if arg_name.eq("graph") {
                 match arg_value {
-                    graphql_parser::schema::Value::String(value) => result.graph_id = value.clone(),
-                    graphql_parser::schema::Value::Enum(value) => result.graph_id = value.clone(),
+                    graphql_tools::parser::schema::Value::String(value) => {
+                        result.graph_id = value.clone()
+                    }
+                    graphql_tools::parser::schema::Value::Enum(value) => result.graph_id = value.clone(),
                     _ => {}
                 }
             } else if arg_name.eq("interface") {
-                if let graphql_parser::schema::Value::String(value) = arg_value {
+                if let graphql_tools::parser::schema::Value::String(value) = arg_value {
                     result.interface = value.clone()
                 }
             }
