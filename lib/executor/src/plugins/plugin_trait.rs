@@ -163,14 +163,6 @@ pub trait RouterPlugin: Send + Sync + 'static {
     where
         Self: Sized;
 
-    fn as_dyn(&self) -> &dyn DynRouterPlugin
-    where
-        Self: Sized,
-        Self: DynRouterPlugin,
-    {
-        self as &dyn DynRouterPlugin
-    }
-
     fn on_http_request<'req>(
         &'req self,
         start_payload: OnHttpRequestHookPayload<'req>,
