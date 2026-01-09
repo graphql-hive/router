@@ -43,6 +43,7 @@ jobs:
       PUBLISH_EXECUTOR_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-plan-executor"') }}
       PUBLISH_ROUTER_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router"') }}
       PUBLISH_GRAPHQL_TOOLS_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"graphql-tools"') }}
+      PUBLISH_CONSOLE_SDK_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-console-sdk"') }}
     if: ${{ github.repository_owner == 'graphql-hive' && needs.check.outputs.crates_to_publish != '{}' }}
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -64,6 +65,13 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).graphql-tools }}
+
+      - name: publish hive-console-sdk lib
+        if: env.PUBLISH_CONSOLE_SDK_CRATE == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-console-sdk }}
 
       - name: publish config lib
         if: env.PUBLISH_CONFIG_CRATE == 'true'
