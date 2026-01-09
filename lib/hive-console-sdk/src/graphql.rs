@@ -1,16 +1,20 @@
 use anyhow::anyhow;
 use anyhow::Error;
-use graphql_tools::parser::schema::InputObjectType;
 use graphql_tools::ast::ext::SchemaDocumentExtension;
 use graphql_tools::ast::FieldByNameExtension;
 use graphql_tools::ast::TypeDefinitionExtension;
 use graphql_tools::ast::TypeExtension;
+use graphql_tools::parser::schema::InputObjectType;
 use moka::sync::Cache;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use graphql_tools::ast::{
+    visit_document, OperationTransformer, OperationVisitor, OperationVisitorContext, Transformed,
+    TransformedValue,
+};
 pub use graphql_tools::parser::minify_query;
 use graphql_tools::parser::parse_query;
 use graphql_tools::parser::query::{
@@ -18,10 +22,6 @@ use graphql_tools::parser::query::{
     Selection, SelectionSet, Text, Type, Value, VariableDefinition,
 };
 use graphql_tools::parser::schema::{Document as SchemaDocument, TypeDefinition};
-use graphql_tools::ast::{
-    visit_document, OperationTransformer, OperationVisitor, OperationVisitorContext, Transformed,
-    TransformedValue,
-};
 
 struct SchemaCoordinatesContext<'a> {
     pub schema_coordinates: HashSet<String>,
@@ -866,7 +866,8 @@ impl OperationProcessor {
 
         let normalized = normalize_operation(&parsed);
 
-        let printed = minify_query(format!("{}", normalized.clone()).as_str()).map_err(|e| e.to_string())?;
+        let printed =
+            minify_query(format!("{}", normalized.clone()).as_str()).map_err(|e| e.to_string())?;
         let hash = format!("{:x}", md5::compute(printed.clone()));
 
         Ok(Some(ProcessedOperation {

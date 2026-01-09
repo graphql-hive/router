@@ -29,7 +29,9 @@ impl FederationDirective for JoinImplementsDirective {
                     graphql_tools::parser::schema::Value::String(value) => {
                         result.graph_id = value.clone()
                     }
-                    graphql_tools::parser::schema::Value::Enum(value) => result.graph_id = value.clone(),
+                    graphql_tools::parser::schema::Value::Enum(value) => {
+                        result.graph_id = value.clone()
+                    }
                     _ => {}
                 }
             } else if arg_name.eq("interface") {

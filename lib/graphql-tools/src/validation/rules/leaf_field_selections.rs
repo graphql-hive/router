@@ -49,7 +49,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for LeafFieldSelections {
                     });
                 }
             } else if field_selection_count == 0 {
-                      user_context.report_error(ValidationError {error_code: self.error_code(),
+                user_context.report_error(ValidationError {error_code: self.error_code(),
                 locations: vec![field.position],
                 message: format!(
                     "Field \"{}\" of type \"{}\" must have a selection of subfields. Did you mean \"{} {{ ... }}\"?",
@@ -58,7 +58,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for LeafFieldSelections {
                     field.name
                 ),
             });
-                  }
+            }
         }
     }
 }
