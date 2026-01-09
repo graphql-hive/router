@@ -98,6 +98,7 @@ async fn get_query_plan(
             }
         }
 
+        // Give the ownership back to variables
         query_plan = start_payload.query_plan;
     }
 
@@ -129,6 +130,7 @@ async fn get_query_plan(
             }
         }
 
+        // Give the ownership back to variables
         query_plan = end_payload.query_plan;
     }
 

@@ -191,6 +191,7 @@ async fn send_request<'a>(
                 }
             }
         }
+        // Give the ownership back to variables
         method = start_payload.method;
         body = start_payload.body;
         execution_request = start_payload.execution_request;
@@ -269,6 +270,7 @@ async fn send_request<'a>(
                 }
             }
 
+            // Give the ownership back to variables
             response = end_payload.response;
         }
     }

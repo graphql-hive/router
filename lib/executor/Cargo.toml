@@ -37,8 +37,6 @@ ahash = { workspace = true }
 strum = { version = "0.27.2", features = ["derive"] }
 ntex = { workspace = true, features = ["tokio"] }
 
-arc-swap = { workspace = true }
-
 hyper-tls = { version = "0.6.0", features = ["vendored"] }
 hyper-util = { version = "0.1.16", features = [
   "client",

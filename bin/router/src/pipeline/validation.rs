@@ -95,6 +95,7 @@ pub async fn validate_operation_with_cache(
                     }
                 }
 
+                // Give the ownership back to variables
                 errors = end_payload.errors;
             }
 

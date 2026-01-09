@@ -181,6 +181,7 @@ impl SubgraphExecutorMap {
                     }
                 }
             }
+            // Give the ownership back to variables
             execution_request = start_payload.execution_request;
             executor = start_payload.executor;
         }
@@ -214,6 +215,7 @@ impl SubgraphExecutorMap {
                     }
                 }
 
+                // Give the ownership back to variables
                 execution_result = end_payload.execution_result;
             }
         }

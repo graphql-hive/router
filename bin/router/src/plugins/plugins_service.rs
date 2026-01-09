@@ -39,7 +39,7 @@ where
 
     async fn call(
         &self,
-        req: web::WebRequest<DefaultError>,
+        mut req: web::WebRequest<DefaultError>,
         ctx: ServiceCtx<'_, Self>,
     ) -> Result<Self::Response, Self::Error> {
         let plugins = req
@@ -57,7 +57,7 @@ where
 
             let mut on_end_callbacks = Vec::with_capacity(plugins.len());
 
-            for plugin in plugins.iter() {
+            for plugin in plugins.as_ref() {
                 let result = plugin.on_http_request(start_payload);
                 start_payload = result.payload;
                 match result.control_flow {
@@ -73,7 +73,8 @@ where
                 }
             }
 
-            let req = start_payload.router_http_request;
+            // Give the ownership back to variables
+            req = start_payload.router_http_request;
 
             let mut response = ctx.call(&self.service, req).await?;
 
@@ -97,6 +98,7 @@ where
                     }
                 }
 
+                // Give the ownership back to variables
                 response = end_payload.response;
             }
             return Ok(response);
