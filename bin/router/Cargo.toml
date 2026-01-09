@@ -57,6 +57,7 @@ cookie = "0.18.1"
 arc-swap = { workspace = true }
 lasso2 = "0.8.2"
 ahash = { workspace = true }
+once_cell = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

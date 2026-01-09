@@ -13,8 +13,10 @@ use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{EndControlFlow, StartControlFlow};
 use hive_router_query_planner::ast::operation::OperationDefinition;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
+use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::planner::PlannerError;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
+use once_cell::sync::Lazy;
 use xxhash_rust::xxh3::Xxh3;
 
 pub enum QueryPlanResult {
@@ -26,6 +28,13 @@ pub enum QueryPlanError {
     Planner(PlannerError),
     Response(ntex::http::Response),
 }
+
+static EMPTY_QUERY_PLAN: Lazy<Arc<QueryPlan>> = Lazy::new(|| {
+    Arc::new(QueryPlan {
+        kind: QUERY_PLAN_KIND,
+        node: None,
+    })
+});
 
 #[inline]
 async fn get_query_plan(
@@ -42,10 +51,7 @@ async fn get_query_plan(
     let is_pure_introspection = is_plan_operation_empty && contains_introspection;
 
     if is_pure_introspection {
-        return Ok(Arc::new(QueryPlan {
-            kind: "QueryPlan".to_string(),
-            node: None,
-        }));
+        return Ok(EMPTY_QUERY_PLAN.clone());
     }
 
     // If the operation is empty, but the projection plan is not,,
@@ -61,10 +67,7 @@ async fn get_query_plan(
     // That's why we return an empty plan,
     // and allow for response projection to happen later.
     if is_plan_operation_empty && !is_projection_plan_empty {
-        return Ok(Arc::new(QueryPlan {
-            kind: "QueryPlan".to_string(),
-            node: None,
-        }));
+        return Ok(EMPTY_QUERY_PLAN.clone());
     }
 
     let mut query_plan: Option<QueryPlan> = None;
