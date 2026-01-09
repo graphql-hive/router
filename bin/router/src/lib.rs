@@ -115,7 +115,7 @@ pub async fn router_entrypoint(plugin_registry: Option<PluginRegistry>) -> Resul
 pub async fn invoke_shutdown_hooks(shared_state: &RouterSharedState) {
     if let Some(plugins) = &shared_state.plugins {
         info!("invoking plugin shutdown hooks");
-        for plugin in plugins.iter() {
+        for plugin in plugins.as_ref() {
             plugin.on_shutdown().await;
         }
     }

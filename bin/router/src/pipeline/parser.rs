@@ -69,6 +69,7 @@ pub async fn parse_operation_with_cache(
                     }
                 }
             }
+            // Give the ownership back to variables
             document = start_payload.document;
         }
 
@@ -98,6 +99,7 @@ pub async fn parse_operation_with_cache(
                     }
                 }
             }
+            // Give the ownership back to variables
             document = end_payload.document;
         }
         /* Handle on_graphql_parse hook in the plugins - END */

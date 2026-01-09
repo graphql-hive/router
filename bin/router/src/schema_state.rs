@@ -54,6 +54,9 @@ pub enum SupergraphManagerError {
     ExecutorInitError(#[from] SubgraphExecutorError),
     #[error("Unexpected: failed to load initial supergraph")]
     FailedToLoadInitialSupergraph,
+
+    #[error("Error from plugin: {0}")]
+    PluginError(String),
 }
 
 impl SchemaState {
@@ -93,9 +96,11 @@ impl SchemaState {
 
                 let mut on_end_callbacks = vec![];
 
+                let mut new_supergraph_data = None;
                 if let Some(plugins) = app_state.plugins.as_ref() {
+                    let current_supergraph_data = swappable_data_spawn_clone.load().clone();
                     let mut start_payload = OnSupergraphLoadStartHookPayload {
-                        current_supergraph_data: swappable_data_spawn_clone.clone(),
+                        current_supergraph_data,
                         new_ast,
                     };
                     for plugin in plugins.as_ref() {
@@ -105,18 +110,26 @@ impl SchemaState {
                             StartControlFlow::Proceed => {
                                 // continue to next plugin
                             }
-                            StartControlFlow::EndWithResponse(_) => {
-                                unreachable!("Plugins should not end supergraph reload processing");
+                            // There is no way to end with response here, so we treat it as error
+                            // or the way to override the supergraph data
+                            StartControlFlow::EndWithResponse(plugin_res) => {
+                                new_supergraph_data = Some(plugin_res.map_err(|err| {
+                                    SupergraphManagerError::PluginError(err.message)
+                                }));
+                                break;
                             }
                             StartControlFlow::OnEnd(callback) => {
                                 on_end_callbacks.push(callback);
                             }
                         }
                     }
+                    // Give the ownership back to variables
                     new_ast = start_payload.new_ast;
                 }
 
-                match Self::build_data(router_config.clone(), new_ast) {
+                match new_supergraph_data
+                    .unwrap_or_else(|| Self::build_data(router_config.clone(), new_ast))
+                {
                     Ok(mut new_supergraph_data) => {
                         if !on_end_callbacks.is_empty() {
                             let mut end_payload = OnSupergraphLoadEndHookPayload {
@@ -130,14 +143,26 @@ impl SchemaState {
                                     EndControlFlow::Proceed => {
                                         // continue to next callback
                                     }
-                                    EndControlFlow::EndWithResponse(_) => {
-                                        unreachable!(
-                                            "Plugins should not end supergraph reload processing"
-                                        );
-                                    }
+                                    // Similar to StartControlFlow,
+                                    // There is no way to end with response here, so we treat it as error
+                                    // or the way to override the supergraph data
+                                    EndControlFlow::EndWithResponse(plugin_res) => match plugin_res
+                                    {
+                                        Ok(data) => {
+                                            end_payload.new_supergraph_data = data;
+                                        }
+                                        Err(err) => {
+                                            error!(
+                                                "Plugin ended supergraph load with error: {}",
+                                                err.message
+                                            );
+                                            return;
+                                        }
+                                    },
                                 }
                             }
 
+                            // Give the ownership back to new_supergraph_data
                             new_supergraph_data = end_payload.new_supergraph_data;
                         }
 

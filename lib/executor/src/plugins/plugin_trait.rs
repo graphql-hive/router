@@ -147,12 +147,6 @@ impl FromGraphQLErrorToResponse for ntex::http::Response {
     }
 }
 
-impl FromGraphQLErrorToResponse for () {
-    fn from_graphql_error_to_response(error: GraphQLError, _status_code: http::StatusCode) -> Self {
-        panic!("Error: {:?}", error);
-    }
-}
-
 #[async_trait::async_trait]
 pub trait RouterPlugin: Send + Sync + 'static {
     fn plugin_name() -> &'static str;

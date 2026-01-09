@@ -219,6 +219,7 @@ pub async fn execute_pipeline(
                 }
             }
         }
+        // Give the ownership back to variables
         graphql_params = deserialization_payload.graphql_params;
         body = deserialization_payload.body;
     }

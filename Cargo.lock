@@ -2186,7 +2186,6 @@ name = "hive-router-plan-executor"
 version = "6.3.2"
 dependencies = [
  "ahash",
- "arc-swap",
  "async-trait",
  "bumpalo",
  "bytes",

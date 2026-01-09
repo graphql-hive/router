@@ -103,7 +103,7 @@ pub async fn execute_query_plan<'exec, 'req>(
             dedupe_subgraph_requests,
         };
 
-        for plugin in plugin_req_state.plugins.iter() {
+        for plugin in plugin_req_state.plugins.as_ref() {
             let result = plugin.on_execute(start_payload).await;
             start_payload = result.payload;
             match result.control_flow {
@@ -120,6 +120,7 @@ pub async fn execute_query_plan<'exec, 'req>(
             }
         }
 
+        // Give the ownership back to variables
         query_plan = start_payload.query_plan;
         data = start_payload.data;
         errors = start_payload.errors;
@@ -172,6 +173,7 @@ pub async fn execute_query_plan<'exec, 'req>(
             }
         }
 
+        // Give the ownership back to variables
         data = end_payload.data;
         errors = end_payload.errors;
         extensions = end_payload.extensions;
