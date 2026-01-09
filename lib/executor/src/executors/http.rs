@@ -356,7 +356,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct HttpResponse {
     pub status: StatusCode,
     pub headers: Arc<HeaderMap>,
