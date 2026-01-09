@@ -12,7 +12,7 @@ pub struct SubgraphResponse<'a> {
     pub errors: Option<Vec<GraphQLError>>,
     pub extensions: Option<Value<'a>>,
     pub headers: Option<Arc<HeaderMap>>,
-    pub bytes: Option<Arc<Bytes>>,
+    pub bytes: Option<Bytes>,
 }
 
 impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {

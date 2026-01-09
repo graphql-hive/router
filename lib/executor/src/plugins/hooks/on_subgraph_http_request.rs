@@ -46,7 +46,7 @@ impl FromGraphQLErrorToResponse for HttpResponse {
     fn from_graphql_error_to_response(error: GraphQLError, status: http::StatusCode) -> Self {
         let body_bytes = from_graphql_error_to_bytes(error);
         HttpResponse {
-            body: Bytes::from(body_bytes).into(),
+            body: Bytes::from(body_bytes),
             status,
             ..Default::default()
         }

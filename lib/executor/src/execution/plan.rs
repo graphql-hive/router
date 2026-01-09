@@ -390,10 +390,6 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     }
                 }
 
-                if let Some(ref response_bytes) = job.response_ref().bytes {
-                    ctx.response_storage.add_response(response_bytes.clone());
-                }
-
                 // SAFETY: The `output_rewrites` are transmuted to the lifetime `'a`. This is safe
                 // because `output_rewrites` is part of `OutputRewritesStorage` which is owned by
                 // `ExecutionContext` and lives for `'a`.
@@ -402,6 +398,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
 
                 let (errors, entity_index_error_map) = match job {
                     ExecutionJob::Fetch { mut response, .. } => {
+                        if let Some(response_bytes) = response.bytes {
+                            ctx.response_storage.add_response(response_bytes);
+                        }
                         if let Some(output_rewrites) = output_rewrites {
                             for output_rewrite in output_rewrites {
                                 output_rewrite.rewrite(
@@ -421,6 +420,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                         ref representation_hash_to_index,
                         ..
                     } => {
+                        if let Some(response_bytes) = response.bytes {
+                            ctx.response_storage.add_response(response_bytes);
+                        }
                         if let Some(mut entities) = response.data.take_entities() {
                             if let Some(output_rewrites) = output_rewrites {
                                 for output_rewrite in output_rewrites {
