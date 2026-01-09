@@ -1,5 +1,5 @@
 use core::fmt;
-use graphql_parser::Pos;
+use graphql_tools::parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use sonic_rs::Value;

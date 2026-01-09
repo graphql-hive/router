@@ -1,4 +1,4 @@
-use graphql_parser::{
+use graphql_tools::parser::{
     query::{Directive, Text, Value},
     schema::{
         Definition, DirectiveDefinition, Document, EnumType, EnumValue, Field, InputObjectType,

@@ -1,4 +1,4 @@
-use graphql_parser::query::{self as query_ast, Definition};
+use graphql_tools::parser::query::{self as query_ast, Definition};
 
 pub mod context;
 pub mod error;
@@ -84,7 +84,7 @@ pub fn create_normalized_document<'a, 'd>(
 
 #[cfg(test)]
 mod tests {
-    use graphql_parser::parse_query;
+    use graphql_tools::parser::parse_query;
 
     use crate::ast::normalization::normalize_operation;
     use crate::ast::selection_item::SelectionItem;

@@ -26,9 +26,14 @@ versioned_files = ["lib/internal/Cargo.toml", { path = "lib/executor/Cargo.toml"
 scopes = ["internal"]
 changelog = "lib/internal/CHANGELOG.md"
 
+[packages.graphql-tools]
+versioned_files = ["lib/graphql-tools/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "graphql-tools" }, { path = "lib/query-planner/Cargo.toml", dependency = "graphql-tools" }, { path = "bin/router/Cargo.toml", dependency = "graphql-tools" }, "Cargo.lock"]
+scopes = ["graphql-tools"]
+changelog = "lib/graphql-tools/CHANGELOG.md"
+
 [packages.router]
 versioned_files = ["bin/router/Cargo.toml", "Cargo.lock"]
-scopes = ["hive-router", "router", "config", "qp", "executor"]
+scopes = ["hive-router", "router", "config", "qp", "executor", "internal", "graphql-tools"]
 changelog = "bin/router/CHANGELOG.md"
 
 [packages.node-addon]

@@ -403,7 +403,7 @@ fn check(
 
 #[cfg(test)]
 mod tests {
-    use graphql_parser::query::Definition;
+    use graphql_tools::parser::query::Definition;
     use hive_router_query_planner::{
         ast::{document::NormalizedDocument, normalization::create_normalized_document},
         consumer_schema::ConsumerSchema,

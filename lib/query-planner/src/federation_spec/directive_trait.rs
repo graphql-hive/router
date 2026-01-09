@@ -1,4 +1,4 @@
-use graphql_parser::schema::Directive;
+use graphql_tools::parser::schema::Directive;
 
 pub trait FederationDirective: Ord + PartialOrd {
     fn directive_name() -> &'static str;

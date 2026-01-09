@@ -42,6 +42,7 @@ jobs:
       PUBLISH_QUERY_PLANNER_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-query-planner"') }}
       PUBLISH_EXECUTOR_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-plan-executor"') }}
       PUBLISH_ROUTER_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router"') }}
+      PUBLISH_GRAPHQL_TOOLS_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"graphql-tools"') }}
     if: ${{ github.repository_owner == 'graphql-hive' && needs.check.outputs.crates_to_publish != '{}' }}
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -56,6 +57,13 @@ jobs:
       - name: authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@v1
         id: auth
+
+      - name: publish graphql-tools lib
+        if: env.PUBLISH_GRAPHQL_TOOLS_CRATE == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).graphql-tools }}
 
       - name: publish config lib
         if: env.PUBLISH_CONFIG_CRATE == 'true'

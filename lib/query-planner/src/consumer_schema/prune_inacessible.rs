@@ -6,8 +6,8 @@ use crate::utils::schema_transformer::TransformedValue;
 
 use crate::utils::schema_transformer::SchemaTransformer;
 
-use graphql_parser::query::Text;
-use graphql_parser::schema::*;
+use graphql_tools::parser::query::Text;
+use graphql_tools::parser::schema::*;
 
 // directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ENUM | ENUM_VALUE | SCALAR | INPUT_OBJECT | INPUT_FIELD_DEFINITION | ARGUMENT_DEFINITION
 pub(crate) struct PruneInaccessible;

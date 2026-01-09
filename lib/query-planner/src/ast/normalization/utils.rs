@@ -1,4 +1,4 @@
-use graphql_parser::query as query_ast;
+use graphql_tools::parser::query as query_ast;
 
 pub fn extract_type_condition<'a, 'd, T: query_ast::Text<'d>>(
     type_condition: &'a query_ast::TypeCondition<'d, T>,

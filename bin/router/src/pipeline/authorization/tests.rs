@@ -1,6 +1,6 @@
 use std::{fmt::Display, sync::Arc};
 
-use graphql_parser::parse_query;
+use graphql_tools::parser::parse_query;
 use hive_router_plan_executor::{
     execution::client_request_details::JwtRequestDetails,
     introspection::{
