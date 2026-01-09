@@ -58,7 +58,7 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
 
 pub struct RouterSharedState {
     pub validation_plan: ValidationPlan,
-    pub parse_cache: Cache<u64, Arc<graphql_parser::query::Document<'static, String>>>,
+    pub parse_cache: Cache<u64, Arc<graphql_tools::parser::query::Document<'static, String>>>,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: HeaderRulesPlan,
     pub override_labels_evaluator: OverrideLabelsEvaluator,

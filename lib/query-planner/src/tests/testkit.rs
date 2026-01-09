@@ -6,7 +6,7 @@ use std::sync::Once;
 use lazy_static::lazy_static;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use graphql_parser::query as query_ast;
+use graphql_tools::parser::query as query_ast;
 
 use crate::ast::normalization::normalize_operation;
 use crate::graph::edge::PlannerOverrideContext;

@@ -257,7 +257,7 @@ impl SafeSelectionSetMerger {
 
 #[cfg(test)]
 mod tests {
-    use graphql_parser::query::{Definition, OperationDefinition};
+    use graphql_tools::parser::query::{Definition, OperationDefinition};
 
     use crate::{
         ast::{safe_merge::SafeSelectionSetMerger, selection_set::SelectionSet},

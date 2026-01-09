@@ -1,4 +1,4 @@
-use graphql_parser::query::{
+use graphql_tools::parser::query::{
     Definition, Field, FragmentDefinition, Mutation, OperationDefinition, Query, Selection,
     SelectionSet, Subscription,
 };

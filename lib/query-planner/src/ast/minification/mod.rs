@@ -38,8 +38,8 @@ fn get_root_type_name<'a>(
 
 #[cfg(test)]
 mod tests {
-    use graphql_parser::parse_query;
-    use graphql_parser::query::Document;
+    use graphql_tools::parser::parse_query;
+    use graphql_tools::parser::query::Document;
 
     use crate::ast::minification::minify_operation;
     use crate::ast::normalization::normalize_operation;

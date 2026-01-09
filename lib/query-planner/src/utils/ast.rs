@@ -1,4 +1,4 @@
-use graphql_parser::query::{Directive, Text};
+use graphql_tools::parser::query::{Directive, Text};
 
 /// Checks if two directives are equal without comparing their positions
 pub fn equal_directives<'a, T: Text<'a> + PartialEq>(

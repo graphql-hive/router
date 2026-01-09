@@ -1,4 +1,4 @@
-use graphql_parser::schema::{Directive, Value};
+use graphql_tools::parser::schema::{Directive, Value};
 
 use super::directives::FederationDirective;
 

@@ -1,4 +1,4 @@
-use graphql_parser::query as query_ast;
+use graphql_tools::parser::query as query_ast;
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use std::{
     collections::BTreeSet,

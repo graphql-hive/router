@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use graphql_parser::query::Document;
+use graphql_tools::parser::query::Document;
 use hive_router_query_planner::ast::minification::minify_operation;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
