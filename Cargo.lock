@@ -1865,16 +1865,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
-name = "graphql-parser"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a818c0d883d7c0801df27be910917750932be279c7bc82dc541b8769425f409"
-dependencies = [
- "combine",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "graphql-tools"
 version = "0.4.0"
 dependencies = [
@@ -1887,19 +1877,6 @@ dependencies = [
  "serde_json",
  "serde_with",
  "thiserror 2.0.17",
-]
-
-[[package]]
-name = "graphql-tools"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68fb22726aceab7a8933cdcff4201e1cdbcc7c7394df5bc1ebdcf27b44376433"
-dependencies = [
- "graphql-parser",
- "lazy_static",
- "serde",
- "serde_json",
- "serde_with",
 ]
 
 [[package]]
@@ -2038,16 +2015,14 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fd76ed219c09b131bab7192f8ecb0b3118ac0685cc212bf4911caf79c78c70b"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "async-trait",
  "axum-core",
- "graphql-parser",
- "graphql-tools 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "graphql-tools",
  "md5",
+ "mockito",
  "moka",
  "regress",
  "reqwest",
@@ -2073,7 +2048,7 @@ dependencies = [
  "cookie",
  "criterion",
  "futures",
- "graphql-tools 0.4.0",
+ "graphql-tools",
  "hive-console-sdk",
  "hive-router-config",
  "hive-router-internal",
@@ -2158,7 +2133,7 @@ dependencies = [
  "criterion",
  "dashmap",
  "futures",
- "graphql-tools 0.4.0",
+ "graphql-tools",
  "hive-router-config",
  "hive-router-internal",
  "hive-router-query-planner",
@@ -2190,7 +2165,7 @@ version = "2.1.5"
 dependencies = [
  "bitflags 2.10.0",
  "criterion",
- "graphql-tools 0.4.0",
+ "graphql-tools",
  "insta",
  "lazy-init",
  "lazy_static",
@@ -4187,7 +4162,7 @@ dependencies = [
 name = "qp-dev-cli"
 version = "0.0.0"
 dependencies = [
- "graphql-tools 0.4.0",
+ "graphql-tools",
  "hive-router-plan-executor",
  "hive-router-query-planner",
  "serde_json",

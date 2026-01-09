@@ -20,6 +20,7 @@ hive-router-query-planner = { path = "../../lib/query-planner", version = "2.1.5
 hive-router-plan-executor = { path = "../../lib/executor", version = "6.3.2" }
 hive-router-config = { path = "../../lib/router-config", version = "0.0.16" }
 hive-router-internal = { path = "../../lib/internal", version = "0.0.5" }
+hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.2.3" }
 graphql-tools =  { path = "../../lib/graphql-tools", version = "0.4.0" }
 
 tokio = { workspace = true }
@@ -49,7 +50,6 @@ regex-automata = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { version = "0.12.10", features = ["future"] }
-hive-console-sdk = "0.2.2"
 ulid = "1.2.1"
 tokio-util = "0.7.16"
 cookie = "0.18.1"
