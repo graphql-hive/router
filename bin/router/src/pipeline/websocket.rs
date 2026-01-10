@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, trace};
 
+use crate::pipeline::execution_request::ExecutionRequest;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
@@ -168,19 +169,11 @@ async fn handle_text_frame(
 }
 
 #[derive(Deserialize, Debug)]
-struct SubscribePayload {
-    id: String,
-    query: String,
-    variables: Option<serde_json::Value>,
-    operation_name: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum ClientMessage {
     Subscribe {
         id: String,
-        payload: SubscribePayload,
+        payload: ExecutionRequest,
     },
     Complete {
         id: String,
