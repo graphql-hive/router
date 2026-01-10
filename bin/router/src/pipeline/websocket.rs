@@ -185,10 +185,7 @@ async fn handle_text_frame(
     trace!("Received client message: {:?}", client_msg);
 
     match client_msg {
-        ClientMessage::Subscribe {
-            ref id,
-            mut payload,
-        } => {
+        ClientMessage::Subscribe { id, mut payload } => {
             let maybe_supergraph = schema_state.current_supergraph();
             let supergraph = match maybe_supergraph.as_ref() {
                 Some(supergraph) => supergraph,
@@ -197,7 +194,7 @@ async fn handle_text_frame(
                         "No supergraph available yet, unable to process client subscribe message"
                     );
                     return Some(ServerMessage::error(
-                        id,
+                        &id,
                         &vec![GraphQLError::from_message_and_extensions(
                             "No supergraph available yet".to_string(),
                             GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
@@ -208,7 +205,7 @@ async fn handle_text_frame(
 
             let parser_payload = match parse_operation_with_cache(shared_state, &payload).await {
                 Ok(payload) => payload,
-                Err(err) => return Some(err.into_server_message(id)),
+                Err(err) => return Some(err.into_server_message(&id)),
             };
 
             if let Err(err) = validate_operation_with_cache(
@@ -219,7 +216,7 @@ async fn handle_text_frame(
             )
             .await
             {
-                return Some(err.into_server_message(id));
+                return Some(err.into_server_message(&id));
             }
 
             let normalize_payload = match normalize_request_with_cache(
@@ -231,13 +228,13 @@ async fn handle_text_frame(
             .await
             {
                 Ok(payload) => payload,
-                Err(err) => return Some(err.into_server_message(id)),
+                Err(err) => return Some(err.into_server_message(&id)),
             };
 
             let variable_payload =
                 match coerce_request_variables(supergraph, &mut payload, &normalize_payload) {
                     Ok(payload) => payload,
-                    Err(err) => return Some(err.into_server_message(id)),
+                    Err(err) => return Some(err.into_server_message(&id)),
                 };
 
             let query_plan_cancellation_token =
@@ -291,8 +288,8 @@ async fn handle_text_frame(
             .await
             {
                 Ok(QueryPlanExecutionResult::Single(response)) => {
-                    let _ = sink.send(ServerMessage::next(id, &response.body)).await;
-                    Some(ServerMessage::complete(id))
+                    let _ = sink.send(ServerMessage::next(&id, &response.body)).await;
+                    Some(ServerMessage::complete(&id))
                 }
                 Ok(QueryPlanExecutionResult::Stream(response)) => {
                     let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
@@ -334,14 +331,14 @@ async fn handle_text_frame(
                         None
                     } else {
                         trace!(id = %id_string, "Subscription completed by client");
-                        Some(ServerMessage::complete(id))
+                        Some(ServerMessage::complete(&id))
                     }
                 }
-                Err(err) => Some(err.into_server_message(id)),
+                Err(err) => Some(err.into_server_message(&id)),
             }
         }
-        ClientMessage::Complete { ref id } => {
-            if let Some(cancel_tx) = state.borrow_mut().active_subscriptions.remove(id) {
+        ClientMessage::Complete { id } => {
+            if let Some(cancel_tx) = state.borrow_mut().active_subscriptions.remove(&id) {
                 trace!(id = %id, "Client requested subscription cancellation");
                 let _ = cancel_tx.try_send(());
             }
