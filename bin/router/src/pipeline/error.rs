@@ -11,29 +11,11 @@ use hive_router_query_planner::{
 use http::{HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
-    web::{self, error::QueryPayloadError, HttpRequest},
+    web::{self, error::QueryPayloadError},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::pipeline::progressive_override::LabelEvaluationError;
-
-#[derive(Debug)]
-pub struct PipelineError {
-    pub accept_ok: bool,
-    pub error: PipelineErrorVariant,
-}
-
-pub trait PipelineErrorFromAcceptHeader {
-    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError;
-}
-
-impl PipelineErrorFromAcceptHeader for HttpRequest {
-    #[inline]
-    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
-        let accept_ok = false; // will be going away
-        PipelineError { accept_ok, error }
-    }
-}
+use crate::pipeline::{header::SingleContentType, progressive_override::LabelEvaluationError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineErrorVariant {
@@ -94,6 +76,12 @@ pub enum PipelineErrorVariant {
     SubscriptionsNotSupport,
     #[error("Subscriptions are not supported over accepted transport(s)")]
     SubscriptionsTransportNotSupported,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct FailedExecutionResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<GraphQLError>>,
 }
 
 impl PipelineErrorVariant {
@@ -159,19 +147,14 @@ impl PipelineErrorVariant {
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
         }
     }
-}
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct FailedExecutionResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub errors: Option<Vec<GraphQLError>>,
-}
+    pub fn into_response(self, content_type: Option<SingleContentType>) -> web::HttpResponse {
+        let accept_ok = content_type.unwrap_or(SingleContentType::GraphQLResponseJSON)
+            == SingleContentType::GraphQLResponseJSON;
 
-impl PipelineError {
-    pub fn into_response(self) -> web::HttpResponse {
-        let status = self.error.default_status_code(self.accept_ok);
+        let status = self.default_status_code(accept_ok);
 
-        if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
+        if let PipelineErrorVariant::ValidationErrors(validation_errors) = self {
             let validation_error_result = FailedExecutionResult {
                 errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
             };
@@ -179,7 +162,7 @@ impl PipelineError {
             return ResponseBuilder::new(status).json(&validation_error_result);
         }
 
-        if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = self.error {
+        if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = self {
             let authorization_error_result = FailedExecutionResult {
                 errors: Some(authorization_errors),
             };
@@ -187,8 +170,8 @@ impl PipelineError {
             return ResponseBuilder::new(status).json(&authorization_error_result);
         }
 
-        let code = self.error.graphql_error_code();
-        let message = self.error.graphql_error_message();
+        let code = self.graphql_error_code();
+        let message = self.graphql_error_message();
 
         let graphql_error = GraphQLError::from_message_and_extensions(
             message,

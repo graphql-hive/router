@@ -20,7 +20,7 @@ use crate::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
-        error::{PipelineErrorFromAcceptHeader, PipelineErrorVariant},
+        error::PipelineErrorVariant,
         execution::{execute_plan, ExposeQueryPlanMode, PlannedRequest, EXPOSE_QUERY_PLAN_HEADER},
         execution_request::get_execution_request_from_http_request,
         header::{RequestAccepts, TEXT_HTML_CONTENT_TYPE},
@@ -61,7 +61,7 @@ pub async fn graphql_request_handler(
 ) -> web::HttpResponse {
     let (single_content_type, _stream_content_type) = match req.accepted_content_type() {
         Ok((single, stream)) => (single, stream),
-        Err(err) => return err.into_response(),
+        Err(err) => return err.into_response(None),
     };
 
     if req.method() == Method::GET
@@ -92,23 +92,23 @@ pub async fn graphql_request_handler(
     let started_at = Instant::now();
 
     if let Err(err) = perform_csrf_prevention(req, &shared_state.router_config.csrf) {
-        return err.into_response();
+        return err.into_response(single_content_type);
     }
 
     let mut execution_request =
         match get_execution_request_from_http_request(req, body_bytes.clone()).await {
             Ok(exec_req) => exec_req,
-            Err(err) => return err.into_response(),
+            Err(err) => return err.into_response(single_content_type),
         };
 
     let parser_payload = match parse_operation_with_cache(shared_state, &execution_request).await {
         Ok(payload) => payload,
-        Err(err) => return req.new_pipeline_error(err).into_response(),
+        Err(err) => return err.into_response(single_content_type),
     };
     if let Err(err) =
         validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload).await
     {
-        return req.new_pipeline_error(err).into_response();
+        return err.into_response(single_content_type);
     }
 
     let normalize_payload = match normalize_request_with_cache(
@@ -120,14 +120,13 @@ pub async fn graphql_request_handler(
     .await
     {
         Ok(payload) => payload,
-        Err(err) => return req.new_pipeline_error(err).into_response(),
+        Err(err) => return err.into_response(single_content_type),
     };
     if req.method() == Method::GET {
         if let Some(OperationKind::Mutation) = normalize_payload.operation_for_plan.operation_kind {
             error!("Mutation is not allowed over GET, stopping");
-            return req
-                .new_pipeline_error(PipelineErrorVariant::MutationNotAllowedOverHttpGet)
-                .into_response();
+            return PipelineErrorVariant::MutationNotAllowedOverHttpGet
+                .into_response(single_content_type);
         }
     }
 
@@ -140,15 +139,13 @@ pub async fn graphql_request_handler(
     // coming soon
     // && stream_content_type.is_none()
     {
-        return req
-            .new_pipeline_error(PipelineErrorVariant::SubscriptionsTransportNotSupported)
-            .into_response();
+        return PipelineErrorVariant::SubscriptionsNotSupport.into_response(single_content_type);
     }
 
     let variable_payload =
         match coerce_request_variables(supergraph, &mut execution_request, &normalize_payload) {
             Ok(payload) => payload,
-            Err(err) => return req.new_pipeline_error(err).into_response(),
+            Err(err) => return err.into_response(single_content_type),
         };
 
     let query_plan_cancellation_token =
@@ -164,9 +161,8 @@ pub async fn graphql_request_handler(
             claims: match jwt_context.get_claims_value() {
                 Ok(claims) => claims,
                 Err(e) => {
-                    return req
-                        .new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e))
-                        .into_response();
+                    return PipelineErrorVariant::JwtForwardingError(e)
+                        .into_response(single_content_type)
                 }
             },
         },
@@ -233,9 +229,8 @@ pub async fn graphql_request_handler(
             let accepted_content_type = match single_content_type {
                 Some(content_type) => content_type.as_str(),
                 None => {
-                    return req
-                        .new_pipeline_error(PipelineErrorVariant::UnsupportedContentType)
-                        .into_response();
+                    return PipelineErrorVariant::UnsupportedContentType
+                        .into_response(single_content_type);
                 }
             };
 
@@ -253,7 +248,7 @@ pub async fn graphql_request_handler(
                 .header(http::header::CONTENT_TYPE, accepted_content_type)
                 .body(response_bytes)
         }
-        Err(err) => req.new_pipeline_error(err).into_response(),
+        Err(err) => err.into_response(single_content_type),
     }
 }
 

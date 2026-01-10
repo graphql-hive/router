@@ -6,7 +6,7 @@ use lazy_static::lazy_static;
 use ntex::web::HttpRequest;
 use tracing::{trace, warn};
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineErrorVariant;
 
 lazy_static! {
     pub static ref APPLICATION_JSON_STR: &'static str = "application/json";
@@ -22,6 +22,7 @@ lazy_static! {
 }
 
 /// Non-streamable (single) content types for GraphQL responses.
+#[derive(PartialEq)]
 pub enum SingleContentType {
     /// GraphQL over HTTP spec (`application/graphql-response+json`)
     ///
@@ -39,6 +40,10 @@ impl SingleContentType {
             SingleContentType::GraphQLResponseJSON => &APPLICATION_GRAPHQL_RESPONSE_JSON_STR,
             SingleContentType::JSON => &APPLICATION_JSON_STR,
         }
+    }
+    #[inline]
+    pub fn default() -> Self {
+        SingleContentType::GraphQLResponseJSON
     }
 }
 
@@ -136,7 +141,7 @@ pub trait RequestAccepts {
     /// Returns an error if no valid content types are found in the Accept header.
     fn accepted_content_type(
         &self,
-    ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), PipelineError>;
+    ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), PipelineErrorVariant>;
 }
 
 impl RequestAccepts for HttpRequest {
@@ -152,7 +157,7 @@ impl RequestAccepts for HttpRequest {
     #[inline]
     fn accepted_content_type(
         &self,
-    ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), PipelineError> {
+    ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), PipelineErrorVariant> {
         let content_types = match self
             .headers()
             .get(ACCEPT)
@@ -207,39 +212,35 @@ impl RequestAccepts for HttpRequest {
             (Some(single), Some(stream)) => Ok((Some(single), Some(stream))),
             (Some(single), None) => Ok((Some(single), None)),
             (None, Some(stream)) => Ok((None, Some(stream))),
-            (None, None) => {
-                Err(self.new_pipeline_error(PipelineErrorVariant::UnsupportedContentType))
-            }
+            (None, None) => Err(PipelineErrorVariant::UnsupportedContentType),
         }
     }
 }
 
 pub trait AssertRequestJson {
-    fn assert_json_content_type(&self) -> Result<(), PipelineError>;
+    fn assert_json_content_type(&self) -> Result<(), PipelineErrorVariant>;
 }
 
 impl AssertRequestJson for HttpRequest {
     #[inline]
-    fn assert_json_content_type(&self) -> Result<(), PipelineError> {
+    fn assert_json_content_type(&self) -> Result<(), PipelineErrorVariant> {
         match self.headers().get(CONTENT_TYPE) {
             Some(value) => {
-                let content_type_str = value.to_str().map_err(|_| {
-                    self.new_pipeline_error(PipelineErrorVariant::InvalidHeaderValue(CONTENT_TYPE))
-                })?;
+                let content_type_str = value
+                    .to_str()
+                    .map_err(|_| PipelineErrorVariant::InvalidHeaderValue(CONTENT_TYPE))?;
                 if !content_type_str.contains(*APPLICATION_JSON_STR) {
                     warn!(
                         "Invalid content type on a POST request: {}",
                         content_type_str
                     );
-                    return Err(
-                        self.new_pipeline_error(PipelineErrorVariant::UnsupportedContentType)
-                    );
+                    return Err(PipelineErrorVariant::UnsupportedContentType);
                 }
                 Ok(())
             }
             None => {
                 trace!("POST without content type detected");
-                Err(self.new_pipeline_error(PipelineErrorVariant::MissingContentTypeHeader))
+                Err(PipelineErrorVariant::MissingContentTypeHeader)
             }
         }
     }
