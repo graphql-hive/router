@@ -138,7 +138,7 @@ async fn handle_text_frame(
     _schema_state: Arc<SchemaState>,
     _shared_state: Arc<RouterSharedState>,
 ) {
-    let text_str = match String::from_utf8(text.to_vec()) {
+    let text = match String::from_utf8(text.to_vec()) {
         Ok(s) => s,
         Err(e) => {
             error!("Invalid UTF-8 in WebSocket message: {}", e);
@@ -152,10 +152,24 @@ async fn handle_text_frame(
         }
     };
 
-    trace!("Received WebSocket message: {}", text_str);
+    let client_msg: ClientMessage = match sonic_rs::from_str(&text) {
+        Ok(msg) => msg,
+        Err(e) => {
+            error!("Failed to parse client message to JSON: {}", e);
+            let _ = sink
+                .send(ws::Message::Close(Some(ws::CloseReason {
+                    code: ws::CloseCode::Invalid,
+                    description: Some("Invalid JSON in message".into()),
+                })))
+                .await;
+            return;
+        }
+    };
+
+    trace!("Received client message: {:?}", client_msg);
 
     // echo
-    let _ = sink.send(ws::Message::Text(text_str.into())).await;
+    let _ = sink.send(ws::Message::Text("henlo".into())).await;
 }
 
 #[derive(Deserialize, Debug)]
