@@ -82,6 +82,14 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
 }
 
 #[inline]
+pub async fn get_execution_request_from_http_request(
+    req: &HttpRequest,
+    body_bytes: Bytes,
+) -> Result<ExecutionRequest, PipelineError> {
+    todo!();
+}
+
+#[inline]
 pub async fn get_execution_request(
     req: &HttpRequest,
     body_bytes: Bytes,

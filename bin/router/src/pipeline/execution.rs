@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineErrorVariant;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
@@ -14,12 +14,11 @@ use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanE
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
-use ntex::web::HttpRequest;
 
-static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
+pub static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum ExposeQueryPlanMode {
+pub enum ExposeQueryPlanMode {
     Yes,
     No,
     DryRun,
@@ -35,27 +34,13 @@ pub struct PlannedRequest<'req> {
 
 #[inline]
 pub async fn execute_plan(
-    req: &HttpRequest,
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
+    expose_query_plan: &ExposeQueryPlanMode,
     planned_request: &PlannedRequest<'_>,
-) -> Result<PlanExecutionOutput, PipelineError> {
-    let mut expose_query_plan = ExposeQueryPlanMode::No;
-
-    if app_state.router_config.query_planner.allow_expose {
-        if let Some(expose_qp_header) = req.headers().get(&EXPOSE_QUERY_PLAN_HEADER) {
-            let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
-
-            match str_value {
-                "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
-                "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
-                _ => {}
-            }
-        }
-    }
-
-    let extensions = if expose_query_plan == ExposeQueryPlanMode::Yes
-        || expose_query_plan == ExposeQueryPlanMode::DryRun
+) -> Result<PlanExecutionOutput, PipelineErrorVariant> {
+    let extensions = if *expose_query_plan == ExposeQueryPlanMode::Yes
+        || *expose_query_plan == ExposeQueryPlanMode::DryRun
     {
         Some(HashMap::from_iter([(
             "queryPlan".to_string(),
@@ -89,7 +74,7 @@ pub async fn execute_plan(
                     .forward_claims_to_upstream_extensions
                     .field_name,
             )
-            .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?
+            .map_err(|e| PipelineErrorVariant::JwtForwardingError(e))?
     } else {
         None
     };
@@ -114,6 +99,6 @@ pub async fn execute_plan(
     .await
     .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);
-        req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err))
+        PipelineErrorVariant::PlanExecutionError(err)
     })
 }
