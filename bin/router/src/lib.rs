@@ -20,7 +20,10 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     logger::configure_logging,
-    pipeline::{graphql_request_handler, usage_reporting::init_hive_user_agent},
+    pipeline::{
+        graphql_request_handler, usage_reporting::init_hive_user_agent,
+        websocket::graphql_ws_handler,
+    },
 };
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
@@ -135,6 +138,7 @@ pub async fn configure_app_from_config(
 
 pub fn configure_ntex_app(cfg: &mut web::ServiceConfig) {
     cfg.route("/graphql", web::to(graphql_endpoint_handler))
+        .route("/ws", web::get().to(graphql_ws_handler))
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }
