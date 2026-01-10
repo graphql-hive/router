@@ -1,4 +1,4 @@
-use futures::future::{ready, select, Either};
+use futures::future::{select, Either};
 use ntex::channel::oneshot;
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::util::Bytes;
@@ -9,7 +9,7 @@ use std::io;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::debug;
+use tracing::{debug, error, trace};
 
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
@@ -17,17 +17,17 @@ use crate::shared_state::RouterSharedState;
 pub async fn graphql_ws_handler(
     req: HttpRequest,
     schema_state: web::types::State<Arc<SchemaState>>,
-    app_state: web::types::State<Arc<RouterSharedState>>,
+    shared_state: web::types::State<Arc<RouterSharedState>>,
 ) -> Result<HttpResponse, Error> {
     let schema_state = schema_state.get_ref().clone();
-    let app_state = app_state.get_ref().clone();
+    let shared_state = shared_state.get_ref().clone();
 
     ws::start(
         req,
         fn_factory_with_config(move |sink: ws::WsSink| {
             let schema_state = schema_state.clone();
-            let app_state = app_state.clone();
-            async move { ws_service(sink, schema_state, app_state).await }
+            let shared_state = shared_state.clone();
+            async move { ws_service(sink, schema_state, shared_state).await }
         }),
     )
     .await
@@ -71,8 +71,8 @@ async fn heartbeat(
 
 async fn ws_service(
     sink: ws::WsSink,
-    _schema_state: Arc<SchemaState>,
-    _app_state: Arc<RouterSharedState>,
+    schema_state: Arc<SchemaState>,
+    shared_state: Arc<RouterSharedState>,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
     debug!("WebSocket connection established");
@@ -83,31 +83,43 @@ async fn ws_service(
 
     let (tx, rx) = oneshot::channel();
 
-    rt::spawn(heartbeat(state.clone(), sink, rx));
+    rt::spawn(heartbeat(state.clone(), sink.clone(), rx));
+
+    let sink = sink.clone();
+    let state = state.clone();
+    let schema_state = schema_state.clone();
+    let shared_state = shared_state.clone();
 
     let service = fn_service(move |frame| {
-        let item = match frame {
-            ws::Frame::Text(text) => Some(ws::Message::Text(
-                String::from_utf8(Vec::from(text.as_ref())).unwrap().into(),
-            )),
-            // we don't support binary frames
-            // TODO: should we drop the connection?
-            ws::Frame::Binary(_) => None,
-            // heartbeat
-            web::ws::Frame::Ping(msg) => {
-                state.borrow_mut().last_heartbeat = Instant::now();
-                Some(web::ws::Message::Pong(msg))
-            }
-            web::ws::Frame::Pong(_) => {
-                state.borrow_mut().last_heartbeat = Instant::now();
-                None
-            }
-            // client's closing
-            ws::Frame::Close(reason) => Some(ws::Message::Close(reason)),
-            // ignore other frames (should not match)
-            _ => None,
-        };
-        ready(Ok(item))
+        let sink = sink.clone();
+        let state = state.clone();
+        let schema_state = schema_state.clone();
+        let shared_state = shared_state.clone();
+        async move {
+            let item = match frame {
+                ws::Frame::Text(text) => {
+                    handle_text_frame(text, sink, schema_state, shared_state).await;
+                    None
+                }
+                // we don't support binary frames
+                // TODO: should we drop the connection altogether?
+                ws::Frame::Binary(_) => None,
+                // heartbeat
+                web::ws::Frame::Ping(msg) => {
+                    state.borrow_mut().last_heartbeat = Instant::now();
+                    Some(web::ws::Message::Pong(msg))
+                }
+                web::ws::Frame::Pong(_) => {
+                    state.borrow_mut().last_heartbeat = Instant::now();
+                    None
+                }
+                // client's closing
+                ws::Frame::Close(reason) => Some(ws::Message::Close(reason)),
+                // ignore other frames (should not match)
+                _ => None,
+            };
+            Ok(item)
+        }
     });
 
     let on_shutdown = fn_shutdown(move || {
@@ -116,4 +128,30 @@ async fn ws_service(
     });
 
     Ok(chain(service).and_then(on_shutdown))
+}
+
+async fn handle_text_frame(
+    text: Bytes,
+    sink: ws::WsSink,
+    _schema_state: Arc<SchemaState>,
+    _shared_state: Arc<RouterSharedState>,
+) {
+    let text_str = match String::from_utf8(text.to_vec()) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Invalid UTF-8 in WebSocket message: {}", e);
+            let _ = sink
+                .send(ws::Message::Close(Some(ws::CloseReason {
+                    code: ws::CloseCode::Invalid,
+                    description: Some("Invalid UTF-8 in message".into()),
+                })))
+                .await;
+            return;
+        }
+    };
+
+    trace!("Received WebSocket message: {}", text_str);
+
+    // echo
+    let _ = sink.send(ws::Message::Text(text_str.into())).await;
 }
