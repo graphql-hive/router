@@ -166,43 +166,29 @@ struct SubscribePayload {
 }
 
 #[derive(Deserialize, Debug)]
-struct SubscribeMessage {
-    id: String,
-    #[serde(rename = "type")]
-    msg_type: String,
-    payload: SubscribePayload,
-}
-
-#[derive(Deserialize, Debug)]
-struct NextMessage {
-    id: String,
-    #[serde(rename = "type")]
-    msg_type: String,
-    // TODO: define proper payload structure
-    payload: serde_json::Value,
-}
-
-#[derive(Deserialize, Debug)]
-struct ErrorMessage {
-    id: String,
-    #[serde(rename = "type")]
-    msg_type: String,
-    // TODO: define proper payload structure
-    payload: serde_json::Value,
-}
-
-#[derive(Deserialize, Debug)]
-struct CompleteMessage {
-    id: String,
-    #[serde(rename = "type")]
-    msg_type: String,
-    // TODO: define proper payload structure
-    payload: serde_json::Value,
-}
-
+#[serde(tag = "type")]
 enum ClientMessage {
-    Subscribe(SubscribeMessage),
-    Next(NextMessage),
-    Error(ErrorMessage),
-    Complete(CompleteMessage),
+    Subscribe {
+        id: String,
+        payload: SubscribePayload,
+    },
+    Complete {
+        id: String,
+    },
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type")]
+enum ServerMessage {
+    Next {
+        id: String,
+        payload: serde_json::Value,
+    },
+    Error {
+        id: String,
+        payload: serde_json::Value,
+    },
+    Complete {
+        id: String,
+    },
 }
