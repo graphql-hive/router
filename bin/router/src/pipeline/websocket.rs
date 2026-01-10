@@ -10,12 +10,12 @@ use std::io;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
-use hive_router_plan_executor::response::graphql_error::GraphQLError;
+use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 
 pub async fn graphql_ws_handler(
     req: HttpRequest,
@@ -135,7 +135,7 @@ async fn ws_service(
 async fn handle_text_frame(
     text: Bytes,
     sink: ws::WsSink,
-    _schema_state: Arc<SchemaState>,
+    schema_state: Arc<SchemaState>,
     _shared_state: Arc<RouterSharedState>,
 ) -> Option<ws::Message> {
     let text = match String::from_utf8(text.to_vec()) {
@@ -162,10 +162,31 @@ async fn handle_text_frame(
 
     trace!("Received client message: {:?}", client_msg);
 
-    // echo
-    let _ = sink.send(ws::Message::Text("henlo".into())).await;
-
-    None
+    match client_msg {
+        ClientMessage::Subscribe { id, payload } => {
+            let maybe_supergraph = schema_state.current_supergraph();
+            let supergraph = match maybe_supergraph.as_ref() {
+                Some(supergraph) => supergraph,
+                None => {
+                    warn!(
+                        "No supergraph available yet, unable to process client subscribe message"
+                    );
+                    return Some(
+                        ServerMessage::Error {
+                            id: id.clone(),
+                            payload: vec![GraphQLError::from_message_and_extensions(
+                                "No supergraph available yet".to_string(),
+                                GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
+                            )],
+                        }
+                        .into(),
+                    );
+                }
+            };
+            Some(ws::Message::Text("TODO".into()))
+        }
+        _ => Some(ws::Message::Text("TODO".into())),
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -195,4 +216,19 @@ enum ServerMessage {
     Complete {
         id: String,
     },
+}
+
+impl From<ServerMessage> for ws::Message {
+    fn from(msg: ServerMessage) -> Self {
+        match sonic_rs::to_string(&msg) {
+            Ok(text) => ws::Message::Text(text.into()),
+            Err(e) => {
+                error!("Failed to serialize server message to JSON: {}", e);
+                ws::Message::Close(Some(ws::CloseReason {
+                    code: ntex::ws::CloseCode::from(4500),
+                    description: Some("Internal Server Error".into()),
+                }))
+            }
+        }
+    }
 }
