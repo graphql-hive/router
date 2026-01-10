@@ -1,4 +1,5 @@
 use futures::future::{select, Either};
+use futures::StreamExt;
 use hive_router_plan_executor::execution::client_request_details::{
     ClientRequestDetails, JwtRequestDetails, OperationDetails,
 };
@@ -13,10 +14,12 @@ use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
 use crate::pipeline::coerce_variables::coerce_request_variables;
@@ -54,6 +57,17 @@ struct WsState {
     /// The moment of the last heartbeat received from the client. This is used
     /// to detect client timeouts and drop the connection on timeout.
     last_heartbeat: Instant,
+    /// Active subscriptions with their cancellation senders.
+    active_subscriptions: HashMap<String, mpsc::Sender<()>>,
+}
+
+impl WsState {
+    fn new() -> Self {
+        Self {
+            last_heartbeat: Instant::now(),
+            active_subscriptions: HashMap::new(),
+        }
+    }
 }
 
 /// Heartbeat ping interval.
@@ -94,18 +108,11 @@ async fn ws_service(
 {
     debug!("WebSocket connection established");
 
-    let state = Rc::new(RefCell::new(WsState {
-        last_heartbeat: Instant::now(),
-    }));
+    let state = Rc::new(RefCell::new(WsState::new()));
 
     let (tx, rx) = oneshot::channel();
 
     rt::spawn(heartbeat(state.clone(), sink.clone(), rx));
-
-    let sink = sink.clone();
-    let state = state.clone();
-    let schema_state = schema_state.clone();
-    let shared_state = shared_state.clone();
 
     let service = fn_service(move |frame| {
         let sink = sink.clone();
@@ -115,7 +122,7 @@ async fn ws_service(
         async move {
             let item = match frame {
                 ws::Frame::Text(text) => {
-                    handle_text_frame(text, sink, &schema_state, &shared_state).await
+                    handle_text_frame(text, sink, state, &schema_state, &shared_state).await
                 }
                 // we don't support binary frames
                 // TODO: should we drop the connection altogether?
@@ -149,6 +156,7 @@ async fn ws_service(
 async fn handle_text_frame(
     text: Bytes,
     sink: ws::WsSink,
+    state: Rc<RefCell<WsState>>,
     schema_state: &Arc<SchemaState>,
     shared_state: &Arc<RouterSharedState>,
 ) -> Option<ws::Message> {
@@ -188,16 +196,13 @@ async fn handle_text_frame(
                     warn!(
                         "No supergraph available yet, unable to process client subscribe message"
                     );
-                    return Some(
-                        ServerMessage::error(
-                            id,
-                            &vec![GraphQLError::from_message_and_extensions(
-                                "No supergraph available yet".to_string(),
-                                GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
-                            )],
-                        )
-                        .into(),
-                    );
+                    return Some(ServerMessage::error(
+                        id,
+                        &vec![GraphQLError::from_message_and_extensions(
+                            "No supergraph available yet".to_string(),
+                            GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
+                        )],
+                    ));
                 }
             };
 
@@ -286,21 +291,42 @@ async fn handle_text_frame(
             .await
             {
                 Ok(QueryPlanExecutionResult::Single(response)) => {
-                    let payload = match sonic_rs::from_slice(&response.body) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            error!("Failed to serialize plan execution output body: {}", err);
-                            return Some(ws::Message::Close(Some(ws::CloseReason {
-                                code: ntex::ws::CloseCode::from(4500),
-                                description: Some("Internal Server Error".into()),
-                            })));
-                        }
-                    };
-                    let _ = sink.send(ServerMessage::next(id, &payload).into()).await;
-                    Some(ServerMessage::complete(id).into())
+                    let _ = sink.send(ServerMessage::next(id, &response.body)).await;
+                    Some(ServerMessage::complete(id))
                 }
-                Ok(QueryPlanExecutionResult::Stream(_)) => {
-                    todo!();
+                Ok(QueryPlanExecutionResult::Stream(response)) => {
+                    let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+
+                    state
+                        .borrow_mut()
+                        .active_subscriptions
+                        .insert(id.to_string(), cancel_tx);
+
+                    let mut stream = response.body;
+                    let id_string = id.to_string();
+
+                    loop {
+                        tokio::select! {
+                            maybe_item = stream.next() => {
+                                match maybe_item {
+                                    Some(body) => {
+                                        let _ = sink.send(ServerMessage::next(&id_string, &body)).await;
+                                    }
+                                    None => {
+                                        break; // completed
+                                    }
+                                }
+                            }
+                            _ = cancel_rx.recv() => {
+                                trace!(id = %id_string, "Subscription cancelled by client");
+                                break; // cancelled
+                            }
+                        }
+                    }
+
+                    state.borrow_mut().active_subscriptions.remove(&id_string);
+
+                    Some(ServerMessage::complete(id))
                 }
                 Err(err) => Some(err.into_server_message(id)),
             }
@@ -339,15 +365,29 @@ enum ServerMessage<'a> {
     },
 }
 
-impl<'a> ServerMessage<'a> {
-    pub fn next(id: &'a str, payload: &'a sonic_rs::Value) -> Self {
-        ServerMessage::Next { id, payload }
+impl ServerMessage<'_> {
+    pub fn next(id: &str, body: &[u8]) -> ws::Message {
+        let payload = match sonic_rs::from_slice(body) {
+            Ok(value) => value,
+            Err(err) => {
+                error!("Failed to serialize plan execution output body: {}", err);
+                return ws::Message::Close(Some(ws::CloseReason {
+                    code: ntex::ws::CloseCode::from(4500),
+                    description: Some("Internal Server Error".into()),
+                }));
+            }
+        };
+        ServerMessage::Next {
+            id,
+            payload: &payload,
+        }
+        .into()
     }
-    pub fn error(id: &'a str, payload: &'a [GraphQLError]) -> Self {
-        ServerMessage::Error { id, payload }
+    pub fn error(id: &str, payload: &[GraphQLError]) -> ws::Message {
+        ServerMessage::Error { id, payload }.into()
     }
-    pub fn complete(id: &'a str) -> Self {
-        ServerMessage::Complete { id }
+    pub fn complete(id: &str) -> ws::Message {
+        ServerMessage::Complete { id }.into()
     }
 }
 
@@ -376,6 +416,6 @@ impl PipelineErrorVariant {
             GraphQLErrorExtensions::new_from_code(code),
         );
 
-        ServerMessage::error(id, &vec![graphql_error]).into()
+        ServerMessage::error(id, &vec![graphql_error])
     }
 }
