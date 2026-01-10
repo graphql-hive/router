@@ -190,7 +190,7 @@ async fn handle_text_frame(
                     );
                     return Some(
                         ServerMessage::Error {
-                            id: id.clone(),
+                            id: &id,
                             payload: vec![GraphQLError::from_message_and_extensions(
                                 "No supergraph available yet".to_string(),
                                 GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
@@ -312,22 +312,22 @@ enum ClientMessage {
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", rename_all = "lowercase")]
-enum ServerMessage {
+enum ServerMessage<'id> {
     Next {
-        id: String,
+        id: &'id str,
         // TODO: define a proper payload type?
         payload: serde_json::Value,
     },
     Error {
-        id: String,
+        id: &'id str,
         payload: Vec<GraphQLError>,
     },
     Complete {
-        id: String,
+        id: &'id str,
     },
 }
 
-impl From<ServerMessage> for ws::Message {
+impl From<ServerMessage<'_>> for ws::Message {
     fn from(msg: ServerMessage) -> Self {
         match sonic_rs::to_string(&msg) {
             Ok(text) => ws::Message::Text(text.into()),
@@ -343,7 +343,7 @@ impl From<ServerMessage> for ws::Message {
 }
 
 impl PipelineErrorVariant {
-    fn into_server_message(&self, id: &str) -> ServerMessage {
+    fn into_server_message<'id>(&self, id: &'id str) -> ServerMessage<'id> {
         let code = self.graphql_error_code();
         let message = self.graphql_error_message();
 
@@ -353,7 +353,7 @@ impl PipelineErrorVariant {
         );
 
         ServerMessage::Error {
-            id: id.to_string(),
+            id: id,
             payload: vec![graphql_error],
         }
     }
