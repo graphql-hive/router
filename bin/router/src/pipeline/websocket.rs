@@ -39,6 +39,36 @@ struct WsState {
     last_heartbeat: Instant,
 }
 
+/// Heartbeat ping interval.
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+/// Client response to heartbeat timeout.
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Ping client every heartbeat interval.
+async fn heartbeat(
+    state: Rc<RefCell<WsState>>,
+    sink: web::ws::WsSink,
+    mut rx: oneshot::Receiver<()>,
+) {
+    loop {
+        match select(Box::pin(ntex::time::sleep(HEARTBEAT_INTERVAL)), &mut rx).await {
+            Either::Left(_) => {
+                if Instant::now().duration_since(state.borrow().last_heartbeat) > CLIENT_TIMEOUT {
+                    debug!("WebSocket client heartbeat timeout");
+                    return;
+                }
+                if sink
+                    .send(web::ws::Message::Ping(Bytes::default()))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Either::Right(_) => return,
+        }
+    }
+}
+
 async fn ws_service(
     sink: ws::WsSink,
     _schema_state: Arc<SchemaState>,
@@ -86,34 +116,4 @@ async fn ws_service(
     });
 
     Ok(chain(service).and_then(on_shutdown))
-}
-
-/// Heartbeat ping interval.
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-/// Client response to heartbeat timeout.
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Ping client every heartbeat interval.
-async fn heartbeat(
-    state: Rc<RefCell<WsState>>,
-    sink: web::ws::WsSink,
-    mut rx: oneshot::Receiver<()>,
-) {
-    loop {
-        match select(Box::pin(ntex::time::sleep(HEARTBEAT_INTERVAL)), &mut rx).await {
-            Either::Left(_) => {
-                if Instant::now().duration_since(state.borrow().last_heartbeat) > CLIENT_TIMEOUT {
-                    debug!("WebSocket client heartbeat timeout");
-                    return;
-                }
-                if sink
-                    .send(web::ws::Message::Ping(Bytes::default()))
-                    .await
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Either::Right(_) => return,
-        }
-    }
 }
