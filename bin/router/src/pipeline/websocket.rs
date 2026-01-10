@@ -286,15 +286,30 @@ async fn handle_text_frame(
             .await
             {
                 Ok(QueryPlanExecutionResult::Single(response)) => {
-                    todo!();
+                    let payload = match sonic_rs::from_slice(&response.body) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error!("Failed to serialize plan execution output body: {}", err);
+                            return Some(ws::Message::Close(Some(ws::CloseReason {
+                                code: ntex::ws::CloseCode::from(4500),
+                                description: Some("Internal Server Error".into()),
+                            })));
+                        }
+                    };
+                    let _ = sink
+                        .send(ServerMessage::Next { id: &id, payload }.into())
+                        .await;
+                    Some(ServerMessage::Complete { id: &id }.into())
                 }
-                Ok(QueryPlanExecutionResult::Stream(response)) => {
+                Ok(QueryPlanExecutionResult::Stream(_)) => {
                     todo!();
                 }
                 Err(err) => Some(err.into_server_message(id).into()),
             }
         }
-        _ => Some(ws::Message::Text("TODO".into())),
+        _ => {
+            todo!();
+        }
     }
 }
 
@@ -315,8 +330,7 @@ enum ClientMessage {
 enum ServerMessage<'id> {
     Next {
         id: &'id str,
-        // TODO: define a proper payload type?
-        payload: serde_json::Value,
+        payload: sonic_rs::Value,
     },
     Error {
         id: &'id str,
