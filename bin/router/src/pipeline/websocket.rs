@@ -166,7 +166,7 @@ struct SubscribePayload {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "lowercase")]
 enum ClientMessage {
     Subscribe {
         id: String,
@@ -178,7 +178,7 @@ enum ClientMessage {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "lowercase")]
 enum ServerMessage {
     Next {
         id: String,
