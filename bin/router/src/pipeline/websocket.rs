@@ -100,8 +100,7 @@ async fn ws_service(
         async move {
             let item = match frame {
                 ws::Frame::Text(text) => {
-                    handle_text_frame(text, sink, schema_state, shared_state).await;
-                    None
+                    handle_text_frame(text, sink, schema_state, shared_state).await
                 }
                 // we don't support binary frames
                 // TODO: should we drop the connection altogether?
@@ -115,7 +114,7 @@ async fn ws_service(
                     state.borrow_mut().last_heartbeat = Instant::now();
                     None
                 }
-                // client's closing
+                // closing connection
                 ws::Frame::Close(reason) => Some(ws::Message::Close(reason)),
                 // ignore other frames (should not match)
                 _ => None,
@@ -137,18 +136,15 @@ async fn handle_text_frame(
     sink: ws::WsSink,
     _schema_state: Arc<SchemaState>,
     _shared_state: Arc<RouterSharedState>,
-) {
+) -> Option<ws::Message> {
     let text = match String::from_utf8(text.to_vec()) {
         Ok(s) => s,
         Err(e) => {
             error!("Invalid UTF-8 in WebSocket message: {}", e);
-            let _ = sink
-                .send(ws::Message::Close(Some(ws::CloseReason {
-                    code: ws::CloseCode::Invalid,
-                    description: Some("Invalid UTF-8 in message".into()),
-                })))
-                .await;
-            return;
+            return Some(ws::Message::Close(Some(ws::CloseReason {
+                code: ws::CloseCode::Invalid,
+                description: Some("Invalid UTF-8 in message".into()),
+            })));
         }
     };
 
@@ -156,13 +152,10 @@ async fn handle_text_frame(
         Ok(msg) => msg,
         Err(e) => {
             error!("Failed to parse client message to JSON: {}", e);
-            let _ = sink
-                .send(ws::Message::Close(Some(ws::CloseReason {
-                    code: ws::CloseCode::Invalid,
-                    description: Some("Invalid JSON in message".into()),
-                })))
-                .await;
-            return;
+            return Some(ws::Message::Close(Some(ws::CloseReason {
+                code: ntex::ws::CloseCode::from(4400),
+                description: Some("Invalid message received".into()),
+            })));
         }
     };
 
@@ -170,6 +163,8 @@ async fn handle_text_frame(
 
     // echo
     let _ = sink.send(ws::Message::Text("henlo".into())).await;
+
+    None
 }
 
 #[derive(Deserialize, Debug)]
