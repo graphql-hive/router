@@ -189,13 +189,13 @@ async fn handle_text_frame(
                         "No supergraph available yet, unable to process client subscribe message"
                     );
                     return Some(
-                        ServerMessage::Error {
-                            id: &id,
-                            payload: vec![GraphQLError::from_message_and_extensions(
+                        ServerMessage::error(
+                            id,
+                            vec![GraphQLError::from_message_and_extensions(
                                 "No supergraph available yet".to_string(),
                                 GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
                             )],
-                        }
+                        )
                         .into(),
                     );
                 }
@@ -296,10 +296,8 @@ async fn handle_text_frame(
                             })));
                         }
                     };
-                    let _ = sink
-                        .send(ServerMessage::Next { id: &id, payload }.into())
-                        .await;
-                    Some(ServerMessage::Complete { id: &id }.into())
+                    let _ = sink.send(ServerMessage::next(id, payload).into()).await;
+                    Some(ServerMessage::complete(id).into())
                 }
                 Ok(QueryPlanExecutionResult::Stream(_)) => {
                     todo!();
@@ -341,6 +339,18 @@ enum ServerMessage<'id> {
     },
 }
 
+impl<'id> ServerMessage<'id> {
+    pub fn next(id: &'id str, payload: sonic_rs::Value) -> Self {
+        ServerMessage::Next { id, payload }
+    }
+    pub fn error(id: &'id str, payload: Vec<GraphQLError>) -> Self {
+        ServerMessage::Error { id, payload }
+    }
+    pub fn complete(id: &'id str) -> Self {
+        ServerMessage::Complete { id }
+    }
+}
+
 impl From<ServerMessage<'_>> for ws::Message {
     fn from(msg: ServerMessage) -> Self {
         match sonic_rs::to_string(&msg) {
@@ -366,9 +376,6 @@ impl PipelineErrorVariant {
             GraphQLErrorExtensions::new_from_code(code),
         );
 
-        ServerMessage::Error {
-            id: id,
-            payload: vec![graphql_error],
-        }
+        ServerMessage::error(id, vec![graphql_error])
     }
 }
