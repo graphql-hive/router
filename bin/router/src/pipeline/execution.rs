@@ -38,11 +38,11 @@ pub struct PlannedRequest<'req> {
 pub async fn execute_plan(
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
-    expose_query_plan: ExposeQueryPlanMode,
+    expose_query_plan: &ExposeQueryPlanMode,
     planned_request: &PlannedRequest<'_>,
 ) -> Result<QueryPlanExecutionResult, PipelineErrorVariant> {
-    let extensions = if expose_query_plan == ExposeQueryPlanMode::Yes
-        || expose_query_plan == ExposeQueryPlanMode::DryRun
+    let extensions = if *expose_query_plan == ExposeQueryPlanMode::Yes
+        || *expose_query_plan == ExposeQueryPlanMode::DryRun
     {
         Some(HashMap::from_iter([(
             "queryPlan".to_string(),
