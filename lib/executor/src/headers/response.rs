@@ -45,10 +45,10 @@ pub fn apply_subgraph_response_headers(
     Ok(())
 }
 
-pub struct ResponseExpressionContext<'a, 'req> {
-    pub subgraph_name: &'a str,
-    pub client_request: &'a ClientRequestDetails<'a, 'req>,
-    pub subgraph_headers: &'a HeaderMap,
+pub struct ResponseExpressionContext<'exec, 'req> {
+    pub subgraph_name: &'exec str,
+    pub client_request: &'exec ClientRequestDetails<'exec, 'req>,
+    pub subgraph_headers: &'exec HeaderMap,
 }
 
 trait ApplyResponseHeader {
@@ -283,10 +283,11 @@ fn write_agg(
     }
 }
 
+#[inline]
 /// Modify the outgoing client response headers based on the aggregated headers from subgraphs.
 pub fn modify_client_response_headers(
     agg: ResponseHeaderAggregator,
-    out: &mut HeaderMap,
+    out: &mut ntex::http::HeaderMap,
 ) -> Result<(), HeaderRuleRuntimeError> {
     for (name, (agg_strategy, mut values)) in agg.entries {
         if values.is_empty() {
@@ -296,20 +297,20 @@ pub fn modify_client_response_headers(
         if is_never_join_header(&name) {
             // never-join headers must be emitted as multiple header fields
             for value in values {
-                out.append(name.clone(), value);
+                out.append(name.clone(), value.into());
             }
             continue;
         }
 
         if values.len() == 1 {
-            out.insert(name, values.pop().unwrap());
+            out.insert(name, values.pop().unwrap().into());
             continue;
         }
 
         if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
             let joined = join_with_comma(&values)
                 .map_err(|_| HeaderRuleRuntimeError::BadHeaderValue(name.to_string()))?;
-            out.insert(name, joined);
+            out.insert(name, joined.into());
         }
     }
 

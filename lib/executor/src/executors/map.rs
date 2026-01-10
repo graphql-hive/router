@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
 use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
@@ -20,20 +19,21 @@ use hyper_util::{
     rt::{TokioExecutor, TokioTimer},
 };
 use tokio::sync::{OnceCell, Semaphore};
-use tracing::error;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
     executors::{
-        common::{
-            HttpExecutionResponse, SubgraphExecutionRequest, SubgraphExecutor,
-            SubgraphExecutorBoxedArc,
-        },
-        dedupe::{ABuildHasher, SharedResponse},
+        common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
+        dedupe::ABuildHasher,
         error::SubgraphExecutorError,
-        http::{HTTPSubgraphExecutor, HttpClient},
+        http::{HTTPSubgraphExecutor, HttpClient, HttpResponse},
     },
-    response::graphql_error::GraphQLError,
+    hooks::on_subgraph_execute::{
+        OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
+    },
+    plugin_context::PluginRequestState,
+    plugin_trait::{EndControlFlow, StartControlFlow},
+    response::subgraph_response::SubgraphResponse,
 };
 
 type SubgraphName = String;
@@ -50,6 +50,8 @@ struct ResolvedSubgraphConfig<'a> {
     dedupe_enabled: bool,
 }
 
+pub type InflightRequestsMap = Arc<DashMap<u64, Arc<OnceCell<HttpResponse>>, ABuildHasher>>;
+
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
     /// Mapping from subgraph name to static endpoint for quick lookup
@@ -64,7 +66,7 @@ pub struct SubgraphExecutorMap {
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
-    in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    in_flight_requests: InflightRequestsMap,
 }
 
 impl SubgraphExecutorMap {
@@ -93,7 +95,7 @@ impl SubgraphExecutorMap {
     }
 
     pub fn from_http_endpoint_map(
-        subgraph_endpoint_map: HashMap<SubgraphName, String>,
+        subgraph_endpoint_map: &HashMap<SubgraphName, String>,
         config: Arc<HiveRouterConfig>,
     ) -> Result<Self, SubgraphExecutorError> {
         let global_timeout = DurationOrProgram::compile(
@@ -105,89 +107,120 @@ impl SubgraphExecutorMap {
         })?;
         let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), global_timeout);
 
-        for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.into_iter() {
+        for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.iter() {
             let endpoint_config = config
                 .override_subgraph_urls
-                .get_subgraph_url(&subgraph_name);
+                .get_subgraph_url(subgraph_name);
 
             let endpoint_str = match endpoint_config {
                 Some(UrlOrExpression::Url(url)) => url.clone(),
                 Some(UrlOrExpression::Expression { expression }) => {
                     subgraph_executor_map
-                        .register_endpoint_expression(&subgraph_name, expression)?;
+                        .register_endpoint_expression(subgraph_name, expression)?;
                     original_endpoint_str.clone()
                 }
                 None => original_endpoint_str.clone(),
             };
 
-            subgraph_executor_map.register_static_endpoint(&subgraph_name, &endpoint_str);
-            subgraph_executor_map.register_executor(&subgraph_name, &endpoint_str)?;
-            subgraph_executor_map.register_subgraph_timeout(&subgraph_name)?;
+            subgraph_executor_map.register_static_endpoint(subgraph_name, &endpoint_str);
+            subgraph_executor_map.register_executor(subgraph_name, &endpoint_str)?;
+            subgraph_executor_map.register_subgraph_timeout(subgraph_name)?;
         }
 
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'a, 'req>(
+    pub async fn execute<'exec, 'req>(
         &self,
-        subgraph_name: &str,
-        execution_request: SubgraphExecutionRequest<'a>,
-        client_request: &ClientRequestDetails<'a, 'req>,
-    ) -> HttpExecutionResponse {
-        match self.get_or_create_executor(subgraph_name, client_request) {
-            Ok(executor) => {
-                let timeout = self
-                    .timeouts_by_subgraph
-                    .get(subgraph_name)
-                    .map(|t| {
-                        let global_timeout_duration =
-                            resolve_timeout(&self.global_timeout, client_request, None, "all")?;
-                        resolve_timeout(
-                            t.value(),
-                            client_request,
-                            Some(global_timeout_duration),
-                            subgraph_name,
-                        )
-                    })
-                    .transpose();
+        subgraph_name: &'exec str,
+        mut execution_request: SubgraphExecutionRequest<'exec>,
+        client_request: &ClientRequestDetails<'exec, 'req>,
+        plugin_req_state: &'exec Option<PluginRequestState<'req>>,
+    ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
+        let mut executor = self.get_or_create_executor(subgraph_name, client_request)?;
 
-                match timeout {
-                    Ok(timeout) => executor.execute(execution_request, timeout).await,
-                    Err(err) => {
-                        error!(
-                            "Failed to resolve timeout for subgraph '{}': {}",
-                            subgraph_name, err,
-                        );
-                        self.internal_server_error_response(err.into(), subgraph_name)
+        let timeout = self
+            .timeouts_by_subgraph
+            .get(subgraph_name)
+            .map(|t| {
+                let global_timeout_duration =
+                    resolve_timeout(&self.global_timeout, client_request, None, "all")?;
+                resolve_timeout(
+                    t.value(),
+                    client_request,
+                    Some(global_timeout_duration),
+                    subgraph_name,
+                )
+            })
+            .transpose()?;
+
+        let mut on_end_callbacks = vec![];
+
+        let mut execution_result: Option<SubgraphResponse<'exec>> = None;
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut start_payload = OnSubgraphExecuteStartHookPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                subgraph_name,
+                executor,
+                execution_request,
+            };
+            for plugin in plugin_req_state.plugins.as_ref() {
+                let result = plugin.on_subgraph_execute(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    StartControlFlow::Proceed => {
+                        // continue to next plugin
+                    }
+                    StartControlFlow::EndWithResponse(response) => {
+                        execution_result = Some(response);
+                        break;
+                    }
+                    StartControlFlow::OnEnd(callback) => {
+                        on_end_callbacks.push(callback);
                     }
                 }
             }
-            Err(err) => {
-                error!(
-                    "Subgraph executor error for subgraph '{}': {}",
-                    subgraph_name, err,
-                );
-                self.internal_server_error_response(err.into(), subgraph_name)
+            // Give the ownership back to variables
+            execution_request = start_payload.execution_request;
+            executor = start_payload.executor;
+        }
+
+        let mut execution_result = match execution_result {
+            Some(execution_result) => execution_result,
+            None => {
+                executor
+                    .execute(execution_request, timeout, plugin_req_state)
+                    .await?
+            }
+        };
+
+        if !on_end_callbacks.is_empty() {
+            if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+                let mut end_payload = OnSubgraphExecuteEndHookPayload {
+                    context: &plugin_req_state.context,
+                    execution_result,
+                };
+
+                for callback in on_end_callbacks {
+                    let result = callback(end_payload);
+                    end_payload = result.payload;
+                    match result.control_flow {
+                        EndControlFlow::Proceed => {
+                            // continue to next callback
+                        }
+                        EndControlFlow::EndWithResponse(response) => {
+                            end_payload.execution_result = response;
+                        }
+                    }
+                }
+
+                // Give the ownership back to variables
+                execution_result = end_payload.execution_result;
             }
         }
-    }
 
-    fn internal_server_error_response(
-        &self,
-        graphql_error: GraphQLError,
-        subgraph_name: &str,
-    ) -> HttpExecutionResponse {
-        let errors = vec![graphql_error.add_subgraph_name(subgraph_name)];
-        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-        let mut buffer = BytesMut::new();
-        buffer.put_slice(b"{\"errors\":");
-        buffer.put_slice(&errors_bytes);
-        buffer.put_slice(b"}");
-
-        HttpExecutionResponse {
-            body: buffer.freeze(),
-            headers: Default::default(),
-        }
+        Ok(execution_result)
     }
 
     /// Looks up a subgraph executor based on the subgraph name.
@@ -209,9 +242,7 @@ impl SubgraphExecutorMap {
             })
             .unwrap_or_else(|| {
                 self.get_executor_from_static_endpoint(subgraph_name)
-                    .ok_or_else(|| {
-                        SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
-                    })
+                    .ok_or(SubgraphExecutorError::StaticEndpointNotFound)
             })
     }
 
@@ -229,9 +260,7 @@ impl SubgraphExecutorMap {
             self.static_endpoints_by_subgraph
                 .get(subgraph_name)
                 .map(|endpoint| endpoint.value().clone())
-                .ok_or_else(|| {
-                    SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
-                })?
+                .ok_or(SubgraphExecutorError::StaticEndpointNotFound)?
                 .into(),
         );
 
@@ -242,10 +271,7 @@ impl SubgraphExecutorMap {
 
         // Resolve the expression to get an endpoint URL.
         let endpoint_result = expression.execute(value).map_err(|err| {
-            SubgraphExecutorError::EndpointExpressionResolutionFailure(
-                subgraph_name.to_string(),
-                err.to_string(),
-            )
+            SubgraphExecutorError::EndpointExpressionResolutionFailure(err.to_string())
         })?;
 
         let endpoint_str = match endpoint_result.as_str() {
@@ -293,12 +319,9 @@ impl SubgraphExecutorMap {
         subgraph_name: &str,
         expression: &str,
     ) -> Result<(), SubgraphExecutorError> {
-        let program = expression.compile_expression(None).map_err(|err| {
-            SubgraphExecutorError::EndpointExpressionBuild(
-                subgraph_name.to_string(),
-                err.diagnostics,
-            )
-        })?;
+        let program = expression
+            .compile_expression(None)
+            .map_err(|err| SubgraphExecutorError::EndpointExpressionBuild(err.diagnostics))?;
         self.expression_endpoints_by_subgraph
             .insert(subgraph_name.to_string(), program);
 
@@ -351,6 +374,7 @@ impl SubgraphExecutorMap {
             subgraph_config.client,
             semaphore,
             subgraph_config.dedupe_enabled,
+            self.config.clone(),
             self.in_flight_requests.clone(),
         );
 

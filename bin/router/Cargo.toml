@@ -54,9 +54,10 @@ hive-console-sdk = "0.2.2"
 ulid = "1.2.1"
 tokio-util = "0.7.16"
 cookie = "0.18.1"
-arc-swap = "1.7.1"
+arc-swap = { workspace = true }
 lasso2 = "0.8.2"
 ahash = { workspace = true }
+once_cell = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

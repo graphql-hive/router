@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::variables::collect_variables;
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use http::Method;
@@ -8,10 +9,8 @@ use ntex::web::HttpRequest;
 use sonic_rs::{JsonValueTrait, Value};
 use tracing::{error, trace, warn};
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
-use crate::pipeline::execution_request::ExecutionRequest;
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::schema_state::SupergraphData;
 
 #[derive(Clone, Debug, Default)]
 pub struct CoerceVariablesPayload {
@@ -32,8 +31,8 @@ impl CoerceVariablesPayload {
 pub fn coerce_request_variables(
     req: &HttpRequest,
     supergraph: &SupergraphData,
-    execution_params: &mut ExecutionRequest,
-    normalized_operation: &Arc<GraphQLNormalizationPayload>,
+    graphql_params: &mut GraphQLParams,
+    normalized_operation: &GraphQLNormalizationPayload,
 ) -> Result<CoerceVariablesPayload, PipelineError> {
     if req.method() == Method::GET {
         if let Some(OperationKind::Mutation) =
@@ -41,13 +40,13 @@ pub fn coerce_request_variables(
         {
             error!("Mutation is not allowed over GET, stopping");
 
-            return Err(req.new_pipeline_error(PipelineErrorVariant::MutationNotAllowedOverHttpGet));
+            return Err(PipelineError::MutationNotAllowedOverHttpGet);
         }
     }
 
     match collect_variables(
         &normalized_operation.operation_for_plan,
-        &mut execution_params.variables,
+        &mut graphql_params.variables,
         &supergraph.metadata,
     ) {
         Ok(values) => {
@@ -65,7 +64,7 @@ pub fn coerce_request_variables(
                 "failed to collect variables from incoming request: {}",
                 err_msg
             );
-            Err(req.new_pipeline_error(PipelineErrorVariant::VariablesCoercionError(err_msg)))
+            Err(PipelineError::VariablesCoercionError(err_msg))
         }
     }
 }

@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use http::Method;
 use ntex::util::Bytes;
 use ntex::web::types::Query;
 use ntex::web::HttpRequest;
-use serde::{Deserialize, Deserializer};
-use sonic_rs::Value;
 use tracing::{trace, warn};
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::header::AssertRequestJson;
 
 #[derive(serde::Deserialize, Debug)]
@@ -20,41 +19,15 @@ struct GETQueryParams {
     pub extensions: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecutionRequest {
-    pub query: String,
-    pub operation_name: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_null_default")]
-    pub variables: HashMap<String, Value>,
-    // TODO: We don't use extensions yet, but we definitely will in the future.
-    #[allow(dead_code)]
-    pub extensions: Option<HashMap<String, Value>>,
-}
+impl TryInto<GraphQLParams> for GETQueryParams {
+    type Error = PipelineError;
 
-fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    T: Default + Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    let opt = Option::<T>::deserialize(deserializer)?;
-    Ok(opt.unwrap_or_default())
-}
-
-impl TryInto<ExecutionRequest> for GETQueryParams {
-    type Error = PipelineErrorVariant;
-
-    fn try_into(self) -> Result<ExecutionRequest, Self::Error> {
-        let query = match self.query {
-            Some(q) => q,
-            None => return Err(PipelineErrorVariant::GetMissingQueryParam("query")),
-        };
-
+    fn try_into(self) -> Result<GraphQLParams, Self::Error> {
         let variables = match self.variables.as_deref() {
             Some(v_str) if !v_str.is_empty() => match sonic_rs::from_str(v_str) {
                 Ok(vars) => vars,
                 Err(e) => {
-                    return Err(PipelineErrorVariant::FailedToParseVariables(e));
+                    return Err(PipelineError::FailedToParseVariables(e));
                 }
             },
             _ => HashMap::new(),
@@ -64,14 +37,14 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
             Some(e_str) if !e_str.is_empty() => match sonic_rs::from_str(e_str) {
                 Ok(exts) => Some(exts),
                 Err(e) => {
-                    return Err(PipelineErrorVariant::FailedToParseExtensions(e));
+                    return Err(PipelineError::FailedToParseExtensions(e));
                 }
             },
             _ => None,
         };
 
-        let execution_request = ExecutionRequest {
-            query,
+        let execution_request = GraphQLParams {
+            query: self.query,
             operation_name: self.operation_name,
             variables,
             extensions,
@@ -81,29 +54,38 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
     }
 }
 
+pub trait GetQueryStr {
+    fn get_query(&self) -> Result<&str, PipelineError>;
+}
+
+impl GetQueryStr for GraphQLParams {
+    fn get_query(&self) -> Result<&str, PipelineError> {
+        self.query
+            .as_deref()
+            .ok_or(PipelineError::GetMissingQueryParam("query"))
+    }
+}
+
 #[inline]
-pub async fn get_execution_request(
+pub fn deserialize_graphql_params(
     req: &HttpRequest,
     body_bytes: Bytes,
-) -> Result<ExecutionRequest, PipelineError> {
+) -> Result<GraphQLParams, PipelineError> {
     let http_method = req.method();
-    let execution_request: ExecutionRequest = match *http_method {
+    let graphql_params: GraphQLParams = match *http_method {
         Method::GET => {
             trace!("processing GET GraphQL operation");
-            let query_params_str = req.uri().query().ok_or_else(|| {
-                req.new_pipeline_error(PipelineErrorVariant::GetInvalidQueryParams)
-            })?;
+            let query_params_str = req
+                .uri()
+                .query()
+                .ok_or_else(|| PipelineError::GetInvalidQueryParams)?;
             let query_params = Query::<GETQueryParams>::from_query(query_params_str)
-                .map_err(|e| {
-                    req.new_pipeline_error(PipelineErrorVariant::GetUnprocessableQueryParams(e))
-                })?
+                .map_err(PipelineError::GetUnprocessableQueryParams)?
                 .0;
 
             trace!("parsed GET query params: {:?}", query_params);
 
-            query_params
-                .try_into()
-                .map_err(|err| req.new_pipeline_error(err))?
+            query_params.try_into()?
         }
         Method::POST => {
             trace!("Processing POST GraphQL request");
@@ -111,9 +93,9 @@ pub async fn get_execution_request(
             req.assert_json_content_type()?;
 
             let execution_request = unsafe {
-                sonic_rs::from_slice_unchecked::<ExecutionRequest>(&body_bytes).map_err(|e| {
+                sonic_rs::from_slice_unchecked::<GraphQLParams>(&body_bytes).map_err(|e| {
                     warn!("Failed to parse body: {}", e);
-                    req.new_pipeline_error(PipelineErrorVariant::FailedToParseBody(e))
+                    PipelineError::FailedToParseBody(e)
                 })?
             };
 
@@ -122,13 +104,9 @@ pub async fn get_execution_request(
         _ => {
             warn!("unsupported HTTP method: {}", http_method);
 
-            return Err(
-                req.new_pipeline_error(PipelineErrorVariant::UnsupportedHttpMethod(
-                    http_method.to_owned(),
-                )),
-            );
+            return Err(PipelineError::UnsupportedHttpMethod(http_method.to_owned()));
         }
     };
 
-    Ok(execution_request)
+    Ok(graphql_params)
 }

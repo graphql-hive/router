@@ -18,12 +18,14 @@ tracing = { workspace = true }
 sonic-rs = { workspace = true }
 vrl = { workspace = true }
 humantime = "2.3.0"
-once_cell = "1.21.3"
+once_cell = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
+ahash = { workspace = true }
+lasso2 = "0.8.2"
 
 [dev-dependencies]
 criterion = { workspace = true }
