@@ -114,8 +114,8 @@ async fn ws_service(
                     state.borrow_mut().last_heartbeat = Instant::now();
                     None
                 }
-                // closing connection
-                ws::Frame::Close(reason) => Some(ws::Message::Close(reason)),
+                // closing connection. we cant send any more message so we just None
+                ws::Frame::Close(_) => None,
                 // ignore other frames (should not match)
                 _ => None,
             };
