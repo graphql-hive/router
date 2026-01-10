@@ -106,7 +106,7 @@ async fn ws_service(
     shared_state: Arc<RouterSharedState>,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
-    debug!("WebSocket connection established");
+    debug!("WebSocket connection opened");
 
     let state = Rc::new(RefCell::new(WsState::new()));
 
@@ -137,7 +137,10 @@ async fn ws_service(
                     None
                 }
                 // closing connection. we cant send any more message so we just None
-                ws::Frame::Close(_) => None,
+                ws::Frame::Close(_) => {
+                    debug!("WebSocket connection closed");
+                    None
+                }
                 // ignore other frames (should not match)
                 _ => None,
             };
