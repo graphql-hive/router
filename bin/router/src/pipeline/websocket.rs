@@ -14,6 +14,7 @@ use tracing::{debug, error, trace};
 
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
+use hive_router_plan_executor::response::graphql_error::GraphQLError;
 
 pub async fn graphql_ws_handler(
     req: HttpRequest,
@@ -182,11 +183,12 @@ enum ClientMessage {
 enum ServerMessage {
     Next {
         id: String,
+        // TODO: define a proper payload type?
         payload: serde_json::Value,
     },
     Error {
         id: String,
-        payload: serde_json::Value,
+        payload: Vec<GraphQLError>,
     },
     Complete {
         id: String,
