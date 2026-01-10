@@ -4,6 +4,7 @@ use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::util::Bytes;
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
+use serde::Deserialize;
 use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
@@ -154,4 +155,54 @@ async fn handle_text_frame(
 
     // echo
     let _ = sink.send(ws::Message::Text(text_str.into())).await;
+}
+
+#[derive(Deserialize, Debug)]
+struct SubscribePayload {
+    id: String,
+    query: String,
+    variables: Option<serde_json::Value>,
+    operation_name: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct SubscribeMessage {
+    id: String,
+    #[serde(rename = "type")]
+    msg_type: String,
+    payload: SubscribePayload,
+}
+
+#[derive(Deserialize, Debug)]
+struct NextMessage {
+    id: String,
+    #[serde(rename = "type")]
+    msg_type: String,
+    // TODO: define proper payload structure
+    payload: serde_json::Value,
+}
+
+#[derive(Deserialize, Debug)]
+struct ErrorMessage {
+    id: String,
+    #[serde(rename = "type")]
+    msg_type: String,
+    // TODO: define proper payload structure
+    payload: serde_json::Value,
+}
+
+#[derive(Deserialize, Debug)]
+struct CompleteMessage {
+    id: String,
+    #[serde(rename = "type")]
+    msg_type: String,
+    // TODO: define proper payload structure
+    payload: serde_json::Value,
+}
+
+enum ClientMessage {
+    Subscribe(SubscribeMessage),
+    Next(NextMessage),
+    Error(ErrorMessage),
+    Complete(CompleteMessage),
 }
