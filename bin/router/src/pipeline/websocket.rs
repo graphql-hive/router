@@ -331,8 +331,12 @@ async fn handle_text_frame(
                 Err(err) => Some(err.into_server_message(id)),
             }
         }
-        _ => {
-            todo!();
+        ClientMessage::Complete { ref id } => {
+            if let Some(cancel_tx) = state.borrow_mut().active_subscriptions.remove(id) {
+                trace!(id = %id, "Client requested subscription cancellation");
+                let _ = cancel_tx.try_send(());
+            }
+            None
         }
     }
 }
