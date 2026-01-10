@@ -303,7 +303,10 @@ async fn handle_text_frame(
                         .insert(id.to_string(), cancel_tx);
 
                     let mut stream = response.body;
+                    let mut client_completed = false;
                     let id_string = id.to_string();
+
+                    trace!(id = %id_string, "Subscription started");
 
                     loop {
                         tokio::select! {
@@ -318,7 +321,7 @@ async fn handle_text_frame(
                                 }
                             }
                             _ = cancel_rx.recv() => {
-                                trace!(id = %id_string, "Subscription cancelled by client");
+                                client_completed = true;
                                 break; // cancelled
                             }
                         }
@@ -326,7 +329,13 @@ async fn handle_text_frame(
 
                     state.borrow_mut().active_subscriptions.remove(&id_string);
 
-                    Some(ServerMessage::complete(id))
+                    if client_completed {
+                        trace!(id = %id_string, "Subscription completed itself");
+                        None
+                    } else {
+                        trace!(id = %id_string, "Subscription completed by client");
+                        Some(ServerMessage::complete(id))
+                    }
                 }
                 Err(err) => Some(err.into_server_message(id)),
             }
