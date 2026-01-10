@@ -17,7 +17,7 @@ use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 
-pub async fn graphql_ws_handler(
+pub async fn ws_index(
     req: HttpRequest,
     schema_state: web::types::State<Arc<SchemaState>>,
     shared_state: web::types::State<Arc<RouterSharedState>>,
