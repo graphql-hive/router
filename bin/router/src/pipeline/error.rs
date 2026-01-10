@@ -20,24 +20,6 @@ use crate::pipeline::{
     progressive_override::LabelEvaluationError,
 };
 
-#[derive(Debug)]
-pub struct PipelineError {
-    pub accept_ok: bool,
-    pub error: PipelineErrorVariant,
-}
-
-pub trait PipelineErrorFromAcceptHeader {
-    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError;
-}
-
-impl PipelineErrorFromAcceptHeader for HttpRequest {
-    #[inline]
-    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
-        let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR, None);
-        PipelineError { accept_ok, error }
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineErrorVariant {
     // HTTP-related errors
@@ -162,19 +144,12 @@ impl PipelineErrorVariant {
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
         }
     }
-}
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct FailedExecutionResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub errors: Option<Vec<GraphQLError>>,
-}
+    pub fn into_response(self, req: &HttpRequest) -> web::HttpResponse {
+        let accept_ok = !req.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR, None);
+        let status = self.default_status_code(accept_ok);
 
-impl PipelineError {
-    pub fn into_response(self) -> web::HttpResponse {
-        let status = self.error.default_status_code(self.accept_ok);
-
-        if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
+        if let PipelineErrorVariant::ValidationErrors(validation_errors) = self {
             let validation_error_result = FailedExecutionResult {
                 errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
             };
@@ -182,7 +157,7 @@ impl PipelineError {
             return ResponseBuilder::new(status).json(&validation_error_result);
         }
 
-        if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = self.error {
+        if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = self {
             let authorization_error_result = FailedExecutionResult {
                 errors: Some(authorization_errors),
             };
@@ -190,8 +165,8 @@ impl PipelineError {
             return ResponseBuilder::new(status).json(&authorization_error_result);
         }
 
-        let code = self.error.graphql_error_code();
-        let message = self.error.graphql_error_message();
+        let code = self.graphql_error_code();
+        let message = self.graphql_error_message();
 
         let graphql_error = GraphQLError::from_message_and_extensions(
             message,
@@ -204,4 +179,10 @@ impl PipelineError {
 
         ResponseBuilder::new(status).json(&result)
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct FailedExecutionResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<GraphQLError>>,
 }

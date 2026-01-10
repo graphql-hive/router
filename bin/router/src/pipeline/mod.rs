@@ -21,7 +21,7 @@ use crate::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
-        error::{PipelineErrorFromAcceptHeader, PipelineErrorVariant},
+        error::PipelineErrorVariant,
         execution::{execute_plan, ExposeQueryPlanMode, PlannedRequest, EXPOSE_QUERY_PLAN_HEADER},
         execution_request::get_execution_request_from_http_request,
         header::{
@@ -90,23 +90,23 @@ pub async fn graphql_request_handler(
     let started_at = Instant::now();
 
     if let Err(err) = perform_csrf_prevention(req, &shared_state.router_config.csrf) {
-        return err.into_response();
+        return err.into_response(req);
     }
 
     let mut execution_request =
         match get_execution_request_from_http_request(req, body_bytes.clone()).await {
             Ok(exec_req) => exec_req,
-            Err(err) => return err.into_response(),
+            Err(err) => return err.into_response(req),
         };
 
     let parser_payload = match parse_operation_with_cache(shared_state, &execution_request).await {
         Ok(payload) => payload,
-        Err(err) => return req.new_pipeline_error(err).into_response(),
+        Err(err) => return err.into_response(req),
     };
     if let Err(err) =
         validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload).await
     {
-        return req.new_pipeline_error(err).into_response();
+        return err.into_response(req);
     }
 
     let normalize_payload = match normalize_request_with_cache(
@@ -118,14 +118,12 @@ pub async fn graphql_request_handler(
     .await
     {
         Ok(payload) => payload,
-        Err(err) => return req.new_pipeline_error(err).into_response(),
+        Err(err) => return err.into_response(req),
     };
     if req.method() == Method::GET {
         if let Some(OperationKind::Mutation) = normalize_payload.operation_for_plan.operation_kind {
             error!("Mutation is not allowed over GET, stopping");
-            return req
-                .new_pipeline_error(PipelineErrorVariant::MutationNotAllowedOverHttpGet)
-                .into_response();
+            return PipelineErrorVariant::MutationNotAllowedOverHttpGet.into_response(req);
         }
     }
 
@@ -136,18 +134,16 @@ pub async fn graphql_request_handler(
 
     if is_subscription
         && !req.accepts_content_type(*MULTIPART_MIXED, None)
-        // considers both GraphQL's Incremental Delivery RFC and Apollo's Multipart HTTP
+    // considers both GraphQL's Incremental Delivery RFC and Apollo's Multipart HTTP
         && !req.accepts_content_type(*TEXT_EVENT_STREAM, None)
     {
-        return req
-            .new_pipeline_error(PipelineErrorVariant::SubscriptionsTransportNotSupported)
-            .into_response();
+        return PipelineErrorVariant::SubscriptionsTransportNotSupported.into_response(req);
     }
 
     let variable_payload =
         match coerce_request_variables(supergraph, &mut execution_request, &normalize_payload) {
             Ok(payload) => payload,
-            Err(err) => return req.new_pipeline_error(err).into_response(),
+            Err(err) => return err.into_response(req),
         };
 
     let query_plan_cancellation_token =
@@ -162,11 +158,7 @@ pub async fn graphql_request_handler(
             scopes: jwt_context.extract_scopes(),
             claims: &match jwt_context.get_claims_value() {
                 Ok(claims) => claims,
-                Err(e) => {
-                    return req
-                        .new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e))
-                        .into_response();
-                }
+                Err(e) => return PipelineErrorVariant::JwtForwardingError(e).into_response(req),
             },
         },
         None => JwtRequestDetails::Unauthenticated,
@@ -298,7 +290,7 @@ pub async fn graphql_request_handler(
                 .header(http::header::CONTENT_TYPE, response_content_type)
                 .streaming(body)
         }
-        Err(err) => req.new_pipeline_error(err).into_response(),
+        Err(err) => err.into_response(req),
     }
 }
 

@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer};
 use sonic_rs::Value;
 use tracing::{trace, warn};
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineErrorVariant;
 use crate::pipeline::header::AssertRequestJson;
 
 #[derive(serde::Deserialize, Debug)]
@@ -85,25 +85,22 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
 pub async fn get_execution_request_from_http_request(
     req: &mut HttpRequest,
     body_bytes: Bytes,
-) -> Result<ExecutionRequest, PipelineError> {
+) -> Result<ExecutionRequest, PipelineErrorVariant> {
     let http_method = req.method();
     let execution_request: ExecutionRequest = match *http_method {
         Method::GET => {
             trace!("Processing GET GraphQL operation");
-            let query_params_str = req.uri().query().ok_or_else(|| {
-                req.new_pipeline_error(PipelineErrorVariant::GetInvalidQueryParams)
-            })?;
+            let query_params_str = req
+                .uri()
+                .query()
+                .ok_or_else(|| PipelineErrorVariant::GetInvalidQueryParams)?;
             let query_params = Query::<GETQueryParams>::from_query(query_params_str)
-                .map_err(|e| {
-                    req.new_pipeline_error(PipelineErrorVariant::GetUnprocessableQueryParams(e))
-                })?
+                .map_err(|e| PipelineErrorVariant::GetUnprocessableQueryParams(e))?
                 .0;
 
             trace!("parsed GET query params: {:?}", query_params);
 
-            query_params
-                .try_into()
-                .map_err(|err| req.new_pipeline_error(err))?
+            query_params.try_into()?
         }
         Method::POST => {
             trace!("Processing POST GraphQL request");
@@ -113,7 +110,7 @@ pub async fn get_execution_request_from_http_request(
             let execution_request = unsafe {
                 sonic_rs::from_slice_unchecked::<ExecutionRequest>(&body_bytes).map_err(|e| {
                     warn!("Failed to parse body: {}", e);
-                    req.new_pipeline_error(PipelineErrorVariant::FailedToParseBody(e))
+                    PipelineErrorVariant::FailedToParseBody(e)
                 })?
             };
 
@@ -122,11 +119,9 @@ pub async fn get_execution_request_from_http_request(
         _ => {
             warn!("unsupported HTTP method: {}", http_method);
 
-            return Err(
-                req.new_pipeline_error(PipelineErrorVariant::UnsupportedHttpMethod(
-                    http_method.to_owned(),
-                )),
-            );
+            return Err(PipelineErrorVariant::UnsupportedHttpMethod(
+                http_method.to_owned(),
+            ));
         }
     };
 

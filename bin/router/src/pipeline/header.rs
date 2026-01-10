@@ -6,7 +6,7 @@ use lazy_static::lazy_static;
 use ntex::web::HttpRequest;
 use tracing::{trace, warn};
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineErrorVariant;
 
 lazy_static! {
     pub static ref APPLICATION_JSON_STR: &'static str = "application/json";
@@ -51,31 +51,29 @@ impl RequestAccepts for HttpRequest {
 }
 
 pub trait AssertRequestJson {
-    fn assert_json_content_type(&self) -> Result<(), PipelineError>;
+    fn assert_json_content_type(&self) -> Result<(), PipelineErrorVariant>;
 }
 
 impl AssertRequestJson for HttpRequest {
     #[inline]
-    fn assert_json_content_type(&self) -> Result<(), PipelineError> {
+    fn assert_json_content_type(&self) -> Result<(), PipelineErrorVariant> {
         match self.headers().get(CONTENT_TYPE) {
             Some(value) => {
-                let content_type_str = value.to_str().map_err(|_| {
-                    self.new_pipeline_error(PipelineErrorVariant::InvalidHeaderValue(CONTENT_TYPE))
-                })?;
+                let content_type_str = value
+                    .to_str()
+                    .map_err(|_| PipelineErrorVariant::InvalidHeaderValue(CONTENT_TYPE))?;
                 if !content_type_str.contains(*APPLICATION_JSON_STR) {
                     warn!(
                         "Invalid content type on a POST request: {}",
                         content_type_str
                     );
-                    return Err(
-                        self.new_pipeline_error(PipelineErrorVariant::UnsupportedContentType)
-                    );
+                    return Err(PipelineErrorVariant::UnsupportedContentType);
                 }
                 Ok(())
             }
             None => {
                 trace!("POST without content type detected");
-                Err(self.new_pipeline_error(PipelineErrorVariant::MissingContentTypeHeader))
+                Err(PipelineErrorVariant::MissingContentTypeHeader)
             }
         }
     }
