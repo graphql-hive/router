@@ -1,4 +1,11 @@
 use futures::future::{select, Either};
+use hive_router_plan_executor::execution::client_request_details::{
+    ClientRequestDetails, JwtRequestDetails, OperationDetails,
+};
+use hive_router_plan_executor::execution::plan::QueryPlanExecutionResult;
+use hive_router_query_planner::state::supergraph_state::OperationKind;
+use hive_router_query_planner::utils::cancellation::CancellationToken;
+use http::Method;
 use ntex::channel::oneshot;
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::util::Bytes;
@@ -12,7 +19,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, trace, warn};
 
+use crate::pipeline::coerce_variables::coerce_request_variables;
+use crate::pipeline::error::PipelineErrorVariant;
+use crate::pipeline::execute_pipeline;
+use crate::pipeline::execution::{ExposeQueryPlanMode, EXPOSE_QUERY_PLAN_HEADER};
 use crate::pipeline::execution_request::ExecutionRequest;
+use crate::pipeline::normalize::normalize_request_with_cache;
+use crate::pipeline::parser::parse_operation_with_cache;
+use crate::pipeline::validation::validate_operation_with_cache;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
@@ -101,7 +115,7 @@ async fn ws_service(
         async move {
             let item = match frame {
                 ws::Frame::Text(text) => {
-                    handle_text_frame(text, sink, schema_state, shared_state).await
+                    handle_text_frame(text, sink, &schema_state, &shared_state).await
                 }
                 // we don't support binary frames
                 // TODO: should we drop the connection altogether?
@@ -135,8 +149,8 @@ async fn ws_service(
 async fn handle_text_frame(
     text: Bytes,
     sink: ws::WsSink,
-    schema_state: Arc<SchemaState>,
-    _shared_state: Arc<RouterSharedState>,
+    schema_state: &Arc<SchemaState>,
+    shared_state: &Arc<RouterSharedState>,
 ) -> Option<ws::Message> {
     let text = match String::from_utf8(text.to_vec()) {
         Ok(s) => s,
@@ -163,7 +177,10 @@ async fn handle_text_frame(
     trace!("Received client message: {:?}", client_msg);
 
     match client_msg {
-        ClientMessage::Subscribe { id, payload } => {
+        ClientMessage::Subscribe {
+            ref id,
+            mut payload,
+        } => {
             let maybe_supergraph = schema_state.current_supergraph();
             let supergraph = match maybe_supergraph.as_ref() {
                 Some(supergraph) => supergraph,
@@ -183,7 +200,99 @@ async fn handle_text_frame(
                     );
                 }
             };
-            Some(ws::Message::Text("TODO".into()))
+
+            let parser_payload = match parse_operation_with_cache(shared_state, &payload).await {
+                Ok(payload) => payload,
+                Err(err) => return Some(err.into_server_message(id).into()),
+            };
+
+            if let Err(err) = validate_operation_with_cache(
+                supergraph,
+                schema_state,
+                shared_state,
+                &parser_payload,
+            )
+            .await
+            {
+                return Some(err.into_server_message(id).into());
+            }
+
+            let normalize_payload = match normalize_request_with_cache(
+                supergraph,
+                schema_state,
+                &payload,
+                &parser_payload,
+            )
+            .await
+            {
+                Ok(payload) => payload,
+                Err(err) => return Some(err.into_server_message(id).into()),
+            };
+
+            let variable_payload =
+                match coerce_request_variables(supergraph, &mut payload, &normalize_payload) {
+                    Ok(payload) => payload,
+                    Err(err) => return Some(err.into_server_message(id).into()),
+                };
+
+            let query_plan_cancellation_token =
+                CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
+
+            // TODO: extract from connection init payload and extensions of payload
+            let headers = ntex::http::HeaderMap::new();
+
+            // TODO: extract from connection init payload and extensions of payload
+            let jwt_request_details = JwtRequestDetails::Unauthenticated;
+
+            let client_request_details = ClientRequestDetails {
+                method: &Method::POST,
+                url: &http::Uri::from_static("/graphql"),
+                headers: &headers,
+                operation: OperationDetails {
+                    name: normalize_payload.operation_for_plan.name.as_deref(),
+                    kind: match normalize_payload.operation_for_plan.operation_kind {
+                        Some(OperationKind::Query) => "query",
+                        Some(OperationKind::Mutation) => "mutation",
+                        Some(OperationKind::Subscription) => "subscription",
+                        None => "query",
+                    },
+                    query: &payload.query,
+                },
+                jwt: &jwt_request_details,
+            };
+
+            let mut expose_query_plan = ExposeQueryPlanMode::No;
+            if shared_state.router_config.query_planner.allow_expose {
+                if let Some(expose_qp_header) = headers.get(&EXPOSE_QUERY_PLAN_HEADER) {
+                    let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
+                    match str_value {
+                        "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
+                        "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
+                        _ => {}
+                    }
+                }
+            }
+
+            match execute_pipeline(
+                &query_plan_cancellation_token,
+                &client_request_details,
+                &normalize_payload,
+                &variable_payload,
+                &expose_query_plan,
+                supergraph,
+                shared_state,
+                schema_state,
+            )
+            .await
+            {
+                Ok(QueryPlanExecutionResult::Single(response)) => {
+                    todo!();
+                }
+                Ok(QueryPlanExecutionResult::Stream(response)) => {
+                    todo!();
+                }
+                Err(err) => Some(err.into_server_message(id).into()),
+            }
         }
         _ => Some(ws::Message::Text("TODO".into())),
     }
@@ -229,6 +338,23 @@ impl From<ServerMessage> for ws::Message {
                     description: Some("Internal Server Error".into()),
                 }))
             }
+        }
+    }
+}
+
+impl PipelineErrorVariant {
+    fn into_server_message(&self, id: &str) -> ServerMessage {
+        let code = self.graphql_error_code();
+        let message = self.graphql_error_message();
+
+        let graphql_error = GraphQLError::from_message_and_extensions(
+            message,
+            GraphQLErrorExtensions::new_from_code(code),
+        );
+
+        ServerMessage::Error {
+            id: id.to_string(),
+            payload: vec![graphql_error],
         }
     }
 }
