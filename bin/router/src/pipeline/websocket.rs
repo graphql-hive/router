@@ -191,7 +191,7 @@ async fn handle_text_frame(
                     return Some(
                         ServerMessage::error(
                             id,
-                            vec![GraphQLError::from_message_and_extensions(
+                            &vec![GraphQLError::from_message_and_extensions(
                                 "No supergraph available yet".to_string(),
                                 GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
                             )],
@@ -203,7 +203,7 @@ async fn handle_text_frame(
 
             let parser_payload = match parse_operation_with_cache(shared_state, &payload).await {
                 Ok(payload) => payload,
-                Err(err) => return Some(err.into_server_message(id).into()),
+                Err(err) => return Some(err.into_server_message(id)),
             };
 
             if let Err(err) = validate_operation_with_cache(
@@ -214,7 +214,7 @@ async fn handle_text_frame(
             )
             .await
             {
-                return Some(err.into_server_message(id).into());
+                return Some(err.into_server_message(id));
             }
 
             let normalize_payload = match normalize_request_with_cache(
@@ -226,13 +226,13 @@ async fn handle_text_frame(
             .await
             {
                 Ok(payload) => payload,
-                Err(err) => return Some(err.into_server_message(id).into()),
+                Err(err) => return Some(err.into_server_message(id)),
             };
 
             let variable_payload =
                 match coerce_request_variables(supergraph, &mut payload, &normalize_payload) {
                     Ok(payload) => payload,
-                    Err(err) => return Some(err.into_server_message(id).into()),
+                    Err(err) => return Some(err.into_server_message(id)),
                 };
 
             let query_plan_cancellation_token =
@@ -296,13 +296,13 @@ async fn handle_text_frame(
                             })));
                         }
                     };
-                    let _ = sink.send(ServerMessage::next(id, payload).into()).await;
+                    let _ = sink.send(ServerMessage::next(id, &payload).into()).await;
                     Some(ServerMessage::complete(id).into())
                 }
                 Ok(QueryPlanExecutionResult::Stream(_)) => {
                     todo!();
                 }
-                Err(err) => Some(err.into_server_message(id).into()),
+                Err(err) => Some(err.into_server_message(id)),
             }
         }
         _ => {
@@ -325,28 +325,28 @@ enum ClientMessage {
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", rename_all = "lowercase")]
-enum ServerMessage<'id> {
+enum ServerMessage<'a> {
     Next {
-        id: &'id str,
-        payload: sonic_rs::Value,
+        id: &'a str,
+        payload: &'a sonic_rs::Value,
     },
     Error {
-        id: &'id str,
-        payload: Vec<GraphQLError>,
+        id: &'a str,
+        payload: &'a [GraphQLError],
     },
     Complete {
-        id: &'id str,
+        id: &'a str,
     },
 }
 
-impl<'id> ServerMessage<'id> {
-    pub fn next(id: &'id str, payload: sonic_rs::Value) -> Self {
+impl<'a> ServerMessage<'a> {
+    pub fn next(id: &'a str, payload: &'a sonic_rs::Value) -> Self {
         ServerMessage::Next { id, payload }
     }
-    pub fn error(id: &'id str, payload: Vec<GraphQLError>) -> Self {
+    pub fn error(id: &'a str, payload: &'a [GraphQLError]) -> Self {
         ServerMessage::Error { id, payload }
     }
-    pub fn complete(id: &'id str) -> Self {
+    pub fn complete(id: &'a str) -> Self {
         ServerMessage::Complete { id }
     }
 }
@@ -367,7 +367,7 @@ impl From<ServerMessage<'_>> for ws::Message {
 }
 
 impl PipelineErrorVariant {
-    fn into_server_message<'id>(&self, id: &'id str) -> ServerMessage<'id> {
+    fn into_server_message(&self, id: &str) -> ws::Message {
         let code = self.graphql_error_code();
         let message = self.graphql_error_message();
 
@@ -376,6 +376,6 @@ impl PipelineErrorVariant {
             GraphQLErrorExtensions::new_from_code(code),
         );
 
-        ServerMessage::error(id, vec![graphql_error])
+        ServerMessage::error(id, &vec![graphql_error]).into()
     }
 }
