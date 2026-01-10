@@ -137,8 +137,14 @@ async fn ws_service(
                     None
                 }
                 // closing connection. we cant send any more message so we just None
-                ws::Frame::Close(_) => {
-                    debug!("WebSocket connection closed");
+                ws::Frame::Close(msg) => {
+                    if let Some(close_reason) = msg {
+                        debug!(
+                            code = ?close_reason.code,
+                            description = ?close_reason.description,
+                            "WebSocket connection closed",
+                        );
+                    }
                     None
                 }
                 // ignore other frames (should not match)
@@ -185,7 +191,7 @@ async fn handle_text_frame(
         }
     };
 
-    trace!("Received client message: {:?}", client_msg);
+    trace!(msg = ?client_msg, "Received client message");
 
     match client_msg {
         ClientMessage::Subscribe { id, mut payload } => {
