@@ -4,7 +4,7 @@ use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::util::Bytes;
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
@@ -178,7 +178,7 @@ enum ClientMessage {
     },
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum ServerMessage {
     Next {
