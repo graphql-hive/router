@@ -195,6 +195,13 @@ async fn handle_text_frame(
 
     match client_msg {
         ClientMessage::Subscribe { id, mut payload } => {
+            if state.borrow().active_subscriptions.contains_key(&id) {
+                return Some(ws::Message::Close(Some(ws::CloseReason {
+                    code: ntex::ws::CloseCode::from(4409),
+                    description: Some(format!("Subscriber for {id} already exists")),
+                })));
+            }
+
             let maybe_supergraph = schema_state.current_supergraph();
             let supergraph = match maybe_supergraph.as_ref() {
                 Some(supergraph) => supergraph,
