@@ -145,6 +145,7 @@ async fn ws_service(
                             "WebSocket connection closed",
                         );
                     }
+                    state.borrow_mut().active_subscriptions.clear();
                     None
                 }
                 // ignore other frames (should not match)
