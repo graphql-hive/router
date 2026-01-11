@@ -23,6 +23,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
+use crate::jwt::context::JwtRequestContext;
+use crate::jwt::errors::JwtError;
 use crate::pipeline::coerce_variables::coerce_request_variables;
 use crate::pipeline::error::PipelineErrorVariant;
 use crate::pipeline::execute_pipeline;
@@ -259,11 +261,47 @@ async fn handle_text_frame(
             let query_plan_cancellation_token =
                 CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-            // TODO: extract from connection init payload
+            // TODO: extract from connection init payload too
             let headers = extract_headers_from_extensions(&payload.extensions);
 
-            // TODO: extract from connection init payload and extensions of payload
-            let jwt_request_details = JwtRequestDetails::Unauthenticated;
+            let mut jwt_context: Option<JwtRequestContext> = None;
+            if let Some(jwt) = &shared_state.jwt_auth_runtime {
+                match jwt
+                    .verify_headers(&headers, &shared_state.jwt_claims_cache)
+                    .await
+                {
+                    Ok(maybe_jwt_context) => {
+                        if let Some(ctx) = maybe_jwt_context {
+                            jwt_context = Some(ctx);
+                        };
+                    }
+                    Err(err) => {
+                        let _ = sink.send(err.into_server_message(&id)).await;
+                        // TODO: we report error as graphql error, but should we also close the connection? we're dealing with auth so it might be safer to close
+                        return Some(err.into_close_message());
+                    }
+                }
+            }
+            let jwt_claims = match &jwt_context {
+                Some(jwt_context) => match jwt_context.get_claims_value() {
+                    Ok(claims) => Some(claims),
+                    Err(e) => {
+                        return Some(
+                            PipelineErrorVariant::JwtForwardingError(e).into_close_message(),
+                        )
+                    }
+                },
+                None => None,
+            };
+            let jwt_request_details = match (&jwt_context, &jwt_claims) {
+                (Some(jwt_context), Some(claims)) => JwtRequestDetails::Authenticated {
+                    token: jwt_context.token_raw.as_str(),
+                    prefix: jwt_context.token_prefix.as_deref(),
+                    scopes: jwt_context.extract_scopes(),
+                    claims,
+                },
+                _ => JwtRequestDetails::Unauthenticated,
+            };
 
             let client_request_details = ClientRequestDetails {
                 method: &Method::POST,
@@ -471,5 +509,24 @@ impl PipelineErrorVariant {
         );
 
         ServerMessage::error(id, &vec![graphql_error])
+    }
+    fn into_close_message(&self) -> ws::Message {
+        ws::Message::Close(Some(ws::CloseReason {
+            // TODO: always an internal server error if we're closing the connection?
+            code: ntex::ws::CloseCode::from(4500),
+            description: Some(self.graphql_error_code().to_string()),
+        }))
+    }
+}
+
+impl JwtError {
+    fn into_server_message(&self, id: &str) -> ws::Message {
+        ServerMessage::error(id, &vec![self.into()])
+    }
+    fn into_close_message(&self) -> ws::Message {
+        ws::Message::Close(Some(ws::CloseReason {
+            code: ntex::ws::CloseCode::from(4403),
+            description: Some(self.error_code().to_string()),
+        }))
     }
 }

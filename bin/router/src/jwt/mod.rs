@@ -12,7 +12,7 @@ use jsonwebtoken::{
     jwk::{Jwk, JwkSet},
     Algorithm, DecodingKey, Header, Validation,
 };
-use ntex::{http::header::HeaderValue, web::HttpRequest};
+use ntex::{http::header::HeaderValue, http::HeaderMap, web::HttpRequest};
 use tracing::warn;
 
 use crate::{
@@ -52,11 +52,11 @@ impl JwtAuthRuntime {
         Ok(instance)
     }
 
-    fn lookup(&self, req: &HttpRequest) -> Result<(Option<String>, String), LookupError> {
+    fn lookup(&self, headers: &HeaderMap) -> Result<(Option<String>, String), LookupError> {
         for lookup_config in &self.config.lookup_locations {
             match lookup_config {
                 JwtAuthPluginLookupLocation::Header { name, prefix } => {
-                    if let Some(header_value) = req.headers().get(name.get_header_ref()) {
+                    if let Some(header_value) = headers.get(name.get_header_ref()) {
                         let header_str = match header_value.to_str() {
                             Ok(s) => s,
                             Err(e) => return Err(LookupError::FailedToStringifyHeader(e)),
@@ -90,7 +90,7 @@ impl JwtAuthRuntime {
                     }
                 }
                 JwtAuthPluginLookupLocation::Cookie { name } => {
-                    if let Some(cookie_raw) = req.headers().get(COOKIE) {
+                    if let Some(cookie_raw) = headers.get(COOKIE) {
                         let raw_cookies = match cookie_raw.to_str() {
                             Ok(cookies) => cookies.split(';'),
                             Err(e) => {
@@ -161,9 +161,9 @@ impl JwtAuthRuntime {
     fn authenticate(
         &self,
         jwks: &Vec<Arc<JwkSet>>,
-        req: &HttpRequest,
+        headers: &HeaderMap,
     ) -> Result<(JwtTokenPayload, Option<String>, String), JwtError> {
-        match self.lookup(req) {
+        match self.lookup(headers) {
             Ok((maybe_prefix, token)) => {
                 // First, we need to decode the header to determine which provider to use.
                 let header = decode_header(&token).map_err(JwtError::InvalidJwtHeader)?;
@@ -266,47 +266,58 @@ impl JwtAuthRuntime {
         Ok(token_data)
     }
 
-    pub async fn validate_request(
+    pub async fn verify_headers(
         &self,
-        request: &mut HttpRequest,
+        headers: &HeaderMap,
         cache: &JwtClaimsCache,
-    ) -> Result<(), JwtError> {
-        let (maybe_prefix, token) = match self.lookup(request) {
+    ) -> Result<Option<JwtRequestContext>, JwtError> {
+        let (maybe_prefix, token) = match self.lookup(headers) {
             Ok((p, t)) => (p, t),
             Err(e) => {
                 // No token found, but this is only an error if auth is required.
                 if self.config.require_authentication.is_some_and(|v| v) {
                     return Err(JwtError::LookupFailed(e));
                 }
-                return Ok(());
+                return Ok(None);
             }
         };
 
         let validation_result = cache
             .try_get_with(token.clone(), async {
                 let valid_jwks = self.jwks.all();
-                self.authenticate(&valid_jwks, request)
+                self.authenticate(&valid_jwks, headers)
                     .map(|(payload, _, _)| Arc::new(payload))
             })
             .await;
 
         match validation_result {
-            Ok(token_payload) => {
-                request.extensions_mut().insert(JwtRequestContext {
-                    token_payload,
-                    token_raw: token,
-                    token_prefix: maybe_prefix,
-                });
-                Ok(())
-            }
+            Ok(token_payload) => Ok(Some(JwtRequestContext {
+                token_payload,
+                token_raw: token,
+                token_prefix: maybe_prefix,
+            })),
             Err(err) => {
                 warn!("jwt token error: {:?}", err);
                 if self.config.require_authentication.is_some_and(|v| v) {
                     Err((*err).clone())
                 } else {
-                    Ok(())
+                    Ok(None)
                 }
             }
+        }
+    }
+    pub async fn validate_request(
+        &self,
+        request: &mut HttpRequest,
+        cache: &JwtClaimsCache,
+    ) -> Result<(), JwtError> {
+        match self.verify_headers(request.headers(), cache).await {
+            Ok(Some(context)) => {
+                request.extensions_mut().insert(context);
+                Ok(())
+            }
+            Ok(None) => Ok(()),
+            Err(e) => Err(e),
         }
     }
 }
