@@ -13,6 +13,7 @@ use ntex::util::Bytes;
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
 use serde::{Deserialize, Serialize};
+use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
@@ -258,8 +259,8 @@ async fn handle_text_frame(
             let query_plan_cancellation_token =
                 CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-            // TODO: extract from connection init payload and extensions of payload
-            let headers = ntex::http::HeaderMap::new();
+            // TODO: extract from connection init payload
+            let headers = extract_headers_from_extensions(&payload.extensions);
 
             // TODO: extract from connection init payload and extensions of payload
             let jwt_request_details = JwtRequestDetails::Unauthenticated;
@@ -363,6 +364,31 @@ async fn handle_text_frame(
             None
         }
     }
+}
+
+fn extract_headers_from_extensions(
+    extensions: &Option<HashMap<String, sonic_rs::Value>>,
+) -> ntex::http::HeaderMap {
+    let mut header_map = ntex::http::HeaderMap::new();
+
+    if let Some(ext) = extensions {
+        if let Some(headers_value) = ext.get("headers") {
+            if let Some(headers_obj) = headers_value.as_object() {
+                for (key, value) in headers_obj {
+                    if let Some(value_str) = value.as_str() {
+                        if let (Ok(name), Ok(val)) = (
+                            ntex::http::header::HeaderName::try_from(key),
+                            ntex::http::header::HeaderValue::try_from(value_str),
+                        ) {
+                            header_map.insert(name, val);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    header_map
 }
 
 #[derive(Deserialize, Debug)]
