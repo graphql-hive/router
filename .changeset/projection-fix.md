@@ -10,3 +10,5 @@ When a query included fragments on an abstract type (interface or union) that se
 For example, with `... on A { children { id } }` and `... on B { children { id } }` where `A.children` returns `[AChild]` and `B.children` returns `[BChild]`, the projection would fail to correctly distinguish between the types and return incomplete or incorrect data.
 
 The fix introduces type-aware plan merging, which preserves the context of which concrete types a field came from. During response projection, the type is now determined dynamically for each object, ensuring the correct field type is used.
+
+In addition, a refactor of the response projection logic was performed to improve performance.
