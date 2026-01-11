@@ -21,6 +21,7 @@ pub struct SchemaMetadata {
     pub object_types: HashSet<String>,
     pub scalar_types: HashSet<String>,
     pub union_types: HashSet<String>,
+    pub interface_types: HashSet<String>,
 }
 
 impl SchemaMetadata {
@@ -34,6 +35,10 @@ impl SchemaMetadata {
 
     pub fn is_union_type(&self, name: &str) -> bool {
         self.union_types.contains(name)
+    }
+
+    pub fn is_interface_type(&self, name: &str) -> bool {
+        self.interface_types.contains(name)
     }
 
     pub fn get_type_fields(&self, type_name: &str) -> Option<&HashMap<String, FieldTypeInfo>> {
@@ -88,6 +93,7 @@ impl SchemaWithMetadata for ConsumerSchema {
         ]);
         let mut object_types: HashSet<String> = HashSet::default();
         let mut union_types: HashSet<String> = HashSet::default();
+        let mut interface_types: HashSet<String> = HashSet::default();
 
         for definition in &self.document.definitions {
             match definition {
@@ -123,6 +129,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                 }
                 Definition::TypeDefinition(TypeDefinition::Interface(interface_type)) => {
                     let name = interface_type.name.to_string();
+                    interface_types.insert(name.clone());
                     let mut fields = HashMap::default();
                     for field in &interface_type.fields {
                         let field_type_name = field.field_type.type_name();
@@ -183,6 +190,7 @@ impl SchemaWithMetadata for ConsumerSchema {
             object_types,
             scalar_types,
             union_types,
+            interface_types,
         }
     }
 }

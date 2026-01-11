@@ -7,9 +7,9 @@ use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use crate::response::value::Value;
 use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
+use std::cell::OnceCell;
 use std::collections::HashMap;
-
-use tracing::{instrument, warn};
+use std::rc::Rc;
 
 use crate::introspection::schema::SchemaMetadata;
 use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
@@ -18,7 +18,63 @@ use crate::utils::consts::{
     QUOTE, TRUE, TYPENAME_FIELD_NAME,
 };
 
-#[instrument(level = "trace", skip_all)]
+/// Represents a type's name that can be either already resolved or lazily computed.
+/// This avoids computing the type name when it's not needed, which is important for performance.
+///
+/// The enum is recursive - a Deferred variant can contain another TypeName as its parent,
+/// creating a lazy chain that only resolves when actually needed.
+#[derive(Clone)]
+enum TypeName<'a> {
+    Resolved(&'a str),
+    Deferred {
+        selection: &'a FieldProjectionPlan,
+        data: Option<&'a Value<'a>>,
+        parent: Rc<TypeName<'a>>,
+        schema: &'a SchemaMetadata,
+        /// Cache for the resolved type name to avoid recomputation
+        cached: OnceCell<Result<&'a str, ProjectionError>>,
+    },
+}
+
+impl<'a> TypeName<'a> {
+    #[inline]
+    fn resolved(type_name: &'a str) -> Self {
+        TypeName::Resolved(type_name)
+    }
+
+    #[inline]
+    fn deferred(
+        selection: &'a FieldProjectionPlan,
+        data: Option<&'a Value>,
+        parent: TypeName<'a>,
+        schema: &'a SchemaMetadata,
+    ) -> Self {
+        TypeName::Deferred {
+            selection,
+            data,
+            parent: Rc::new(parent),
+            schema,
+            cached: OnceCell::new(),
+        }
+    }
+
+    #[inline]
+    fn get(&self) -> Result<&'a str, ProjectionError> {
+        match self {
+            TypeName::Resolved(name) => Ok(name),
+            TypeName::Deferred {
+                selection,
+                data,
+                parent,
+                schema,
+                cached,
+            } => cached
+                .get_or_init(|| resolve_type_name(selection, *data, parent, schema))
+                .clone(),
+        }
+    }
+}
+
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 pub fn project_by_operation(
@@ -48,7 +104,7 @@ pub fn project_by_operation(
             &mut errors,
             selections,
             variable_values,
-            operation_type_name,
+            TypeName::resolved(operation_type_name),
             &mut buffer,
             &mut first,
             schema_metadata,
@@ -130,14 +186,14 @@ fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
     };
 }
 
-fn project_selection_set(
-    data: &Value,
+fn project_selection_set<'a>(
+    data: &'a Value,
     errors: &mut Vec<GraphQLError>,
-    selection: &FieldProjectionPlan,
+    selection: &'a FieldProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     buffer: &mut Vec<u8>,
-    parent_type_name: &str,
-    schema_metadata: &SchemaMetadata,
+    parent_type_name: TypeName<'a>,
+    schema_metadata: &'a SchemaMetadata,
 ) -> Result<(), ProjectionError> {
     match data {
         Value::Array(arr) => {
@@ -153,7 +209,7 @@ fn project_selection_set(
                     selection,
                     variable_values,
                     buffer,
-                    parent_type_name,
+                    parent_type_name.clone(),
                     schema_metadata,
                 )?;
                 first = false;
@@ -166,12 +222,12 @@ fn project_selection_set(
                     selections: Some(selections),
                 } => {
                     let mut first = true;
-                    let type_name = resolve_type_name(
+                    let type_name = TypeName::deferred(
                         selection,
                         Some(data),
                         parent_type_name,
                         schema_metadata,
-                    )?;
+                    );
                     project_selection_set_with_map(
                         obj,
                         errors,
@@ -209,40 +265,50 @@ fn project_selection_set(
 
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
-fn project_selection_set_with_map(
-    obj: &[(&str, Value)],
+fn project_selection_set_with_map<'a>(
+    obj: &'a [(&str, Value)],
     errors: &mut Vec<GraphQLError>,
-    plans: &[FieldProjectionPlan],
+    plans: &'a [FieldProjectionPlan],
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    parent_type_name: &str,
+    parent_type_name: TypeName<'a>,
     buffer: &mut Vec<u8>,
     first: &mut bool,
-    schema_metadata: &SchemaMetadata,
+    schema_metadata: &'a SchemaMetadata,
 ) -> Result<(), ProjectionError> {
     for plan in plans {
-        if plan
-            .parent_type_guard
-            .as_ref()
-            .is_some_and(|guard| !guard.matches(parent_type_name))
-        {
-            // Seems like the field projection plan applies to other types, so move to the next one
-            continue;
+        if let Some(guard) = &plan.parent_type_guard {
+            let name = parent_type_name.get()?;
+            if !guard.matches(name) {
+                // Seems like the field projection plan applies to other types, so move to the next one
+                continue;
+            }
         }
 
         let field_val = obj
-            .iter()
-            .position(|(k, _)| k == &plan.response_key.as_str())
+            .binary_search_by_key(&plan.response_key.as_str(), |(k, _)| *k)
+            .ok()
             .map(|idx| &obj[idx].1);
 
-        let type_name = resolve_type_name(plan, field_val, parent_type_name, schema_metadata)?;
-
-        let res = check(
-            &plan.conditions,
-            parent_type_name,
-            type_name,
-            field_val,
-            variable_values,
-        );
+        let res = if let Some(conditions) = &plan.conditions {
+            let field_type_name_cell = OnceCell::new();
+            let field_type_name_fn = || {
+                field_type_name_cell
+                    .get_or_init(|| {
+                        resolve_type_name(plan, field_val, &parent_type_name, schema_metadata)
+                    })
+                    .clone()
+            };
+            let parent_type_name_fn = || parent_type_name.get();
+            check(
+                conditions,
+                &parent_type_name_fn,
+                &field_type_name_fn,
+                field_val,
+                variable_values,
+            )
+        } else {
+            Ok(())
+        };
 
         match res {
             Ok(_) => {
@@ -264,27 +330,30 @@ fn project_selection_set_with_map(
                         continue;
                     }
                     ProjectionValueSource::ResponseData { .. } => {
-                        if let Some(field_val) = field_val {
+                        if plan.is_typename {
+                            // If the field is TYPENAME_FIELD, we should set it to the parent type name
+                            buffer.put(QUOTE);
+                            buffer.put(parent_type_name.get()?.as_bytes());
+                            buffer.put(QUOTE);
+                        } else if let Some(field_val) = field_val {
                             project_selection_set(
                                 field_val,
                                 errors,
                                 plan,
                                 variable_values,
                                 buffer,
-                                parent_type_name,
+                                parent_type_name.clone(),
                                 schema_metadata,
                             )?;
-                        } else if plan.is_typename {
-                            // If the field is TYPENAME_FIELD, we should set it to the parent type name
-                            buffer.put(QUOTE);
-                            buffer.put(parent_type_name.as_bytes());
-                            buffer.put(QUOTE);
                         } else {
                             // If the field is not found in the object, set it to Null
                             buffer.put(NULL);
                         }
                     }
                 }
+            }
+            Err(FieldProjectionConditionError::Fatal(err)) => {
+                return Err(err);
             }
             Err(FieldProjectionConditionError::Skip) => {
                 // Skip this field
@@ -335,13 +404,17 @@ fn project_selection_set_with_map(
 }
 
 #[inline]
-fn check(
+fn check<'a, F, T>(
     cond: &FieldProjectionCondition,
-    parent_type_name: &str,
-    field_type_name: &str,
+    parent_type_name: &T,
+    field_type_name: &F,
     field_value: Option<&Value>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-) -> Result<(), FieldProjectionConditionError> {
+) -> Result<(), FieldProjectionConditionError>
+where
+    F: Fn() -> Result<&'a str, ProjectionError>,
+    T: Fn() -> Result<&'a str, ProjectionError>,
+{
     match cond {
         FieldProjectionCondition::And(condition_a, condition_b) => check(
             condition_a,
@@ -401,14 +474,14 @@ fn check(
             Ok(())
         }
         FieldProjectionCondition::ParentTypeCondition(type_condition) => {
-            if type_condition.matches(parent_type_name) {
+            if type_condition.matches(parent_type_name()?) {
                 Ok(())
             } else {
                 Err(FieldProjectionConditionError::InvalidParentType)
             }
         }
         FieldProjectionCondition::FieldTypeCondition(type_condition) => {
-            if type_condition.matches(field_type_name) {
+            if type_condition.matches(field_type_name()?) {
                 Ok(())
             } else {
                 Err(FieldProjectionConditionError::InvalidFieldType)
@@ -416,7 +489,7 @@ fn check(
         }
         FieldProjectionCondition::EnumValuesCondition(enum_values) => {
             if let Some(Value::String(string_value)) = field_value {
-                if enum_values.contains(&string_value.to_string()) {
+                if enum_values.contains(string_value.as_ref()) {
                     Ok(())
                 } else {
                     Err(FieldProjectionConditionError::InvalidEnumValue)
@@ -428,7 +501,7 @@ fn check(
     }
 }
 
-#[inline(always)]
+#[inline]
 /// When an error is returned, it means a broken logic or state.
 /// A scenario when a type is missing or a type is missing a field,
 /// can only happen when field's projection rule lack a proper type guard,
@@ -436,7 +509,7 @@ fn check(
 fn resolve_type_name<'a>(
     plan: &'a FieldProjectionPlan,
     field_val: Option<&'a Value>,
-    parent_type_name: &'a str,
+    parent_type_name: &TypeName<'a>,
     schema_metadata: &'a SchemaMetadata,
 ) -> Result<&'a str, ProjectionError> {
     if plan.is_typename {
@@ -446,14 +519,16 @@ fn resolve_type_name<'a>(
     let typename_field = field_val
         .and_then(|value| value.as_object())
         .and_then(|obj| {
-            obj.iter()
-                .position(|(k, _)| k == &TYPENAME_FIELD_NAME)
+            obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| *k)
+                .ok()
                 .and_then(|idx| obj[idx].1.as_str())
         });
 
     if let Some(typename) = typename_field {
         return Ok(typename);
     }
+
+    let parent_type_name = parent_type_name.get()?;
 
     let fields = schema_metadata
         .get_type_fields(parent_type_name)
