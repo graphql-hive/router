@@ -145,6 +145,7 @@ async fn ws_service(
                             "WebSocket connection closed",
                         );
                     }
+                    // cancel all active subscriptions on close allowing shutdown
                     state.borrow_mut().active_subscriptions.clear();
                     None
                 }
