@@ -198,7 +198,7 @@ async fn handle_text_frame(
         ClientMessage::Subscribe { id, mut payload } => {
             if state.borrow().active_subscriptions.contains_key(&id) {
                 return Some(ws::Message::Close(Some(ws::CloseReason {
-                    code: ntex::ws::CloseCode::from(4409),
+                    code: ws::CloseCode::from(4409),
                     description: Some(format!("Subscriber for {id} already exists")),
                 })));
             }
