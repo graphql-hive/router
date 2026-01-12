@@ -13,13 +13,13 @@ use axum::{
     routing::{get, post_service},
     Router,
 };
+use dashmap::DashMap;
 use sonic_rs::Value;
-use std::{collections::HashMap, env::var, sync::Arc};
+use std::{env::var, sync::Arc};
 use tokio::{
     net::TcpListener,
     sync::{
         oneshot::{self, Sender},
-        Mutex,
     },
     task::JoinHandle,
 };
@@ -55,7 +55,7 @@ async fn add_subgraph_header(req: Request, next: Next) -> Response {
 }
 
 async fn track_requests(
-    State(state): State<SubgraphsServiceState>,
+    State(state): State<Arc<SubgraphsServiceState>>,
     request: Request,
     next: Next,
 ) -> impl IntoResponse {
@@ -63,9 +63,7 @@ async fn track_requests(
     let (parts, body) = request.into_parts();
     let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
     let record = extract_record(&parts, body_bytes.clone());
-    let mut log = state.request_log.lock().await;
-
-    log.entry(path).or_default().push(record);
+    state.request_log.entry(path).or_default().push(record);
     let new_body = axum::body::Body::from(body_bytes);
     let request = Request::from_parts(parts, new_body);
 
@@ -74,7 +72,8 @@ async fn track_requests(
 
 fn extract_record(request_parts: &Parts, request_body: Bytes) -> RequestLog {
     let header_map = request_parts.headers.clone();
-    let body_value: Value = sonic_rs::from_slice(&request_body).unwrap();
+    // If body is not valid JSON, we just store an empty object
+    let body_value: Value = sonic_rs::from_slice(&request_body).unwrap_or(Value::new());
 
     RequestLog {
         headers: header_map,
@@ -94,23 +93,23 @@ pub struct RequestLog {
 
 #[derive(Clone)]
 pub struct SubgraphsServiceState {
-    pub request_log: Arc<Mutex<HashMap<String, Vec<RequestLog>>>>,
+    pub request_log: DashMap<String, Vec<RequestLog>>,
     pub health_check_url: String,
 }
 
 pub fn start_subgraphs_server(
     port: Option<u16>,
-) -> (JoinHandle<()>, Sender<()>, SubgraphsServiceState) {
+) -> (JoinHandle<()>, Sender<()>, Arc<SubgraphsServiceState>) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let host = var("HOST").unwrap_or("0.0.0.0".to_owned());
     let port = port
         .map(|v| v.to_string())
         .unwrap_or(var("PORT").unwrap_or("4200".to_owned()));
 
-    let shared_state = SubgraphsServiceState {
-        request_log: Arc::new(Mutex::new(HashMap::new())),
+    let shared_state = Arc::new(SubgraphsServiceState {
+        request_log: DashMap::new(),
         health_check_url: format!("http://{}:{}/health", host, port),
-    };
+    });
 
     let app = Router::new()
         .route(
