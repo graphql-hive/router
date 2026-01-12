@@ -22,7 +22,7 @@ lazy_static! {
 }
 
 /// Non-streamable (single) content types for GraphQL responses.
-#[derive(PartialEq, Default)]
+#[derive(PartialEq, Default, Debug)]
 pub enum SingleContentType {
     /// GraphQL over HTTP spec (`application/graphql-response+json`)
     ///
@@ -45,7 +45,7 @@ impl SingleContentType {
 }
 
 /// Streamable content types for GraphQL responses.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum StreamContentType {
     /// Incremental Delivery over HTTP (`multipart/mixed`)
     ///
@@ -76,6 +76,7 @@ impl StreamContentType {
     }
 }
 
+#[derive(Debug)]
 enum SupportedContentType {
     Single(SingleContentType),
     Stream(StreamContentType),
