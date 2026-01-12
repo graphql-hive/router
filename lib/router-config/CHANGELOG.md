@@ -66,6 +66,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.16 (2026-01-12)
+
+### Fixes
+
+#### Added an option to customize the GraphQL endpoint path
+
+You can now customize the GraphQL endpoint path by adding the following configuration to your router configuration file:
+
+```yaml
+http:
+  graphql_endpoint: /my-graphql-endpoint
+```
+
 ## 0.0.15 (2025-12-08)
 
 ### Fixes
