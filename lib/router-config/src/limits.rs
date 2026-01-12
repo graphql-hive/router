@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
-pub struct QueryComplexityConfig {
+pub struct LimitsConfig {
     /// Configuration of limiting the depth of the incoming GraphQL operations.
     /// If not specified, depth limiting is disabled.
     ///

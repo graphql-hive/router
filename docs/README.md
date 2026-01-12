@@ -11,10 +11,10 @@
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
+|[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_depth":null,"max_directives":null}`<br/>||
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
-|[**query\_complexity**](#query_complexity)|`object`|Configuration for query complexity checking.<br/>Default: `{"max_depth":null,"max_directives":null}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
@@ -91,6 +91,9 @@ jwt:
     - name: authorization
       prefix: Bearer
       source: header
+limits:
+  max_depth: null
+  max_directives: null
 log:
   filter: null
   format: json
@@ -111,9 +114,6 @@ override_subgraph_urls:
                   .default
                 }
             
-query_complexity:
-  max_depth: null
-  max_directives: null
 query_planner:
   allow_expose: false
   timeout: 10s
@@ -1649,6 +1649,75 @@ The first one that is found will be used.
 
 ```
 
+<a name="limits"></a>
+## limits: object
+
+Configuration for checking the limits such as query depth, complexity, etc.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**max\_depth**](#limitsmax_depth)|`object`, `null`|Configuration of limiting the depth of the incoming GraphQL operations.<br/>||
+|[**max\_directives**](#limitsmax_directives)|`object`, `null`|Configuration of limiting the number of directives in the incoming GraphQL operations.<br/>||
+
+**Example**
+
+```yaml
+max_depth: null
+max_directives: null
+
+```
+
+<a name="limitsmax_depth"></a>
+### limits\.max\_depth: object,null
+
+Configuration of limiting the depth of the incoming GraphQL operations.
+If not specified, depth limiting is disabled.
+
+It is used to prevent too large queries that could lead to overfetching or DOS attacks.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expose\_limits**|`boolean`|Whether to expose the limits in the error message.<br/>Default: `true`<br/>||
+|**flatten\_fragments**|`boolean`|Flatten fragment spreads and inline fragments when calculating depth.<br/>Default: `false`<br/>||
+|**ignore\_introspection**|`boolean`|Ignore the depth of introspection queries.<br/>Default: `true`<br/>||
+|**n**|`integer`|Depth threshold. A value of 0 means no limit.<br/>Default: `6`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="limitsmax_directives"></a>
+### limits\.max\_directives: object,null
+
+Configuration of limiting the number of directives in the incoming GraphQL operations.
+If not specified, directive limiting is disabled.
+
+It is used to prevent too many directives that could lead to overfetching or DOS attacks.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expose\_limits**|`boolean`|Whether to expose the limits in the error message.<br/>Default: `true`<br/>||
+|**n**|`integer`|Directives threshold. A value of 0 means no limit.<br/>Default: `50`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+
+**Example**
+
+```yaml
+{}
+
+```
+
 <a name="log"></a>
 ## log: object
 
@@ -1727,75 +1796,6 @@ products:
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**url**||Overrides for the URL of the subgraph.<br/><br/>For convenience, a plain string in your configuration will be treated as a static URL.<br/><br/>### Static URL Example<br/>```yaml<br/>url: "https://api.example.com/graphql"<br/>```<br/><br/>### Dynamic Expression Example<br/><br/>The expression has access to the following variables:<br/>- `request`: The incoming HTTP request, including headers and other metadata.<br/>- `default`: The original URL of the subgraph (from supergraph sdl).<br/><br/>```yaml<br/>url:<br/>  expression: \|<br/>    if .request.headers."x-region" == "us-east" {<br/>      "https://products-us-east.example.com/graphql"<br/>    } else if .request.headers."x-region" == "eu-west" {<br/>      "https://products-eu-west.example.com/graphql"<br/>    } else {<br/>      .default<br/>    }<br/>|yes|
-
-<a name="query_complexity"></a>
-## query\_complexity: object
-
-Configuration for query complexity checking.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**max\_depth**](#query_complexitymax_depth)|`object`, `null`|Configuration of limiting the depth of the incoming GraphQL operations.<br/>||
-|[**max\_directives**](#query_complexitymax_directives)|`object`, `null`|Configuration of limiting the number of directives in the incoming GraphQL operations.<br/>||
-
-**Example**
-
-```yaml
-max_depth: null
-max_directives: null
-
-```
-
-<a name="query_complexitymax_depth"></a>
-### query\_complexity\.max\_depth: object,null
-
-Configuration of limiting the depth of the incoming GraphQL operations.
-If not specified, depth limiting is disabled.
-
-It is used to prevent too large queries that could lead to overfetching or DOS attacks.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**expose\_limits**|`boolean`|Whether to expose the limits in the error message.<br/>Default: `true`<br/>||
-|**flatten\_fragments**|`boolean`|Flatten fragment spreads and inline fragments when calculating depth.<br/>Default: `false`<br/>||
-|**ignore\_introspection**|`boolean`|Ignore the depth of introspection queries.<br/>Default: `true`<br/>||
-|**n**|`integer`|Depth threshold. A value of 0 means no limit.<br/>Default: `6`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
-
-**Example**
-
-```yaml
-{}
-
-```
-
-<a name="query_complexitymax_directives"></a>
-### query\_complexity\.max\_directives: object,null
-
-Configuration of limiting the number of directives in the incoming GraphQL operations.
-If not specified, directive limiting is disabled.
-
-It is used to prevent too many directives that could lead to overfetching or DOS attacks.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**expose\_limits**|`boolean`|Whether to expose the limits in the error message.<br/>Default: `true`<br/>||
-|**n**|`integer`|Directives threshold. A value of 0 means no limit.<br/>Default: `50`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
-
-**Example**
-
-```yaml
-{}
-
-```
 
 <a name="query_planner"></a>
 ## query\_planner: object

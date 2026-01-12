@@ -6,11 +6,11 @@ pub mod graphiql;
 pub mod headers;
 pub mod http_server;
 pub mod jwt_auth;
+pub mod limits;
 pub mod log;
 pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
-pub mod query_complexity;
 pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
@@ -103,8 +103,8 @@ pub struct HiveRouterConfig {
     pub usage_reporting: usage_reporting::UsageReportingConfig,
 
     #[serde(default)]
-    /// Configuration for query complexity checking.
-    pub query_complexity: query_complexity::QueryComplexityConfig,
+    /// Configuration for checking the limits such as query depth, complexity, etc.
+    pub limits: limits::LimitsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

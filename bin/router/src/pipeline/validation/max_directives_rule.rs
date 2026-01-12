@@ -8,7 +8,7 @@ use graphql_tools::{
         utils::{ValidationError, ValidationErrorContext},
     },
 };
-use hive_router_config::query_complexity::MaxDirectivesRuleConfig;
+use hive_router_config::limits::MaxDirectivesRuleConfig;
 
 use crate::pipeline::validation::shared::CountableNode;
 
@@ -117,7 +117,7 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
 mod tests {
     use graphql_parser::{parse_query, parse_schema};
     use graphql_tools::validation::validate::{validate, ValidationPlan};
-    use hive_router_config::query_complexity::MaxDirectivesRuleConfig;
+    use hive_router_config::limits::MaxDirectivesRuleConfig;
 
     use crate::pipeline::validation::max_directives_rule::MaxDirectivesRule;
 
