@@ -1,7 +1,7 @@
+pub mod allow_introspection;
 pub mod authorization;
 pub mod cors;
 pub mod csrf;
-pub mod disable_introspection;
 mod env_overrides;
 pub mod graphiql;
 pub mod headers;
@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::{
-    disable_introspection::DisableIntrospectionConfig,
+    allow_introspection::AllowIntrospectionConfig,
     env_overrides::{EnvVarOverrides, EnvVarOverridesError},
     graphiql::GraphiQLConfig,
     http_server::HttpServerConfig,
@@ -103,9 +103,9 @@ pub struct HiveRouterConfig {
     #[serde(default)]
     pub usage_reporting: usage_reporting::UsageReportingConfig,
 
-    /// Configuration to disable introspection queries.
+    /// Configuration to enable or disable introspection queries.
     #[serde(default)]
-    pub disable_introspection: Option<DisableIntrospectionConfig>,
+    pub introspection: Option<AllowIntrospectionConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]

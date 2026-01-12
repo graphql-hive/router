@@ -73,7 +73,7 @@ pub enum PipelineError {
     #[error("Failed to forward jwt: {0}")]
     JwtForwardingError(JwtForwardingError),
 
-    #[error("Failed to evaluate disable_introspection expression: {0}")]
+    #[error("Failed to evaluate introspection expression: {0}")]
     IntrospectionPermissionEvaluationError(String),
 }
 
