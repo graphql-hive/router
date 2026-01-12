@@ -305,8 +305,7 @@ mod tests {
 
         #[test]
         fn test_apollo_multipart_http() {
-            let result =
-                SupportedContentType::parse(r#"multipart/mixed; subscriptionSpec="1.0""#);
+            let result = SupportedContentType::parse(r#"multipart/mixed; subscriptionSpec="1.0""#);
             assert!(matches!(
                 result,
                 Some(SupportedContentType::Stream(
@@ -317,8 +316,7 @@ mod tests {
 
         #[test]
         fn test_apollo_multipart_http_reversed_params() {
-            let result =
-                SupportedContentType::parse(r#"subscriptionSpec="1.0"; multipart/mixed"#);
+            let result = SupportedContentType::parse(r#"subscriptionSpec="1.0"; multipart/mixed"#);
             assert!(matches!(
                 result,
                 Some(SupportedContentType::Stream(
@@ -386,14 +384,16 @@ mod tests {
         #[test]
         fn test_multiple_content_types_order_matters() {
             // First single type should be selected
-            let (single, stream) =
-                SupportedContentType::parse_header("application/json, application/graphql-response+json");
+            let (single, stream) = SupportedContentType::parse_header(
+                "application/json, application/graphql-response+json",
+            );
             assert!(matches!(single, Some(SingleContentType::JSON)));
             assert!(stream.is_none());
 
             // Reversed order
-            let (single, stream) =
-                SupportedContentType::parse_header("application/graphql-response+json, application/json");
+            let (single, stream) = SupportedContentType::parse_header(
+                "application/graphql-response+json, application/json",
+            );
             assert!(matches!(
                 single,
                 Some(SingleContentType::GraphQLResponseJSON)
@@ -403,9 +403,8 @@ mod tests {
 
         #[test]
         fn test_mixed_single_and_stream_types() {
-            let (single, stream) = SupportedContentType::parse_header(
-                "text/event-stream, application/json",
-            );
+            let (single, stream) =
+                SupportedContentType::parse_header("text/event-stream, application/json");
             assert!(matches!(single, Some(SingleContentType::JSON)));
             assert!(matches!(stream, Some(StreamContentType::SSE)));
         }
@@ -413,15 +412,13 @@ mod tests {
         #[test]
         fn test_order_of_appearance_respected() {
             // SSE before multipart/mixed
-            let (_single, stream) = SupportedContentType::parse_header(
-                "text/event-stream, multipart/mixed",
-            );
+            let (_single, stream) =
+                SupportedContentType::parse_header("text/event-stream, multipart/mixed");
             assert!(matches!(stream, Some(StreamContentType::SSE)));
 
             // multipart/mixed before SSE
-            let (_single, stream) = SupportedContentType::parse_header(
-                "multipart/mixed, text/event-stream",
-            );
+            let (_single, stream) =
+                SupportedContentType::parse_header("multipart/mixed, text/event-stream");
             assert!(matches!(
                 stream,
                 Some(StreamContentType::IncrementalDelivery)
@@ -451,9 +448,8 @@ mod tests {
 
         #[test]
         fn test_unsupported_types_ignored() {
-            let (single, stream) = SupportedContentType::parse_header(
-                "text/html, application/json, text/plain",
-            );
+            let (single, stream) =
+                SupportedContentType::parse_header("text/html, application/json, text/plain");
             assert!(matches!(single, Some(SingleContentType::JSON)));
             assert!(stream.is_none());
         }
@@ -479,9 +475,8 @@ mod tests {
         #[test]
         fn test_wildcard_with_other_types_returns_defaults() {
             // Wildcard should return defaults regardless of other types
-            let (single, stream) = SupportedContentType::parse_header(
-                "application/json, */*, text/event-stream",
-            );
+            let (single, stream) =
+                SupportedContentType::parse_header("application/json, */*, text/event-stream");
             assert!(matches!(
                 single,
                 Some(SingleContentType::GraphQLResponseJSON)
