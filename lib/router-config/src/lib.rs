@@ -11,6 +11,7 @@ pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
+pub mod subscriptions;
 pub mod supergraph;
 pub mod traffic_shaping;
 pub mod usage_reporting;
@@ -100,6 +101,10 @@ pub struct HiveRouterConfig {
     /// Configuration for usage reporting to GraphQL Hive.
     #[serde(default)]
     pub usage_reporting: usage_reporting::UsageReportingConfig,
+
+    /// Configuration for subscriptions.
+    #[serde(default)]
+    pub subscriptions: subscriptions::SubscriptionsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

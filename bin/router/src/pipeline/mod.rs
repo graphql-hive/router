@@ -191,13 +191,17 @@ pub async fn execute_pipeline(
         Some(OperationKind::Subscription)
     );
 
+    if is_subscription && !shared_state.router_config.subscriptions.enabled {
+        return Err(req.new_pipeline_error(PipelineErrorVariant::SubscriptionsNotSupport));
+    }
+
     if is_subscription
         && !req.accepts_content_type(*MULTIPART_MIXED, None)
         // considers both GraphQL's Incremental Delivery RFC and Apollo's Multipart HTTP
         && !req.accepts_content_type(*TEXT_EVENT_STREAM, None)
     {
         return Err(
-            req.new_pipeline_error(PipelineErrorVariant::SubscriptionNotSupportedOverTransport)
+            req.new_pipeline_error(PipelineErrorVariant::SubscriptionsTransportNotSupported)
         );
     }
 

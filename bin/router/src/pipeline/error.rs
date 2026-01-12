@@ -93,8 +93,10 @@ pub enum PipelineErrorVariant {
     JwtForwardingError(JwtForwardingError),
 
     // Subscription-related errors
+    #[error("Subscriptions are not supported")]
+    SubscriptionsNotSupport,
     #[error("Subscriptions are not supported over this transport")]
-    SubscriptionNotSupportedOverTransport,
+    SubscriptionsTransportNotSupported,
 }
 
 impl PipelineErrorVariant {
@@ -117,7 +119,8 @@ impl PipelineErrorVariant {
             Self::NormalizationError(NormalizationError::MultipleMatchingOperationsFound) => {
                 "OPERATION_RESOLUTION_FAILURE"
             }
-            Self::SubscriptionNotSupportedOverTransport => "SUBSCRIPTION_NOT_SUPPORTED",
+            Self::SubscriptionsNotSupport => "SUBSCRIPTIONS_NOT_SUPPORT",
+            Self::SubscriptionsTransportNotSupported => "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED",
             _ => "BAD_REQUEST",
         }
     }
@@ -155,7 +158,8 @@ impl PipelineErrorVariant {
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
-            (Self::SubscriptionNotSupportedOverTransport, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::SubscriptionsNotSupport, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
         }
     }
 }

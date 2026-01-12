@@ -26,6 +26,59 @@ mod subscription_e2e_tests {
     }
 
     #[ntex::test]
+    async fn subscription_not_allowed_when_disabled() {
+        let _subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            # disabled by default
+            # subscriptions:
+            #     enabled: false
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    product {
+                        upc
+                    }
+                }
+            }
+            "#,
+            None,
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(
+            res.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Expected 415 Unsupported Media Type"
+        );
+
+        let content_type_header = get_content_type_header(&res);
+        assert!(
+            content_type_header == "application/json",
+            "Expected Content-Type to be application/json"
+        );
+
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"{"errors":[{"message":"Subscriptions are not supported","extensions":{"code":"SUBSCRIPTIONS_NOT_SUPPORT"}}]}"#);
+    }
+
+    #[ntex::test]
     async fn subscription_no_entity_resolution_sse_subgraph() {
         let _subgraphs_server = SubgraphsServer::start_with_subscriptions_protocol(
             subgraphs::SubscriptionProtocol::SseOnly,
@@ -37,6 +90,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             "#
         ))
         .await
@@ -124,6 +179,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             "#
         ))
         .await
@@ -208,6 +265,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             "#
         ))
         .await
@@ -293,6 +352,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             "#
         ))
         .await
@@ -393,6 +454,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             "#
         ))
         .await
@@ -478,6 +541,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             "#
         ))
         .await
@@ -544,6 +609,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             "#
         ))
         .await
@@ -607,6 +674,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             "#
         ))
         .await
@@ -669,6 +738,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             "#
         ))
         .await
@@ -724,6 +795,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             "#
         ))
         .await
@@ -888,6 +961,8 @@ mod subscription_e2e_tests {
             supergraph:
                 source: file
                 path: supergraph.graphql
+            subscriptions:
+                enabled: true
             headers:
                 all:
                     request:
