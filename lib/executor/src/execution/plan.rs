@@ -7,6 +7,7 @@ use hive_router_query_planner::planner::plan_nodes::{
     QueryPlan, SequenceNode,
 };
 use http::HeaderMap;
+use ntex::http::header::HeaderValue;
 use sonic_rs::ValueRef;
 
 use crate::{
@@ -56,7 +57,7 @@ pub struct QueryPlanExecutionContext<'exec> {
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
-    pub response_content_type: &'static http::HeaderValue,
+    pub response_content_type: &'static HeaderValue,
 }
 
 pub struct PlanExecutionOutput {

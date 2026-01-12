@@ -9,9 +9,10 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{header::CONTENT_TYPE, HeaderValue, Method};
+use http::{header::CONTENT_TYPE, Method};
 use ntex::{
     http::ResponseBuilder,
+    http::header::HeaderValue,
     util::Bytes,
     web::{self, HttpRequest},
 };

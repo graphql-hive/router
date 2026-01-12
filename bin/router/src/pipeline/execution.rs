@@ -14,6 +14,7 @@ use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanE
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
+use ntex::http::header::HeaderValue;
 use ntex::web::HttpRequest;
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
@@ -31,7 +32,7 @@ pub struct PlannedRequest<'req> {
     pub variable_payload: &'req CoerceVariablesPayload,
     pub client_request_details: &'req ClientRequestDetails<'req>,
     pub authorization_errors: Vec<AuthorizationError>,
-    pub response_content_type: &'static http::HeaderValue,
+    pub response_content_type: &'static HeaderValue,
 }
 
 #[inline]
