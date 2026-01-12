@@ -39,7 +39,7 @@ impl From<SupergraphFetcherError> for LoadSupergraphError {
             }
             SupergraphFetcherError::RejectedByCircuitBreaker => {
                 LoadSupergraphError::NetworkError(reqwest_middleware::Error::Middleware(
-                    anyhow::anyhow!("Request rejected by circuit breaker").into(),
+                    anyhow::anyhow!("Request rejected by circuit breaker"),
                 ))
             }
             SupergraphFetcherError::CircuitBreakerCreation(e) => {
