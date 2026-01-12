@@ -23,5 +23,5 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
-pretty_assertions = "0.5.0"
+pretty_assertions = "1.0.0"
 insta = { workspace = true }
