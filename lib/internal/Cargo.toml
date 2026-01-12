@@ -12,7 +12,7 @@ authors = ["The Guild"]
 [lib]
 
 [dependencies]
-hive-router-config = { path = "../router-config", version = "0.0.15" }
+hive-router-config = { path = "../router-config", version = "0.0.16" }
 tracing = { workspace = true }
 
 sonic-rs = { workspace = true }
