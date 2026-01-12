@@ -20,6 +20,8 @@ serde_json = "1.0"
 serde_with = "3.0.0"
 combine = "4.6.6"
 thiserror = { workspace = true }
+itoa = "1.0.17"
+ryu = "1.0.22"
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }

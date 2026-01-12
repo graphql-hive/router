@@ -1,4 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
+use graphql_tools::parser::minify_query_document;
 use graphql_tools::parser::{minify_query, parse_query, query::Document};
 use std::fs::File;
 use std::hint::black_box;
@@ -50,6 +51,10 @@ fn bench_minifiers(c: &mut Criterion) {
 
     group.bench_function("minify_query", |b| {
         b.iter(|| minify_query(black_box(source.as_str())).expect("failed to minify query"))
+    });
+
+    group.bench_function("minify_document", |b| {
+        b.iter(|| minify_query_document(black_box(&parsed)))
     });
 
     group.finish();
