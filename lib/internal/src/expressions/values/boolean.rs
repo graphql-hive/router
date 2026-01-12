@@ -22,7 +22,7 @@ impl FromVrlValue for bool {
     #[inline]
     fn from_vrl_value(value: VrlValue) -> Result<Self, Self::Error> {
         match value {
-            VrlValue::Bytes(b) => Ok(String::from_utf8(b.to_vec())? == "true"),
+            VrlValue::Bytes(b) => Ok(b == "true"),
             VrlValue::Integer(i) => Ok(i != 0),
             VrlValue::Float(f) => Ok(f != 0.0),
             VrlValue::Boolean(b) => Ok(b),
