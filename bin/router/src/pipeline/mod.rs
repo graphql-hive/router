@@ -126,10 +126,7 @@ pub async fn graphql_request_handler(
             let code = error.graphql_error_code();
             let message = error.graphql_error_message();
 
-            let graphql_error = GraphQLError::from_message_and_extensions(
-                message,
-                GraphQLErrorExtensions::new_from_code(code),
-            );
+            let graphql_error = GraphQLError::from_message_and_code(message, code);
 
             let result = FailedExecutionResult {
                 errors: Some(vec![graphql_error]),

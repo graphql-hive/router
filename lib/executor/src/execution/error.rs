@@ -1,9 +1,8 @@
 use strum::IntoStaticStr;
 
 use crate::{
-    headers::errors::HeaderRuleRuntimeError,
-    projection::error::ProjectionError,
-    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
+    headers::errors::HeaderRuleRuntimeError, projection::error::ProjectionError,
+    response::graphql_error::GraphQLError,
 };
 
 #[derive(thiserror::Error, Debug, Clone, IntoStaticStr)]
@@ -74,18 +73,14 @@ impl PlanExecutionError {
 
 impl From<PlanExecutionError> for GraphQLError {
     fn from(val: PlanExecutionError) -> Self {
-        let message = val.to_string();
-        GraphQLError {
-            extensions: GraphQLErrorExtensions {
-                code: Some(val.error_code().into()),
-                service_name: val.context.subgraph_name,
-                affected_path: val.context.affected_path,
-                extensions: Default::default(),
-            },
-            message,
-            locations: None,
-            path: None,
+        let mut error = GraphQLError::from_message_and_code(val.to_string(), val.error_code());
+        if let Some(subgraph_name) = val.subgraph_name() {
+            error = error.add_subgraph_name(subgraph_name);
         }
+        if let Some(affected_path) = val.affected_path() {
+            error = error.add_affected_path(affected_path);
+        }
+        error
     }
 }
 
