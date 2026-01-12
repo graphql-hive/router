@@ -103,7 +103,8 @@ impl RouterSharedState {
             hive_usage_agent,
             disable_introspection: compile_disable_introspection(
                 &router_config.disable_introspection,
-            )?,
+            )
+            .map_err(Box::new)?,
         })
     }
 }

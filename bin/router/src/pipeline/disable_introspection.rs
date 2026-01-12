@@ -15,18 +15,16 @@ use crate::pipeline::error::{PipelineError};
 
 pub fn compile_disable_introspection(
     disable_introspection_config: &Option<DisableIntrospectionConfig>,
-) -> Result<Option<BooleanOrProgram>, Box<ExpressionCompileError>> {
-    if let Some(config) = disable_introspection_config {
-        match config {
-            DisableIntrospectionConfig::Boolean(b) => Ok(Some(BooleanOrProgram::Value(*b))),
-            DisableIntrospectionConfig::Expression { expression } => {
-                let program = expression.compile_expression(None)?;
-                Ok(Some(BooleanOrProgram::Program(Box::new(program))))
-            }
-        }
-    } else {
-        Ok(None)
-    }
+) -> Result<Option<BooleanOrProgram>, ExpressionCompileError> {
+    disable_introspection_config
+        .as_ref()
+        .map(|config| match config {
+            DisableIntrospectionConfig::Boolean(b) => Ok(BooleanOrProgram::Value(*b)),
+            DisableIntrospectionConfig::Expression { expression } => expression
+                .compile_expression(None)
+                .map(|program| BooleanOrProgram::Program(Box::new(program))),
+        })
+        .transpose()
 }
 
 pub fn handle_disable_introspection(
