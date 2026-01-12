@@ -115,6 +115,50 @@ impl SupportedContentType {
         }
         None
     }
+    pub fn parse_header(
+        content_types: &str,
+    ) -> (Option<SingleContentType>, Option<StreamContentType>) {
+        if content_types.is_empty() {
+            return (
+                Some(SingleContentType::GraphQLResponseJSON),
+                Some(StreamContentType::IncrementalDelivery),
+            );
+        }
+
+        let mut single_content_type = None;
+        let mut stream_content_type = None;
+
+        // we must split "," to avoid false positives like when checking `(multipart/mixed, spec="1.0")`
+        // with: `accept: multipart/mixed, text/event-stream;spec="1.0"`
+        for content_type in content_types.split(',').map(|part| part.trim()) {
+            if content_type == "*/*" {
+                // wildcard means we accept everything, so we can default to our preferred types
+                return (
+                    Some(SingleContentType::GraphQLResponseJSON),
+                    Some(StreamContentType::IncrementalDelivery),
+                );
+            }
+
+            let supported_content_type = match SupportedContentType::parse(content_type) {
+                Some(sct) => sct,
+                None => continue,
+            };
+            match supported_content_type {
+                SupportedContentType::Single(single) => {
+                    single_content_type = single_content_type.or(Some(single))
+                }
+                SupportedContentType::Stream(stream) => {
+                    stream_content_type = stream_content_type.or(Some(stream))
+                }
+            }
+
+            if single_content_type.is_some() && stream_content_type.is_some() {
+                break; // we found both, we're safe to break
+            }
+        }
+
+        (single_content_type, stream_content_type)
+    }
 }
 
 pub trait RequestAccepts {
@@ -163,7 +207,7 @@ impl RequestAccepts for HttpRequest {
             .get(ACCEPT)
             .and_then(|value| value.to_str().ok())
         {
-            Some(t) if !t.is_empty() => t,
+            Some(t) => t,
             // None or empty Accept header means we should use defaults
             _ => {
                 return Ok((
@@ -173,37 +217,8 @@ impl RequestAccepts for HttpRequest {
             }
         };
 
-        let mut single_content_type = None;
-        let mut stream_content_type = None;
-
-        // we must split "," to avoid false positives like when checking `(multipart/mixed, spec="1.0")`
-        // with: `accept: multipart/mixed, text/event-stream;spec="1.0"`
-        for content_type in content_types.split(',').map(|part| part.trim()) {
-            if content_type == "*/*" {
-                // wildcard means we accept everything, so we can default to our preferred types
-                return Ok((
-                    Some(SingleContentType::GraphQLResponseJSON),
-                    Some(StreamContentType::IncrementalDelivery),
-                ));
-            }
-
-            let supported_content_type = match SupportedContentType::parse(content_type) {
-                Some(sct) => sct,
-                None => continue,
-            };
-            match supported_content_type {
-                SupportedContentType::Single(single) => {
-                    single_content_type = single_content_type.or(Some(single))
-                }
-                SupportedContentType::Stream(stream) => {
-                    stream_content_type = stream_content_type.or(Some(stream))
-                }
-            }
-
-            if single_content_type.is_some() && stream_content_type.is_some() {
-                break; // we found both, we're safe to break
-            }
-        }
+        let (single_content_type, stream_content_type) =
+            SupportedContentType::parse_header(content_types);
 
         // at this point we treat no content type as "user explicitly does not support any known types"
         // this is because only empty accept header or */* is treated as "accept everything" and we check
