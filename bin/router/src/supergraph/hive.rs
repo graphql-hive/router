@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use hive_console_sdk::supergraph_fetcher::{
-    SupergraphFetcher, SupergraphFetcherAsyncState, SupergraphFetcherError,
+    async_fetcher::SupergraphFetcherAsyncState, SupergraphFetcher, SupergraphFetcherError,
 };
 use std::time::Duration;
 use tracing::{debug, error};
@@ -18,16 +18,35 @@ pub struct SupergraphHiveConsoleLoader {
 impl From<SupergraphFetcherError> for LoadSupergraphError {
     fn from(err: SupergraphFetcherError) -> Self {
         match err {
-            SupergraphFetcherError::NetworkError(e) => LoadSupergraphError::NetworkError(e),
-            SupergraphFetcherError::NetworkResponseError(e) => {
+            SupergraphFetcherError::Network(e) => LoadSupergraphError::NetworkError(e),
+            SupergraphFetcherError::ResponseParse(e) => {
                 LoadSupergraphError::NetworkResponseError(e)
             }
-            SupergraphFetcherError::Lock(e) => LoadSupergraphError::LockError(e),
-            SupergraphFetcherError::FetcherCreationError(e) => {
+            SupergraphFetcherError::ETagRead(e) => {
+                LoadSupergraphError::LockError(format!("Failed to read etag: {:?}", e))
+            }
+            SupergraphFetcherError::ETagWrite(e) => {
+                LoadSupergraphError::LockError(format!("Failed to write etag: {:?}", e))
+            }
+            SupergraphFetcherError::HTTPClientCreation(e) => {
                 LoadSupergraphError::InitializationError(e.to_string())
             }
             SupergraphFetcherError::InvalidKey(e) => {
                 LoadSupergraphError::InvalidConfiguration(format!("Invalid CDN key: {}", e))
+            }
+            SupergraphFetcherError::MissingConfigurationOption(msg) => {
+                LoadSupergraphError::InvalidConfiguration(msg)
+            }
+            SupergraphFetcherError::RejectedByCircuitBreaker => {
+                LoadSupergraphError::NetworkError(reqwest_middleware::Error::Middleware(
+                    anyhow::anyhow!("Request rejected by circuit breaker").into(),
+                ))
+            }
+            SupergraphFetcherError::CircuitBreakerCreation(e) => {
+                LoadSupergraphError::InitializationError(format!(
+                    "Circuit breaker creation failed: {}",
+                    e
+                ))
             }
         }
     }
@@ -71,15 +90,15 @@ impl SupergraphHiveConsoleLoader {
             poll_interval.as_millis(),
             request_timeout.as_millis()
         );
-        let fetcher = SupergraphFetcher::try_new_async(
-            endpoint,
-            key,
-            format!("hive-router/{}", ROUTER_VERSION),
-            connect_timeout,
-            request_timeout,
-            accept_invalid_certs,
-            retry_count,
-        )?;
+        let fetcher = SupergraphFetcher::builder()
+            .user_agent(format!("hive-router/{}", ROUTER_VERSION))
+            .key(key.to_string())
+            .add_endpoint(endpoint)
+            .accept_invalid_certs(accept_invalid_certs)
+            .connect_timeout(connect_timeout)
+            .request_timeout(request_timeout)
+            .max_retries(retry_count)
+            .build_async()?;
 
         Ok(Box::new(SupergraphHiveConsoleLoader {
             fetcher,

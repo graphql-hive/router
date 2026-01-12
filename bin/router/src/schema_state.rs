@@ -163,7 +163,7 @@ impl SupergraphBackgroundLoader {
 }
 
 #[async_trait]
-impl BackgroundTask for SupergraphBackgroundLoader {
+impl BackgroundTask for Arc<SupergraphBackgroundLoader> {
     fn id(&self) -> &str {
         "supergraph-background-loader"
     }

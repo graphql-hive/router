@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use ntex::rt::Arbiter;
-use std::{future::Future, sync::Arc};
+use std::future::Future;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -29,7 +29,7 @@ impl BackgroundTasksManager {
         }
     }
 
-    pub fn register_task<T>(&mut self, task: Arc<T>)
+    pub fn register_task<T>(&mut self, task: T)
     where
         T: BackgroundTask + 'static,
     {

@@ -67,7 +67,7 @@ pub struct JwksSource {
 }
 
 #[async_trait::async_trait]
-impl BackgroundTask for JwksSource {
+impl BackgroundTask for Arc<JwksSource> {
     fn id(&self) -> &str {
         "jwt_auth_jwks"
     }

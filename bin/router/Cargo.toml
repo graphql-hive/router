@@ -47,6 +47,7 @@ reqwest-middleware = { workspace = true }
 vrl = { workspace = true }
 serde_json = { workspace = true }
 regex-automata = { workspace = true }
+ahash = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { version = "0.12.10", features = ["future"] }
@@ -55,7 +56,7 @@ tokio-util = "0.7.16"
 cookie = "0.18.1"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
-ahash = { workspace = true }
+anyhow = "1.0.100"
 
 [dev-dependencies]
 criterion = { workspace = true }

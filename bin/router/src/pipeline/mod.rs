@@ -253,7 +253,8 @@ pub async fn execute_pipeline(
                 hive_usage_agent,
                 &shared_state.router_config.usage_reporting,
                 &execution_result,
-            );
+            )
+            .await;
         }
     }
 
