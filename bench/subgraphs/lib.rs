@@ -70,8 +70,9 @@ async fn track_requests(
 
 fn extract_record(request_parts: &Parts, request_body: Bytes) -> RequestLog {
     let header_map = request_parts.headers.clone();
-    // If body is not valid JSON, we just store an empty object
-    let body_value: Value = sonic_rs::from_slice(&request_body).unwrap_or(Value::new());
+    // If body is not valid JSON, store the error message as string
+    let body_value: Value =
+        sonic_rs::from_slice(&request_body).unwrap_or_else(|err| Value::from(&err.to_string()));
 
     RequestLog {
         headers: header_map,
