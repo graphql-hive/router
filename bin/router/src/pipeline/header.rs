@@ -45,7 +45,7 @@ impl SingleContentType {
 
 impl Default for SingleContentType {
     fn default() -> Self {
-        SingleContentType::GraphQLResponseJSON
+        SingleContentType::JSON
     }
 }
 
