@@ -8,7 +8,7 @@ use crate::{
 
 #[derive(thiserror::Error, Debug, Clone, IntoStaticStr)]
 pub enum PlanExecutionErrorKind {
-    #[error("Projection faiure: {0}")]
+    #[error("Projection failure: {0}")]
     #[strum(serialize = "PROJECTION_FAILURE")]
     ProjectionFailure(#[from] ProjectionError),
 
