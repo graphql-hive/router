@@ -14,7 +14,7 @@ This includes new validation rules to enforce maximum query depth, maximum numbe
 By default, it is disabled, but you can enable and configure it in your router configuration as follows:
 
 ```yaml
-query_complexity:
+limits:
   max_depth:
     n: 10  # Set the maximum allowed depth for queries
 ```
@@ -26,7 +26,7 @@ This configuration allows you to set a maximum depth for incoming GraphQL querie
 You can also limit the number of directives in incoming GraphQL operations. This is also disabled by default. You can enable and configure it as follows:
 
 ```yaml
-query_complexity:
+limits:
   max_directives:
     n: 5  # Set the maximum allowed number of directives
 ```

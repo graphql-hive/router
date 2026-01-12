@@ -131,7 +131,7 @@ pub async fn configure_app_from_config(
         SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
     let schema_state_arc = Arc::new(schema_state);
     let mut validation_plan = default_rules_validation_plan();
-    if let Some(max_depth_config) = &router_config_arc.query_complexity.max_depth {
+    if let Some(max_depth_config) = &router_config_arc.limits.max_depth {
         if max_depth_config.is_enabled() {
             info!(
                 "Enabling Max Depth Rule with max depth {}",

@@ -8,7 +8,7 @@ use graphql_tools::{
         utils::{ValidationError, ValidationErrorContext},
     },
 };
-use hive_router_config::query_complexity::MaxDepthRuleConfig;
+use hive_router_config::limits::MaxDepthRuleConfig;
 
 use crate::pipeline::validation::shared::CountableNode;
 
@@ -123,7 +123,7 @@ impl<'a> MaxDepthVisitor<'a, '_> {
 mod tests {
     use graphql_parser::parse_schema;
     use graphql_tools::validation::validate::ValidationPlan;
-    use hive_router_config::query_complexity::MaxDepthRuleConfig;
+    use hive_router_config::limits::MaxDepthRuleConfig;
 
     use crate::pipeline::validation::max_depth_rule::MaxDepthRule;
 
