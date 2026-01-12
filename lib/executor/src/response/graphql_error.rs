@@ -105,7 +105,7 @@ impl GraphQLError {
     ///     extensions: std::collections::HashMap::new(),
     /// };
     ///
-    /// let error = GraphQLError::from_message_and_extensions("An error occurred".into(), extensions);
+    /// let error = GraphQLError::from_message_and_extensions("An error occurred", extensions);
     ///
     /// assert_eq!(json!(error), json!({
     ///     "message": "An error occurred",
@@ -131,7 +131,7 @@ impl GraphQLError {
     /// use hive_router_plan_executor::response::graphql_error::GraphQLError;
     /// use sonic_rs::json;
     ///
-    /// let error = GraphQLError::from_message_and_code("An error occurred".into(), "SOME_ERROR_CODE");
+    /// let error = GraphQLError::from_message_and_code("An error occurred", "SOME_ERROR_CODE");
     ///
     /// assert_eq!(json!(error), json!({
     ///     "message": "An error occurred",
