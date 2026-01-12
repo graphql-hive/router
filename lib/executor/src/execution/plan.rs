@@ -56,11 +56,11 @@ pub struct QueryPlanExecutionContext<'exec> {
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
+    pub response_content_type: &'static http::HeaderValue,
 }
 
 pub struct PlanExecutionOutput {
-    pub body: Vec<u8>,
-    pub headers: HeaderMap,
+    pub response: ntex::http::Response,
     pub error_count: usize,
 }
 
@@ -93,13 +93,6 @@ pub async fn execute_query_plan<'exec>(
             .await?;
     }
 
-    let mut response_headers = HeaderMap::new();
-    modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || None,
-            affected_path: || None,
-        })?;
-
     let final_response = &exec_ctx.final_response;
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
     let body = project_by_operation(
@@ -117,9 +110,18 @@ pub async fn execute_query_plan<'exec>(
         affected_path: || None,
     })?;
 
+    let mut response = ntex::http::Response::Ok()
+        .content_type(ctx.response_content_type)
+        .body(body);
+
+    modify_client_response_headers(exec_ctx.response_headers_aggregator, response.headers_mut())
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || None,
+            affected_path: || None,
+        })?;
+
     Ok(PlanExecutionOutput {
-        body,
-        headers: response_headers,
+        response,
         error_count,
     })
 }

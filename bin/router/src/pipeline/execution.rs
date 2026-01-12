@@ -31,6 +31,7 @@ pub struct PlannedRequest<'req> {
     pub variable_payload: &'req CoerceVariablesPayload,
     pub client_request_details: &'req ClientRequestDetails<'req>,
     pub authorization_errors: Vec<AuthorizationError>,
+    pub response_content_type: &'static http::HeaderValue,
 }
 
 #[inline]
@@ -110,6 +111,7 @@ pub async fn execute_plan(
             .into_iter()
             .map(|e| e.into())
             .collect(),
+        response_content_type: planned_request.response_content_type,
     })
     .await
     .map_err(|err| {
