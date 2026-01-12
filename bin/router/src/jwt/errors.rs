@@ -1,5 +1,5 @@
 use crate::pipeline::error::FailedExecutionResult;
-use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
+use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use http::StatusCode;
 use ntex::{
     http::{
@@ -82,11 +82,6 @@ impl From<&JwtError> for StatusCode {
 
 impl From<&JwtError> for GraphQLError {
     fn from(val: &JwtError) -> Self {
-        GraphQLError {
-            extensions: GraphQLErrorExtensions::new_from_code(val.error_code()),
-            message: val.to_string(),
-            locations: None,
-            path: None,
-        }
+        GraphQLError::from_message_and_code(val.to_string(), val.error_code())
     }
 }
