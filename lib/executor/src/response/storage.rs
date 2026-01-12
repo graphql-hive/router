@@ -31,6 +31,9 @@ impl ResponsesStorage {
     }
 
     pub fn estimate_final_response_size(&self) -> usize {
-        self.responses.iter().map(|r| r.len()).sum()
+        let total_size: usize = self.responses.iter().map(|r| r.len()).sum();
+        // Add a 20% buffer to account for JSON syntax, escaping, and other overhead.
+        // I tested a bunch of numbers and it was the best from the bunch.
+        (total_size as f64 * 1.2) as usize
     }
 }
