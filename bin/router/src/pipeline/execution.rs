@@ -108,14 +108,16 @@ pub async fn execute_plan(
         );
     }
 
-    if let Some(disable_introspection) = &app_state.disable_introspection {
-        handle_disable_introspection(
-            disable_introspection,
-            &mut introspection_context,
-            planned_request.client_request_details,
-            false,
-            &mut initial_errors,
-        )?;
+    if introspection_context.query.is_some() {
+        if let Some(disable_introspection) = &app_state.disable_introspection {
+            handle_disable_introspection(
+                disable_introspection,
+                &mut introspection_context,
+                planned_request.client_request_details,
+                false,
+                &mut initial_errors,
+            )?;
+        }
     }
 
     execute_query_plan(QueryPlanExecutionContext {
