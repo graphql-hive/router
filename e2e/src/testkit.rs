@@ -74,7 +74,7 @@ where
 
 pub struct SubgraphsServer {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    subgraph_shared_state: SubgraphsServiceState,
+    subgraph_shared_state: Arc<SubgraphsServiceState>,
 }
 
 impl Drop for SubgraphsServer {
@@ -95,9 +95,8 @@ impl SubgraphsServer {
         let (_server_handle, shutdown_tx, subgraph_shared_state) =
             start_subgraphs_server(Some(port));
 
-        let health_check_url = subgraph_shared_state.health_check_url.clone();
         loop {
-            match reqwest::get(&health_check_url).await {
+            match reqwest::get(&subgraph_shared_state.health_check_url).await {
                 Ok(response) if response.status().is_success() => {
                     // Server is up and running.
                     break;
@@ -116,9 +115,10 @@ impl SubgraphsServer {
     }
 
     pub async fn get_subgraph_requests_log(&self, subgraph_name: &str) -> Option<Vec<RequestLog>> {
-        let log = self.subgraph_shared_state.request_log.lock().await;
-
-        log.get(&format!("/{}", subgraph_name)).cloned()
+        self.subgraph_shared_state
+            .request_log
+            .get(&format!("/{}", subgraph_name))
+            .map(|entry| entry.value().clone())
     }
 }
 
