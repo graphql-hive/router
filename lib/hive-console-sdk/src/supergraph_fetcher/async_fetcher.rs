@@ -63,6 +63,10 @@ impl SupergraphFetcher<SupergraphFetcherAsyncState> {
         }
 
         if let Some(last_resp) = last_resp {
+            if last_resp.status().as_u16() == 304 {
+                return Ok(None);
+            }
+
             let etag = last_resp.headers().get("etag");
             self.update_latest_etag(etag).await;
             let text = last_resp
