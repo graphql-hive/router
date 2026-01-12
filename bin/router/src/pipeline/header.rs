@@ -75,21 +75,19 @@ impl StreamContentType {
             StreamContentType::ApolloMultipartHTTP => &r#"multipart/mixed; boundary=graphql"#,
         }
     }
+    #[inline]
+    pub fn default() -> Self {
+        StreamContentType::IncrementalDelivery
+    }
 }
 
-pub enum SupportedContentType {
+enum SupportedContentType {
     Single(SingleContentType),
     Stream(StreamContentType),
 }
 
 impl SupportedContentType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SupportedContentType::Single(single) => single.as_str(),
-            SupportedContentType::Stream(stream) => stream.as_str(),
-        }
-    }
-    pub fn parse(content_type: &str) -> Option<SupportedContentType> {
+    fn parse(content_type: &str) -> Option<SupportedContentType> {
         if content_type == *APPLICATION_GRAPHQL_RESPONSE_JSON_STR {
             return Some(SupportedContentType::Single(
                 SingleContentType::GraphQLResponseJSON,
@@ -115,13 +113,22 @@ impl SupportedContentType {
         }
         None
     }
-    pub fn parse_header(
-        content_types: &str,
-    ) -> (Option<SingleContentType>, Option<StreamContentType>) {
+    /// Reads the header and returns a tuple of accepted/parsed content types.
+    ///
+    /// Returns `(SingleContentType, StreamContentType)` where:
+    /// - First element: The preferred non-streamable content type (for queries/mutations)
+    /// - Second element: The preferred streamable content type (for subscriptions/streaming)
+    ///
+    /// The content type is selected in order of appearance in the `Accept` header. For example,
+    /// if the header is `Accept: text/event-stream, application/json`, the non-streamable will be
+    /// `JSON` and streamable will be `SSE`.
+    ///
+    /// If the `Accept` header is missing or empty, defaults are used.
+    fn parse_header(content_types: &str) -> (Option<SingleContentType>, Option<StreamContentType>) {
         if content_types.is_empty() {
             return (
-                Some(SingleContentType::GraphQLResponseJSON),
-                Some(StreamContentType::IncrementalDelivery),
+                Some(SingleContentType::default()),
+                Some(StreamContentType::default()),
             );
         }
 
@@ -134,8 +141,8 @@ impl SupportedContentType {
             if content_type == "*/*" {
                 // wildcard means we accept everything, so we can default to our preferred types
                 return (
-                    Some(SingleContentType::GraphQLResponseJSON),
-                    Some(StreamContentType::IncrementalDelivery),
+                    Some(SingleContentType::default()),
+                    Some(StreamContentType::default()),
                 );
             }
 
@@ -169,18 +176,6 @@ pub trait RequestAccepts {
     /// it contains `*/*`. This is because this is not a HTML server, it's a GraphQL server.
     fn can_accept_http(&self) -> bool;
     /// Reads the request's `Accept` header and returns a tuple of accepted content types.
-    ///
-    /// Returns `(SingleContentType, StreamContentType)` where:
-    /// - First element: The preferred non-streamable content type (for queries/mutations)
-    /// - Second element: The preferred streamable content type (for subscriptions/streaming)
-    ///
-    /// The content type is selected in order of appearance in the `Accept` header. For example,
-    /// if the header is `Accept: text/event-stream, application/json`, the non-streamable will be
-    /// `JSON` and streamable will be `SSE`.
-    ///
-    /// If the `Accept` header is missing or empty, defaults are used:
-    /// - Single/Non-streamable: `GraphQLResponseJSON`
-    /// - Streamable: `IncrementalDelivery`
     ///
     /// Returns an error if no valid content types are found in the Accept header.
     fn accepted_content_type(
