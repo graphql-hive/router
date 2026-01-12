@@ -5,6 +5,8 @@ members = [
   "lib/router-config",
   "lib/executor",
   "lib/node-addon",
+  "lib/graphql-tools",
+  "lib/hive-console-sdk",
   "bin/dev-cli",
   "bin/router",
   "e2e",
@@ -27,8 +29,6 @@ lto = true
 codegen-units = 1
 
 [workspace.dependencies]
-graphql-tools = "0.4.0"
-graphql-parser = "0.4.1"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.142"
 sonic-rs = "0.5.3"

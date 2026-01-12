@@ -7,7 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::value::Value;
-use graphql_parser::query::{Text as ParserText, Value as ParserValue};
+use graphql_tools::parser::query::{Text as ParserText, Value as ParserValue};
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct ArgumentsMap {
