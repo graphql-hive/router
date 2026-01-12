@@ -317,8 +317,8 @@ pub async fn execute_pipeline<'exec, 'req>(
     let planned_request = PlannedRequest {
         normalized_payload: &normalize_payload,
         query_plan_payload: &query_plan_payload,
-        variable_payload: variable_payload,
-        client_request_details: client_request_details,
+        variable_payload,
+        client_request_details,
         authorization_errors: &authorization_errors,
     };
 

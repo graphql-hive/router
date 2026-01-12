@@ -22,7 +22,7 @@ lazy_static! {
 }
 
 /// Non-streamable (single) content types for GraphQL responses.
-#[derive(PartialEq)]
+#[derive(PartialEq, Default)]
 pub enum SingleContentType {
     /// GraphQL over HTTP spec (`application/graphql-response+json`)
     ///
@@ -31,6 +31,7 @@ pub enum SingleContentType {
     /// Read more: https://graphql.github.io/graphql-over-http
     GraphQLResponseJSON,
     /// Legacy GraphQL over HTTP (`application/json`)
+    #[default]
     JSON,
 }
 
@@ -43,19 +44,15 @@ impl SingleContentType {
     }
 }
 
-impl Default for SingleContentType {
-    fn default() -> Self {
-        SingleContentType::JSON
-    }
-}
-
 /// Streamable content types for GraphQL responses.
+#[derive(Default)]
 pub enum StreamContentType {
     /// Incremental Delivery over HTTP (`multipart/mixed`)
     ///
     /// Default for subscriptions.
     ///
     /// Read more: https://github.com/graphql/graphql-over-http/blob/c144dbd89cbea6bde0045205e34e01002f9f9ba0/rfcs/IncrementalDelivery.md
+    #[default]
     IncrementalDelivery,
     /// GraphQL over SSE (`text/event-stream`)
     ///
@@ -76,12 +73,6 @@ impl StreamContentType {
             StreamContentType::SSE => &TEXT_EVENT_STREAM,
             StreamContentType::ApolloMultipartHTTP => r#"multipart/mixed; boundary=graphql"#,
         }
-    }
-}
-
-impl Default for StreamContentType {
-    fn default() -> Self {
-        StreamContentType::IncrementalDelivery
     }
 }
 

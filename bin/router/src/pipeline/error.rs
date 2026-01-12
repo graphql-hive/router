@@ -149,8 +149,7 @@ impl PipelineErrorVariant {
     }
 
     pub fn into_response(self, content_type: Option<SingleContentType>) -> web::HttpResponse {
-        let accept_ok = content_type.unwrap_or(SingleContentType::default())
-            == SingleContentType::GraphQLResponseJSON;
+        let accept_ok = content_type.unwrap_or_default() == SingleContentType::GraphQLResponseJSON;
 
         let status = self.default_status_code(accept_ok);
 
