@@ -17,7 +17,7 @@ scopes = ["hive-router-plan-executor", "executor"]
 changelog = "lib/executor/CHANGELOG.md"
 
 [packages.config]
-versioned_files = ["lib/router-config/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-config" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-config" }, "Cargo.lock"]
+versioned_files = ["lib/router-config/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-config" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-config" }, { path = "lib/internal/Cargo.toml", dependency = "hive-router-config" }, "Cargo.lock"]
 scopes = ["config"]
 changelog = "lib/router-config/CHANGELOG.md"
 
