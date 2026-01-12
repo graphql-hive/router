@@ -302,12 +302,12 @@ impl HttpResponse {
     fn deserialize_http_response<'a>(&self) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
         let bytes_ref: &[u8] = &self.body;
 
-        // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
-        // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
-        // and will live as long as `'a`. The `Bytes` are stored in an `Arc`, so they won't be
-        // dropped until all references are gone. The `Value`s deserialized from this byte
-        // slice will borrow from it, and they are stored in `ctx.final_response`, which also
-        // lives for `'a`.
+        // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'a`.
+        // This is safe because the returned `SubgraphResponse` contains a clone of `self.body`
+        // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
+        // underlying data remains alive as long as the `SubgraphResponse` does.
+        // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
+        // creating a self-referential struct, which is why `unsafe` is required.
         let bytes_ref: &'a [u8] = unsafe { std::mem::transmute(bytes_ref) };
 
         sonic_rs::from_slice(bytes_ref)
