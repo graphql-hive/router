@@ -15,7 +15,6 @@ use ntex::{
 };
 
 use crate::{
-    jwt::context::JwtRequestContext,
     pipeline::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
@@ -79,15 +78,17 @@ pub async fn graphql_request_handler(
         }
     }
 
-    if let Some(jwt) = &shared_state.jwt_auth_runtime {
+    let jwt_context = if let Some(jwt) = &shared_state.jwt_auth_runtime {
         match jwt
             .validate_request(req, &shared_state.jwt_claims_cache)
             .await
         {
-            Ok(_) => (),
+            Ok(jwt_context) => jwt_context,
             Err(err) => return err.make_response(),
         }
-    }
+    } else {
+        None
+    };
 
     let started_at = Instant::now();
 
@@ -151,12 +152,8 @@ pub async fn graphql_request_handler(
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-    let req_extensions = req.extensions();
-    let jwt_context = req_extensions.get::<JwtRequestContext>();
     let jwt_request_details = match jwt_context {
         Some(jwt_context) => JwtRequestDetails::Authenticated {
-            token: jwt_context.token_raw,
-            prefix: jwt_context.token_prefix,
             scopes: jwt_context.extract_scopes(),
             claims: match jwt_context.get_claims_value() {
                 Ok(claims) => claims,
@@ -165,6 +162,8 @@ pub async fn graphql_request_handler(
                         .into_response(single_content_type)
                 }
             },
+            token: jwt_context.token_raw,
+            prefix: jwt_context.token_prefix,
         },
         None => JwtRequestDetails::Unauthenticated,
     };
