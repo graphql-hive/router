@@ -731,7 +731,7 @@ mod tests {
         let projection = project_by_operation(
             &data,
             vec![],
-            &None,
+            &HashMap::new(),
             operation_type_name,
             &selections,
             &None,
