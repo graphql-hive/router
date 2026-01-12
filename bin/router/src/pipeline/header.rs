@@ -193,20 +193,11 @@ impl RequestAccepts for HttpRequest {
     fn accepted_content_type(
         &self,
     ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), PipelineErrorVariant> {
-        let content_types = match self
+        let content_types = self
             .headers()
             .get(ACCEPT)
             .and_then(|value| value.to_str().ok())
-        {
-            Some(t) => t,
-            // None or empty Accept header means we should use defaults
-            _ => {
-                return Ok((
-                    Some(SingleContentType::GraphQLResponseJSON),
-                    Some(StreamContentType::IncrementalDelivery),
-                ))
-            }
-        };
+            .unwrap_or("");
 
         let (single_content_type, stream_content_type) =
             SupportedContentType::parse_header(content_types);
