@@ -1,7 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use graphql_parser::query::Document;
+use graphql_tools::parser::query::Document;
 use hive_router_query_planner::utils::parsing::safe_parse_operation;
 use xxhash_rust::xxh3::Xxh3;
 

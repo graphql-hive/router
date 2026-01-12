@@ -220,7 +220,8 @@ pub async fn graphql_request_handler(
                         hive_usage_agent,
                         &shared_state.router_config.usage_reporting,
                         &response,
-                    );
+                    )
+                    .await;
                 }
             }
 

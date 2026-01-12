@@ -5,7 +5,7 @@ use std::{
     mem,
 };
 
-use graphql_parser::query::{Text as ParserText, Value as ParserValue};
+use graphql_tools::parser::query::{Text as ParserText, Value as ParserValue};
 use serde::{Deserialize, Serialize};
 use sonic_rs::Value as SonicValue;
 

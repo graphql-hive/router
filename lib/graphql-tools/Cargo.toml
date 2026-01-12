@@ -1,0 +1,27 @@
+[package]
+name = "graphql-tools"
+version = "0.4.0"
+edition = "2021"
+description = "Tools for working with GraphQL in Rust"
+license = "MIT"
+publish = true
+repository = "https://github.com/graphql-hive/router"
+homepage = "https://github.com/graphql-hive/router"
+authors = ["The Guild"]
+
+[[bench]]
+name = "parser"
+harness = false
+
+[dependencies]
+lazy_static = { workspace = true }
+serde = { version = "1.0.200", features = ["derive"] }
+serde_json = "1.0"
+serde_with = "3.0.0"
+combine = "4.6.6"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true, features = ["html_reports"] }
+pretty_assertions = "0.5.0"
+insta = { workspace = true }

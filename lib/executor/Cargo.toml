@@ -15,9 +15,8 @@ authors = ["The Guild"]
 hive-router-query-planner = { path = "../query-planner", version = "2.1.5" }
 hive-router-config = { path = "../router-config", version = "0.0.16" }
 hive-router-internal = { path = "../internal", version = "0.0.5" }
+graphql-tools =  { path = "../graphql-tools", version = "0.4.0" }
 
-graphql-parser = { workspace = true }
-graphql-tools = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }

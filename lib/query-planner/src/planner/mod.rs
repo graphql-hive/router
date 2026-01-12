@@ -1,6 +1,6 @@
 use error::QueryPlanError;
 use fetch::{error::FetchGraphError, fetch_graph::build_fetch_graph_from_query_tree};
-use graphql_parser::schema;
+use graphql_tools::parser::schema;
 use petgraph::graph::NodeIndex;
 use plan_nodes::QueryPlan;
 use query_plan::build_query_plan_from_fetch_graph;

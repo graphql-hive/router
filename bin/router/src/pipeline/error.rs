@@ -47,7 +47,7 @@ pub enum PipelineErrorVariant {
     #[error("Failed to parse GraphQL extensions JSON")]
     FailedToParseExtensions(sonic_rs::Error),
     #[error("Failed to parse GraphQL operation")]
-    FailedToParseOperation(graphql_parser::query::ParseError),
+    FailedToParseOperation(graphql_tools::parser::query::ParseError),
     #[error("Failed to normalize GraphQL operation")]
     NormalizationError(NormalizationError),
     #[error("Failed to collect GraphQL variables: {0}")]

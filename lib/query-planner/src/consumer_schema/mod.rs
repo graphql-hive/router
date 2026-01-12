@@ -1,7 +1,7 @@
 pub(crate) mod prune_inacessible;
 pub(crate) mod strip_schema_internals;
 
-use graphql_parser::schema::*;
+use graphql_tools::parser::schema::*;
 use prune_inacessible::PruneInaccessible;
 use strip_schema_internals::StripSchemaInternals;
 
@@ -22,7 +22,7 @@ impl ConsumerSchema {
         // Add introspection schema to the consumer schema
         let introspection_schema = include_str!("introspection_schema.graphql");
         let mut parsed_introspection_schema =
-            graphql_parser::schema::parse_schema(introspection_schema).unwrap();
+            graphql_tools::parser::schema::parse_schema(introspection_schema).unwrap();
         parsed_introspection_schema
             .definitions
             .iter_mut()
