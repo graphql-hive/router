@@ -7,7 +7,7 @@ use hive_router_plan_executor::execution::{
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{header::CONTENT_TYPE, HeaderValue, Method};
+use http::{header::CONTENT_TYPE, Method};
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
@@ -22,10 +22,7 @@ use crate::{
         error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant},
         execution::{execute_plan, PlannedRequest},
         execution_request::get_execution_request,
-        header::{
-            RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
-            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
-        },
+        header::{RequestAccepts, TEXT_HTML_CONTENT_TYPE},
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::parse_operation_with_cache,
         progressive_override::request_override_context,
@@ -61,7 +58,17 @@ pub async fn graphql_request_handler(
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
 ) -> web::HttpResponse {
-    if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
+    let (single_content_type, _stream_content_type) = match req.accepted_content_type() {
+        Ok((single, stream)) => (single, stream),
+        Err(err) => return err.into_response(),
+    };
+
+    if req.method() == Method::GET
+        && single_content_type.is_none()
+        // coming soon
+        // && stream_content_type.is_none()
+        && req.can_accept_http()
+    {
         if shared_state.router_config.graphiql.enabled {
             return web::HttpResponse::Ok()
                 .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)
@@ -94,15 +101,17 @@ pub async fn graphql_request_handler(
     .await
     {
         Ok(response) => {
+            let accepted_content_type = match single_content_type {
+                Some(content_type) => content_type.as_str(),
+                None => {
+                    return req
+                        .new_pipeline_error(PipelineErrorVariant::UnsupportedContentType)
+                        .into_response();
+                }
+            };
+
             let response_bytes = Bytes::from(response.body);
             let response_headers = response.headers;
-
-            let response_content_type: &'static HeaderValue =
-                if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
-                    &APPLICATION_GRAPHQL_RESPONSE_JSON
-                } else {
-                    &APPLICATION_JSON
-                };
 
             let mut response_builder = web::HttpResponse::Ok();
             for (header_name, header_value) in response_headers {
@@ -112,7 +121,7 @@ pub async fn graphql_request_handler(
             }
 
             response_builder
-                .header(http::header::CONTENT_TYPE, response_content_type)
+                .header(http::header::CONTENT_TYPE, accepted_content_type)
                 .body(response_bytes)
         }
         Err(err) => err.into_response(),
