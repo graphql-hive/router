@@ -431,6 +431,8 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     }
                 }
 
+                ctx.handle_errors(job.subgraph_name, None, job.response.errors, None);
+
                 deep_merge(&mut ctx.final_response, job.response.data);
             }
             ExecutionJob::FlattenFetch(mut job) => {
