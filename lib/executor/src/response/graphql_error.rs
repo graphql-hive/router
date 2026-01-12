@@ -92,6 +92,29 @@ impl GraphQLError {
         vec![self]
     }
 
+    /// Creates a GraphQLError with the given message and extensions.
+    /// Example:
+    /// ```rust
+    /// use hive_router_plan_executor::response::graphql_error::GraphQLError;
+    /// use hive_router_plan_executor::response::graphql_error::GraphQLErrorExtensions;
+    /// use sonic_rs::json;
+    ///
+    /// let extensions = GraphQLErrorExtensions {
+    ///     code: Some("SOME_ERROR_CODE".to_string()),
+    ///     service_name: None,
+    ///     affected_path: None,
+    ///     extensions: std::collections::HashMap::new(),
+    /// };
+    ///
+    /// let error = GraphQLError::from_message_and_extensions("An error occurred".into(), extensions);
+    ///
+    /// assert_eq!(json!(error), json!({
+    ///     "message": "An error occurred",
+    ///     "extensions": {
+    ///         "code": "SOME_ERROR_CODE"
+    ///     }
+    /// }));
+    /// ```
     pub fn from_message_and_extensions(
         message: String,
         extensions: GraphQLErrorExtensions,
@@ -104,18 +127,75 @@ impl GraphQLError {
         }
     }
 
-    pub fn add_subgraph_name(mut self, subgraph_name: &str) -> Self {
+    /// Creates a GraphQLError with the given message and code in extensions.
+    /// Example:
+    /// ```rust
+    /// use hive_router_plan_executor::response::graphql_error::GraphQLError;
+    /// use sonic_rs::json;
+    ///
+    /// let error = GraphQLError::from_message_and_code("An error occurred".into(), "SOME_ERROR_CODE");
+    ///
+    /// assert_eq!(json!(error), json!({
+    ///     "message": "An error occurred",
+    ///     "extensions": {
+    ///         "code": "SOME_ERROR_CODE"
+    ///     }
+    /// }));
+    /// ```
+    pub fn from_message_and_code(message: String, code: &str) -> Self {
+        GraphQLError {
+            message,
+            locations: None,
+            path: None,
+            extensions: GraphQLErrorExtensions::new_from_code(code),
+        }
+    }
+
+    /// Adds subgraph name and error code `DOWNSTREAM_SERVICE_ERROR` to the extensions.
+    /// Example:
+    /// ```rust
+    /// use hive_router_plan_executor::response::graphql_error::GraphQLError;
+    /// use sonic_rs::json;
+    ///
+    /// let error = GraphQLError::from("An error occurred")
+    ///     .add_subgraph_name("users");
+    ///
+    /// assert_eq!(json!(error), json!({
+    ///     "message": "An error occurred",
+    ///     "extensions": {
+    ///         "serviceName": "users",
+    ///         "code": "DOWNSTREAM_SERVICE_ERROR"
+    ///     }
+    /// }));
+    /// ```
+    pub fn add_subgraph_name<TStr: Into<String>>(mut self, subgraph_name: TStr) -> Self {
         self.extensions
             .service_name
-            .get_or_insert(subgraph_name.to_string());
+            .get_or_insert(subgraph_name.into());
         self.extensions
             .code
             .get_or_insert("DOWNSTREAM_SERVICE_ERROR".to_string());
         self
     }
 
-    pub fn add_affected_path(mut self, affected_path: String) -> Self {
-        self.extensions.affected_path = Some(affected_path);
+    /// Adds affected path to the extensions.
+    /// Example:
+    /// ```rust
+    /// use hive_router_plan_executor::response::graphql_error::GraphQLError;
+    /// use sonic_rs::json;
+    ///
+    /// let error = GraphQLError::from("An error occurred")
+    ///     .add_affected_path("user.friends[0].name");
+    ///
+    /// assert_eq!(json!(error), json!({
+    ///     "message": "An error occurred",
+    ///     "extensions": {
+    ///         "affectedPath": "user.friends[0].name"
+    ///     }
+    /// }));
+    /// ```
+    pub fn add_affected_path<TStr: Into<String>>(mut self, affected_path: TStr) -> Self {
+        self.extensions.affected_path = Some(affected_path.into());
         self
     }
 }

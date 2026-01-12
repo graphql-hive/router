@@ -19,15 +19,18 @@ mod hive_cdn_supergraph_e2e_tests {
         let first_supergraph = include_str!("../supergraph.graphql");
         fs::write(&supergraph_file_path, first_supergraph).expect("failed to write supergraph");
 
-        let app = init_router_from_config_inline(&format!(
-            r#"
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"
             supergraph:
               source: file
               path: {supergraph_file_path}
             http:
               graphql_endpoint: /custom
         "#,
-        ))
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
         wait_for_readiness(&app.app).await;

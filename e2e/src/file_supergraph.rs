@@ -21,12 +21,15 @@ mod file_supergraph_e2e_tests {
         let first_supergraph = include_str!("../supergraph.graphql");
         fs::write(&supergraph_file_path, first_supergraph).expect("failed to write supergraph");
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
                 source: file
                 path: {supergraph_file_path}
           "#,
-        ))
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
         wait_for_readiness(&app.app).await;
@@ -49,7 +52,7 @@ mod file_supergraph_e2e_tests {
             .unwrap()
             .as_array()
             .unwrap();
-        assert_eq!(types_arr.len(), 17);
+        assert_eq!(types_arr.len(), 21);
     }
 
     #[ntex::test]
@@ -64,13 +67,16 @@ mod file_supergraph_e2e_tests {
         fs::write(&supergraph_file_path, "type Query { f: String }")
             .expect("failed to write supergraph");
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
                 source: file
                 path: {supergraph_file_path}
                 poll_interval: 100ms
           "#,
-        ))
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
         wait_for_readiness(&app.app).await;

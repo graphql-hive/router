@@ -4,6 +4,7 @@ use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
+use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
 use moka::future::Cache;
 use moka::Expiry;
 use std::sync::Arc;
@@ -70,6 +71,7 @@ pub struct RouterSharedState {
     pub jwt_claims_cache: JwtClaimsCache,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
     pub hive_usage_agent: Option<Arc<UsageAgent>>,
+    pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
 }
 
 impl RouterSharedState {
@@ -77,6 +79,7 @@ impl RouterSharedState {
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
         hive_usage_agent: Option<Arc<UsageAgent>>,
+        plugins: Option<Vec<RouterPluginBoxed>>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
@@ -96,6 +99,7 @@ impl RouterSharedState {
             .map_err(Box::new)?,
             jwt_auth_runtime,
             hive_usage_agent,
+            plugins: plugins.map(Arc::new),
         })
     }
 }
