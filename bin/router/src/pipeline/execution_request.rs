@@ -89,7 +89,7 @@ pub async fn get_execution_request(
     let http_method = req.method();
     let execution_request: ExecutionRequest = match *http_method {
         Method::GET => {
-            trace!("processing GET GraphQL operation");
+            trace!("Processing GET GraphQL operation");
             let query_params_str = req.uri().query().ok_or_else(|| {
                 req.new_pipeline_error(PipelineErrorVariant::GetInvalidQueryParams)
             })?;
