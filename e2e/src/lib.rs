@@ -11,6 +11,8 @@ mod header_propagation;
 #[cfg(test)]
 mod hive_cdn_supergraph;
 #[cfg(test)]
+mod http;
+#[cfg(test)]
 mod jwt;
 #[cfg(test)]
 mod override_subgraph_urls;

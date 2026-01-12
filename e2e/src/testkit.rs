@@ -180,6 +180,8 @@ pub async fn init_router_from_config(
     Box<dyn std::error::Error>,
 > {
     let mut bg_tasks_manager = BackgroundTasksManager::new();
+    let http_config = router_config.http.clone();
+    let graphql_path = http_config.graphql_endpoint();
     let (shared_state, schema_state) =
         configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
 
@@ -187,7 +189,7 @@ pub async fn init_router_from_config(
         web::App::new()
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(configure_ntex_app),
+            .configure(|m| configure_ntex_app(m, &graphql_path)),
     )
     .await;
 
