@@ -256,4 +256,240 @@ impl AssertRequestJson for HttpRequest {
     }
 }
 
-// TODO: tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod supported_content_type_parse {
+        use super::*;
+
+        #[test]
+        fn test_application_graphql_response_json() {
+            let result = SupportedContentType::parse("application/graphql-response+json");
+            assert!(matches!(
+                result,
+                Some(SupportedContentType::Single(
+                    SingleContentType::GraphQLResponseJSON
+                ))
+            ));
+        }
+
+        #[test]
+        fn test_application_json() {
+            let result = SupportedContentType::parse("application/json");
+            assert!(matches!(
+                result,
+                Some(SupportedContentType::Single(SingleContentType::JSON))
+            ));
+        }
+
+        #[test]
+        fn test_text_event_stream() {
+            let result = SupportedContentType::parse("text/event-stream");
+            assert!(matches!(
+                result,
+                Some(SupportedContentType::Stream(StreamContentType::SSE))
+            ));
+        }
+
+        #[test]
+        fn test_multipart_mixed() {
+            let result = SupportedContentType::parse("multipart/mixed");
+            assert!(matches!(
+                result,
+                Some(SupportedContentType::Stream(
+                    StreamContentType::IncrementalDelivery
+                ))
+            ));
+        }
+
+        #[test]
+        fn test_apollo_multipart_http() {
+            let result =
+                SupportedContentType::parse(r#"multipart/mixed; subscriptionSpec="1.0""#);
+            assert!(matches!(
+                result,
+                Some(SupportedContentType::Stream(
+                    StreamContentType::ApolloMultipartHTTP
+                ))
+            ));
+        }
+
+        #[test]
+        fn test_apollo_multipart_http_reversed_params() {
+            let result =
+                SupportedContentType::parse(r#"subscriptionSpec="1.0"; multipart/mixed"#);
+            assert!(matches!(
+                result,
+                Some(SupportedContentType::Stream(
+                    StreamContentType::ApolloMultipartHTTP
+                ))
+            ));
+        }
+
+        #[test]
+        fn test_unsupported_content_type() {
+            let result = SupportedContentType::parse("text/html");
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn test_empty_string() {
+            let result = SupportedContentType::parse("");
+            assert!(result.is_none());
+        }
+    }
+
+    mod supported_content_type_parse_header {
+        use super::*;
+
+        #[test]
+        fn test_empty_header_returns_defaults() {
+            let (single, stream) = SupportedContentType::parse_header("");
+            assert!(matches!(
+                single,
+                Some(SingleContentType::GraphQLResponseJSON)
+            ));
+            assert!(matches!(
+                stream,
+                Some(StreamContentType::IncrementalDelivery)
+            ));
+        }
+
+        #[test]
+        fn test_wildcard_returns_defaults() {
+            let (single, stream) = SupportedContentType::parse_header("*/*");
+            assert!(matches!(
+                single,
+                Some(SingleContentType::GraphQLResponseJSON)
+            ));
+            assert!(matches!(
+                stream,
+                Some(StreamContentType::IncrementalDelivery)
+            ));
+        }
+
+        #[test]
+        fn test_single_content_type_only() {
+            let (single, stream) = SupportedContentType::parse_header("application/json");
+            assert!(matches!(single, Some(SingleContentType::JSON)));
+            assert!(stream.is_none());
+        }
+
+        #[test]
+        fn test_stream_content_type_only() {
+            let (single, stream) = SupportedContentType::parse_header("text/event-stream");
+            assert!(single.is_none());
+            assert!(matches!(stream, Some(StreamContentType::SSE)));
+        }
+
+        #[test]
+        fn test_multiple_content_types_order_matters() {
+            // First single type should be selected
+            let (single, stream) =
+                SupportedContentType::parse_header("application/json, application/graphql-response+json");
+            assert!(matches!(single, Some(SingleContentType::JSON)));
+            assert!(stream.is_none());
+
+            // Reversed order
+            let (single, stream) =
+                SupportedContentType::parse_header("application/graphql-response+json, application/json");
+            assert!(matches!(
+                single,
+                Some(SingleContentType::GraphQLResponseJSON)
+            ));
+            assert!(stream.is_none());
+        }
+
+        #[test]
+        fn test_mixed_single_and_stream_types() {
+            let (single, stream) = SupportedContentType::parse_header(
+                "text/event-stream, application/json",
+            );
+            assert!(matches!(single, Some(SingleContentType::JSON)));
+            assert!(matches!(stream, Some(StreamContentType::SSE)));
+        }
+
+        #[test]
+        fn test_order_of_appearance_respected() {
+            // SSE before multipart/mixed
+            let (_single, stream) = SupportedContentType::parse_header(
+                "text/event-stream, multipart/mixed",
+            );
+            assert!(matches!(stream, Some(StreamContentType::SSE)));
+
+            // multipart/mixed before SSE
+            let (_single, stream) = SupportedContentType::parse_header(
+                "multipart/mixed, text/event-stream",
+            );
+            assert!(matches!(
+                stream,
+                Some(StreamContentType::IncrementalDelivery)
+            ));
+        }
+
+        #[test]
+        fn test_apollo_multipart_with_comma_in_accept_header() {
+            // This tests the split logic to avoid false positives
+            let (_single, stream) = SupportedContentType::parse_header(
+                r#"multipart/mixed;subscriptionSpec="1.0", text/event-stream"#,
+            );
+            assert!(matches!(
+                stream,
+                Some(StreamContentType::ApolloMultipartHTTP)
+            ));
+        }
+
+        #[test]
+        fn test_whitespace_handling() {
+            let (single, stream) = SupportedContentType::parse_header(
+                "application/json , text/event-stream , multipart/mixed",
+            );
+            assert!(matches!(single, Some(SingleContentType::JSON)));
+            assert!(matches!(stream, Some(StreamContentType::SSE)));
+        }
+
+        #[test]
+        fn test_unsupported_types_ignored() {
+            let (single, stream) = SupportedContentType::parse_header(
+                "text/html, application/json, text/plain",
+            );
+            assert!(matches!(single, Some(SingleContentType::JSON)));
+            assert!(stream.is_none());
+        }
+
+        #[test]
+        fn test_all_unsupported_types() {
+            let (single, stream) =
+                SupportedContentType::parse_header("text/html, text/plain, application/xml");
+            assert!(single.is_none());
+            assert!(stream.is_none());
+        }
+
+        #[test]
+        fn test_stops_after_finding_both_types() {
+            // Should stop processing after finding both single and stream types
+            let (single, stream) = SupportedContentType::parse_header(
+                "application/json, text/event-stream, application/graphql-response+json, multipart/mixed",
+            );
+            assert!(matches!(single, Some(SingleContentType::JSON)));
+            assert!(matches!(stream, Some(StreamContentType::SSE)));
+        }
+
+        #[test]
+        fn test_wildcard_with_other_types_returns_defaults() {
+            // Wildcard should return defaults regardless of other types
+            let (single, stream) = SupportedContentType::parse_header(
+                "application/json, */*, text/event-stream",
+            );
+            assert!(matches!(
+                single,
+                Some(SingleContentType::GraphQLResponseJSON)
+            ));
+            assert!(matches!(
+                stream,
+                Some(StreamContentType::IncrementalDelivery)
+            ));
+        }
+    }
+}
