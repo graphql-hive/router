@@ -345,9 +345,9 @@ impl Minifier {
 
         if !has_newline {
             use std::fmt::Write;
-            /// Reserve extra space for escape sequences. Most strings need 2 bytes for quotes,
-            /// and ~16 bytes accounts for typical escape sequences (e.g., \", \\, \u00XX).
-            /// The buffer will grow dynamically if this estimate is too small.
+            // Reserve extra space for escape sequences. Most strings need 2 bytes for quotes,
+            // and ~16 bytes accounts for typical escape sequences (e.g., \", \\, \u00XX).
+            // The buffer will grow dynamically if this estimate is too small.
             self.buffer.reserve(s.len() + 16);
             self.buffer.push('"');
             for c in s.chars() {
@@ -559,6 +559,10 @@ mod tests {
         let source =
             std::fs::read_to_string("src/parser/tests/queries/directive_args.graphql").unwrap();
         let minified_query = super::minify_query(&source).unwrap();
+        // In all the tests below, I first use snapshots to assert the output of `minify_query`,
+        // and only then compare it with the output of `minify_query_document`.
+        // While I could compare the outputs directly without snapshots,
+        // this setup makes sure that future changes in either function are caught independently.
         insta::assert_snapshot!(minified_query, @r#"query{node@dir(a:1 b:"2" c:true d:false e:null)}"#);
 
         let minified_document = super::minify_query_document(
