@@ -5,6 +5,8 @@ mod authorization_directives_reject;
 #[cfg(test)]
 mod env_vars;
 #[cfg(test)]
+mod error_handling;
+#[cfg(test)]
 mod file_supergraph;
 #[cfg(test)]
 mod header_propagation;

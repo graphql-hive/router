@@ -9,8 +9,9 @@ use futures::TryFutureExt;
 use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes};
+use http::HeaderMap;
 use http::HeaderValue;
-use http::{HeaderMap, StatusCode};
+use http::StatusCode;
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
@@ -21,7 +22,6 @@ use tracing::debug;
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
-use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
@@ -196,24 +196,6 @@ impl HTTPSubgraphExecutor {
             headers: parts.headers.into(),
         })
     }
-
-    fn error_to_response<'exec>(&self, error: SubgraphExecutorError) -> SubgraphResponse<'exec> {
-        let graphql_error: GraphQLError = error.into();
-        let mut graphql_error = graphql_error.add_subgraph_name(&self.subgraph_name);
-        graphql_error.message = "Failed to execute request to subgraph".to_string();
-
-        SubgraphResponse {
-            errors: Some(vec![graphql_error]),
-            ..Default::default()
-        }
-    }
-
-    fn log_error(&self, error: &SubgraphExecutorError) {
-        tracing::error!(
-            error = error as &dyn std::error::Error,
-            "Subgraph executor error"
-        );
-    }
 }
 
 #[async_trait]
@@ -223,14 +205,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> SubgraphResponse<'a> {
-        let body = match self.build_request_body(&execution_request) {
-            Ok(body) => body,
-            Err(e) => {
-                self.log_error(&e);
-                return self.error_to_response(e);
-            }
-        };
+    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+        let body = self.build_request_body(&execution_request)?;
 
         let mut headers = execution_request.headers;
         self.header_map.iter().for_each(|(key, value)| {
@@ -241,15 +217,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            return match self._send_request(body, headers, timeout).await {
-                Ok(shared_response) => shared_response
-                    .deserialize_http_response()
-                    .unwrap_or_else(|err| self.error_to_response(err)),
-                Err(e) => {
-                    self.log_error(&e);
-                    self.error_to_response(e)
-                }
-            };
+            let shared_response = self._send_request(body, headers, timeout).await?;
+            return shared_response.deserialize_http_response();
         }
 
         let fingerprint = request_fingerprint(&http::Method::POST, &self.endpoint, &headers, &body);
@@ -263,7 +232,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .value()
             .clone();
 
-        let response_result = cell
+        let shared_response = cell
             .get_or_try_init(|| async {
                 let res = {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
@@ -277,17 +246,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 self.in_flight_requests.remove(&fingerprint);
                 res
             })
-            .await;
+            .await?;
 
-        match response_result {
-            Ok(shared_response) => shared_response
-                .deserialize_http_response()
-                .unwrap_or_else(|err| self.error_to_response(err)),
-            Err(e) => {
-                self.log_error(&e);
-                self.error_to_response(e)
-            }
-        }
+        shared_response.deserialize_http_response()
     }
 }
 

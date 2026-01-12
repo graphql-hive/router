@@ -19,7 +19,6 @@ use hyper_util::{
     rt::{TokioExecutor, TokioTimer},
 };
 use tokio::sync::{OnceCell, Semaphore};
-use tracing::error;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -29,7 +28,7 @@ use crate::{
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, HttpResponse},
     },
-    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
+    response::subgraph_response::SubgraphResponse,
 };
 
 type SubgraphName = String;
@@ -137,58 +136,28 @@ impl SubgraphExecutorMap {
 
     pub async fn execute<'exec>(
         &self,
-        subgraph_name: &'exec str,
+        subgraph_name: &str,
         execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec>,
-    ) -> SubgraphResponse<'exec> {
-        match self.get_or_create_executor(subgraph_name, client_request) {
-            Ok(executor) => {
-                let timeout = self
-                    .timeouts_by_subgraph
-                    .get(subgraph_name)
-                    .map(|t| {
-                        let global_timeout_duration =
-                            resolve_timeout(&self.global_timeout, client_request, None, "all")?;
-                        resolve_timeout(
-                            t.value(),
-                            client_request,
-                            Some(global_timeout_duration),
-                            subgraph_name,
-                        )
-                    })
-                    .transpose();
+    ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
+        let executor = self.get_or_create_executor(subgraph_name, client_request)?;
 
-                match timeout {
-                    Ok(timeout) => executor.execute(execution_request, timeout).await,
-                    Err(err) => {
-                        error!(
-                            "Failed to resolve timeout for subgraph '{}': {}",
-                            subgraph_name, err,
-                        );
-                        self.internal_server_error_response(err.into(), subgraph_name)
-                    }
-                }
-            }
-            Err(err) => {
-                error!(
-                    "Subgraph executor error for subgraph '{}': {}",
-                    subgraph_name, err,
-                );
-                self.internal_server_error_response(err.into(), subgraph_name)
-            }
-        }
-    }
+        let timeout = self
+            .timeouts_by_subgraph
+            .get(subgraph_name)
+            .map(|t| {
+                let global_timeout_duration =
+                    resolve_timeout(&self.global_timeout, client_request, None, "all")?;
+                resolve_timeout(
+                    t.value(),
+                    client_request,
+                    Some(global_timeout_duration),
+                    subgraph_name,
+                )
+            })
+            .transpose()?;
 
-    fn internal_server_error_response<'exec>(
-        &self,
-        graphql_error: GraphQLError,
-        subgraph_name: &'exec str,
-    ) -> SubgraphResponse<'exec> {
-        let error_with_subgraph_name = graphql_error.add_subgraph_name(subgraph_name);
-        SubgraphResponse {
-            errors: Some(vec![error_with_subgraph_name]),
-            ..Default::default()
-        }
+        executor.execute(execution_request, timeout).await
     }
 
     /// Looks up a subgraph executor based on the subgraph name.
