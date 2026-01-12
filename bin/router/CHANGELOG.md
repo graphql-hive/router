@@ -116,6 +116,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.29 (2026-01-12)
+
+### Fixes
+
+#### Bump hive-router-config version
+
+Somehow the `hive-router-internal` crate was published with an older version of the `hive-router-config` dependency.
+
 ## 0.0.28 (2026-01-12)
 
 ### Features

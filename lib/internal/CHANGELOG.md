@@ -1,3 +1,11 @@
+## 0.0.5 (2026-01-12)
+
+### Fixes
+
+#### Bump hive-router-config version
+
+Somehow the `hive-router-internal` crate was published with an older version of the `hive-router-config` dependency.
+
 ## 0.0.4 (2025-12-12)
 
 ### Features
