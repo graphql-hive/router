@@ -18,9 +18,7 @@ use sonic_rs::Value;
 use std::{env::var, sync::Arc};
 use tokio::{
     net::TcpListener,
-    sync::{
-        oneshot::{self, Sender},
-    },
+    sync::oneshot::{self, Sender},
     task::JoinHandle,
 };
 
