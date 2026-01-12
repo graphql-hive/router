@@ -114,12 +114,12 @@ impl GraphQLError {
     ///     }
     /// }));
     /// ```
-    pub fn from_message_and_extensions(
-        message: String,
+    pub fn from_message_and_extensions<TMessage: Into<String>>(
+        message: TMessage,
         extensions: GraphQLErrorExtensions,
     ) -> Self {
         GraphQLError {
-            message,
+            message: message.into(),
             locations: None,
             path: None,
             extensions,
