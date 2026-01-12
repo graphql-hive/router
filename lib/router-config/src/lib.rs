@@ -103,6 +103,8 @@ pub struct HiveRouterConfig {
     #[serde(default)]
     pub usage_reporting: usage_reporting::UsageReportingConfig,
 
+    /// Configuration to disable introspection queries.
+    #[serde(default)]
     pub disable_introspection: Option<DisableIntrospectionConfig>,
 }
 
