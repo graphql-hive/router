@@ -1,5 +1,7 @@
 ---
 internal: patch
+router: patch
+executor: patch
 ---
 
 # Bump hive-router-config version
