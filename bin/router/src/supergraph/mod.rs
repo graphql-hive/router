@@ -50,7 +50,7 @@ pub fn resolve_from_config(
                 *connect_timeout,
                 *request_timeout,
                 *accept_invalid_certs,
-                retry_policy.max_retries,
+                retry_policy.into(),
             )?)
         }
     }

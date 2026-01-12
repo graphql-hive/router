@@ -21,6 +21,8 @@ pub enum LoadSupergraphError {
     MissingHiveCDNEndpoint,
     #[error("Hive CDN key is missing. Please provide it via 'HIVE_CDN_KEY' environment variable or under 'supergraph.key' in the configuration.")]
     MissingHiveCDNKey,
+    #[error("Request rejected by circuit breaker")]
+    RejectedByCircuitBreaker,
 }
 
 #[derive(Debug)]

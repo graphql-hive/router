@@ -5,7 +5,9 @@ use std::{
 
 use async_trait::async_trait;
 use graphql_parser::schema::Document;
-use hive_console_sdk::agent::{AgentError, ExecutionReport, UsageAgent, UsageAgentExt};
+use hive_console_sdk::agent::usage_agent::{
+    AgentError, ExecutionReport, UsageAgent, UsageAgentExt,
+};
 use hive_router_config::usage_reporting::UsageReportingConfig;
 use hive_router_plan_executor::execution::{
     client_request_details::ClientRequestDetails, plan::PlanExecutionOutput,
@@ -30,35 +32,42 @@ pub enum UsageReportingError {
 pub fn init_hive_user_agent(
     bg_tasks_manager: &mut BackgroundTasksManager,
     usage_config: &UsageReportingConfig,
-) -> Result<Arc<UsageAgent>, UsageReportingError> {
+) -> Result<UsageAgent, UsageReportingError> {
     let user_agent = format!("hive-router/{}", ROUTER_VERSION);
     let access_token = usage_config
         .access_token
         .as_deref()
         .ok_or(UsageReportingError::MissingAccessToken)?;
 
-    let hive_user_agent = UsageAgent::try_new(
-        access_token,
-        usage_config.endpoint.clone(),
-        usage_config.target_id.clone(),
-        usage_config.buffer_size,
-        usage_config.connect_timeout,
-        usage_config.request_timeout,
-        usage_config.accept_invalid_certs,
-        usage_config.flush_interval,
-        user_agent,
-    )?;
-    bg_tasks_manager.register_task(hive_user_agent.clone());
-    Ok(hive_user_agent)
+    let mut hive_usage_agent = UsageAgent::builder()
+        .token(access_token.into())
+        .endpoint(usage_config.endpoint.clone())
+        .buffer_size(usage_config.buffer_size)
+        .connect_timeout(usage_config.connect_timeout)
+        .request_timeout(usage_config.request_timeout)
+        .accept_invalid_certs(usage_config.accept_invalid_certs)
+        .flush_interval(usage_config.flush_interval)
+        .user_agent(user_agent);
+
+    if let Some(target_id) = &usage_config.target_id {
+        hive_usage_agent = hive_usage_agent.target_id(target_id.into());
+    }
+
+    let hive_usage_agent = hive_usage_agent.build()?;
+
+    bg_tasks_manager.register_task(Arc::new(UsageAgentTask {
+        agent: hive_usage_agent.clone(),
+    }));
+    Ok(hive_usage_agent)
 }
 
 #[inline]
-pub fn collect_usage_report(
+pub async fn collect_usage_report(
     schema: Arc<Document<'static, String>>,
     duration: Duration,
     req: &HttpRequest,
-    client_request_details: &ClientRequestDetails,
-    hive_usage_agent: &Arc<UsageAgent>,
+    client_request_details: &ClientRequestDetails<'_, '_>,
+    hive_usage_agent: &UsageAgent,
     usage_config: &UsageReportingConfig,
     execution_result: &PlanExecutionOutput,
 ) {
@@ -95,7 +104,7 @@ pub fn collect_usage_report(
         persisted_document_hash: None,
     };
 
-    if let Err(err) = hive_usage_agent.add_report(execution_report) {
+    if let Err(err) = hive_usage_agent.add_report(execution_report).await {
         tracing::error!("Failed to send usage report: {}", err);
     }
 }
@@ -105,13 +114,17 @@ fn get_header_value<'req>(req: &'req HttpRequest, header_name: &str) -> Option<&
     req.headers().get(header_name).and_then(|v| v.to_str().ok())
 }
 
+struct UsageAgentTask {
+    agent: UsageAgent,
+}
+
 #[async_trait]
-impl BackgroundTask for UsageAgent {
+impl BackgroundTask for UsageAgentTask {
     fn id(&self) -> &str {
         "hive_console_usage_report_task"
     }
 
     async fn run(&self, token: CancellationToken) {
-        self.start_flush_interval(Some(token)).await
+        self.agent.start_flush_interval(&token).await
     }
 }
