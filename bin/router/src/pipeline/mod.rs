@@ -80,7 +80,7 @@ pub async fn graphql_request_handler(
 
     let jwt_context = if let Some(jwt) = &shared_state.jwt_auth_runtime {
         match jwt
-            .validate_request(req, &shared_state.jwt_claims_cache)
+            .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
             .await
         {
             Ok(jwt_context) => jwt_context,
@@ -210,7 +210,6 @@ pub async fn graphql_request_handler(
     .await
     {
         Ok(response) => {
-            // TODO: this needs to work for streaming results too
             if shared_state.router_config.usage_reporting.enabled {
                 if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
                     usage_reporting::collect_usage_report(
