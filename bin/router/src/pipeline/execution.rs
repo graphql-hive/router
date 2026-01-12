@@ -74,7 +74,7 @@ pub async fn execute_plan(
                     .forward_claims_to_upstream_extensions
                     .field_name,
             )
-            .map_err(|e| PipelineErrorVariant::JwtForwardingError(e))?
+            .map_err(PipelineErrorVariant::JwtForwardingError)?
     } else {
         None
     };

@@ -252,7 +252,7 @@ pub async fn graphql_request_handler(
 }
 
 #[inline]
-#[allow(clippy::await_holding_refcell_ref)]
+#[allow(clippy::await_holding_refcell_ref, clippy::too_many_arguments)]
 pub async fn execute_pipeline<'exec, 'req>(
     cancellation_token: &CancellationToken,
     client_request_details: &ClientRequestDetails<'exec, 'req>,
@@ -265,17 +265,17 @@ pub async fn execute_pipeline<'exec, 'req>(
 ) -> Result<PlanExecutionOutput, PipelineErrorVariant> {
     let progressive_override_ctx = request_override_context(
         &shared_state.override_labels_evaluator,
-        &client_request_details,
+        client_request_details,
     )
-    .map_err(|error| PipelineErrorVariant::LabelEvaluationError(error))?;
+    .map_err(PipelineErrorVariant::LabelEvaluationError)?;
 
     let decision = enforce_operation_authorization(
         &shared_state.router_config,
-        &normalize_payload,
+        normalize_payload,
         &supergraph.authorization,
         &supergraph.metadata,
-        &variable_payload,
-        &client_request_details.jwt,
+        variable_payload,
+        client_request_details.jwt,
     );
 
     let (normalize_payload, authorization_errors) = match decision {
@@ -317,8 +317,8 @@ pub async fn execute_pipeline<'exec, 'req>(
     let planned_request = PlannedRequest {
         normalized_payload: &normalize_payload,
         query_plan_payload: &query_plan_payload,
-        variable_payload: &variable_payload,
-        client_request_details: &client_request_details,
+        variable_payload: variable_payload,
+        client_request_details: client_request_details,
         authorization_errors: &authorization_errors,
     };
 

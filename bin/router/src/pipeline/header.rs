@@ -41,8 +41,10 @@ impl SingleContentType {
             SingleContentType::JSON => &APPLICATION_JSON_STR,
         }
     }
-    #[inline]
-    pub fn default() -> Self {
+}
+
+impl Default for SingleContentType {
+    fn default() -> Self {
         SingleContentType::GraphQLResponseJSON
     }
 }
@@ -70,13 +72,15 @@ pub enum StreamContentType {
 impl StreamContentType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            StreamContentType::IncrementalDelivery => &"multipart/mixed; boundary=-",
+            StreamContentType::IncrementalDelivery => "multipart/mixed; boundary=-",
             StreamContentType::SSE => &TEXT_EVENT_STREAM,
-            StreamContentType::ApolloMultipartHTTP => &r#"multipart/mixed; boundary=graphql"#,
+            StreamContentType::ApolloMultipartHTTP => r#"multipart/mixed; boundary=graphql"#,
         }
     }
-    #[inline]
-    pub fn default() -> Self {
+}
+
+impl Default for StreamContentType {
+    fn default() -> Self {
         StreamContentType::IncrementalDelivery
     }
 }
