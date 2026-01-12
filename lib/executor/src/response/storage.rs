@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use bytes::Bytes;
 
 pub struct ResponsesStorage {
-    responses: Vec<Arc<Bytes>>,
+    responses: Vec<Bytes>,
 }
 
 impl Default for ResponsesStorage {
@@ -21,7 +19,7 @@ impl ResponsesStorage {
 
     pub fn add_response(&mut self, response: Bytes) -> usize {
         let new_item_index = self.responses.len();
-        self.responses.push(Arc::new(response));
+        self.responses.push(response);
         new_item_index
     }
 

@@ -26,6 +26,8 @@ pub enum SubgraphExecutorError {
     TimeoutExpressionResolution(String, String),
     #[error("Request to subgraph \"{0}\" timed out after {1} milliseconds")]
     RequestTimeout(String, u128),
+    #[error("Failed to deserialize subgraph response: {0}")]
+    ResponseDeserializationFailure(String),
 }
 
 impl From<SubgraphExecutorError> for GraphQLError {
@@ -73,6 +75,9 @@ impl SubgraphExecutorError {
             SubgraphExecutorError::RequestTimeout(_, _) => "SUBGRAPH_REQUEST_TIMEOUT",
             SubgraphExecutorError::RequestTimeoutExpressionBuild(_, _) => {
                 "SUBGRAPH_TIMEOUT_EXPRESSION_BUILD_FAILURE"
+            }
+            SubgraphExecutorError::ResponseDeserializationFailure(_) => {
+                "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE"
             }
         }
     }
