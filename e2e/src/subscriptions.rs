@@ -1,7 +1,5 @@
-// TODO: when query fails for whatever reason and the client is requesting an SSE, it MUST be in the stream
-
 #[cfg(test)]
-mod subscription_e2e_tests {
+mod subscriptions_e2e_tests {
     use futures::{future, Stream};
     use std::sync::Arc;
 
