@@ -438,8 +438,8 @@ mod subscriptions_e2e_tests {
 
         // we check this at the end because the body will hold clues to why the test fails
         assert_eq!(
-            content_type_header, "multipart/mixed;boundary=graphql",
-            "Expected Content-Type to be multipart/mixed;boundary=graphql"
+            content_type_header, "multipart/mixed; boundary=graphql",
+            "Expected Content-Type to be multipart/mixed; boundary=graphql"
         );
     }
 
