@@ -96,7 +96,7 @@ pub enum PipelineError {
     #[strum(serialize = "JWT_FORWARDING_ERROR")]
     JwtForwardingError(JwtForwardingError),
 
-    #[error("Failed to evaluate disable_introspection expression: {0}")]
+    #[error("Failed to evaluate introspection expression: {0}")]
     IntrospectionPermissionEvaluationError(String),
 }
 

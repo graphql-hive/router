@@ -39,11 +39,11 @@ use crate::{
     shared_state::RouterSharedState,
 };
 
+pub mod allow_introspection;
 pub mod authorization;
 pub mod coerce_variables;
 pub mod cors;
 pub mod csrf_prevention;
-pub mod disable_introspection;
 pub mod error;
 pub mod execution;
 pub mod execution_request;

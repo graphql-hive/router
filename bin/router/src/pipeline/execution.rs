@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::vec;
 
+use crate::pipeline::allow_introspection::handle_allow_introspection;
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::disable_introspection::handle_disable_introspection;
@@ -109,9 +110,9 @@ pub async fn execute_plan(
     }
 
     if introspection_context.query.is_some() {
-        if let Some(disable_introspection) = &app_state.disable_introspection {
-            handle_disable_introspection(
-                disable_introspection,
+        if let Some(allow_introspection) = &app_state.allow_introspection {
+            handle_allow_introspection(
+                allow_introspection,
                 &mut introspection_context,
                 planned_request.client_request_details,
                 false,

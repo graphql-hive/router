@@ -2,5 +2,5 @@
 supergraph:
   source: file
   path: ../supergraph.graphql
-disable_introspection:
-  expression: env("DISABLE_INTROSPECTION", string!("false")) == "true"
+introspection:
+  expression: env("DISABLE_INTROSPECTION", string!("false")) != "true"
