@@ -339,10 +339,7 @@ mod tests {
         #[test]
         fn test_empty_header_returns_defaults() {
             let (single, stream) = SupportedContentType::parse_header("");
-            assert!(matches!(
-                single,
-                Some(SingleContentType::GraphQLResponseJSON)
-            ));
+            assert!(matches!(single, Some(SingleContentType::JSON)));
             assert!(matches!(
                 stream,
                 Some(StreamContentType::IncrementalDelivery)
@@ -352,10 +349,7 @@ mod tests {
         #[test]
         fn test_wildcard_returns_defaults() {
             let (single, stream) = SupportedContentType::parse_header("*/*");
-            assert!(matches!(
-                single,
-                Some(SingleContentType::GraphQLResponseJSON)
-            ));
+            assert!(matches!(single, Some(SingleContentType::JSON)));
             assert!(matches!(
                 stream,
                 Some(StreamContentType::IncrementalDelivery)
@@ -472,10 +466,7 @@ mod tests {
             // Wildcard should return defaults regardless of other types
             let (single, stream) =
                 SupportedContentType::parse_header("application/json, */*, text/event-stream");
-            assert!(matches!(
-                single,
-                Some(SingleContentType::GraphQLResponseJSON)
-            ));
+            assert!(matches!(single, Some(SingleContentType::JSON)));
             assert!(matches!(
                 stream,
                 Some(StreamContentType::IncrementalDelivery)
