@@ -1,6 +1,8 @@
 use graphql_tools::validation::validate::ValidationPlan;
 use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::HiveRouterConfig;
+use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
+use hive_router_internal::expressions::ExpressionCompileError;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
@@ -12,6 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
+use crate::pipeline::disable_introspection::compile_disable_introspection;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
@@ -70,6 +73,7 @@ pub struct RouterSharedState {
     pub jwt_claims_cache: JwtClaimsCache,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
     pub hive_usage_agent: Option<UsageAgent>,
+    pub disable_introspection: Option<BooleanOrProgram>,
 }
 
 impl RouterSharedState {
@@ -97,6 +101,9 @@ impl RouterSharedState {
             .map_err(Box::new)?,
             jwt_auth_runtime,
             hive_usage_agent,
+            disable_introspection: compile_disable_introspection(
+                &router_config.disable_introspection,
+            )?,
         })
     }
 }
@@ -111,4 +118,6 @@ pub enum SharedStateError {
     OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
     #[error("error creating hive usage agent: {0}")]
     UsageAgent(#[from] Box<AgentError>),
+    #[error("invalid disable introspection config: {0}")]
+    DisableIntrospectionCompile(#[from] Box<ExpressionCompileError>),
 }

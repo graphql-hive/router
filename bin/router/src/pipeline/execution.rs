@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::vec;
 
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::disable_introspection::handle_disable_introspection;
+use crate::pipeline::error::{PipelineError};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
@@ -12,6 +14,7 @@ use hive_router_plan_executor::execution::client_request_details::ClientRequestD
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
+use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use ntex::web::HttpRequest;
@@ -65,7 +68,7 @@ pub async fn execute_plan(
         None
     };
 
-    let introspection_context = IntrospectionContext {
+    let mut introspection_context = IntrospectionContext {
         query: planned_request
             .normalized_payload
             .operation_for_introspection
@@ -73,6 +76,8 @@ pub async fn execute_plan(
         schema: &supergraph.planner.consumer_schema.document,
         metadata: &supergraph.metadata,
     };
+
+    let mut initial_errors: Vec<GraphQLError> = vec![];
 
     let jwt_forward_plan: Option<JwtAuthForwardingPlan> = if app_state
         .router_config
@@ -94,6 +99,25 @@ pub async fn execute_plan(
         None
     };
 
+    if !planned_request.authorization_errors.is_empty() {
+        initial_errors.extend(
+            planned_request
+                .authorization_errors
+                .into_iter()
+                .map(|e| e.into()),
+        );
+    }
+
+    if let Some(disable_introspection) = &app_state.disable_introspection {
+        handle_disable_introspection(
+            disable_introspection,
+            &mut introspection_context,
+            planned_request.client_request_details,
+            false,
+            &mut initial_errors,
+        )?;
+    }
+
     execute_query_plan(QueryPlanExecutionContext {
         query_plan: planned_request.query_plan_payload,
         projection_plan: &planned_request.normalized_payload.projection_plan,
@@ -105,11 +129,7 @@ pub async fn execute_plan(
         operation_type_name: planned_request.normalized_payload.root_type_name,
         jwt_auth_forwarding: &jwt_forward_plan,
         executors: &supergraph.subgraph_executor_map,
-        initial_errors: planned_request
-            .authorization_errors
-            .into_iter()
-            .map(|e| e.into())
-            .collect(),
+        initial_errors,
     })
     .await
     .map_err(|err| {
