@@ -5,6 +5,7 @@ mod env_overrides;
 pub mod graphiql;
 pub mod headers;
 pub mod http_server;
+pub mod introspection_policy;
 pub mod jwt_auth;
 pub mod log;
 pub mod override_labels;
@@ -26,6 +27,7 @@ use crate::{
     env_overrides::{EnvVarOverrides, EnvVarOverridesError},
     graphiql::GraphiQLConfig,
     http_server::HttpServerConfig,
+    introspection_policy::IntrospectionPermissionConfig,
     log::LoggingConfig,
     override_labels::OverrideLabelsConfig,
     primitives::file_path::with_start_path,
@@ -100,6 +102,10 @@ pub struct HiveRouterConfig {
     /// Configuration for usage reporting to GraphQL Hive.
     #[serde(default)]
     pub usage_reporting: usage_reporting::UsageReportingConfig,
+
+    /// Configuration to enable or disable introspection queries.
+    #[serde(default)]
+    pub introspection: Option<IntrospectionPermissionConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]

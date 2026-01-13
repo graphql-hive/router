@@ -72,6 +72,9 @@ pub enum PipelineError {
     JwtError(JwtError),
     #[error("Failed to forward jwt: {0}")]
     JwtForwardingError(JwtForwardingError),
+
+    #[error("Failed to evaluate introspection expression: {0}")]
+    IntrospectionPermissionEvaluationError(String),
 }
 
 impl PipelineError {
@@ -133,6 +136,9 @@ impl PipelineError {
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
             (Self::JwtError(err), _) => err.status_code(),
+            (Self::IntrospectionPermissionEvaluationError(_), _) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         }
     }
 }

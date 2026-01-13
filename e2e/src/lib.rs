@@ -3,6 +3,8 @@ mod authorization_directives_filter;
 #[cfg(test)]
 mod authorization_directives_reject;
 #[cfg(test)]
+mod disable_introspection;
+#[cfg(test)]
 mod env_vars;
 #[cfg(test)]
 mod file_supergraph;
