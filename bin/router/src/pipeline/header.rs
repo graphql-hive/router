@@ -4,17 +4,17 @@ use ntex::web::HttpRequest;
 
 use crate::pipeline::error::PipelineError;
 
+pub const APPLICATION_JSON_STR: &str = "application/json";
+const APPLICATION_GRAPHQL_RESPONSE_JSON_STR: &str = "application/graphql-response+json";
+const TEXT_EVENT_STREAM: &str = "text/event-stream";
+const MULTIPART_MIXED: &str = "multipart/mixed";
+/// Non-GraphQL content type, used to detect if the client can accept GraphiQL responses.
+pub const TEXT_HTML_CONTENT_TYPE: &str = "text/html";
+
 lazy_static! {
-    pub static ref APPLICATION_JSON_STR: &'static str = "application/json";
-    pub static ref APPLICATION_JSON: HeaderValue = HeaderValue::from_static(&APPLICATION_JSON_STR);
-    pub static ref APPLICATION_GRAPHQL_RESPONSE_JSON_STR: &'static str =
-    "application/graphql-response+json";
+    pub static ref APPLICATION_JSON: HeaderValue = HeaderValue::from_static(APPLICATION_JSON_STR);
     pub static ref APPLICATION_GRAPHQL_RESPONSE_JSON: HeaderValue =
-    HeaderValue::from_static(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
-    pub static ref TEXT_EVENT_STREAM: &'static str = "text/event-stream";
-    pub static ref MULTIPART_MIXED: &'static str = "multipart/mixed";
-    /// Non-GraphQL content type, used to detect if the client can accept GraphiQL responses.
-    pub static ref TEXT_HTML_CONTENT_TYPE: &'static str = "text/html";
+        HeaderValue::from_static(APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
 }
 
 /// Non-streamable (single) content types for GraphQL responses.
@@ -32,10 +32,10 @@ pub enum SingleContentType {
 }
 
 impl SingleContentType {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            SingleContentType::GraphQLResponseJSON => &APPLICATION_GRAPHQL_RESPONSE_JSON_STR,
-            SingleContentType::JSON => &APPLICATION_JSON_STR,
+            SingleContentType::GraphQLResponseJSON => APPLICATION_GRAPHQL_RESPONSE_JSON_STR,
+            SingleContentType::JSON => APPLICATION_JSON_STR,
         }
     }
 }
@@ -63,10 +63,10 @@ pub enum StreamContentType {
 }
 
 impl StreamContentType {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             StreamContentType::IncrementalDelivery => "multipart/mixed; boundary=-",
-            StreamContentType::SSE => &TEXT_EVENT_STREAM,
+            StreamContentType::SSE => TEXT_EVENT_STREAM,
             StreamContentType::ApolloMultipartHTTP => r#"multipart/mixed; boundary=graphql"#,
         }
     }
@@ -80,25 +80,25 @@ enum SupportedContentType {
 
 impl SupportedContentType {
     fn parse(content_type: &str) -> Option<SupportedContentType> {
-        if content_type == *APPLICATION_GRAPHQL_RESPONSE_JSON_STR {
+        if content_type == APPLICATION_GRAPHQL_RESPONSE_JSON_STR {
             return Some(SupportedContentType::Single(
                 SingleContentType::GraphQLResponseJSON,
             ));
         }
-        if content_type == *APPLICATION_JSON_STR {
+        if content_type == APPLICATION_JSON_STR {
             return Some(SupportedContentType::Single(SingleContentType::JSON));
         }
-        if content_type.contains(*MULTIPART_MIXED)
+        if content_type.contains(MULTIPART_MIXED)
             && content_type.contains(r#"subscriptionSpec="1.0""#)
         {
             return Some(SupportedContentType::Stream(
                 StreamContentType::ApolloMultipartHTTP,
             ));
         }
-        if content_type == *TEXT_EVENT_STREAM {
+        if content_type == TEXT_EVENT_STREAM {
             return Some(SupportedContentType::Stream(StreamContentType::SSE));
         }
-        if content_type == *MULTIPART_MIXED {
+        if content_type == MULTIPART_MIXED {
             return Some(SupportedContentType::Stream(
                 StreamContentType::IncrementalDelivery,
             ));
@@ -181,7 +181,7 @@ impl RequestAccepts for HttpRequest {
         self.headers()
             .get(ACCEPT)
             .and_then(|value| value.to_str().ok())
-            .map(|s| s.contains(*TEXT_HTML_CONTENT_TYPE))
+            .map(|s| s.contains(TEXT_HTML_CONTENT_TYPE))
             .unwrap_or(false)
     }
 

@@ -75,7 +75,7 @@ async fn graphql_endpoint_handler(
         {
             if app_state.router_config.graphiql.enabled {
                 return web::HttpResponse::Ok()
-                    .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)
+                    .header(CONTENT_TYPE, TEXT_HTML_CONTENT_TYPE)
                     .body(GRAPHIQL_HTML);
             } else {
                 return web::HttpResponse::NotFound().into();
