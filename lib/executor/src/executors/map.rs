@@ -445,22 +445,24 @@ fn resolve_timeout(
     default_timeout: Option<Duration>,
     timeout_name: &str,
 ) -> Result<Duration, SubgraphExecutorError> {
-    let mut context_map = BTreeMap::new();
-    context_map.insert("request".into(), client_request.into());
+    duration_or_program
+        .resolve(|| {
+            let mut context_map = BTreeMap::new();
+            context_map.insert("request".into(), client_request.into());
 
-    if let Some(default) = default_timeout {
-        context_map.insert(
-            "default".into(),
-            VrlValue::Integer(default.as_millis() as i64),
-        );
-    }
+            if let Some(default) = default_timeout {
+                context_map.insert(
+                    "default".into(),
+                    VrlValue::Integer(default.as_millis() as i64),
+                );
+            }
 
-    let context = VrlValue::Object(context_map);
-
-    duration_or_program.resolve(context).map_err(|err| {
-        SubgraphExecutorError::TimeoutExpressionResolution(
-            timeout_name.to_string(),
-            err.to_string(),
-        )
-    })
+            VrlValue::Object(context_map)
+        })
+        .map_err(|err| {
+            SubgraphExecutorError::TimeoutExpressionResolution(
+                timeout_name.to_string(),
+                err.to_string(),
+            )
+        })
 }
