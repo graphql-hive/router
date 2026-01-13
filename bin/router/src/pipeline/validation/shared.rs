@@ -33,6 +33,9 @@ impl<'a> CountableNode<'a> {
      * This returns the selection set object of the relevant ast node
      *
      * We use this to traverse the selections in the validation rules.
+     *
+     * The return value is `Option<&SelectionSet>` because
+     * only `FragmentSpread` does not have a selection set.
      */
     pub fn selection_set(&self) -> Option<&'a SelectionSet> {
         match self {
@@ -40,6 +43,8 @@ impl<'a> CountableNode<'a> {
             CountableNode::InlineFragment(inline_fragment) => Some(&inline_fragment.selection_set),
             CountableNode::OperationDefinition(node) => Some(node.selection_set()),
             CountableNode::FragmentDefinition(node) => Some(&node.selection_set),
+            // Fragment spreads do not have selection sets
+            // So we return None here
             CountableNode::FragmentSpread(_) => None,
         }
     }
