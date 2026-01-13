@@ -9,7 +9,7 @@ use tracing::error;
 use crate::pipeline::error::PipelineError;
 
 /// Non-GraphQL content type, used to detect if the client can accept GraphiQL responses.
-pub const TEXT_HTML_MIME: &'static str = "text/html";
+pub const TEXT_HTML_MIME: &str = "text/html";
 
 const JSON_MEDIA_TYPE: MediaType =
     MediaType::new(mediatype::names::APPLICATION, mediatype::names::JSON);
