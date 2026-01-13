@@ -143,7 +143,9 @@ impl PipelineError {
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
             (Self::JwtError(err), _) => err.status_code(),
-            (Self::IntrospectionPermissionEvaluationError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::IntrospectionPermissionEvaluationError(_), _) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         }
     }
 }
