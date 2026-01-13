@@ -306,7 +306,7 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
                 n: 1,
-                expose_limits: true,
+                expose_limits: false,
             },
         })]);
         let errors = validate(&schema, &query, &validation_plan);
