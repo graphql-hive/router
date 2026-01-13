@@ -2,7 +2,9 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use graphql_tools::parser::query::Document;
-use hive_router_query_planner::utils::parsing::safe_parse_operation;
+use hive_router_query_planner::utils::parsing::{
+    safe_parse_operation, safe_parse_operation_with_limit,
+};
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::PipelineError;
@@ -31,11 +33,17 @@ pub async fn parse_operation_with_cache(
         trace!("Found cached parsed operation for query");
         cached
     } else {
-        let parsed = safe_parse_operation(&execution_params.query).map_err(|err| {
+        let parsed = match app_state.router_config.limits.max_tokens.as_ref() {
+            Some(cfg) => {
+                safe_parse_operation_with_limit(&execution_params.query, cfg.n, cfg.expose_limits)
+            }
+            None => safe_parse_operation(&execution_params.query),
+        }
+        .map_err(|err| {
             error!("Failed to parse GraphQL operation: {}", err);
             PipelineError::FailedToParseOperation(err)
         })?;
-        trace!("sucessfully parsed GraphQL operation");
+        trace!("successfully parsed GraphQL operation");
         let parsed_arc = Arc::new(parsed);
         app_state
             .parse_cache

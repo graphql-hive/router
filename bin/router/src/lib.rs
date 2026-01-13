@@ -133,10 +133,6 @@ pub async fn configure_app_from_config(
     let mut validation_plan = default_rules_validation_plan();
     if let Some(max_depth_config) = &router_config_arc.limits.max_depth {
         if max_depth_config.is_enabled() {
-            info!(
-                "Enabling Max Depth Rule with max depth {}",
-                max_depth_config.n
-            );
             validation_plan.add_rule(Box::new(MaxDepthRule {
                 config: max_depth_config.clone(),
             }));
