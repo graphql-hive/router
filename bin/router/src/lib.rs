@@ -20,18 +20,27 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     logger::configure_logging,
-    pipeline::{graphql_request_handler, usage_reporting::init_hive_user_agent},
+    pipeline::{
+        graphql_request_handler,
+        header::{RequestAccepts, TEXT_HTML_CONTENT_TYPE},
+        usage_reporting::init_hive_user_agent,
+    },
 };
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use hive_router_config::{load_config, HiveRouterConfig};
-use http::header::RETRY_AFTER;
+use http::{
+    header::{CONTENT_TYPE, RETRY_AFTER},
+    Method,
+};
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
 use tracing::{info, warn};
+
+static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
 async fn graphql_endpoint_handler(
     request: HttpRequest,
@@ -51,14 +60,42 @@ async fn graphql_endpoint_handler(
             return early_response;
         }
 
-        let mut res = graphql_request_handler(
+        // Aggree on the response content type so that errors can be handled
+        // properly outside the request handler.
+        let (single_content_type, stream_content_type) = match request.accepted_content_type() {
+            Ok((single, stream)) => (single, stream),
+            Err(err) => return err.into_response(None),
+        };
+
+        if request.method() == Method::GET
+        && single_content_type.is_none()
+        // coming soon
+        // && stream_content_type.is_none()
+        && request.can_accept_http()
+        {
+            if app_state.router_config.graphiql.enabled {
+                return web::HttpResponse::Ok()
+                    .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)
+                    .body(GRAPHIQL_HTML);
+            } else {
+                return web::HttpResponse::NotFound().into();
+            }
+        }
+
+        let mut res = match graphql_request_handler(
             &request,
             body_bytes,
+            single_content_type.clone(),
+            stream_content_type,
             supergraph,
             app_state.get_ref(),
             schema_state.get_ref(),
         )
-        .await;
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => return err.into_response(single_content_type),
+        };
 
         // Apply CORS headers to the final response if CORS is configured.
         if let Some(cors) = app_state.cors_runtime.as_ref() {

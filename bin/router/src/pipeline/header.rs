@@ -18,7 +18,7 @@ lazy_static! {
 }
 
 /// Non-streamable (single) content types for GraphQL responses.
-#[derive(PartialEq, Default, Debug)]
+#[derive(PartialEq, Default, Debug, Clone)]
 pub enum SingleContentType {
     /// GraphQL over HTTP spec (`application/graphql-response+json`)
     ///
