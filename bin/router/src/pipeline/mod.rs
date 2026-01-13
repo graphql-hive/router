@@ -1,25 +1,28 @@
 use std::{sync::Arc, time::Instant};
 
-use hive_router_plan_executor::execution::{
-    client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-    plan::PlanExecutionOutput,
+use hive_router_plan_executor::{
+    execution::{
+        client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
+        plan::PlanExecutionOutput,
+    },
+    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
 use http::{header::CONTENT_TYPE, HeaderValue, Method};
 use ntex::{
+    http::ResponseBuilder,
     util::Bytes,
     web::{self, HttpRequest},
 };
 
 use crate::{
-    jwt::context::JwtRequestContext,
     pipeline::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
-        error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant},
+        error::{FailedExecutionResult, PipelineError},
         execution::{execute_plan, PlannedRequest},
         execution_request::get_execution_request,
         header::{
@@ -71,28 +74,7 @@ pub async fn graphql_request_handler(
         }
     }
 
-    let jwt_context = if let Some(jwt) = &shared_state.jwt_auth_runtime {
-        match jwt
-            .validate_request(req, &shared_state.jwt_claims_cache)
-            .await
-        {
-            Ok(jwt_context) => jwt_context,
-            Err(err) => return err.make_response(),
-        }
-    } else {
-        None
-    };
-
-    match execute_pipeline(
-        req,
-        body_bytes,
-        supergraph,
-        shared_state,
-        schema_state,
-        jwt_context,
-    )
-    .await
-    {
+    match execute_pipeline(req, body_bytes, supergraph, shared_state, schema_state).await {
         Ok(response) => {
             let response_bytes = Bytes::from(response.body);
             let response_headers = response.headers;
@@ -115,7 +97,46 @@ pub async fn graphql_request_handler(
                 .header(http::header::CONTENT_TYPE, response_content_type)
                 .body(response_bytes)
         }
-        Err(err) => err.into_response(),
+        Err(error) => {
+            let accept_ok = !req.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
+
+            let status = error.default_status_code(accept_ok);
+
+            if let PipelineError::ValidationErrors(validation_errors) = error {
+                let validation_error_result = FailedExecutionResult {
+                    errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
+                };
+
+                return ResponseBuilder::new(status).json(&validation_error_result);
+            }
+
+            if let PipelineError::AuthorizationFailed(authorization_errors) = error {
+                let authorization_error_result = FailedExecutionResult {
+                    errors: Some(
+                        authorization_errors
+                            .iter()
+                            .map(|error| error.into())
+                            .collect(),
+                    ),
+                };
+
+                return ResponseBuilder::new(status).json(&authorization_error_result);
+            }
+
+            let code = error.graphql_error_code();
+            let message = error.graphql_error_message();
+
+            let graphql_error = GraphQLError::from_message_and_extensions(
+                message,
+                GraphQLErrorExtensions::new_from_code(code),
+            );
+
+            let result = FailedExecutionResult {
+                errors: Some(vec![graphql_error]),
+            };
+
+            ResponseBuilder::new(status).json(&result)
+        }
     }
 }
 
@@ -127,18 +148,33 @@ pub async fn execute_pipeline(
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
-    jwt_context: Option<JwtRequestContext>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
+    let jwt_request_details = match &shared_state.jwt_auth_runtime {
+        Some(jwt_auth_runtime) => match jwt_auth_runtime
+            .validate_request(req, &shared_state.jwt_claims_cache)
+            .await
+            .map_err(PipelineError::JwtError)?
+        {
+            Some(jwt_context) => JwtRequestDetails::Authenticated {
+                scopes: jwt_context.extract_scopes(),
+                claims: jwt_context
+                    .get_claims_value()
+                    .map_err(PipelineError::JwtForwardingError)?,
+                token: jwt_context.token_raw,
+                prefix: jwt_context.token_prefix,
+            },
+            None => JwtRequestDetails::Unauthenticated,
+        },
+        None => JwtRequestDetails::Unauthenticated,
+    };
 
     let mut execution_request = get_execution_request(req, body_bytes).await?;
-    let parser_payload = parse_operation_with_cache(req, shared_state, &execution_request).await?;
-    validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
-        .await?;
+    let parser_payload = parse_operation_with_cache(shared_state, &execution_request).await?;
+    validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload).await?;
 
     let normalize_payload = normalize_request_with_cache(
-        req,
         supergraph,
         schema_state,
         &execution_request,
@@ -150,18 +186,6 @@ pub async fn execute_pipeline(
 
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
-
-    let jwt_request_details = match jwt_context {
-        Some(jwt_context) => JwtRequestDetails::Authenticated {
-            scopes: jwt_context.extract_scopes(),
-            claims: jwt_context
-                .get_claims_value()
-                .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?,
-            token: jwt_context.token_raw,
-            prefix: jwt_context.token_prefix,
-        },
-        None => JwtRequestDetails::Unauthenticated,
-    };
 
     let client_request_details = ClientRequestDetails {
         method: req.method(),
@@ -184,7 +208,7 @@ pub async fn execute_pipeline(
         &shared_state.override_labels_evaluator,
         &client_request_details,
     )
-    .map_err(|error| req.new_pipeline_error(PipelineErrorVariant::LabelEvaluationError(error)))?;
+    .map_err(PipelineError::LabelEvaluationError)?;
 
     let decision = enforce_operation_authorization(
         &shared_state.router_config,
@@ -216,16 +240,11 @@ pub async fn execute_pipeline(
             )
         }
         AuthorizationDecision::Reject { errors } => {
-            return Err(
-                req.new_pipeline_error(PipelineErrorVariant::AuthorizationFailed(
-                    errors.iter().map(|e| e.into()).collect(),
-                )),
-            )
+            return Err(PipelineError::AuthorizationFailed(errors))
         }
     };
 
     let query_plan_payload = plan_operation_with_cache(
-        req,
         supergraph,
         schema_state,
         &normalize_payload,
