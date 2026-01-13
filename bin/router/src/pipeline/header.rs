@@ -4,6 +4,7 @@ use http::header::ACCEPT;
 use mediatype::MediaType;
 use ntex::web::HttpRequest;
 use std::str::FromStr;
+use strum::{AsRefStr, EnumString, IntoStaticStr};
 use tracing::error;
 
 use crate::pipeline::error::PipelineError;
@@ -47,11 +48,12 @@ const SUPPORTED_STREAM_MEDIA_TYPES: &[MediaType] = &[
 ];
 
 /// Non-streamable (single) content types for GraphQL responses.
-#[derive(PartialEq, Default, Debug, Clone)]
+#[derive(PartialEq, Default, Debug, Clone, IntoStaticStr, EnumString, AsRefStr)]
 pub enum SingleContentType {
     /// GraphQL over HTTP spec (`application/graphql-response+json`)
     ///
     /// Read more: https://graphql.github.io/graphql-over-http
+    #[strum(serialize = "application/graphql-response+json")]
     GraphQLResponseJSON,
     /// Legacy GraphQL over HTTP (`application/json`)
     ///
@@ -59,31 +61,22 @@ pub enum SingleContentType {
     ///
     /// Read more: https://graphql.github.io/graphql-over-http
     #[default]
+    #[strum(serialize = "application/json")]
     JSON,
 }
 
-impl SingleContentType {
-    pub fn from_media_type(media_type: Option<&MediaType>) -> Option<SingleContentType> {
-        let media_type = media_type?;
+impl From<&MediaType<'_>> for SingleContentType {
+    fn from(media_type: &MediaType) -> Self {
         if media_type == &GRAPHQL_RESPONSE_JSON_MEDIA_TYPE {
-            Some(SingleContentType::GraphQLResponseJSON)
-        } else if media_type == &JSON_MEDIA_TYPE {
-            Some(SingleContentType::JSON)
+            SingleContentType::GraphQLResponseJSON
         } else {
-            None
-        }
-    }
-
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            SingleContentType::GraphQLResponseJSON => "application/graphql-response+json",
-            SingleContentType::JSON => "application/json",
+            SingleContentType::JSON
         }
     }
 }
 
 /// Streamable content types for GraphQL responses.
-#[derive(PartialEq, Default, Debug)]
+#[derive(PartialEq, Default, Debug, IntoStaticStr, EnumString, AsRefStr)]
 pub enum StreamContentType {
     /// Incremental Delivery over HTTP (`multipart/mixed`)
     ///
@@ -91,44 +84,30 @@ pub enum StreamContentType {
     ///
     /// Read more: https://github.com/graphql/graphql-over-http/blob/c144dbd89cbea6bde0045205e34e01002f9f9ba0/rfcs/IncrementalDelivery.md
     #[default]
+    #[strum(serialize = "multipart/mixed; boundary=-")]
     IncrementalDelivery,
     /// GraphQL over SSE (`text/event-stream`)
     ///
     /// Only "distinct connection mode" at the moment.
     ///
     /// Read more: https://github.com/graphql/graphql-over-http/blob/d285c9f31897ea51e231ebfe8dcb481a354431c9/rfcs/GraphQLOverSSE.md
+    #[strum(serialize = "text/event-stream")]
     SSE,
     /// Apollo Multipart HTTP protocol (`multipart/mixed;subscriptionSpec="1.0"`)
     ///
     /// Read more: https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol
+    #[strum(serialize = r#"multipart/mixed; boundary=graphql"#)]
     ApolloMultipartHTTP,
 }
 
-impl StreamContentType {
-    pub fn from_media_type(media_type: Option<&MediaType>) -> Option<StreamContentType> {
-        let media_type = media_type?;
+impl From<&MediaType<'_>> for StreamContentType {
+    fn from(media_type: &MediaType) -> Self {
         if media_type == &INCREMENTAL_DELIVERY_MEDIA_TYPE {
-            Some(StreamContentType::IncrementalDelivery)
+            StreamContentType::IncrementalDelivery
         } else if media_type == &SSE_MEDIA_TYPE {
-            Some(StreamContentType::SSE)
-        } else if media_type == &APOLLO_MULTIPART_HTTP_MEDIA_TYPE {
-            Some(StreamContentType::ApolloMultipartHTTP)
+            StreamContentType::SSE
         } else {
-            None
-        }
-    }
-
-    /// Will return the string representation of the content type as to be sent
-    /// back to the client in the `Content-Type` header.
-    ///
-    /// For example, if during negotiation the client accepts `multipart/mixed;subscriptionsSpec="1.0"`,
-    /// this function will return `multipart/mixed; boundary=graphql` because that is the expected
-    /// content type value for multipart HTTP responses.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            StreamContentType::IncrementalDelivery => "multipart/mixed; boundary=-",
-            StreamContentType::SSE => "text/event-stream",
-            StreamContentType::ApolloMultipartHTTP => r#"multipart/mixed; boundary=graphql"#,
+            StreamContentType::ApolloMultipartHTTP
         }
     }
 }
@@ -145,10 +124,12 @@ fn negotiate_content_type(
         ));
     }
     let accept = Accept::from_str(accept_header)?;
-    let agreed_single =
-        SingleContentType::from_media_type(accept.negotiate(SUPPORTED_SINGLE_MEDIA_TYPES));
-    let agreed_stream =
-        StreamContentType::from_media_type(accept.negotiate(SUPPORTED_STREAM_MEDIA_TYPES));
+    let agreed_single = accept
+        .negotiate(SUPPORTED_SINGLE_MEDIA_TYPES)
+        .map(|t| t.into());
+    let agreed_stream = accept
+        .negotiate(SUPPORTED_STREAM_MEDIA_TYPES)
+        .map(|t| t.into());
     Ok((agreed_single, agreed_stream))
 }
 

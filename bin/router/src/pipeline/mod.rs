@@ -176,8 +176,8 @@ pub async fn graphql_request_handler(
         }
     }
 
-    let accepted_content_type = match single_content_type {
-        Some(content_type) => content_type.as_str(),
+    let accepted_content_type:  &'static str = match single_content_type {
+        Some(content_type) => content_type.into(),
         None => {
             return Err(PipelineError::UnsupportedContentType);
         }

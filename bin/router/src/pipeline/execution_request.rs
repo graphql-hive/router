@@ -111,7 +111,7 @@ pub async fn get_execution_request_from_http_request(
                     let content_type_str = value
                         .to_str()
                         .map_err(|_| PipelineError::InvalidHeaderValue(CONTENT_TYPE))?;
-                    if !content_type_str.contains(SingleContentType::JSON.as_str()) {
+                    if !content_type_str.contains(SingleContentType::JSON.as_ref()) {
                         warn!(
                             "Invalid content type on a POST request: {}",
                             content_type_str
