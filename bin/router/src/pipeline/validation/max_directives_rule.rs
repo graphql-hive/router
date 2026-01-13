@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use graphql_tools::{
     ast::OperationVisitorContext,
-    static_graphql::query::{Definition, Directive, OperationDefinition},
+    static_graphql::query::Definition,
     validation::{
         rules::ValidationRule,
         utils::{ValidationError, ValidationErrorContext},
@@ -60,23 +60,6 @@ impl ValidationRule for MaxDirectivesRule {
 struct MaxDirectivesVisitor<'a, 'b> {
     visited_fragments: HashMap<&'a str, i32>,
     ctx: &'b mut OperationVisitorContext<'a>,
-}
-
-impl<'a> CountableNode<'a> {
-    fn get_directives(&self) -> Option<&'a [Directive]> {
-        match self {
-            CountableNode::Field(field) => Some(&field.directives),
-            CountableNode::FragmentDefinition(fragment_def) => Some(&fragment_def.directives),
-            CountableNode::InlineFragment(inline_fragment) => Some(&inline_fragment.directives),
-            CountableNode::OperationDefinition(op_def) => match op_def {
-                OperationDefinition::Query(query) => Some(&query.directives),
-                OperationDefinition::Mutation(mutation) => Some(&mutation.directives),
-                OperationDefinition::Subscription(subscription) => Some(&subscription.directives),
-                OperationDefinition::SelectionSet(_) => None,
-            },
-            CountableNode::FragmentSpread(fragment_spread) => Some(&fragment_spread.directives),
-        }
-    }
 }
 
 impl<'a> MaxDirectivesVisitor<'a, '_> {
