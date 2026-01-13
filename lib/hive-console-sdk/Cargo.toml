@@ -12,27 +12,23 @@ authors = ["The Guild"]
 [dependencies]
 graphql-tools =  { path = "../graphql-tools", version = "0.4.0" }
 
-async-trait = "0.1.77"
-axum-core = "0.5"
-thiserror = "2.0.11"
-reqwest = { version = "0.12.24", default-features = false, features = [
-    "rustls-tls",
-    "blocking",
-] }
-reqwest-retry = "0.8.0"
-reqwest-middleware = { version = "0.4.2", features = ["json"]}
-anyhow = "1"
-tracing = "0.1"
-serde = "1"
-tokio = { version = "1.36.0", features = ["full"] }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true, features = [ "blocking" ] }
+reqwest-retry = { workspace = true }
+reqwest-middleware = { workspace = true, features = ["json"]}
+anyhow = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 md5 = "0.8.0"
-serde_json = "1"
-moka = { version = "0.12.10", features = ["future", "sync"] }
+serde_json = { workspace = true }
+moka = { workspace = true }
 sha2 = { version = "0.10.8", features = ["std"] }
-tokio-util = "0.7.16"
-regex-automata = "0.4.10"
-once_cell = "1.21.3"
-retry-policies = "0.5.0"
+tokio-util = { workspace = true }
+regex-automata = { workspace = true }
+once_cell = { workspace = true }
+retry-policies = { workspace = true }
 recloser = "1.3.1"
 futures-util = "0.3.31"
 typify = "0.5.0"
