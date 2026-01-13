@@ -136,6 +136,12 @@ impl StreamContentType {
 fn negotiate_content_type(
     accept_header: &str,
 ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), HeaderError> {
+    if accept_header.is_empty() {
+        return Ok((
+            Some(SingleContentType::default()),
+            Some(StreamContentType::default()),
+        ));
+    }
     let accept = Accept::from_str(accept_header)?;
     let agreed_single =
         SingleContentType::from_media_type(accept.negotiate(SUPPORTED_SINGLE_MEDIA_TYPES));
@@ -202,6 +208,11 @@ mod tests {
     #[test]
     fn negotiate_single_and_stream_content_types() {
         let cases = vec![
+            (
+                "",
+                Some(SingleContentType::JSON),
+                Some(StreamContentType::IncrementalDelivery),
+            ),
             (
                 r#"application/json, text/event-stream, multipart/mixed;subscriptionSpec="1.0""#,
                 Some(SingleContentType::JSON),
