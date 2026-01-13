@@ -94,6 +94,11 @@ impl<'a> From<&'a OperationDefinition> for CountableNode<'a> {
     }
 }
 
+/**
+ * While visiting fragments, we need to keep track of
+ * whether the fragment was already counted, or is being visited.
+ * In case of recursive fragments, this avoids infinite loops.
+ */
 pub enum VisitedFragment {
     Counted(usize),
     Visiting,
