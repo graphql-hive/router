@@ -18,7 +18,7 @@ lazy_static! {
 }
 
 /// Non-streamable (single) content types for GraphQL responses.
-#[derive(PartialEq, Default, Debug, Clone, Copy)]
+#[derive(PartialEq, Default, Debug, Clone)]
 pub enum SingleContentType {
     /// GraphQL over HTTP spec (`application/graphql-response+json`)
     ///
@@ -41,7 +41,7 @@ impl SingleContentType {
 }
 
 /// Streamable content types for GraphQL responses.
-#[derive(PartialEq, Default, Debug, Clone, Copy)]
+#[derive(Default, Debug)]
 pub enum StreamContentType {
     /// Incremental Delivery over HTTP (`multipart/mixed`)
     ///
@@ -195,12 +195,12 @@ impl RequestAccepts for HttpRequest {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("");
 
-        let parsed @ (single, stream) = SupportedContentType::parse_header(content_types);
+        let parsed = SupportedContentType::parse_header(content_types);
 
         // at this point we treat no content type as "user explicitly does not support any known types"
         // this is because only empty accept header or */* is treated as "accept everything" and we check
         // that above
-        if single.is_none() && stream.is_none() {
+        if parsed.0.is_none() && parsed.1.is_none() {
             Err(PipelineError::UnsupportedContentType)
         } else {
             Ok(parsed)
