@@ -38,3 +38,9 @@ pub enum SubgraphExecutorError {
     #[error("Failed to deserialize subgraph response: {0}")]
     ResponseDeserializationFailure(String),
 }
+
+impl SubgraphExecutorError {
+    pub fn error_code(&self) -> &'static str {
+        self.into()
+    }
+}
