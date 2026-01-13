@@ -306,11 +306,11 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
                 n: 1,
-                expose_limits: false,
+                expose_limits: true,
             },
         })]);
         let errors = validate(&schema, &query, &validation_plan);
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Directives limit of 3 exceeded, found 4");
+        assert_eq!(errors[0].message, "Directives limit exceeded");
     }
 }
