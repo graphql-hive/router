@@ -47,7 +47,7 @@ pub mod error;
 pub mod execution;
 pub mod execution_request;
 pub mod header;
-pub mod introspection_permission;
+pub mod introspection_policy;
 pub mod normalize;
 pub mod parser;
 pub mod progressive_override;

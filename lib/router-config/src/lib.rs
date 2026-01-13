@@ -5,7 +5,7 @@ mod env_overrides;
 pub mod graphiql;
 pub mod headers;
 pub mod http_server;
-pub mod introspection_permission;
+pub mod introspection_policy;
 pub mod jwt_auth;
 pub mod limits;
 pub mod log;
@@ -28,7 +28,7 @@ use crate::{
     env_overrides::{EnvVarOverrides, EnvVarOverridesError},
     graphiql::GraphiQLConfig,
     http_server::HttpServerConfig,
-    introspection_permission::IntrospectionPermissionConfig,
+    introspection_policy::IntrospectionPermissionConfig,
     log::LoggingConfig,
     override_labels::OverrideLabelsConfig,
     primitives::file_path::with_start_path,

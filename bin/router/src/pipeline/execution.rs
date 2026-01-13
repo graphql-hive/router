@@ -5,7 +5,7 @@ use std::vec;
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::introspection_permission::handle_introspection_permission;
+use crate::pipeline::introspection_policy::handle_introspection_policy;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
@@ -109,8 +109,8 @@ pub async fn execute_plan(
     }
 
     if introspection_context.query.is_some() {
-        handle_introspection_permission(
-            &app_state.introspection_permission,
+        handle_introspection_policy(
+            &app_state.introspection_policy,
             &mut introspection_context,
             planned_request.client_request_details,
             &mut initial_errors,

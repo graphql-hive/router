@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use hive_router_config::introspection_permission::IntrospectionPermissionConfig;
+use hive_router_config::introspection_policy::IntrospectionPermissionConfig;
 use hive_router_internal::expressions::{
     values::boolean::BooleanOrProgram, CompileExpression, ExpressionCompileError,
 };
@@ -13,10 +13,10 @@ use vrl::core::Value as VrlValue;
 
 use crate::pipeline::error::PipelineError;
 
-pub fn compile_introspection_permission(
-    introspection_permission_cfg: &Option<IntrospectionPermissionConfig>,
+pub fn compile_introspection_policy(
+    introspection_policy_cfg: &Option<IntrospectionPermissionConfig>,
 ) -> Result<BooleanOrProgram, ExpressionCompileError> {
-    match introspection_permission_cfg {
+    match introspection_policy_cfg {
         Some(IntrospectionPermissionConfig::Boolean(b)) => Ok(BooleanOrProgram::Value(*b)),
         Some(IntrospectionPermissionConfig::Expression { expression }) => expression
             .compile_expression(None)
@@ -25,13 +25,13 @@ pub fn compile_introspection_permission(
     }
 }
 
-pub fn handle_introspection_permission(
-    introspection_permission_prog: &BooleanOrProgram,
+pub fn handle_introspection_policy(
+    introspection_policy_prog: &BooleanOrProgram,
     introspection_context: &mut IntrospectionContext,
     client_request_details: &client_request_details::ClientRequestDetails<'_, '_>,
     initial_errors: &mut Vec<GraphQLError>,
 ) -> Result<(), PipelineError> {
-    let is_enabled = introspection_permission_prog
+    let is_enabled = introspection_policy_prog
         .resolve(|| {
             let mut context_map = BTreeMap::new();
             context_map.insert("request".into(), client_request_details.into());

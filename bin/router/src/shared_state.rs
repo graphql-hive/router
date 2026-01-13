@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
-use crate::pipeline::introspection_permission::compile_introspection_permission;
+use crate::pipeline::introspection_policy::compile_introspection_policy;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
@@ -73,7 +73,7 @@ pub struct RouterSharedState {
     pub jwt_claims_cache: JwtClaimsCache,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
     pub hive_usage_agent: Option<UsageAgent>,
-    pub introspection_permission: BooleanOrProgram,
+    pub introspection_policy: BooleanOrProgram,
 }
 
 impl RouterSharedState {
@@ -101,10 +101,8 @@ impl RouterSharedState {
             .map_err(Box::new)?,
             jwt_auth_runtime,
             hive_usage_agent,
-            introspection_permission: compile_introspection_permission(
-                &router_config.introspection,
-            )
-            .map_err(Box::new)?,
+            introspection_policy: compile_introspection_policy(&router_config.introspection)
+                .map_err(Box::new)?,
         })
     }
 }
