@@ -76,6 +76,13 @@ impl From<&MediaType<'_>> for SingleContentType {
 }
 
 /// Streamable content types for GraphQL responses.
+///
+/// The into static str will return the string representation of the content type as to be sent
+/// back to the client in the `Content-Type` header.
+///
+/// For example, if during negotiation the client accepts `multipart/mixed;subscriptionsSpec="1.0"`,
+/// this function will return `multipart/mixed; boundary=graphql` because that is the expected
+/// content type value for multipart HTTP responses.
 #[derive(PartialEq, Default, Debug, IntoStaticStr, EnumString, AsRefStr)]
 pub enum StreamContentType {
     /// Incremental Delivery over HTTP (`multipart/mixed`)
