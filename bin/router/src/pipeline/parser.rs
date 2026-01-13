@@ -34,10 +34,10 @@ pub async fn parse_operation_with_cache(
         cached
     } else {
         let parsed = match app_state.router_config.limits.max_tokens.as_ref() {
-            Some(cfg) => {
+            Some(cfg) if cfg.is_enabled() => {
                 safe_parse_operation_with_limit(&execution_params.query, cfg.n, cfg.expose_limits)
             }
-            None => safe_parse_operation(&execution_params.query),
+            _ => safe_parse_operation(&execution_params.query),
         }
         .map_err(|err| {
             error!("Failed to parse GraphQL operation: {}", err);

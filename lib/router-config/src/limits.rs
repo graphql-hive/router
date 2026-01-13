@@ -27,6 +27,9 @@ pub struct LimitsConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MaxDepthRuleConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
     #[serde(default = "default_max_depth")]
     /// Depth threshold. A value of 0 means no limit.
     pub n: usize,
@@ -46,13 +49,14 @@ pub struct MaxDepthRuleConfig {
 
 impl MaxDepthRuleConfig {
     pub fn is_enabled(&self) -> bool {
-        self.n > 0
+        self.n > 0 && self.enabled
     }
 }
 
 impl Default for MaxDepthRuleConfig {
     fn default() -> Self {
         MaxDepthRuleConfig {
+            enabled: false,
             n: default_max_depth(),
             ignore_introspection: default_ignore_introspection(),
             flatten_fragments: default_flatten_fragments(),
@@ -79,6 +83,9 @@ fn default_expose_limits() -> bool {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MaxDirectivesRuleConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
     #[serde(default = "default_max_directives")]
     /// Directives threshold. A value of 0 means no limit.
     pub n: usize,
@@ -94,13 +101,14 @@ fn default_max_directives() -> usize {
 
 impl MaxDirectivesRuleConfig {
     pub fn is_enabled(&self) -> bool {
-        self.n > 0
+        self.n > 0 && self.enabled
     }
 }
 
 impl Default for MaxDirectivesRuleConfig {
     fn default() -> Self {
         MaxDirectivesRuleConfig {
+            enabled: false,
             n: default_max_directives(),
             expose_limits: default_expose_limits(),
         }
@@ -109,6 +117,9 @@ impl Default for MaxDirectivesRuleConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MaxTokensRuleConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
     #[serde(default = "default_max_tokens")]
     /// Tokens threshold. A value of 0 means no limit.
     pub n: usize,
@@ -119,5 +130,21 @@ pub struct MaxTokensRuleConfig {
 }
 
 fn default_max_tokens() -> usize {
-    0
+    1000
+}
+
+impl MaxTokensRuleConfig {
+    pub fn is_enabled(&self) -> bool {
+        self.n > 0 && self.enabled
+    }
+}
+
+impl Default for MaxTokensRuleConfig {
+    fn default() -> Self {
+        MaxTokensRuleConfig {
+            enabled: false,
+            n: default_max_tokens(),
+            expose_limits: default_expose_limits(),
+        }
+    }
 }

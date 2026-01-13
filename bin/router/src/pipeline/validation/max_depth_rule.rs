@@ -201,6 +201,7 @@ mod tests {
     fn rejects_fragment_exceeding_max_depth() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
+                enabled: true,
                 n: 4,
                 ..Default::default()
             },
@@ -284,6 +285,7 @@ mod tests {
     fn rejects_flattened_inline_fragment_exceeding_max_depth() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
+                enabled: true,
                 n: 2,
                 flatten_fragments: true,
                 ..Default::default()
@@ -325,6 +327,7 @@ mod tests {
     fn allows_introspection_queries_when_ignored() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
+                enabled: true,
                 n: 2,
                 ignore_introspection: true,
                 ..Default::default()
@@ -348,6 +351,7 @@ mod tests {
     fn rejects_recursive_fragment_exceeding_max_depth() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
+                enabled: true,
                 n: 3,
                 ..Default::default()
             },
@@ -388,6 +392,7 @@ mod tests {
     fn rejects_with_a_generic_message_when_expose_limits_is_false() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
+                enabled: true,
                 n: 2,
                 expose_limits: false,
                 ..Default::default()
@@ -415,6 +420,7 @@ mod tests {
     fn rejects_with_detailed_error_message_when_expose_limits_is_true() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
+                enabled: true,
                 n: 2,
                 expose_limits: true,
                 ..Default::default()
@@ -442,6 +448,7 @@ mod tests {
     fn rejects_for_fragment_named_schema_exceeding_max_depth() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
+                enabled: true,
                 n: 6,
                 expose_limits: true,
                 ..Default::default()
@@ -488,6 +495,7 @@ mod tests {
     fn rejects_for_exceeding_max_depth_by_reusing_a_cached_fragment() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
+                enabled: true,
                 n: 6,
                 expose_limits: true,
                 ..Default::default()

@@ -37,7 +37,7 @@ impl ValidationRule for MaxDirectivesRule {
                     let message = if self.config.expose_limits {
                         format!(
                             "Directives limit of {} exceeded, found {}",
-                            directives, self.config.n
+                            self.config.n, directives
                         )
                     } else {
                         "Directives limit exceeded".to_string()
@@ -93,19 +93,21 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
         if let CountableNode::FragmentSpread(countable_node) = countable_node {
             let fragment_name = countable_node.fragment_name.as_str();
             if let Some(visited_fragment_cnt) = self.visited_fragments.get(fragment_name) {
-                return *visited_fragment_cnt;
+                directive_cnt += visited_fragment_cnt;
             } else {
+                // In case of a recursive fragment, we mark it as -1 initially to avoid infinite loops.
                 self.visited_fragments.insert(fragment_name, -1);
-            }
 
-            if let Some(fragment_def) = self.ctx.known_fragments.get(fragment_name) {
-                let countable_node: CountableNode<'a> = fragment_def.into();
-                let fragment_directive_cnt = self.count_directives(countable_node);
-                if self.visited_fragments.get(fragment_name) == Some(&-1) {
-                    self.visited_fragments
-                        .insert(fragment_name, fragment_directive_cnt);
+                if let Some(fragment_def) = self.ctx.known_fragments.get(fragment_name) {
+                    let countable_node: CountableNode<'a> = fragment_def.into();
+                    let fragment_directive_cnt = self.count_directives(countable_node);
+                    // If it was marked as -1, we update it with the actual count.
+                    if self.visited_fragments.get(fragment_name) == Some(&-1) {
+                        self.visited_fragments
+                            .insert(fragment_name, fragment_directive_cnt);
+                    }
+                    directive_cnt += fragment_directive_cnt;
                 }
-                directive_cnt += fragment_directive_cnt;
             }
         }
 
@@ -165,6 +167,7 @@ mod tests {
             .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
+                enabled: true,
                 n: 3,
                 expose_limits: true,
             },
@@ -173,7 +176,7 @@ mod tests {
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Directives limit of 4 exceeded, found 3");
+        assert_eq!(errors[0].message, "Directives limit of 3 exceeded, found 4");
     }
 
     #[test]
@@ -197,6 +200,7 @@ mod tests {
 
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
+                enabled: true,
                 n: 3,
                 expose_limits: true,
             },
@@ -205,7 +209,7 @@ mod tests {
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Directives limit of 4 exceeded, found 3");
+        assert_eq!(errors[0].message, "Directives limit of 3 exceeded, found 4");
     }
 
     #[test]
@@ -250,6 +254,7 @@ mod tests {
             .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
+                enabled: true,
                 n: 3,
                 expose_limits: false,
             },
@@ -271,6 +276,7 @@ mod tests {
             .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
+                enabled: true,
                 n: 3,
                 expose_limits: true,
             },
@@ -279,6 +285,37 @@ mod tests {
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Directives limit of 4 exceeded, found 3");
+        assert_eq!(errors[0].message, "Directives limit of 3 exceeded, found 4");
+    }
+
+    #[test]
+    fn count_directives_on_recursive_fragment_spreads() {
+        let schema = parse_schema(TYPE_DEFS)
+            .expect("Failed to parse schema")
+            .into_static();
+        let query = parse_query(
+            r#"
+        query {
+          ...A
+        }
+        fragment A on Query {
+          ...B @directive1 @directive2
+        }
+        fragment B on Query {
+          ...A @directive3 @directive4
+        }
+      "#,
+        )
+        .expect("Failed to parse query")
+        .into_static();
+        let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
+            config: MaxDirectivesRuleConfig {
+                enabled: true,
+                n: 1,
+                expose_limits: false,
+            },
+        })]);
+        let errors = validate(&schema, &query, &validation_plan);
+        assert!(!errors.is_empty(), "There are 4 directives, should error");
     }
 }
