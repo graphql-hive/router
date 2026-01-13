@@ -51,13 +51,13 @@ ahash = { workspace = true }
 strum = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
-moka = { version = "0.12.10", features = ["future"] }
+moka = { workspace = true }
 ulid = "1.2.1"
-tokio-util = "0.7.16"
+tokio-util = { workspace = true }
 cookie = "0.18.1"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
-anyhow = "1.0.100"
+anyhow = { workspace = true }
 mediatype = "0.21.0"
 headers-core = "0.3.0"
 headers-accept = "0.3.0"
