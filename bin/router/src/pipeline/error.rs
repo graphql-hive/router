@@ -107,7 +107,7 @@ impl PipelineError {
                 "OPERATION_RESOLUTION_FAILURE"
             }
             Self::JwtError(err) => err.error_code(),
-            Self::SubscriptionsNotSupported => "SUBSCRIPTIONS_NOT_SUPPORT",
+            Self::SubscriptionsNotSupported => "SUBSCRIPTIONS_NOT_SUPPORTED",
             Self::SubscriptionsTransportNotSupported => "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED",
             _ => "BAD_REQUEST",
         }
