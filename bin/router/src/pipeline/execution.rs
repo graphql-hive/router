@@ -30,7 +30,7 @@ pub struct PlannedRequest<'req> {
     pub query_plan_payload: &'req Arc<QueryPlan>,
     pub variable_payload: &'req CoerceVariablesPayload,
     pub client_request_details: &'req ClientRequestDetails<'req, 'req>,
-    pub authorization_errors: &'req [AuthorizationError],
+    pub authorization_errors: Vec<AuthorizationError>,
 }
 
 #[inline]
@@ -38,7 +38,7 @@ pub async fn execute_plan(
     req: &HttpRequest,
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
-    planned_request: &PlannedRequest<'_>,
+    planned_request: PlannedRequest<'_>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
@@ -107,7 +107,7 @@ pub async fn execute_plan(
         executors: &supergraph.subgraph_executor_map,
         initial_errors: planned_request
             .authorization_errors
-            .iter()
+            .into_iter()
             .map(|e| e.into())
             .collect(),
     })
