@@ -92,7 +92,7 @@ pub async fn graphql_request_handler(
     // coming soon
     // && stream_content_type.is_none()
     {
-        return Err(PipelineError::SubscriptionsNotSupport);
+        return Err(PipelineError::SubscriptionsNotSupported);
     }
 
     let variable_payload =

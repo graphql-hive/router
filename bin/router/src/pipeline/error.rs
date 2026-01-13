@@ -81,7 +81,7 @@ pub enum PipelineError {
 
     // Subscription-related errors
     #[error("Subscriptions are not supported")]
-    SubscriptionsNotSupport,
+    SubscriptionsNotSupported,
     #[error("Subscriptions are not supported over accepted transport(s)")]
     SubscriptionsTransportNotSupported,
 }
@@ -107,7 +107,7 @@ impl PipelineError {
                 "OPERATION_RESOLUTION_FAILURE"
             }
             Self::JwtError(err) => err.error_code(),
-            Self::SubscriptionsNotSupport => "SUBSCRIPTIONS_NOT_SUPPORT",
+            Self::SubscriptionsNotSupported => "SUBSCRIPTIONS_NOT_SUPPORT",
             Self::SubscriptionsTransportNotSupported => "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED",
             _ => "BAD_REQUEST",
         }
@@ -147,7 +147,7 @@ impl PipelineError {
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
             (Self::JwtError(err), _) => err.status_code(),
-            (Self::SubscriptionsNotSupport, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
         }
     }
