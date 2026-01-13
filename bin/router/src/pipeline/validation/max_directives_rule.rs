@@ -167,7 +167,6 @@ mod tests {
             .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
-                enabled: true,
                 n: 3,
                 expose_limits: true,
             },
@@ -200,7 +199,6 @@ mod tests {
 
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
-                enabled: true,
                 n: 3,
                 expose_limits: true,
             },
@@ -254,7 +252,6 @@ mod tests {
             .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
-                enabled: true,
                 n: 3,
                 expose_limits: false,
             },
@@ -276,7 +273,6 @@ mod tests {
             .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
-                enabled: true,
                 n: 3,
                 expose_limits: true,
             },
@@ -310,7 +306,6 @@ mod tests {
         .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
             config: MaxDirectivesRuleConfig {
-                enabled: true,
                 n: 1,
                 expose_limits: false,
             },
