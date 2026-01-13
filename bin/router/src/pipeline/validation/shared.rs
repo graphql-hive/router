@@ -6,6 +6,10 @@ use graphql_tools::{
     },
 };
 
+/**
+ * A helper enum to represent different kinds of AST nodes that can contain directives, selections, etc nestedly.
+ * This is used to generalize the counting of directives, selections, etc across different node types.
+ */
 pub enum CountableNode<'a> {
     Field(&'a Field),
     FragmentSpread(&'a FragmentSpread),
