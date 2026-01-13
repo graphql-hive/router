@@ -33,4 +33,18 @@ limits:
 
 This configuration helps to prevent excessive use of directives in queries, which can lead to performance issues.
 
+# Max Tokens
+
+Additionally, we have introduced a new configuration option to limit the maximum number of tokens in incoming GraphQL operations. This feature is designed to prevent excessively large queries that could impact server performance.
+
+By default, this limit is disabled. You can enable and configure it in your router configuration as follows:
+
+```yaml
+limits:
+  max_tokens:
+    n: 1000  # Set the maximum allowed number of tokens
+```
+
+This configuration allows you to set a maximum token count for incoming GraphQL queries, helping to ensure that queries remain manageable and do not overwhelm the server.
+
 With these new configurations, you can better manage the complexity of incoming GraphQL queries and ensure the stability and performance of your API.
