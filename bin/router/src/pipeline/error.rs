@@ -15,10 +15,16 @@ use ntex::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::pipeline::{header::SingleContentType, progressive_override::LabelEvaluationError};
+use crate::{
+    jwt::errors::JwtError,
+    pipeline::{
+        authorization::AuthorizationError, header::SingleContentType,
+        progressive_override::LabelEvaluationError,
+    },
+};
 
 #[derive(Debug, thiserror::Error)]
-pub enum PipelineErrorVariant {
+pub enum PipelineError {
     // HTTP-related errors
     #[error("Unsupported HTTP method: {0}")]
     UnsupportedHttpMethod(Method),
@@ -55,7 +61,7 @@ pub enum PipelineErrorVariant {
     #[error("Validation errors")]
     ValidationErrors(Arc<Vec<ValidationError>>),
     #[error("Authorization failed")]
-    AuthorizationFailed(Vec<GraphQLError>),
+    AuthorizationFailed(Vec<AuthorizationError>),
     #[error("Failed to execute a plan: {0}")]
     PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
@@ -68,6 +74,8 @@ pub enum PipelineErrorVariant {
     CsrfPreventionFailed,
 
     // JWT-auth plugin errors
+    #[error(transparent)]
+    JwtError(JwtError),
     #[error("Failed to forward jwt: {0}")]
     JwtForwardingError(JwtForwardingError),
 
@@ -78,13 +86,7 @@ pub enum PipelineErrorVariant {
     SubscriptionsTransportNotSupported,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct FailedExecutionResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub errors: Option<Vec<GraphQLError>>,
-}
-
-impl PipelineErrorVariant {
+impl PipelineError {
     pub fn graphql_error_code(&self) -> &'static str {
         match self {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
@@ -104,6 +106,7 @@ impl PipelineErrorVariant {
             Self::NormalizationError(NormalizationError::MultipleMatchingOperationsFound) => {
                 "OPERATION_RESOLUTION_FAILURE"
             }
+            Self::JwtError(err) => err.error_code(),
             Self::SubscriptionsNotSupport => "SUBSCRIPTIONS_NOT_SUPPORT",
             Self::SubscriptionsTransportNotSupported => "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED",
             _ => "BAD_REQUEST",
@@ -143,6 +146,7 @@ impl PipelineErrorVariant {
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
+            (Self::JwtError(err), _) => err.status_code(),
             (Self::SubscriptionsNotSupport, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
         }
@@ -153,7 +157,7 @@ impl PipelineErrorVariant {
 
         let status = self.default_status_code(prefer_ok);
 
-        if let PipelineErrorVariant::ValidationErrors(validation_errors) = self {
+        if let PipelineError::ValidationErrors(validation_errors) = self {
             let validation_error_result = FailedExecutionResult {
                 errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
             };
@@ -161,9 +165,14 @@ impl PipelineErrorVariant {
             return ResponseBuilder::new(status).json(&validation_error_result);
         }
 
-        if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = self {
+        if let PipelineError::AuthorizationFailed(authorization_errors) = self {
             let authorization_error_result = FailedExecutionResult {
-                errors: Some(authorization_errors),
+                errors: Some(
+                    authorization_errors
+                        .iter()
+                        .map(|error| error.into())
+                        .collect(),
+                ),
             };
 
             return ResponseBuilder::new(status).json(&authorization_error_result);
@@ -183,4 +192,10 @@ impl PipelineErrorVariant {
 
         ResponseBuilder::new(status).json(&result)
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct FailedExecutionResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<GraphQLError>>,
 }

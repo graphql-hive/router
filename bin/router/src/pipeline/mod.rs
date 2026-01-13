@@ -19,7 +19,7 @@ use crate::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
-        error::PipelineErrorVariant,
+        error::PipelineError,
         execution::{execute_plan, ExposeQueryPlanMode, PlannedRequest, EXPOSE_QUERY_PLAN_HEADER},
         execution_request::get_execution_request_from_http_request,
         header::{RequestAccepts, TEXT_HTML_CONTENT_TYPE},
@@ -78,18 +78,6 @@ pub async fn graphql_request_handler(
         }
     }
 
-    let jwt_context = if let Some(jwt) = &shared_state.jwt_auth_runtime {
-        match jwt
-            .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
-            .await
-        {
-            Ok(jwt_context) => jwt_context,
-            Err(err) => return err.make_response(),
-        }
-    } else {
-        None
-    };
-
     let started_at = Instant::now();
 
     if let Err(err) = perform_csrf_prevention(req, &shared_state.router_config.csrf) {
@@ -126,8 +114,7 @@ pub async fn graphql_request_handler(
     if req.method() == Method::GET {
         if let Some(OperationKind::Mutation) = normalize_payload.operation_for_plan.operation_kind {
             error!("Mutation is not allowed over GET, stopping");
-            return PipelineErrorVariant::MutationNotAllowedOverHttpGet
-                .into_response(single_content_type);
+            return PipelineError::MutationNotAllowedOverHttpGet.into_response(single_content_type);
         }
     }
 
@@ -140,7 +127,7 @@ pub async fn graphql_request_handler(
     // coming soon
     // && stream_content_type.is_none()
     {
-        return PipelineErrorVariant::SubscriptionsNotSupport.into_response(single_content_type);
+        return PipelineError::SubscriptionsNotSupport.into_response(single_content_type);
     }
 
     let variable_payload =
@@ -152,18 +139,27 @@ pub async fn graphql_request_handler(
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-    let jwt_request_details = match jwt_context {
-        Some(jwt_context) => JwtRequestDetails::Authenticated {
-            scopes: jwt_context.extract_scopes(),
-            claims: match jwt_context.get_claims_value() {
-                Ok(claims) => claims,
-                Err(e) => {
-                    return PipelineErrorVariant::JwtForwardingError(e)
-                        .into_response(single_content_type)
-                }
+    let jwt_request_details = match &shared_state.jwt_auth_runtime {
+        Some(jwt_auth_runtime) => match jwt_auth_runtime
+            .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
+            .await
+        {
+            Ok(Some(jwt_context)) => JwtRequestDetails::Authenticated {
+                scopes: jwt_context.extract_scopes(),
+                claims: match jwt_context.get_claims_value() {
+                    Ok(claims) => claims,
+                    Err(e) => {
+                        return PipelineError::JwtForwardingError(e)
+                            .into_response(single_content_type);
+                    }
+                },
+                token: jwt_context.token_raw,
+                prefix: jwt_context.token_prefix,
             },
-            token: jwt_context.token_raw,
-            prefix: jwt_context.token_prefix,
+            Ok(None) => JwtRequestDetails::Unauthenticated,
+            Err(e) => {
+                return PipelineError::JwtError(e).into_response(single_content_type);
+            }
         },
         None => JwtRequestDetails::Unauthenticated,
     };
@@ -228,7 +224,7 @@ pub async fn graphql_request_handler(
             let accepted_content_type = match single_content_type {
                 Some(content_type) => content_type.as_str(),
                 None => {
-                    return PipelineErrorVariant::UnsupportedContentType
+                    return PipelineError::UnsupportedContentType
                         .into_response(single_content_type);
                 }
             };
@@ -262,12 +258,12 @@ pub async fn execute_pipeline<'exec, 'req>(
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
-) -> Result<PlanExecutionOutput, PipelineErrorVariant> {
+) -> Result<PlanExecutionOutput, PipelineError> {
     let progressive_override_ctx = request_override_context(
         &shared_state.override_labels_evaluator,
         client_request_details,
     )
-    .map_err(PipelineErrorVariant::LabelEvaluationError)?;
+    .map_err(|error| PipelineError::LabelEvaluationError(error))?;
 
     let decision = enforce_operation_authorization(
         &shared_state.router_config,
@@ -299,9 +295,7 @@ pub async fn execute_pipeline<'exec, 'req>(
             )
         }
         AuthorizationDecision::Reject { errors } => {
-            return Err(PipelineErrorVariant::AuthorizationFailed(
-                errors.iter().map(|e| e.into()).collect(),
-            ))
+            return Err(PipelineError::AuthorizationFailed(errors))
         }
     };
 

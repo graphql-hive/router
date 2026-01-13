@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
-use crate::pipeline::error::PipelineErrorVariant;
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
@@ -38,7 +38,7 @@ pub async fn execute_plan(
     app_state: &Arc<RouterSharedState>,
     expose_query_plan: &ExposeQueryPlanMode,
     planned_request: &PlannedRequest<'_>,
-) -> Result<PlanExecutionOutput, PipelineErrorVariant> {
+) -> Result<PlanExecutionOutput, PipelineError> {
     let extensions = if *expose_query_plan == ExposeQueryPlanMode::Yes
         || *expose_query_plan == ExposeQueryPlanMode::DryRun
     {
@@ -74,7 +74,7 @@ pub async fn execute_plan(
                     .forward_claims_to_upstream_extensions
                     .field_name,
             )
-            .map_err(PipelineErrorVariant::JwtForwardingError)?
+            .map_err(PipelineError::JwtForwardingError)?
     } else {
         None
     };
@@ -99,6 +99,6 @@ pub async fn execute_plan(
     .await
     .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);
-        PipelineErrorVariant::PlanExecutionError(err)
+        PipelineError::PlanExecutionError(err)
     })
 }

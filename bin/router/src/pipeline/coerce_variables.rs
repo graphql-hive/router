@@ -5,7 +5,7 @@ use hive_router_plan_executor::variables::collect_variables;
 use sonic_rs::{JsonValueTrait, Value};
 use tracing::{trace, warn};
 
-use crate::pipeline::error::PipelineErrorVariant;
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
@@ -30,7 +30,7 @@ pub fn coerce_request_variables(
     supergraph: &SupergraphData,
     execution_params: &mut ExecutionRequest,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
-) -> Result<CoerceVariablesPayload, PipelineErrorVariant> {
+) -> Result<CoerceVariablesPayload, PipelineError> {
     match collect_variables(
         &normalized_operation.operation_for_plan,
         &mut execution_params.variables,
@@ -51,7 +51,7 @@ pub fn coerce_request_variables(
                 "failed to collect variables from incoming request: {}",
                 err_msg
             );
-            Err(PipelineErrorVariant::VariablesCoercionError(err_msg))
+            Err(PipelineError::VariablesCoercionError(err_msg))
         }
     }
 }

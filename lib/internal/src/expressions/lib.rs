@@ -123,12 +123,16 @@ where
     /// If this is a static value, returns it immediately.
     /// If this is a program, executes it against the provided context and converts the result.
     ///
-    /// - `vrl_context` - The VRL value context for expression execution
+    /// - `vrl_context_fn` - A function that returns the VRL value context for expression execution
     #[inline]
-    pub fn resolve(&self, vrl_context: VrlValue) -> Result<T, ProgramResolutionError<T::Error>> {
+    pub fn resolve<F>(&self, vrl_context_fn: F) -> Result<T, ProgramResolutionError<T::Error>>
+    where
+        F: FnOnce() -> VrlValue,
+    {
         match self {
             ValueOrProgram::Value(v) => Ok(v.clone()),
             ValueOrProgram::Program(vrl_program) => {
+                let vrl_context = vrl_context_fn();
                 let result_value = vrl_program
                     .execute(vrl_context)
                     .map_err(ProgramResolutionError::ExecutionFailed)?;

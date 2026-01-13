@@ -1,7 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::pipeline::error::PipelineErrorVariant;
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::schema_state::{SchemaState, SupergraphData};
@@ -16,7 +16,7 @@ pub async fn plan_operation_with_cache(
     normalized_operation: &GraphQLNormalizationPayload,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
-) -> Result<Arc<QueryPlan>, PipelineErrorVariant> {
+) -> Result<Arc<QueryPlan>, PipelineError> {
     let stable_override_context =
         StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
 
@@ -70,7 +70,7 @@ pub async fn plan_operation_with_cache(
 
     match plan_result {
         Ok(plan) => Ok(plan),
-        Err(e) => Err(PipelineErrorVariant::PlannerError(e.clone())),
+        Err(e) => Err(PipelineError::PlannerError(e.clone())),
     }
 }
 

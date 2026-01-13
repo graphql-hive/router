@@ -1,12 +1,8 @@
-use http::{
-    header::{ACCEPT, CONTENT_TYPE},
-    HeaderValue,
-};
+use http::{header::ACCEPT, HeaderValue};
 use lazy_static::lazy_static;
 use ntex::web::HttpRequest;
-use tracing::{trace, warn};
 
-use crate::pipeline::error::PipelineErrorVariant;
+use crate::pipeline::error::PipelineError;
 
 lazy_static! {
     pub static ref APPLICATION_JSON_STR: &'static str = "application/json";
@@ -176,7 +172,7 @@ pub trait RequestAccepts {
     /// Returns an error if no valid content types are found in the Accept header.
     fn accepted_content_type(
         &self,
-    ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), PipelineErrorVariant>;
+    ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), PipelineError>;
 }
 
 impl RequestAccepts for HttpRequest {
@@ -192,7 +188,7 @@ impl RequestAccepts for HttpRequest {
     #[inline]
     fn accepted_content_type(
         &self,
-    ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), PipelineErrorVariant> {
+    ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), PipelineError> {
         let content_types = self
             .headers()
             .get(ACCEPT)
@@ -209,36 +205,7 @@ impl RequestAccepts for HttpRequest {
             (Some(single), Some(stream)) => Ok((Some(single), Some(stream))),
             (Some(single), None) => Ok((Some(single), None)),
             (None, Some(stream)) => Ok((None, Some(stream))),
-            (None, None) => Err(PipelineErrorVariant::UnsupportedContentType),
-        }
-    }
-}
-
-pub trait AssertRequestJson {
-    fn assert_json_content_type(&self) -> Result<(), PipelineErrorVariant>;
-}
-
-impl AssertRequestJson for HttpRequest {
-    #[inline]
-    fn assert_json_content_type(&self) -> Result<(), PipelineErrorVariant> {
-        match self.headers().get(CONTENT_TYPE) {
-            Some(value) => {
-                let content_type_str = value
-                    .to_str()
-                    .map_err(|_| PipelineErrorVariant::InvalidHeaderValue(CONTENT_TYPE))?;
-                if !content_type_str.contains(*APPLICATION_JSON_STR) {
-                    warn!(
-                        "Invalid content type on a POST request: {}",
-                        content_type_str
-                    );
-                    return Err(PipelineErrorVariant::UnsupportedContentType);
-                }
-                Ok(())
-            }
-            None => {
-                trace!("POST without content type detected");
-                Err(PipelineErrorVariant::MissingContentTypeHeader)
-            }
+            (None, None) => Err(PipelineError::UnsupportedContentType),
         }
     }
 }

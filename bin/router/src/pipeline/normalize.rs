@@ -7,7 +7,7 @@ use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::pipeline::error::PipelineErrorVariant;
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::{SchemaState, SupergraphData};
@@ -28,7 +28,7 @@ pub async fn normalize_request_with_cache(
     schema_state: &Arc<SchemaState>,
     execution_params: &ExecutionRequest,
     parser_payload: &GraphQLParserPayload,
-) -> Result<Arc<GraphQLNormalizationPayload>, PipelineErrorVariant> {
+) -> Result<Arc<GraphQLNormalizationPayload>, PipelineError> {
     let cache_key = match &execution_params.operation_name {
         Some(operation_name) => {
             let mut hasher = Xxh3::new();
@@ -86,7 +86,7 @@ pub async fn normalize_request_with_cache(
                 error!("Failed to normalize GraphQL operation: {}", err);
                 trace!("{:?}", err);
 
-                Err(PipelineErrorVariant::NormalizationError(err))
+                Err(PipelineError::NormalizationError(err))
             }
         },
     }

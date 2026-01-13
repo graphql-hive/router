@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::pipeline::error::PipelineErrorVariant;
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::{SchemaState, SupergraphData};
 use crate::shared_state::RouterSharedState;
@@ -13,7 +13,7 @@ pub async fn validate_operation_with_cache(
     schema_state: &Arc<SchemaState>,
     app_state: &Arc<RouterSharedState>,
     parser_payload: &GraphQLParserPayload,
-) -> Result<(), PipelineErrorVariant> {
+) -> Result<(), PipelineError> {
     let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
 
     let validation_result = match schema_state
@@ -57,7 +57,7 @@ pub async fn validate_operation_with_cache(
         );
         trace!("Validation errors: {:?}", validation_result);
 
-        return Err(PipelineErrorVariant::ValidationErrors(validation_result));
+        return Err(PipelineError::ValidationErrors(validation_result));
     }
 
     Ok(())
