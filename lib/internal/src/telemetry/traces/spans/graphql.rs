@@ -352,7 +352,6 @@ impl GraphQLOperationSpan {
             "graphql.document.hash" = Empty,
             "graphql.document.text" = Empty,
             "hive.graphql.error.count" = Empty,
-            // TODO: populate these fields when we have error info
             "hive.graphql.error.codes" = Empty,
             "hive.graphql.operation.hash" = Empty,
             // TODO: populate these fields when we have client info
@@ -431,7 +430,6 @@ impl GraphQLSubgraphOperationSpan {
             "graphql.document.hash" = Empty,
             "graphql.document.text" = Empty,
             "hive.graphql.error.count" = Empty,
-            // TODO: populate these fields when we have error info
             "hive.graphql.error.codes" = Empty,
             // Hive Console Attributes
             "hive.graphql.subgraph.name" = subgraph_name,
