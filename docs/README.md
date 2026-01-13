@@ -1689,7 +1689,7 @@ It is used to prevent too large queries that could lead to overfetching or DOS a
 |**expose\_limits**|`boolean`|Whether to expose the limits in the error message.<br/>Default: `true`<br/>||
 |**flatten\_fragments**|`boolean`|Flatten fragment spreads and inline fragments when calculating depth.<br/>Default: `false`<br/>||
 |**ignore\_introspection**|`boolean`|Ignore the depth of introspection queries.<br/>Default: `true`<br/>||
-|**n**|`integer`|Depth threshold. A value of 0 means no limit.<br/>Default: `6`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**n**|`integer`|Depth threshold<br/>Default: `6`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Example**
 
@@ -1712,7 +1712,7 @@ It is used to prevent too many directives that could lead to overfetching or DOS
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**expose\_limits**|`boolean`|Whether to expose the limits in the error message.<br/>Default: `true`<br/>||
-|**n**|`integer`|Directives threshold. A value of 0 means no limit.<br/>Default: `50`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**n**|`integer`|Directives threshold<br/>Default: `50`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Example**
 
@@ -1735,7 +1735,7 @@ It is used to prevent too large queries that could lead to overfetching or DOS a
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**expose\_limits**|`boolean`|Whether to expose the limits in the error message.<br/>Default: `true`<br/>||
-|**n**|`integer`|Tokens threshold. A value of 0 means no limit.<br/>Default: `0`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**n**|`integer`|Tokens threshold<br/>Default: `1000`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Example**
 
