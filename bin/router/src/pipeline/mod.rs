@@ -263,7 +263,7 @@ pub async fn execute_pipeline<'exec, 'req>(
         &shared_state.override_labels_evaluator,
         client_request_details,
     )
-    .map_err(|error| PipelineError::LabelEvaluationError(error))?;
+    .map_err(PipelineError::LabelEvaluationError)?;
 
     let decision = enforce_operation_authorization(
         &shared_state.router_config,
