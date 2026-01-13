@@ -115,7 +115,7 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
 
 #[cfg(test)]
 mod tests {
-    use graphql_parser::{parse_query, parse_schema};
+    use graphql_tools::parser::{parse_query, parse_schema};
     use graphql_tools::validation::validate::{validate, ValidationPlan};
     use hive_router_config::limits::MaxDirectivesRuleConfig;
 

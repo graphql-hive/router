@@ -92,4 +92,5 @@ pub use format::Style;
 pub use position::Pos;
 pub use query::minify_query;
 pub use query::parse_query;
+pub use query::parse_query_with_limit;
 pub use schema::parse_schema;

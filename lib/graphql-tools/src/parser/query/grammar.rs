@@ -254,7 +254,26 @@ pub fn parse_query<'a, S>(s: &'a str) -> Result<Document<'a, S>, ParseError>
 where
     S: Text<'a>,
 {
-    let mut tokens = TokenStream::new(s);
+    let tokens = TokenStream::new(s);
+    handle_token_stream(tokens)
+}
+
+pub fn parse_query_with_limit<'a, S>(
+    s: &'a str,
+    token_limit: usize,
+    expose_limit: bool,
+) -> Result<Document<'a, S>, ParseError>
+where
+    S: Text<'a>,
+{
+    let tokens = TokenStream::new_with_limit(s, token_limit, expose_limit);
+    handle_token_stream(tokens)
+}
+
+fn handle_token_stream<'a, S>(mut tokens: TokenStream<'a>) -> Result<Document<'a, S>, ParseError>
+where
+    S: Text<'a>,
+{
     let (doc, _) = many1(parser(definition))
         .map(|d| Document { definitions: d })
         .skip(eof())

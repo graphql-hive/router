@@ -21,3 +21,16 @@ pub fn safe_parse_operation(
 > {
     graphql_tools::parser::parse_query(operation).map(|op| op.into_static())
 }
+
+#[inline]
+pub fn safe_parse_operation_with_limit(
+    operation: &str,
+    token_limit: usize,
+    expose_limit: bool,
+) -> Result<
+    graphql_tools::parser::query::Document<'static, String>,
+    graphql_tools::parser::query::ParseError,
+> {
+    graphql_tools::parser::parse_query_with_limit(operation, token_limit, expose_limit)
+        .map(|op| op.into_static())
+}

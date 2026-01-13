@@ -121,7 +121,7 @@ impl<'a> MaxDepthVisitor<'a, '_> {
 
 #[cfg(test)]
 mod tests {
-    use graphql_parser::parse_schema;
+    use graphql_tools::parser::{parse_query, parse_schema};
     use graphql_tools::validation::validate::ValidationPlan;
     use hive_router_config::limits::MaxDepthRuleConfig;
 
@@ -164,7 +164,7 @@ mod tests {
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
         let doc: graphql_tools::static_graphql::query::Document =
-            graphql_parser::parse_query(QUERY).expect("Failed to parse query");
+            parse_query(QUERY).expect("Failed to parse query");
 
         let errors = graphql_tools::validation::validate::validate(&schema, &doc, &validation_plan);
 
@@ -184,7 +184,7 @@ mod tests {
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
         let doc: graphql_tools::static_graphql::query::Document =
-            graphql_parser::parse_query(QUERY).expect("Failed to parse query");
+            parse_query(QUERY).expect("Failed to parse query");
 
         let errors = graphql_tools::validation::validate::validate(&schema, &doc, &validation_plan);
 
@@ -209,7 +209,7 @@ mod tests {
         let schema: graphql_tools::static_graphql::schema::Document =
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
-        let doc: graphql_tools::static_graphql::query::Document = graphql_parser::parse_query(
+        let doc: graphql_tools::static_graphql::query::Document = parse_query(
             r#"
       query {
         ...BooksFragment
@@ -251,7 +251,7 @@ mod tests {
         let schema: graphql_tools::static_graphql::schema::Document =
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
-        let doc: graphql_tools::static_graphql::query::Document = graphql_parser::parse_query(
+        let doc: graphql_tools::static_graphql::query::Document = parse_query(
             r#"
       query {
         ...BooksFragment
@@ -293,7 +293,7 @@ mod tests {
         let schema: graphql_tools::static_graphql::schema::Document =
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
-        let doc: graphql_tools::static_graphql::query::Document = graphql_parser::parse_query(
+        let doc: graphql_tools::static_graphql::query::Document = parse_query(
             r#"
       query {
         ... on Query {
@@ -334,7 +334,7 @@ mod tests {
         let schema: graphql_tools::static_graphql::schema::Document =
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
-        let doc = graphql_parser::parse_query(INTROSPECTION_QUERY).expect("Failed to parse query");
+        let doc = parse_query(INTROSPECTION_QUERY).expect("Failed to parse query");
 
         let errors = graphql_tools::validation::validate::validate(&schema, &doc, &validation_plan);
 
@@ -356,7 +356,7 @@ mod tests {
         let schema: graphql_tools::static_graphql::schema::Document =
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
-        let doc: graphql_tools::static_graphql::query::Document = graphql_parser::parse_query(
+        let doc: graphql_tools::static_graphql::query::Document = parse_query(
             r#"
       query {
         ...A
@@ -398,7 +398,7 @@ mod tests {
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
         let doc: graphql_tools::static_graphql::query::Document =
-            graphql_parser::parse_query(QUERY).expect("Failed to parse query");
+            parse_query(QUERY).expect("Failed to parse query");
 
         let errors = graphql_tools::validation::validate::validate(&schema, &doc, &validation_plan);
 
@@ -425,7 +425,7 @@ mod tests {
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
         let doc: graphql_tools::static_graphql::query::Document =
-            graphql_parser::parse_query(QUERY).expect("Failed to parse query");
+            parse_query(QUERY).expect("Failed to parse query");
 
         let errors = graphql_tools::validation::validate::validate(&schema, &doc, &validation_plan);
 
@@ -451,7 +451,7 @@ mod tests {
         let schema: graphql_tools::static_graphql::schema::Document =
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
-        let doc: graphql_tools::static_graphql::query::Document = graphql_parser::parse_query(
+        let doc: graphql_tools::static_graphql::query::Document = parse_query(
             r#"
       query {
         books {
@@ -497,7 +497,7 @@ mod tests {
         let schema: graphql_tools::static_graphql::schema::Document =
             parse_schema(TYPE_DEFS).expect("Failed to parse schema");
 
-        let doc: graphql_tools::static_graphql::query::Document = graphql_parser::parse_query(
+        let doc: graphql_tools::static_graphql::query::Document = parse_query(
             r#"
       query {
         books {

@@ -16,6 +16,13 @@ pub struct LimitsConfig {
     /// It is used to prevent too many directives that could lead to overfetching or DOS attacks.
     #[serde(default)]
     pub max_directives: Option<MaxDirectivesRuleConfig>,
+
+    /// Configuration of limiting the number of tokens in the incoming GraphQL operations.
+    /// If not specified, token limiting is disabled.
+    ///
+    /// It is used to prevent too large queries that could lead to overfetching or DOS attacks.
+    #[serde(default)]
+    pub max_tokens: Option<MaxTokensRuleConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -98,4 +105,19 @@ impl Default for MaxDirectivesRuleConfig {
             expose_limits: default_expose_limits(),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct MaxTokensRuleConfig {
+    #[serde(default = "default_max_tokens")]
+    /// Tokens threshold. A value of 0 means no limit.
+    pub n: usize,
+
+    #[serde(default = "default_expose_limits")]
+    /// Whether to expose the limits in the error message.
+    pub expose_limits: bool,
+}
+
+fn default_max_tokens() -> usize {
+    0
 }
