@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use hive_router_internal::telemetry::traces::spans::graphql::GraphQLVariableCoercionSpan;
 use hive_router_plan_executor::variables::collect_variables;
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use http::Method;
@@ -35,6 +36,9 @@ pub fn coerce_request_variables(
     execution_params: &mut ExecutionRequest,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
 ) -> Result<CoerceVariablesPayload, PipelineError> {
+    let span = GraphQLVariableCoercionSpan::new();
+    let _guard = span.span.enter();
+
     if req.method() == Method::GET {
         if let Some(OperationKind::Mutation) =
             normalized_operation.operation_for_plan.operation_kind

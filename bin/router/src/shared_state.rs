@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
+use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
@@ -55,10 +56,9 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
         Some(DEFAULT_TTL.min(time_until_exp))
     }
 }
-
 pub struct RouterSharedState {
     pub validation_plan: ValidationPlan,
-    pub parse_cache: Cache<u64, Arc<graphql_tools::parser::query::Document<'static, String>>>,
+    pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: HeaderRulesPlan,
     pub override_labels_evaluator: OverrideLabelsEvaluator,

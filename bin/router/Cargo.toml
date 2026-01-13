@@ -57,6 +57,7 @@ cookie = "0.18.1"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
 anyhow = "1.0.100"
+md5 = "0.8.0"
 
 [dev-dependencies]
 criterion = { workspace = true }

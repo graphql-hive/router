@@ -31,20 +31,14 @@ tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 
 regex-automata = { workspace = true }
-
+bytes = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
 ahash = { workspace = true }
-strum = { version = "0.27.2", features = ["derive"] }
 ntex = { workspace = true }
 
 hyper-tls = { version = "0.6.0", features = ["vendored"] }
-hyper-util = { version = "0.1.16", features = [
-  "client",
-  "client-legacy",
-  "http1",
-  "http2",
-  "tokio",
-] }
-bytes = { workspace = true }
+hyper-util = { version = "0.1.16", features = ["client","client-legacy","http1", "http2","tokio"] }
+humantime = "2.3.0"
 itoa = "1.0.15"
 ryu = "1.0.20"
 indexmap = "2.10.0"

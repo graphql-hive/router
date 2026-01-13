@@ -2,11 +2,11 @@ pub mod background_tasks;
 mod consts;
 mod http_utils;
 mod jwt;
-mod logger;
 pub mod pipeline;
 mod schema_state;
 mod shared_state;
 mod supergraph;
+mod telemetry;
 mod utils;
 
 use std::sync::Arc;
@@ -19,19 +19,23 @@ use crate::{
         probes::{health_check_handler, readiness_check_handler},
     },
     jwt::JwtAuthRuntime,
-    logger::configure_logging,
     pipeline::{graphql_request_handler, usage_reporting::init_hive_user_agent},
+    telemetry::HeaderExtractor,
 };
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use hive_router_config::{load_config, HiveRouterConfig};
+use hive_router_internal::telemetry::{
+    otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
+    traces::spans::http_request::HttpServerRequestSpan,
+};
 use http::header::RETRY_AFTER;
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
-use tracing::{info, warn};
+use tracing::{info, warn, Instrument};
 
 async fn graphql_endpoint_handler(
     request: HttpRequest,
@@ -39,46 +43,56 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
+    let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
+        propagator.extract(&HeaderExtractor(request.headers()))
+    });
+    let root_http_request_span = HttpServerRequestSpan::from_request(&request, &body_bytes);
+    let _ = root_http_request_span.set_parent(parent_ctx);
+    let span = root_http_request_span.span.clone();
     let maybe_supergraph = schema_state.current_supergraph();
 
-    if let Some(supergraph) = maybe_supergraph.as_ref() {
-        // If an early CORS response is needed, return it immediately.
-        if let Some(early_response) = app_state
-            .cors_runtime
-            .as_ref()
-            .and_then(|cors| cors.get_early_response(&request))
-        {
-            return early_response;
+    async {
+        if let Some(supergraph) = maybe_supergraph.as_ref() {
+            // If an early CORS response is needed, return it immediately.
+            if let Some(early_response) = app_state
+                .cors_runtime
+                .as_ref()
+                .and_then(|cors| cors.get_early_response(&request))
+            {
+                return early_response;
+            }
+
+            let mut res = graphql_request_handler(
+                &request,
+                body_bytes,
+                supergraph,
+                app_state.get_ref(),
+                schema_state.get_ref(),
+            )
+            .await;
+
+            // Apply CORS headers to the final response if CORS is configured.
+            if let Some(cors) = app_state.cors_runtime.as_ref() {
+                cors.set_headers(&request, res.headers_mut());
+            }
+
+            res
+        } else {
+            warn!("No supergraph available yet, unable to process request");
+
+            web::HttpResponse::ServiceUnavailable()
+                .header(RETRY_AFTER, 10)
+                .finish()
         }
-
-        let mut res = graphql_request_handler(
-            &request,
-            body_bytes,
-            supergraph,
-            app_state.get_ref(),
-            schema_state.get_ref(),
-        )
-        .await;
-
-        // Apply CORS headers to the final response if CORS is configured.
-        if let Some(cors) = app_state.cors_runtime.as_ref() {
-            cors.set_headers(&request, res.headers_mut());
-        }
-
-        res
-    } else {
-        warn!("No supergraph available yet, unable to process request");
-
-        web::HttpResponse::ServiceUnavailable()
-            .header(RETRY_AFTER, 10)
-            .finish()
     }
+    .instrument(span)
+    .await
 }
 
 pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
-    configure_logging(&router_config.log);
+    let otel_telemetry = telemetry::init(&router_config);
     info!("hive-router@{} starting...", ROUTER_VERSION);
     let http_config = router_config.http.clone();
     let addr = router_config.http.address();
@@ -101,6 +115,7 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("server stopped, clearning background tasks");
     bg_tasks_manager.shutdown();
+    otel_telemetry.graceful_shutdown().await;
 
     maybe_error
 }
