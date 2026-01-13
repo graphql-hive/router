@@ -8,10 +8,14 @@ use tracing_subscriber::registry::LookupSpan;
 
 use crate::telemetry::traces::build_trace_provider;
 
-mod error;
+pub mod error;
 pub mod otel;
 pub mod traces;
 mod utils;
+
+use crate::expressions::{CompileExpression, ExecutableProgram};
+use crate::telemetry::error::TelemetryError;
+use vrl::core::Value;
 
 pub struct OpenTelemetry<Subscriber> {
     pub tracer: Option<traces::Tracer<Subscriber>>,
@@ -72,5 +76,51 @@ impl<S> OpenTelemetry<S> {
                 provider: traces_provider,
             }),
         })
+    }
+}
+
+pub fn evaluate_expression_as_string(
+    expression: &str,
+    context: &str,
+) -> Result<String, TelemetryError> {
+    Ok(expression
+        // compile
+        .compile_expression(None)
+        .map_err(|e| {
+            TelemetryError::TracesExporterSetup(format!(
+                "Failed to compile {} expression: {}",
+                context, e
+            ))
+        })?
+        // execute
+        .execute(Value::Null) // no input context as we are in setup phase
+        .map_err(|e| {
+            TelemetryError::TracesExporterSetup(format!(
+                "Failed to execute {} expression: {}",
+                context, e
+            ))
+        })?
+        // coerce
+        .as_str()
+        .ok_or_else(|| {
+            TelemetryError::TracesExporterSetup(format!(
+                "{} expression must return a string",
+                context
+            ))
+        })?
+        .to_string())
+}
+
+pub fn resolve_value_or_expression(
+    value_or_expr: &hive_router_config::primitives::value_or_expression::ValueOrExpression<String>,
+    context: &str,
+) -> Result<String, TelemetryError> {
+    match value_or_expr {
+        hive_router_config::primitives::value_or_expression::ValueOrExpression::Value(v) => {
+            Ok(v.clone())
+        }
+        hive_router_config::primitives::value_or_expression::ValueOrExpression::Expression {
+            expression,
+        } => evaluate_expression_as_string(expression, context),
     }
 }

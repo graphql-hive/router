@@ -2117,6 +2117,8 @@ dependencies = [
  "http",
  "humantime-serde",
  "jsonwebtoken",
+ "once_cell",
+ "regex-automata",
  "retry-policies 0.5.1",
  "schemars 1.0.5",
  "serde",

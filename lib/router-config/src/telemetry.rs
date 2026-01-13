@@ -19,6 +19,8 @@ pub struct TelemetryConfig {
     pub tracing: TracingConfig,
     #[serde(default)]
     pub resource: ResourceConfig,
+    #[serde(default)]
+    pub client_identification: ClientIdentificationConfig,
 }
 
 impl TelemetryConfig {
@@ -32,4 +34,30 @@ impl TelemetryConfig {
 pub struct ResourceConfig {
     #[serde(default)]
     pub attributes: HashMap<String, ValueOrExpression<String>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ClientIdentificationConfig {
+    #[serde(default = "default_client_name_header")]
+    pub name_header: String,
+    #[serde(default = "default_client_version_header")]
+    pub version_header: String,
+}
+
+impl Default for ClientIdentificationConfig {
+    fn default() -> Self {
+        Self {
+            name_header: default_client_name_header(),
+            version_header: default_client_version_header(),
+        }
+    }
+}
+
+fn default_client_name_header() -> String {
+    "graphql-client-name".to_string()
+}
+
+fn default_client_version_header() -> String {
+    "graphql-client-version".to_string()
 }

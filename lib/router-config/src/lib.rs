@@ -98,9 +98,6 @@ pub struct HiveRouterConfig {
 
     #[serde(default)]
     pub authorization: authorization::AuthorizationConfig,
-    /// Configuration for usage reporting to GraphQL Hive.
-    #[serde(default)]
-    pub usage_reporting: usage_reporting::UsageReportingConfig,
 
     #[serde(default)]
     pub telemetry: telemetry::TelemetryConfig,

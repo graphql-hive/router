@@ -354,7 +354,6 @@ impl GraphQLOperationSpan {
             "hive.graphql.error.count" = Empty,
             "hive.graphql.error.codes" = Empty,
             "hive.graphql.operation.hash" = Empty,
-            // TODO: populate these fields when we have client info
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
         );
@@ -391,9 +390,19 @@ impl GraphQLOperationSpan {
             attributes::GRAPHQL_DOCUMENT_HASH,
             identity.client_document_hash,
         );
+
         // if let Some(id) = &identity.document_id {
         //     self.span().record(attributes::GRAPHQL_OPERATION_ID, id.as_str());
         // }
+    }
+
+    pub fn record_client_identity(&self, client_name: Option<&str>, client_version: Option<&str>) {
+        if let Some(name) = client_name {
+            self.span.record(attributes::HIVE_CLIENT_NAME, name);
+        }
+        if let Some(version) = client_version {
+            self.span.record(attributes::HIVE_CLIENT_VERSION, version);
+        }
     }
 }
 
