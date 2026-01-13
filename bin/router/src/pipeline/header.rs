@@ -51,11 +51,13 @@ const SUPPORTED_STREAM_MEDIA_TYPES: &[MediaType] = &[
 pub enum SingleContentType {
     /// GraphQL over HTTP spec (`application/graphql-response+json`)
     ///
-    /// Default for regular queries and mutations.
-    ///
     /// Read more: https://graphql.github.io/graphql-over-http
     GraphQLResponseJSON,
     /// Legacy GraphQL over HTTP (`application/json`)
+    ///
+    /// Default for regular queries and mutations.
+    ///
+    /// Read more: https://graphql.github.io/graphql-over-http
     #[default]
     JSON,
 }
