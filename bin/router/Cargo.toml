@@ -57,6 +57,9 @@ cookie = "0.18.1"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
 anyhow = "1.0.100"
+mediatype = "0.21.0"
+headers-core = "0.3.0"
+headers-accept = "0.3.0"
 
 [dev-dependencies]
 criterion = { workspace = true }

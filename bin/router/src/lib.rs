@@ -22,7 +22,7 @@ use crate::{
     logger::configure_logging,
     pipeline::{
         graphql_request_handler,
-        header::{RequestAccepts, TEXT_HTML_CONTENT_TYPE},
+        header::{RequestAccepts, TEXT_HTML_MIME},
         usage_reporting::init_hive_user_agent,
     },
 };
@@ -62,7 +62,7 @@ async fn graphql_endpoint_handler(
 
         // Aggree on the response content type so that errors can be handled
         // properly outside the request handler.
-        let (single_content_type, stream_content_type) = match request.accepted_content_type() {
+        let (single_content_type, stream_content_type) = match request.negotiate() {
             Ok((single, stream)) => (single, stream),
             Err(err) => return err.into_response(None),
         };
@@ -75,7 +75,7 @@ async fn graphql_endpoint_handler(
         {
             if app_state.router_config.graphiql.enabled {
                 return web::HttpResponse::Ok()
-                    .header(CONTENT_TYPE, TEXT_HTML_CONTENT_TYPE)
+                    .header(CONTENT_TYPE, TEXT_HTML_MIME)
                     .body(GRAPHIQL_HTML);
             } else {
                 return web::HttpResponse::NotFound().into();
