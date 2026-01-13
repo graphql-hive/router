@@ -18,7 +18,7 @@ pub struct GraphQLParserPayload {
 
 #[inline]
 pub async fn parse_operation_with_cache(
-    app_state: &Arc<RouterSharedState>,
+    app_state: &RouterSharedState,
     execution_params: &ExecutionRequest,
 ) -> Result<GraphQLParserPayload, PipelineError> {
     let cache_key = {

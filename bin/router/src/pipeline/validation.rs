@@ -11,7 +11,7 @@ use tracing::{error, trace};
 pub async fn validate_operation_with_cache(
     supergraph: &SupergraphData,
     schema_state: &SchemaState,
-    app_state: &Arc<RouterSharedState>,
+    app_state: &RouterSharedState,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<(), PipelineError> {
     let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
