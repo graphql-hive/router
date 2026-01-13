@@ -31,8 +31,8 @@ pub struct PlanExecutionError {
 
 #[derive(Debug, Clone)]
 pub struct PlanExecutionErrorContext {
-    pub subgraph_name: Option<String>,
-    pub affected_path: Option<String>,
+    subgraph_name: Option<String>,
+    affected_path: Option<String>,
 }
 
 pub struct LazyPlanContext<SN, AP> {
