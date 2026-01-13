@@ -118,18 +118,15 @@ impl<'a> MaxDepthVisitor<'a, '_> {
                 // because fragments can refer itself recursively at some point.
                 // See the tests at the bottom of this file to understand the use cases fully.
                 self.visited_fragments.insert(fragment_name, -1);
-            }
+                // Look up the fragment definition by its name
+                let fragment = self.ctx.known_fragments.get(fragment_name);
+                if let Some(fragment) = fragment {
+                    // Count the depth of the fragment
+                    let fragment_depth = self.count_depth(fragment.into(), Some(0));
 
-            // Look up the fragment definition by its name
-            let fragment = self.ctx.known_fragments.get(fragment_name);
-            if let Some(fragment) = fragment {
-                // Count the depth of the fragment
-                let fragment_depth = self.count_depth(fragment.into(), Some(0));
-
-                // Update the overall depth
-                depth = cmp::max(depth, parent_depth + fragment_depth);
-                // If it was marked as -1, we update it with the actual depth.
-                if Some(&-1) == self.visited_fragments.get(fragment_name) {
+                    // Update the overall depth
+                    depth = cmp::max(depth, parent_depth + fragment_depth);
+                    // Update it with the actual depth.
                     self.visited_fragments.insert(fragment_name, fragment_depth);
                 }
             }
