@@ -39,8 +39,8 @@ pub async fn execute_plan(
     expose_query_plan: &ExposeQueryPlanMode,
     planned_request: &PlannedRequest<'_>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
-    let extensions = if *expose_query_plan == ExposeQueryPlanMode::Yes
-        || *expose_query_plan == ExposeQueryPlanMode::DryRun
+    let extensions = if matches!(expose_query_plan, ExposeQueryPlanMode::Yes)
+        || matches!(expose_query_plan, ExposeQueryPlanMode::DryRun)
     {
         Some(HashMap::from_iter([(
             "queryPlan".to_string(),
