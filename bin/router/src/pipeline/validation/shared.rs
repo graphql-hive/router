@@ -7,8 +7,18 @@ use graphql_tools::{
 };
 
 /**
- * A helper enum to represent different kinds of AST nodes that can contain directives, selections, etc nestedly.
- * This is used to generalize the counting of directives, selections, etc across different node types.
+ * This enum represents a union of ast node types,
+ * that are used for counting selections, or directives
+ * in the ast node.
+ *
+ * It is used by `max_depth` rule to calculate the depth based
+ * on selection,
+ * and it is used by `max_directives` to count the number of
+ * directives used in the operation string.
+ *
+ * In this module, we define `CountableNode.selection_set` only,
+ * but `CountableNode.directives` one is implemented in
+ * `max_directives_rule.rs` file.
  */
 pub enum CountableNode<'a> {
     Field(&'a Field),
@@ -19,6 +29,9 @@ pub enum CountableNode<'a> {
 }
 
 impl<'a> CountableNode<'a> {
+    /**
+     * This returns the selection set object of the relevant ast node
+     */
     pub fn selection_set(&self) -> Option<&'a SelectionSet> {
         match self {
             CountableNode::Field(field) => Some(&field.selection_set),
@@ -30,6 +43,10 @@ impl<'a> CountableNode<'a> {
     }
 }
 
+/**
+ * The following `impl` definitions implements `From` trait
+ * for the original AST Node types to get `CountableNode` for each.
+ */
 impl<'a> From<&'a Selection> for CountableNode<'a> {
     fn from(selection: &'a Selection) -> Self {
         match selection {

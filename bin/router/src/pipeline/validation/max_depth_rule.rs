@@ -63,26 +63,34 @@ struct MaxDepthVisitor<'a, 'b> {
 
 impl<'a> MaxDepthVisitor<'a, '_> {
     fn count_depth(&mut self, node: CountableNode<'a>, parent_depth: Option<i32>) -> i32 {
+        // If introspection queries are to be ignored, skip them from the root
         if self.config.ignore_introspection {
             if let CountableNode::Field(field) = node {
-                if field.name == "__schema" {
+                let field_name = field.name.as_str();
+                if field_name == "__schema" || field_name == "__type" {
                     return 0;
                 }
             }
         }
 
+        // Initialize parent depth
         let mut parent_depth = parent_depth.unwrap_or(0);
 
+        // Current depth starts as parent depth
         let mut depth = parent_depth;
 
+        // Traverse the selection set if present
         if let Some(selection_set) = node.selection_set() {
             for child in &selection_set.items {
+                // If flatten_fragments is true, do not increase depth for fragments
                 if self.config.flatten_fragments
                     && (matches!(child, Selection::FragmentSpread(_))
                         || matches!(child, Selection::InlineFragment(_)))
                 {
                     depth = cmp::max(depth, self.count_depth(child.into(), Some(parent_depth)));
                 } else {
+                    // Increase depth for other selections
+                    // OR if flatten_fragments is false, increase depth for all selections
                     depth = cmp::max(
                         depth,
                         self.count_depth(child.into(), Some(parent_depth + 1)),
@@ -91,24 +99,36 @@ impl<'a> MaxDepthVisitor<'a, '_> {
             }
         }
 
+        // If the node is a FragmentSpread, handle fragment depth counting
         if let CountableNode::FragmentSpread(node) = node {
+            // If flatten_fragments is false, increase parent depth
+            // for the fragment spread itself
             if !self.config.flatten_fragments {
                 parent_depth += 1;
             }
 
             let fragment_name = node.fragment_name.as_str();
+            // Find if the fragment was already visited
             let visited_fragment = self.visited_fragments.get(fragment_name);
             if let Some(visited_fragment_depth) = visited_fragment {
+                // If it was already visited, return the cached depth
                 return parent_depth + visited_fragment_depth;
             } else {
+                // If not, mark it as -1 initially to avoid infinite loops,
+                // because fragments can refer itself recursively at some point.
+                // See the tests at the bottom of this file to understand the use cases fully.
                 self.visited_fragments.insert(fragment_name, -1);
             }
 
+            // Look up the fragment definition by its name
             let fragment = self.ctx.known_fragments.get(fragment_name);
             if let Some(fragment) = fragment {
+                // Count the depth of the fragment
                 let fragment_depth = self.count_depth(fragment.into(), Some(0));
 
+                // Update the overall depth
                 depth = cmp::max(depth, parent_depth + fragment_depth);
+                // If it was marked as -1, we update it with the actual depth.
                 if Some(&-1) == self.visited_fragments.get(fragment_name) {
                     self.visited_fragments.insert(fragment_name, fragment_depth);
                 }
