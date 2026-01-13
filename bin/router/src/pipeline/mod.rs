@@ -149,6 +149,8 @@ pub async fn execute_pipeline(
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
+    let start = Instant::now();
+    perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
             .validate_request(req, &shared_state.jwt_claims_cache)
@@ -167,9 +169,6 @@ pub async fn execute_pipeline(
         },
         None => JwtRequestDetails::Unauthenticated,
     };
-
-    let start = Instant::now();
-    perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
     let mut execution_request = get_execution_request(req, body_bytes).await?;
     let parser_payload = parse_operation_with_cache(shared_state, &execution_request).await?;

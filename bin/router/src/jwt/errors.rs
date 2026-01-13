@@ -34,6 +34,18 @@ pub enum JwtError {
 }
 
 impl JwtError {
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            JwtError::AllProvidersFailedToDecode(_) => "MISSING_JWT",
+            JwtError::FailedToDecodeToken(_) => "INVALID_JWT",
+            JwtError::FailedToLocateProvider => "JWT_NOT_SUPPORTED",
+            JwtError::HTTPRequestParsingError(_) => "FAILED_TO_PARSE_REQUEST",
+            JwtError::InvalidJwtHeader(_) => "INVALID_JWT_HEADER",
+            JwtError::InvalidDecodingKey(_) => "INTERNAL_SERVER_ERROR",
+            JwtError::JwkAlgorithmNotSupported(_) => "JWK_ALGORITHM_NOT_SUPPORTED",
+            JwtError::LookupFailed(_) => "JWT_LOOKUP_FAILED",
+        }
+    }
     pub fn status_code(&self) -> StatusCode {
         match self {
             JwtError::LookupFailed(_) => StatusCode::UNAUTHORIZED,
@@ -45,18 +57,6 @@ impl JwtError {
             | JwtError::InvalidDecodingKey(_)
             | JwtError::FailedToLocateProvider
             | JwtError::FailedToDecodeToken(_) => StatusCode::FORBIDDEN,
-        }
-    }
-    pub fn error_code(&self) -> &'static str {
-        match self {
-            JwtError::AllProvidersFailedToDecode(_) => "MISSING_JWT",
-            JwtError::FailedToDecodeToken(_) => "INVALID_JWT",
-            JwtError::FailedToLocateProvider => "JWT_NOT_SUPPORTED",
-            JwtError::HTTPRequestParsingError(_) => "FAILED_TO_PARSE_REQUEST",
-            JwtError::InvalidJwtHeader(_) => "INVALID_JWT_HEADER",
-            JwtError::InvalidDecodingKey(_) => "INTERNAL_SERVER_ERROR",
-            JwtError::JwkAlgorithmNotSupported(_) => "JWK_ALGORITHM_NOT_SUPPORTED",
-            JwtError::LookupFailed(_) => "JWT_LOOKUP_FAILED",
         }
     }
 }
