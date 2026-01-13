@@ -2,14 +2,9 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use graphql_tools::parser::query::Document;
-<<<<<<< HEAD
-use hive_router_query_planner::utils::parsing::safe_parse_operation;
-=======
 use hive_router_query_planner::utils::parsing::{
     safe_parse_operation, safe_parse_operation_with_limit,
 };
-use ntex::web::HttpRequest;
->>>>>>> 7744fcb0 (Max Tokens)
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::PipelineError;

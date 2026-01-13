@@ -322,7 +322,8 @@ mod tests {
         assert_eq!(error.message, "Query depth limit of 2 exceeded, found 3.");
     }
 
-    const INTROSPECTION_QUERY: &'static str = include_str!("introspection_query.graphql");
+    const INTROSPECTION_QUERY: &'static str =
+        include_str!("test_fixtures/introspection_query.fixture.graphql");
     #[test]
     fn allows_introspection_queries_when_ignored() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
