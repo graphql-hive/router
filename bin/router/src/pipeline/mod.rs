@@ -55,8 +55,8 @@ pub async fn graphql_request_handler(
     single_content_type: Option<SingleContentType>,
     _stream_content_type: Option<StreamContentType>,
     supergraph: &SupergraphData,
-    shared_state: &Arc<RouterSharedState>,
-    schema_state: &Arc<SchemaState>,
+    shared_state: &RouterSharedState,
+    schema_state: &SchemaState,
 ) -> Result<web::HttpResponse, PipelineError> {
     let started_at = Instant::now();
 
@@ -207,8 +207,8 @@ pub async fn execute_pipeline<'exec, 'req>(
     variable_payload: &CoerceVariablesPayload,
     expose_query_plan: &ExposeQueryPlanMode,
     supergraph: &SupergraphData,
-    shared_state: &Arc<RouterSharedState>,
-    schema_state: &Arc<SchemaState>,
+    shared_state: &RouterSharedState,
+    schema_state: &SchemaState,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let progressive_override_ctx = request_override_context(
         &shared_state.override_labels_evaluator,

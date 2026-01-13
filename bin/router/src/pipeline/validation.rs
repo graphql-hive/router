@@ -10,7 +10,7 @@ use tracing::{error, trace};
 #[inline]
 pub async fn validate_operation_with_cache(
     supergraph: &SupergraphData,
-    schema_state: &Arc<SchemaState>,
+    schema_state: &SchemaState,
     app_state: &Arc<RouterSharedState>,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<(), PipelineError> {

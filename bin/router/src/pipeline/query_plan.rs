@@ -12,7 +12,7 @@ use xxhash_rust::xxh3::Xxh3;
 #[inline]
 pub async fn plan_operation_with_cache(
     supergraph: &SupergraphData,
-    schema_state: &Arc<SchemaState>,
+    schema_state: &SchemaState,
     normalized_operation: &GraphQLNormalizationPayload,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
