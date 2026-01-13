@@ -93,3 +93,8 @@ impl<'a> From<&'a OperationDefinition> for CountableNode<'a> {
         CountableNode::OperationDefinition(operation_definition)
     }
 }
+
+pub enum VisitedFragment {
+    Counted(usize),
+    Visiting,
+}

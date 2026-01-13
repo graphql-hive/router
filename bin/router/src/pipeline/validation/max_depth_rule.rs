@@ -10,7 +10,7 @@ use graphql_tools::{
 };
 use hive_router_config::limits::MaxDepthRuleConfig;
 
-use crate::pipeline::validation::shared::CountableNode;
+use crate::pipeline::validation::shared::{CountableNode, VisitedFragment};
 
 pub struct MaxDepthRule {
     pub config: MaxDepthRuleConfig,
@@ -34,7 +34,7 @@ impl ValidationRule for MaxDepthRule {
                     ctx,
                 };
                 let depth = visitor.count_depth(op.into(), None);
-                if depth > self.config.n as i32 {
+                if depth > self.config.n {
                     let message = if self.config.expose_limits {
                         format!(
                             "Query depth limit of {} exceeded, found {}.",
@@ -57,12 +57,12 @@ impl ValidationRule for MaxDepthRule {
 
 struct MaxDepthVisitor<'a, 'b> {
     config: &'b MaxDepthRuleConfig,
-    visited_fragments: HashMap<&'a str, i32>,
+    visited_fragments: HashMap<&'a str, VisitedFragment>,
     ctx: &'b mut OperationVisitorContext<'a>,
 }
 
 impl<'a> MaxDepthVisitor<'a, '_> {
-    fn count_depth(&mut self, node: CountableNode<'a>, parent_depth: Option<i32>) -> i32 {
+    fn count_depth(&mut self, node: CountableNode<'a>, parent_depth: Option<usize>) -> usize {
         // If introspection queries are to be ignored, skip them from the root
         if self.config.ignore_introspection {
             if let CountableNode::Field(field) = node {
@@ -111,23 +111,28 @@ impl<'a> MaxDepthVisitor<'a, '_> {
             // Find if the fragment was already visited
             let visited_fragment = self.visited_fragments.get(fragment_name);
             if let Some(visited_fragment_depth) = visited_fragment {
-                // If it was already visited, return the cached depth
-                return parent_depth + visited_fragment_depth;
+                if let VisitedFragment::Counted(visited_fragment_depth) = visited_fragment_depth {
+                    // If it was already visited, return the cached depth
+                    return parent_depth + visited_fragment_depth;
+                }
             } else {
-                // If not, mark it as -1 initially to avoid infinite loops,
+                // If not, mark it as Visiting initially to avoid infinite loops,
                 // because fragments can refer itself recursively at some point.
                 // See the tests at the bottom of this file to understand the use cases fully.
-                self.visited_fragments.insert(fragment_name, -1);
+                self.visited_fragments
+                    .insert(fragment_name, VisitedFragment::Visiting);
                 // Look up the fragment definition by its name
                 let fragment = self.ctx.known_fragments.get(fragment_name);
                 if let Some(fragment) = fragment {
                     // Count the depth of the fragment
                     let fragment_depth = self.count_depth(fragment.into(), Some(0));
 
+                    // Update it with the actual depth.
+                    self.visited_fragments
+                        .insert(fragment_name, VisitedFragment::Counted(fragment_depth));
+
                     // Update the overall depth
                     depth = cmp::max(depth, parent_depth + fragment_depth);
-                    // Update it with the actual depth.
-                    self.visited_fragments.insert(fragment_name, fragment_depth);
                 }
             }
         }
