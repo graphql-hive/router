@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// or an object containing the expression that evaluates to a boolean.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
-pub enum AllowIntrospectionConfig {
+pub enum IntrospectionPermissionConfig {
     /// A static boolean value to enable or disable the introspection.
     Boolean(bool),
     /// A dynamic value computed by an expression.

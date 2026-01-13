@@ -42,6 +42,7 @@ mod disable_introspection_e2e_tests {
 
         let body = test::read_body(resp).await;
         let json_body: Value = from_slice(&body).unwrap();
+        println!("AA: {:#?}", json_body);
 
         let query_type_name = json_body["data"]["__schema"]["queryType"]["name"]
             .as_str()

@@ -1,23 +1,18 @@
-use std::string::FromUtf8Error;
-
 use crate::expressions::{FromVrlValue, ValueOrProgram};
 use vrl::core::Value as VrlValue;
 
 /// Type alias for a Boolean that can be either static or computed via expression
 pub type BooleanOrProgram = ValueOrProgram<bool>;
 
-/// Error type for String conversion failures
+/// Error type for Boolean conversion failures
 #[derive(Debug, thiserror::Error, Clone)]
-pub enum StringConversionError {
-    #[error("Failed to convert bytes to UTF-8 string: {0}")]
-    InvalidUtf8(#[from] FromUtf8Error),
-
+pub enum BooleanConversionError {
     #[error("Cannot convert {type_name} to boolean")]
     UnsupportedType { type_name: String },
 }
 
 impl FromVrlValue for bool {
-    type Error = StringConversionError;
+    type Error = BooleanConversionError;
 
     #[inline]
     fn from_vrl_value(value: VrlValue) -> Result<Self, Self::Error> {
@@ -27,7 +22,7 @@ impl FromVrlValue for bool {
             VrlValue::Float(f) => Ok(f != 0.0),
             VrlValue::Boolean(b) => Ok(b),
             VrlValue::Null => Ok(false),
-            other => Err(StringConversionError::UnsupportedType {
+            other => Err(BooleanConversionError::UnsupportedType {
                 type_name: other.kind().to_string(),
             }),
         }

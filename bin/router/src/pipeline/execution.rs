@@ -2,11 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::vec;
 
-use crate::pipeline::allow_introspection::handle_allow_introspection;
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
-use crate::pipeline::disable_introspection::handle_disable_introspection;
-use crate::pipeline::error::{PipelineError};
+use crate::pipeline::error::PipelineError;
+use crate::pipeline::introspection_permission::handle_introspection_permission;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
@@ -110,15 +109,12 @@ pub async fn execute_plan(
     }
 
     if introspection_context.query.is_some() {
-        if let Some(allow_introspection) = &app_state.allow_introspection {
-            handle_allow_introspection(
-                allow_introspection,
-                &mut introspection_context,
-                planned_request.client_request_details,
-                false,
-                &mut initial_errors,
-            )?;
-        }
+        handle_introspection_permission(
+            &app_state.introspection_permission,
+            &mut introspection_context,
+            planned_request.client_request_details,
+            &mut initial_errors,
+        )?;
     }
 
     execute_query_plan(QueryPlanExecutionContext {

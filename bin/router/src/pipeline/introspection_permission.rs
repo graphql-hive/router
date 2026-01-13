@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use hive_router_config::allow_introspection::AllowIntrospectionConfig;
+use hive_router_config::introspection_permission::IntrospectionPermissionConfig;
 use hive_router_internal::expressions::{
     values::boolean::BooleanOrProgram, CompileExpression, ExpressionCompileError,
 };
@@ -11,39 +11,34 @@ use hive_router_plan_executor::{
 };
 use vrl::core::Value as VrlValue;
 
-use crate::pipeline::error::{PipelineError};
+use crate::pipeline::error::PipelineError;
 
-pub fn compile_allow_introspection(
-    allow_introspection_config: &Option<AllowIntrospectionConfig>,
-) -> Result<Option<BooleanOrProgram>, ExpressionCompileError> {
-    allow_introspection_config
-        .as_ref()
-        .map(|config| match config {
-            AllowIntrospectionConfig::Boolean(b) => Ok(BooleanOrProgram::Value(*b)),
-            AllowIntrospectionConfig::Expression { expression } => expression
-                .compile_expression(None)
-                .map(|program| BooleanOrProgram::Program(Box::new(program))),
-        })
-        .transpose()
+pub fn compile_introspection_permission(
+    introspection_permission_cfg: &Option<IntrospectionPermissionConfig>,
+) -> Result<BooleanOrProgram, ExpressionCompileError> {
+    match introspection_permission_cfg {
+        Some(IntrospectionPermissionConfig::Boolean(b)) => Ok(BooleanOrProgram::Value(*b)),
+        Some(IntrospectionPermissionConfig::Expression { expression }) => expression
+            .compile_expression(None)
+            .map(|program| BooleanOrProgram::Program(Box::new(program))),
+        None => Ok(BooleanOrProgram::Value(true)),
+    }
 }
 
-pub fn handle_allow_introspection(
-    allow_introspection_program: &BooleanOrProgram,
+pub fn handle_introspection_permission(
+    introspection_permission_prog: &BooleanOrProgram,
     introspection_context: &mut IntrospectionContext,
     client_request_details: &client_request_details::ClientRequestDetails<'_, '_>,
-    default_value: bool,
     initial_errors: &mut Vec<GraphQLError>,
 ) -> Result<(), PipelineError> {
-    let is_enabled = allow_introspection_program
+    let is_enabled = introspection_permission_prog
         .resolve(|| {
             let mut context_map = BTreeMap::new();
             context_map.insert("request".into(), client_request_details.into());
 
-            context_map.insert("default".into(), VrlValue::Boolean(default_value));
-
             VrlValue::Object(context_map)
         })
-        .map_err(|e| PipelineError::AllowIntrospectionEvaluationError(e.to_string()))?;
+        .map_err(|e| PipelineError::IntrospectionPermissionEvaluationError(e.to_string()))?;
 
     if !is_enabled {
         introspection_context.query = None;

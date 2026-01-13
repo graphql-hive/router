@@ -39,7 +39,6 @@ use crate::{
     shared_state::RouterSharedState,
 };
 
-pub mod allow_introspection;
 pub mod authorization;
 pub mod coerce_variables;
 pub mod cors;
@@ -48,6 +47,7 @@ pub mod error;
 pub mod execution;
 pub mod execution_request;
 pub mod header;
+pub mod introspection_permission;
 pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
