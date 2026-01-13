@@ -132,11 +132,9 @@ pub async fn configure_app_from_config(
     let schema_state_arc = Arc::new(schema_state);
     let mut validation_plan = default_rules_validation_plan();
     if let Some(max_depth_config) = &router_config_arc.limits.max_depth {
-        if max_depth_config.is_enabled() {
-            validation_plan.add_rule(Box::new(MaxDepthRule {
-                config: max_depth_config.clone(),
-            }));
-        }
+        validation_plan.add_rule(Box::new(MaxDepthRule {
+            config: max_depth_config.clone(),
+        }));
     }
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc,
