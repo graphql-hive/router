@@ -195,17 +195,15 @@ impl RequestAccepts for HttpRequest {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("");
 
-        let (single_content_type, stream_content_type) =
-            SupportedContentType::parse_header(content_types);
+        let parsed = SupportedContentType::parse_header(content_types);
 
         // at this point we treat no content type as "user explicitly does not support any known types"
         // this is because only empty accept header or */* is treated as "accept everything" and we check
         // that above
-        match (single_content_type, stream_content_type) {
-            (Some(single), Some(stream)) => Ok((Some(single), Some(stream))),
-            (Some(single), None) => Ok((Some(single), None)),
-            (None, Some(stream)) => Ok((None, Some(stream))),
-            (None, None) => Err(PipelineError::UnsupportedContentType),
+        if parsed.0.is_none() && parsed.1.is_none() {
+            Err(PipelineError::UnsupportedContentType)
+        } else {
+            Ok(parsed)
         }
     }
 }
