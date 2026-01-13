@@ -1,8 +1,8 @@
 use graphql_tools::{
     ast::OperationDefinitionExtension,
     static_graphql::query::{
-        Field, FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition, Selection,
-        SelectionSet,
+        Directive, Field, FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition,
+        Selection, SelectionSet,
     },
 };
 
@@ -31,6 +31,8 @@ pub enum CountableNode<'a> {
 impl<'a> CountableNode<'a> {
     /**
      * This returns the selection set object of the relevant ast node
+     *
+     * We use this to traverse the selections in the validation rules.
      */
     pub fn selection_set(&self) -> Option<&'a SelectionSet> {
         match self {
@@ -39,6 +41,25 @@ impl<'a> CountableNode<'a> {
             CountableNode::OperationDefinition(node) => Some(node.selection_set()),
             CountableNode::FragmentDefinition(node) => Some(&node.selection_set),
             CountableNode::FragmentSpread(_) => None,
+        }
+    }
+    /**
+     * This returns the directives slice of the relevant ast node
+     *
+     * We use this in `max_directives_rule.rs` to count the number of directives
+     */
+    pub fn get_directives(&self) -> Option<&'a [Directive]> {
+        match self {
+            CountableNode::Field(field) => Some(&field.directives),
+            CountableNode::FragmentDefinition(fragment_def) => Some(&fragment_def.directives),
+            CountableNode::InlineFragment(inline_fragment) => Some(&inline_fragment.directives),
+            CountableNode::OperationDefinition(op_def) => match op_def {
+                OperationDefinition::Query(query) => Some(&query.directives),
+                OperationDefinition::Mutation(mutation) => Some(&mutation.directives),
+                OperationDefinition::Subscription(subscription) => Some(&subscription.directives),
+                OperationDefinition::SelectionSet(_) => None,
+            },
+            CountableNode::FragmentSpread(fragment_spread) => Some(&fragment_spread.directives),
         }
     }
 }
