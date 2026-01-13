@@ -35,7 +35,7 @@ pub struct PlannedRequest<'req> {
 #[inline]
 pub async fn execute_plan(
     supergraph: &SupergraphData,
-    app_state: &RouterSharedState,
+    app_state: &Arc<RouterSharedState>,
     expose_query_plan: &ExposeQueryPlanMode,
     planned_request: &PlannedRequest<'_>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
