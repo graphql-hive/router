@@ -42,3 +42,9 @@ pub enum SubgraphExecutorError {
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     NativeTlsCertificatesError(String),
 }
+
+impl SubgraphExecutorError {
+    pub fn error_code(&self) -> &'static str {
+        self.into()
+    }
+}

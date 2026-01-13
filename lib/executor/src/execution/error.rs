@@ -16,7 +16,7 @@ pub enum PlanExecutionErrorKind {
     HeaderPropagation(#[from] HeaderRuleRuntimeError),
 
     #[error(transparent)]
-    #[strum(serialize = "SUBGRAPH_EXECUTOR_FAILURE")]
+    #[strum(serialize = "SUBGRAPH_EXECUTION_FAILURE")]
     SubgraphExecutor(#[from] SubgraphExecutorError),
 }
 
@@ -63,6 +63,9 @@ impl PlanExecutionError {
     }
 
     pub fn error_code(&self) -> &'static str {
+        if let PlanExecutionErrorKind::SubgraphExecutor(subgraph_error) = &self.kind {
+            return subgraph_error.error_code();
+        }
         (&self.kind).into()
     }
 
