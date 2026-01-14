@@ -98,6 +98,6 @@ impl<'exec> OutputRewritesStorage<'exec> {
     }
 
     pub fn get(&self, id: i64) -> Option<&'exec [FetchRewrite]> {
-        self.output_rewrites.get(&id).copied() // No clones?
+        self.output_rewrites.get(&id).copied()
     }
 }
