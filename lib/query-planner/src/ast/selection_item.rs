@@ -2,7 +2,7 @@ use crate::{
     ast::normalization::utils::extract_type_condition,
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
-use graphql_parser::query as query_ast;
+use graphql_tools::parser::query as query_ast;
 
 use super::selection_set::{FieldSelection, InlineFragmentSelection};
 use core::panic;

@@ -23,7 +23,7 @@ use crate::{
     },
 };
 use error::GraphError;
-use graphql_parser::query::{Selection, SelectionSet};
+use graphql_tools::parser::query::{Selection, SelectionSet};
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, Edges, NodeIndex},

@@ -1,6 +1,6 @@
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
-use graphql_parser::schema::Document;
+use graphql_tools::parser::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_plan_executor::{
@@ -163,7 +163,7 @@ impl SupergraphBackgroundLoader {
 }
 
 #[async_trait]
-impl BackgroundTask for SupergraphBackgroundLoader {
+impl BackgroundTask for Arc<SupergraphBackgroundLoader> {
     fn id(&self) -> &str {
         "supergraph-background-loader"
     }

@@ -3,9 +3,9 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use graphql_parser::query::Directive;
-use graphql_parser::schema as input;
 use graphql_tools::ast::SchemaDocumentExtension;
+use graphql_tools::parser::query::Directive;
+use graphql_tools::parser::schema as input;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
@@ -90,7 +90,7 @@ impl LinkedSpecifications {
 
             let url = directive.arguments.iter().find_map(|(name, value)| {
                 if name == "url" {
-                    if let graphql_parser::query::Value::String(s) = value {
+                    if let graphql_tools::parser::query::Value::String(s) = value {
                         return Some(s);
                     }
                 }

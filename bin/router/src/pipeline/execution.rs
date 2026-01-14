@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
@@ -30,7 +30,7 @@ pub struct PlannedRequest<'req> {
     pub query_plan_payload: &'req Arc<QueryPlan>,
     pub variable_payload: &'req CoerceVariablesPayload,
     pub client_request_details: &'req ClientRequestDetails<'req, 'req>,
-    pub authorization_errors: &'req [AuthorizationError],
+    pub authorization_errors: Vec<AuthorizationError>,
 }
 
 #[inline]
@@ -38,7 +38,7 @@ pub async fn execute_plan(
     req: &HttpRequest,
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
-    planned_request: &PlannedRequest<'_>,
+    planned_request: PlannedRequest<'_>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
@@ -89,7 +89,7 @@ pub async fn execute_plan(
                     .forward_claims_to_upstream_extensions
                     .field_name,
             )
-            .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?
+            .map_err(PipelineError::JwtForwardingError)?
     } else {
         None
     };
@@ -107,13 +107,13 @@ pub async fn execute_plan(
         executors: &supergraph.subgraph_executor_map,
         initial_errors: planned_request
             .authorization_errors
-            .iter()
+            .into_iter()
             .map(|e| e.into())
             .collect(),
     })
     .await
     .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);
-        req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err))
+        PipelineError::PlanExecutionError(err)
     })
 }

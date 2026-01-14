@@ -1,6 +1,6 @@
 use hive_router_internal::expressions::vrl::prelude::ExpressionError;
 
-use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
+use crate::response::graphql_error::GraphQLError;
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum SubgraphExecutorError {
@@ -32,12 +32,7 @@ pub enum SubgraphExecutorError {
 
 impl From<SubgraphExecutorError> for GraphQLError {
     fn from(error: SubgraphExecutorError) -> Self {
-        GraphQLError {
-            message: "Internal server error".to_string(),
-            locations: None,
-            path: None,
-            extensions: GraphQLErrorExtensions::new_from_code(error.error_code()),
-        }
+        GraphQLError::from_message_and_code("Internal server error", error.error_code())
     }
 }
 

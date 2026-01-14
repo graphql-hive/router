@@ -20,11 +20,11 @@ hive-router-query-planner = { path = "../../lib/query-planner", version = "2.1.5
 hive-router-plan-executor = { path = "../../lib/executor", version = "6.3.2" }
 hive-router-config = { path = "../../lib/router-config", version = "0.0.16" }
 hive-router-internal = { path = "../../lib/internal", version = "0.0.5" }
+hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.0" }
+graphql-tools =  { path = "../../lib/graphql-tools", version = "0.4.0" }
 
 tokio = { workspace = true }
 futures = { workspace = true }
-graphql-parser = { workspace = true }
-graphql-tools = { workspace = true }
 serde = { workspace = true }
 reqwest = { workspace = true }
 sonic-rs = { workspace = true }
@@ -47,16 +47,16 @@ reqwest-middleware = { workspace = true }
 vrl = { workspace = true }
 serde_json = { workspace = true }
 regex-automata = { workspace = true }
+ahash = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
-moka = { version = "0.12.10", features = ["future"] }
-hive-console-sdk = "0.2.2"
+moka = { workspace = true }
 ulid = "1.2.1"
-tokio-util = "0.7.16"
+tokio-util = { workspace = true }
 cookie = "0.18.1"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
-ahash = { workspace = true }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

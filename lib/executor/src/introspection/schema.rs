@@ -1,10 +1,10 @@
 use ahash::{HashMap, HashSet};
 
-use graphql_parser::{
+use graphql_tools::ast::TypeExtension;
+use graphql_tools::parser::{
     query::Type,
     schema::{Definition, TypeDefinition},
 };
-use graphql_tools::ast::TypeExtension;
 use hive_router_query_planner::consumer_schema::ConsumerSchema;
 
 #[derive(Debug, Default)]
@@ -202,9 +202,11 @@ trait TypeName {
 impl TypeName for Type<'_, String> {
     fn type_name(&self) -> String {
         match self {
-            graphql_parser::schema::Type::NamedType(named_type) => named_type.to_string(),
-            graphql_parser::schema::Type::NonNullType(non_null_type) => non_null_type.type_name(),
-            graphql_parser::schema::Type::ListType(list_type) => list_type.type_name(),
+            graphql_tools::parser::schema::Type::NamedType(named_type) => named_type.to_string(),
+            graphql_tools::parser::schema::Type::NonNullType(non_null_type) => {
+                non_null_type.type_name()
+            }
+            graphql_tools::parser::schema::Type::ListType(list_type) => list_type.type_name(),
         }
     }
 }
