@@ -126,12 +126,12 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'exec, 'req>(
+    pub async fn execute<'a>(
         &self,
-        subgraph_name: &'exec str,
-        execution_request: SubgraphExecutionRequest<'exec>,
-        client_request: &ClientRequestDetails<'exec, 'req>,
-    ) -> SubgraphResponse<'exec> {
+        subgraph_name: &'a str,
+        execution_request: SubgraphExecutionRequest<'a>,
+        client_request: &ClientRequestDetails<'a>,
+    ) -> SubgraphResponse<'a> {
         match self.get_or_create_executor(subgraph_name, client_request) {
             Ok(executor) => {
                 let timeout = self
@@ -188,7 +188,7 @@ impl SubgraphExecutorMap {
     fn get_or_create_executor(
         &self,
         subgraph_name: &str,
-        client_request: &ClientRequestDetails<'_, '_>,
+        client_request: &ClientRequestDetails<'_>,
     ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
         self.expression_endpoints_by_subgraph
             .get(subgraph_name)
@@ -215,7 +215,7 @@ impl SubgraphExecutorMap {
         &self,
         subgraph_name: &str,
         expression: &VrlProgram,
-        client_request: &ClientRequestDetails<'_, '_>,
+        client_request: &ClientRequestDetails<'_>,
     ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
         let original_url_value = VrlValue::Bytes(
             self.static_endpoints_by_subgraph
@@ -433,7 +433,7 @@ impl SubgraphExecutorMap {
 /// Optionally includes a default timeout value in the VRL context.
 fn resolve_timeout(
     duration_or_program: &DurationOrProgram,
-    client_request: &ClientRequestDetails<'_, '_>,
+    client_request: &ClientRequestDetails<'_>,
     default_timeout: Option<Duration>,
     timeout_name: &str,
 ) -> Result<Duration, SubgraphExecutorError> {

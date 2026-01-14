@@ -5,18 +5,18 @@ use hive_router_internal::expressions::{lib::ToVrlValue, vrl::core::Value};
 use http::Method;
 use ntex::http::HeaderMap as NtexHeaderMap;
 
-pub struct OperationDetails<'exec> {
-    pub name: Option<&'exec str>,
-    pub query: &'exec str,
+pub struct OperationDetails<'a> {
+    pub name: Option<&'a str>,
+    pub query: &'a str,
     pub kind: &'static str,
 }
 
-pub struct ClientRequestDetails<'exec, 'req> {
-    pub method: &'req Method,
-    pub url: &'req http::Uri,
-    pub headers: &'req NtexHeaderMap,
-    pub operation: OperationDetails<'exec>,
-    pub jwt: &'exec JwtRequestDetails,
+pub struct ClientRequestDetails<'a> {
+    pub method: &'a Method,
+    pub url: &'a http::Uri,
+    pub headers: &'a NtexHeaderMap,
+    pub operation: OperationDetails<'a>,
+    pub jwt: &'a JwtRequestDetails,
 }
 
 pub enum JwtRequestDetails {
@@ -29,7 +29,7 @@ pub enum JwtRequestDetails {
     Unauthenticated,
 }
 
-impl From<&ClientRequestDetails<'_, '_>> for Value {
+impl From<&ClientRequestDetails<'_>> for Value {
     fn from(details: &ClientRequestDetails) -> Self {
         // .request.headers
         let headers_value = client_header_map_to_vrl_value(details.headers);
