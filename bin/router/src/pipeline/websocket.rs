@@ -303,6 +303,7 @@ async fn handle_text_frame(
             let _ = sink.send(ServerMessage::ack(None).into()).await;
 
             debug!("Connection acknowledged");
+
             // TODO: read payload and set it to the current_headers
 
             None
@@ -368,8 +369,9 @@ async fn handle_text_frame(
             let query_plan_cancellation_token =
                 CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-            // TODO: extract from connection init payload too
             let headers = extract_headers_from_extensions(&payload.extensions);
+
+            // TODO: update current headers in state
 
             let mut jwt_context: Option<JwtRequestContext> = None;
             if let Some(jwt) = &shared_state.jwt_auth_runtime {
@@ -456,6 +458,9 @@ async fn handle_text_frame(
                     Some(ServerMessage::complete(&id))
                 }
                 Ok(QueryPlanExecutionResult::Stream(response)) => {
+                    // we use mpsc::channel(1) instead of oneshot because oneshot::Receiver
+                    // is consumed on first await, which doesn't work in tokio::select! loops that
+                    // need to poll the receiver multiple times across iterations
                     let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
 
                     state
