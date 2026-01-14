@@ -85,33 +85,34 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
         }
 
         // If it is a fragment spread, we need to count directives of the used fragments
-        if let CountableNode::FragmentSpread(countable_node) = countable_node {
-            let fragment_name = countable_node.fragment_name.as_str();
-            // If it is already visited, add it to the total
-            if let Some(visited_fragment) = self.visited_fragments.get(fragment_name) {
-                // If it is counted already, use the cached value
-                if let VisitedFragment::Counted(visited_fragment_cnt) = visited_fragment {
-                    directive_cnt += visited_fragment_cnt;
-                }
-            } else {
-                // If not, let's mark it as Visiting initially to avoid infinite loops,
-                // because fragments can refer itself recursively at some point.
-                // See the tests at the bottom of this file to understand the use cases fully.
-                self.visited_fragments
-                    .insert(fragment_name, VisitedFragment::Visiting);
+        if let CountableNode::FragmentSpread(node) = countable_node {
+            let fragment_name = node.fragment_name.as_str();
 
-                // If the fragment is found, get the original Fragment Definition and convert it to CountableNode
-                if let Some(fragment_def) = self.ctx.known_fragments.get(fragment_name) {
-                    let countable_node: CountableNode<'a> = fragment_def.into();
-                    // Count directives of the fragment
-                    let fragment_directive_cnt = self.count_directives(countable_node);
-                    // We can now set the actual counted directives for this fragment
-                    self.visited_fragments.insert(
-                        fragment_name,
-                        VisitedFragment::Counted(fragment_directive_cnt),
-                    );
-                    directive_cnt += fragment_directive_cnt;
+            // Check if the fragment was already visited
+            match self.visited_fragments.get(fragment_name) {
+                Some(VisitedFragment::Counted(cnt)) => {
+                    return directive_cnt + cnt;
                 }
+                Some(VisitedFragment::Visiting) => return directive_cnt,
+                None => {}
+            }
+
+            // If not, mark it as Visiting initially to avoid infinite loops
+            self.visited_fragments
+                .insert(fragment_name, VisitedFragment::Visiting);
+
+            // If the fragment is found, get the original Fragment Definition and convert it to CountableNode
+            if let Some(fragment_def) = self.ctx.known_fragments.get(fragment_name) {
+                let countable_node: CountableNode<'a> = fragment_def.into();
+                // Count directives of the fragment
+                let fragment_directive_cnt = self.count_directives(countable_node);
+
+                // Update it with the actual count
+                self.visited_fragments.insert(
+                    fragment_name,
+                    VisitedFragment::Counted(fragment_directive_cnt),
+                );
+                directive_cnt += fragment_directive_cnt;
             }
         }
 
