@@ -70,17 +70,17 @@ struct MaxDirectivesVisitor<'a, 'b> {
 impl<'a> MaxDirectivesVisitor<'a, '_> {
     fn count_directives(&mut self, countable_node: CountableNode<'a>) -> usize {
         // Start with 0
-        let mut directive_cnt: usize = 0;
+        let mut directive_count: usize = 0;
         // Get the directives of the current node
         if let Some(directives) = countable_node.get_directives() {
-            directive_cnt += directives.len();
+            directive_count += directives.len();
         }
 
         // If it is a node that has selections, iterate over the selection set, and get their number of directives
         if let Some(selection_set) = countable_node.selection_set() {
             for selection in &selection_set.items {
                 let countable_node: CountableNode<'a> = selection.into();
-                directive_cnt += self.count_directives(countable_node);
+                directive_count += self.count_directives(countable_node);
             }
         }
 
@@ -90,10 +90,10 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
 
             // Check if the fragment was already visited
             match self.visited_fragments.get(fragment_name) {
-                Some(VisitedFragment::Counted(cnt)) => {
-                    return directive_cnt + cnt;
+                Some(VisitedFragment::Counted(num)) => {
+                    return directive_count + num;
                 }
-                Some(VisitedFragment::Visiting) => return directive_cnt,
+                Some(VisitedFragment::Visiting) => return directive_count,
                 None => {}
             }
 
@@ -105,18 +105,18 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
             if let Some(fragment_def) = self.ctx.known_fragments.get(fragment_name) {
                 let countable_node: CountableNode<'a> = fragment_def.into();
                 // Count directives of the fragment
-                let fragment_directive_cnt = self.count_directives(countable_node);
+                let fragment_directive_count = self.count_directives(countable_node);
 
                 // Update it with the actual count
                 self.visited_fragments.insert(
                     fragment_name,
-                    VisitedFragment::Counted(fragment_directive_cnt),
+                    VisitedFragment::Counted(fragment_directive_count),
                 );
-                directive_cnt += fragment_directive_cnt;
+                directive_count += fragment_directive_count;
             }
         }
 
-        directive_cnt
+        directive_count
     }
 }
 
