@@ -5,7 +5,7 @@ use hive_router_plan_executor::{
         client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
         plan::PlanExecutionOutput,
     },
-    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
+    response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -114,7 +114,7 @@ pub async fn graphql_request_handler(
                 let authorization_error_result = FailedExecutionResult {
                     errors: Some(
                         authorization_errors
-                            .iter()
+                            .into_iter()
                             .map(|error| error.into())
                             .collect(),
                     ),
@@ -126,10 +126,7 @@ pub async fn graphql_request_handler(
             let code = error.graphql_error_code();
             let message = error.graphql_error_message();
 
-            let graphql_error = GraphQLError::from_message_and_extensions(
-                message,
-                GraphQLErrorExtensions::new_from_code(code),
-            );
+            let graphql_error = GraphQLError::from_message_and_code(message, code);
 
             let result = FailedExecutionResult {
                 errors: Some(vec![graphql_error]),
@@ -258,9 +255,9 @@ pub async fn execute_pipeline(
         query_plan_payload: &query_plan_payload,
         variable_payload: &variable_payload,
         client_request_details: &client_request_details,
-        authorization_errors: &authorization_errors,
+        authorization_errors,
     };
-    let execution_result = execute_plan(req, supergraph, shared_state, &planned_request).await?;
+    let execution_result = execute_plan(req, supergraph, shared_state, planned_request).await?;
 
     if shared_state.router_config.usage_reporting.enabled {
         if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
