@@ -43,7 +43,7 @@ impl Hash for Value<'_> {
 }
 
 impl<'a> Value<'a> {
-    pub fn take_entities(&'a mut self) -> Option<Vec<Value<'a>>> {
+    pub fn take_entities(&mut self) -> Option<Vec<Value<'a>>> {
         match self {
             Value::Object(data) => {
                 if let Ok(entities_idx) = data.binary_search_by_key(&"_entities", |(k, _)| *k) {
