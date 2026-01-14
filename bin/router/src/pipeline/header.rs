@@ -1,4 +1,4 @@
-use http::header::{ACCEPT};
+use http::header::ACCEPT;
 use lazy_static::lazy_static;
 use ntex::{http::header::HeaderValue, web::HttpRequest};
 

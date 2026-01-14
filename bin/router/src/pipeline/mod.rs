@@ -11,8 +11,8 @@ use hive_router_query_planner::{
 };
 use http::{header::CONTENT_TYPE, Method};
 use ntex::{
-    http::ResponseBuilder,
     http::header::HeaderValue,
+    http::ResponseBuilder,
     util::Bytes,
     web::{self, HttpRequest},
 };
