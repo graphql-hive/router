@@ -95,12 +95,16 @@ pub async fn graphql_request_handler(
 
         let status = error.default_status_code(accept_ok);
 
+        let mut builder = ResponseBuilder::new(status);
+
+        let builder = builder.content_type(response_content_type);
+
         if let PipelineError::ValidationErrors(validation_errors) = error {
             let validation_error_result = FailedExecutionResult {
                 errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
             };
 
-            return ResponseBuilder::new(status).json(&validation_error_result);
+            return builder.json(&validation_error_result);
         }
 
         if let PipelineError::AuthorizationFailed(authorization_errors) = error {
@@ -113,7 +117,7 @@ pub async fn graphql_request_handler(
                 ),
             };
 
-            return ResponseBuilder::new(status).json(&authorization_error_result);
+            return builder.json(&authorization_error_result);
         }
 
         let code = error.graphql_error_code();
@@ -125,9 +129,7 @@ pub async fn graphql_request_handler(
             errors: Some(vec![graphql_error]),
         };
 
-        ResponseBuilder::new(status)
-            .content_type(response_content_type)
-            .json(&result)
+        builder.json(&result)
     })
 }
 
