@@ -1,10 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
-use hive_router_plan_executor::{
-    execution::client_request_details::{
-        ClientRequestDetails, JwtRequestDetails, OperationDetails,
-    },
-    response::graphql_error::GraphQLError,
+use hive_router_plan_executor::execution::client_request_details::{
+    ClientRequestDetails, JwtRequestDetails, OperationDetails,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -95,41 +92,11 @@ pub async fn graphql_request_handler(
 
         let status = error.default_status_code(accept_ok);
 
-        let mut builder = ResponseBuilder::new(status);
+        let result = FailedExecutionResult::from(error);
 
-        let builder = builder.content_type(response_content_type);
-
-        if let PipelineError::ValidationErrors(validation_errors) = error {
-            let validation_error_result = FailedExecutionResult {
-                errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-            };
-
-            return builder.json(&validation_error_result);
-        }
-
-        if let PipelineError::AuthorizationFailed(authorization_errors) = error {
-            let authorization_error_result = FailedExecutionResult {
-                errors: Some(
-                    authorization_errors
-                        .into_iter()
-                        .map(|error| error.into())
-                        .collect(),
-                ),
-            };
-
-            return builder.json(&authorization_error_result);
-        }
-
-        let code = error.graphql_error_code();
-        let message = error.graphql_error_message();
-
-        let graphql_error = GraphQLError::from_message_and_code(message, code);
-
-        let result = FailedExecutionResult {
-            errors: Some(vec![graphql_error]),
-        };
-
-        builder.json(&result)
+        ResponseBuilder::new(status)
+            .content_type(response_content_type)
+            .json(&result)
     })
 }
 

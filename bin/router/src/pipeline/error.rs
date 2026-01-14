@@ -142,3 +142,39 @@ pub struct FailedExecutionResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<GraphQLError>>,
 }
+
+// This allows easy conversion from PipelineError to FailedExecutionResult
+// FailedExecutionResult is agnostic to HTTP so later on we can use it with different serialization formats
+impl From<PipelineError> for FailedExecutionResult {
+    fn from(error: PipelineError) -> Self {
+        if let PipelineError::ValidationErrors(validation_errors) = error {
+            let validation_error_result = FailedExecutionResult {
+                errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
+            };
+
+            return validation_error_result;
+        }
+
+        if let PipelineError::AuthorizationFailed(authorization_errors) = error {
+            let authorization_error_result = FailedExecutionResult {
+                errors: Some(
+                    authorization_errors
+                        .into_iter()
+                        .map(|error| error.into())
+                        .collect(),
+                ),
+            };
+
+            return authorization_error_result;
+        }
+
+        let code = error.graphql_error_code();
+        let message = error.graphql_error_message();
+
+        let graphql_error = GraphQLError::from_message_and_code(message, code);
+
+        FailedExecutionResult {
+            errors: Some(vec![graphql_error]),
+        }
+    }
+}
