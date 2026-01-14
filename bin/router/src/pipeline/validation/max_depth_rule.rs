@@ -27,30 +27,35 @@ impl ValidationRule for MaxDepthRule {
         error_collector: &mut ValidationErrorContext,
     ) {
         for definition in &ctx.operation.definitions {
-            if let Definition::Operation(op) = definition {
-                let mut visitor = MaxDepthVisitor {
-                    config: &self.config,
-                    visited_fragments: HashMap::new(),
-                    ctx,
-                };
-                let depth = visitor.count_depth(op.into(), None);
-                if depth > self.config.n {
-                    let message = if self.config.expose_limits {
-                        format!(
-                            "Query depth limit of {} exceeded, found {}.",
-                            self.config.n, depth
-                        )
-                    } else {
-                        "Query depth limit exceeded.".to_string()
-                    };
+            let Definition::Operation(op) = definition else {
+                continue;
+            };
 
-                    error_collector.report_error(ValidationError {
-                        message,
-                        locations: vec![],
-                        error_code: "MAX_DEPTH_EXCEEDED",
-                    });
-                }
+            let mut visitor = MaxDepthVisitor {
+                config: &self.config,
+                visited_fragments: HashMap::new(),
+                ctx,
+            };
+            let depth = visitor.count_depth(op.into(), None);
+
+            if depth <= self.config.n {
+                continue;
             }
+
+            let message = if self.config.expose_limits {
+                format!(
+                    "Query depth limit of {} exceeded, found {}.",
+                    self.config.n, depth
+                )
+            } else {
+                "Query depth limit exceeded.".to_string()
+            };
+
+            error_collector.report_error(ValidationError {
+                message,
+                locations: vec![],
+                error_code: "MAX_DEPTH_EXCEEDED",
+            });
         }
     }
 }
