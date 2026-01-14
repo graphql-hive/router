@@ -604,6 +604,7 @@ enum ClientMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ServerMessage<'a> {
     ConnectionAck {
+        #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<sonic_rs::Value>,
     },
     Next {
