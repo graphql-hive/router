@@ -200,9 +200,9 @@ pub async fn graphql_request_handler(
 
 #[inline]
 #[allow(clippy::await_holding_refcell_ref, clippy::too_many_arguments)]
-pub async fn execute_pipeline<'exec, 'req>(
+pub async fn execute_pipeline<'exec>(
     cancellation_token: &CancellationToken,
-    client_request_details: &ClientRequestDetails<'exec, 'req>,
+    client_request_details: &ClientRequestDetails<'exec>,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     variable_payload: &CoerceVariablesPayload,
     expose_query_plan: &ExposeQueryPlanMode,
