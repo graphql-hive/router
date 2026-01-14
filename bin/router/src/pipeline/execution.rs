@@ -30,7 +30,7 @@ pub struct PlannedRequest<'req> {
     pub query_plan_payload: &'req Arc<QueryPlan>,
     pub variable_payload: &'req CoerceVariablesPayload,
     pub client_request_details: &'req ClientRequestDetails<'req>,
-    pub authorization_errors: &'req [AuthorizationError],
+    pub authorization_errors: Vec<AuthorizationError>,
 }
 
 #[inline]
