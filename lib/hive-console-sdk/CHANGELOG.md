@@ -1,3 +1,15 @@
+## 0.3.1 (2026-01-14)
+
+### Fixes
+
+#### Update `reqwest`, `reqwest-retry`, and `reqwest-middleware` dependencies
+
+This change updates the `reqwest` dependency to version `0.13.0`, `reqwest-retry` to version `0.9.0`, and `reqwest-middleware` to version `0.5.0` in the Hive Console SDK and Router packages.
+
+#### Moves hive-console-sdk to router repository
+
+This change moves the `hive-console-sdk` package to the Hive Router repository.
+
 ## 0.3.0
 
 ### Minor Changes

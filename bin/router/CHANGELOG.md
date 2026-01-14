@@ -116,6 +116,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.30 (2026-01-14)
+
+### Fixes
+
+#### Update `reqwest`, `reqwest-retry`, and `reqwest-middleware` dependencies
+
+This change updates the `reqwest` dependency to version `0.13.0`, `reqwest-retry` to version `0.9.0`, and `reqwest-middleware` to version `0.5.0` in the Hive Console SDK and Router packages.
+
+#### Improved Performance for Expressions
+
+This change introduces "lazy evaluation" for contextual information used in expressions (like dynamic timeouts).
+
+Previously, the Router would prepare and clone data (such as request details or subgraph names) every time it performed an operation, even if that data wasn't actually needed.
+Now, this work is only performed "on-demand" - for example, only if an expression is actually being executed.
+This reduces unnecessary CPU usage and memory allocations during the hot path of request execution.
+
+#### Moves `graphql-tools` to router repository
+
+This change moves the `graphql-tools` package to the Hive Router repository.
+
+## Own GraphQL Parser
+
+This change also introduces our own GraphQL parser (copy of `graphql_parser`), which is now used across all packages in the Hive Router monorepo. This allows us to have better control over parsing and potentially optimize it for our specific use cases.
+
+#### Moves hive-console-sdk to router repository
+
+This change moves the `hive-console-sdk` package to the Hive Router repository.
+
+#### Remove extra `target_id` validation in Router config
+
+This change removes the extra deserialization validation for the `target_id` field in the Router configuration, because it is already done by the Hive Console SDK.
+
 ## 0.0.29 (2026-01-12)
 
 ### Fixes

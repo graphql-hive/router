@@ -66,6 +66,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.17 (2026-01-14)
+
+### Fixes
+
+#### Remove extra `target_id` validation in Router config
+
+This change removes the extra deserialization validation for the `target_id` field in the Router configuration, because it is already done by the Hive Console SDK.
+
 ## 0.0.16 (2026-01-12)
 
 ### Fixes

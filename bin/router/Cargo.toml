@@ -1,6 +1,6 @@
 [package]
 name = "hive-router"
-version = "0.0.29"
+version = "0.0.30"
 edition = "2021"
 description = "GraphQL router/gateway for Federation"
 license = "MIT"
@@ -16,12 +16,12 @@ name = "hive_router"
 path = "src/main.rs"
 
 [dependencies]
-hive-router-query-planner = { path = "../../lib/query-planner", version = "2.1.5" }
-hive-router-plan-executor = { path = "../../lib/executor", version = "6.3.2" }
-hive-router-config = { path = "../../lib/router-config", version = "0.0.16" }
-hive-router-internal = { path = "../../lib/internal", version = "0.0.5" }
-hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.0" }
-graphql-tools =  { path = "../../lib/graphql-tools", version = "0.4.0" }
+hive-router-query-planner = { path = "../../lib/query-planner", version = "2.1.6" }
+hive-router-plan-executor = { path = "../../lib/executor", version = "6.3.3" }
+hive-router-config = { path = "../../lib/router-config", version = "0.0.17" }
+hive-router-internal = { path = "../../lib/internal", version = "0.0.6" }
+hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.1" }
+graphql-tools =  { path = "../../lib/graphql-tools", version = "0.4.1" }
 
 tokio = { workspace = true }
 futures = { workspace = true }

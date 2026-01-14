@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-query-planner"
-version = "2.1.5"
+version = "2.1.6"
 edition = "2021"
 description = "GraphQL query planner for Federation specification"
 license = "MIT"
@@ -12,7 +12,7 @@ authors = ["The Guild"]
 [lib]
 
 [dependencies]
-graphql-tools =  { path = "../graphql-tools", version = "0.4.0" }
+graphql-tools =  { path = "../graphql-tools", version = "0.4.1" }
 serde = { workspace = true }
 sonic-rs = { workspace = true }
 tracing = { workspace = true }
