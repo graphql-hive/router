@@ -390,7 +390,7 @@ impl<'exec> Executor<'exec> {
         ctx: &mut ExecutionContext<'exec>,
         job: ExecutionJob<'exec>,
     ) -> Result<(), PlanExecutionError> {
-        let _: () = match job {
+        match job {
             ExecutionJob::Fetch(mut job) => {
                 if let Some(response_headers) = &job.response.headers {
                     apply_subgraph_response_headers(
@@ -437,6 +437,9 @@ impl<'exec> Executor<'exec> {
                 let output_rewrites =
                     self.process_subgraph_response(ctx, job.response.bytes, job.fetch_node_id);
 
+                let mut entity_index_error_map: Option<HashMap<&usize, Vec<GraphQLErrorPath>>> =
+                    None;
+
                 if let Some(mut entities) = job.response.data.take_entities() {
                     if let Some(output_rewrites) = output_rewrites {
                         for output_rewrite in output_rewrites {
@@ -455,7 +458,7 @@ impl<'exec> Executor<'exec> {
                         .errors
                         .as_ref()
                         .map(|_| GraphQLErrorPath::with_capacity(normalized_path.len() + 2));
-                    let mut entity_index_error_map = job
+                    entity_index_error_map = job
                         .response
                         .errors
                         .as_ref()
@@ -484,27 +487,18 @@ impl<'exec> Executor<'exec> {
                             index += 1;
                         },
                     );
-                    let affected_path = job.flatten_node_path.to_string();
-                    ctx.handle_errors(
-                        job.subgraph_name,
-                        Some(affected_path),
-                        job.response.errors,
-                        entity_index_error_map,
-                    );
-                } else if let Some(errors) = job.response.errors {
-                    // No entities were returned, but there are errors to handle.
-                    // We associate them with the flattened path and subgraph.
-                    let affected_path = job.flatten_node_path.to_string();
-                    ctx.errors.extend(errors.into_iter().map(|e| {
-                        e.add_subgraph_name(job.subgraph_name)
-                            .add_affected_path(affected_path.clone())
-                    }));
                 }
+                ctx.handle_errors(
+                    job.subgraph_name,
+                    Some(job.flatten_node_path),
+                    job.response.errors,
+                    entity_index_error_map,
+                );
             }
             ExecutionJob::None => {
                 // nothing to do
             }
-        };
+        }
         Ok(())
     }
 
