@@ -60,7 +60,7 @@ impl<'a> ExecutionContext<'a> {
             for response_error in response_errors {
                 let mut processed_error = response_error.add_subgraph_name(subgraph_name);
 
-                if let Some(ref affected_path) = affected_path {
+                if let Some(affected_path) = &affected_path {
                     processed_error = processed_error.add_affected_path(affected_path.clone());
                 }
 
