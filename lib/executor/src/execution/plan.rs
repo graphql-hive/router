@@ -656,11 +656,7 @@ impl<'exec> Executor<'exec> {
             response: self
                 .executors
                 .execute(&node.service_name, subgraph_request, self.client_request)
-                .await
-                .with_plan_context(LazyPlanContext {
-                    subgraph_name: || Some(node.service_name.clone()),
-                    affected_path: || None,
-                })?,
+                .await,
         }))
     }
 
