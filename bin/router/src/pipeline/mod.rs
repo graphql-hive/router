@@ -264,7 +264,7 @@ pub async fn execute_pipeline<'exec, 'req>(
         query_plan_payload: &query_plan_payload,
         variable_payload,
         client_request_details,
-        authorization_errors: authorization_errors,
+        authorization_errors,
     };
 
     let pipeline_result =
