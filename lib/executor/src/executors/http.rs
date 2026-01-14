@@ -3,16 +3,14 @@ use std::time::Duration;
 
 use crate::executors::dedupe::request_fingerprint;
 use crate::executors::map::InflightRequestsMap;
-use crate::response::graphql_error::GraphQLError;
 use crate::response::subgraph_response::SubgraphResponse;
 use futures::TryFutureExt;
 
 use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes};
-use http::HeaderMap;
 use http::HeaderValue;
-use http::StatusCode;
+use http::{HeaderMap, StatusCode};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
@@ -23,6 +21,7 @@ use tracing::debug;
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
+use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;

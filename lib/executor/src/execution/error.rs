@@ -71,12 +71,6 @@ impl PlanExecutionError {
     }
 }
 
-// This is needed for individual fetch node error handling
-// Individual fetch node errors are not propagated as PipelineError
-// but converted directly to GraphQLError
-// and added to `errors` field in GraphQL response
-// So failing plan nodes do not fail the whole operation
-// See `error_handling_e2e_tests` for reproduction
 impl From<PlanExecutionError> for GraphQLError {
     fn from(val: PlanExecutionError) -> Self {
         let mut error = GraphQLError::from_message_and_code(val.to_string(), val.error_code());
