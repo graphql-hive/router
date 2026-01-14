@@ -27,32 +27,37 @@ impl ValidationRule for MaxDirectivesRule {
         error_collector: &mut ValidationErrorContext,
     ) {
         for definition in &ctx.operation.definitions {
-            if let Definition::Operation(op) = definition {
-                let mut visitor = MaxDirectivesVisitor {
-                    visited_fragments: HashMap::new(),
-                    ctx,
-                };
-                // First start counting directives from the operation definition
-                // `op.into()` will get `CountableNode`, then `count_directives` will
-                // start counting directives nestedly
-                let directives = visitor.count_directives(op.into());
-                if directives > self.config.n {
-                    let message = if self.config.expose_limits {
-                        format!(
-                            "Directives limit of {} exceeded, found {}",
-                            self.config.n, directives
-                        )
-                    } else {
-                        "Directives limit exceeded".to_string()
-                    };
+            let Definition::Operation(op) = definition else {
+                continue;
+            };
 
-                    error_collector.report_error(ValidationError {
-                        message,
-                        locations: vec![],
-                        error_code: self.error_code(),
-                    });
-                }
+            let mut visitor = MaxDirectivesVisitor {
+                visited_fragments: HashMap::new(),
+                ctx,
+            };
+            // First start counting directives from the operation definition
+            // `op.into()` will get `CountableNode`, then `count_directives` will
+            // start counting directives nestedly
+            let directives = visitor.count_directives(op.into());
+
+            if directives <= self.config.n {
+                continue;
             }
+
+            let message = if self.config.expose_limits {
+                format!(
+                    "Directives limit of {} exceeded, found {}",
+                    self.config.n, directives
+                )
+            } else {
+                "Directives limit exceeded".to_string()
+            };
+
+            error_collector.report_error(ValidationError {
+                message,
+                locations: vec![],
+                error_code: self.error_code(),
+            });
         }
     }
 }
