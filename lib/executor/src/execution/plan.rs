@@ -604,7 +604,7 @@ impl<'exec> Executor<'exec> {
 
         match self.execute_fetch_node(fetch_node, representations).await? {
             ExecutionJob::Fetch(job) => Ok(ExecutionJob::FlattenFetch(FlattenFetchJob {
-                flatten_node_path: &node.path,
+                flatten_node_path: node.path.clone(),
                 response: job.response,
                 fetch_node_id: job.fetch_node_id,
                 subgraph_name: job.subgraph_name,
