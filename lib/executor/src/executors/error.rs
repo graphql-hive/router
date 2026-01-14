@@ -36,6 +36,7 @@ pub enum SubgraphExecutorError {
     #[strum(serialize = "SUBGRAPH_REQUEST_TIMEOUT")]
     RequestTimeout(String, u128),
     #[error("Failed to deserialize subgraph response: {0}")]
+    #[strum(serialize = "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE")]
     ResponseDeserializationFailure(String),
 }
 
