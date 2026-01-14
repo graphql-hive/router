@@ -8,6 +8,7 @@ use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use http::Method;
 use ntex::channel::oneshot;
+use ntex::http::HeaderMap;
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::util::Bytes;
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
@@ -60,6 +61,25 @@ struct WsState {
     /// The moment of the last heartbeat received from the client. This is used
     /// to detect client timeouts and drop the connection on timeout.
     last_heartbeat: Instant,
+    /// When was the connection established/opened. This is used mainly to track
+    /// which clients need to be kicked if they have not been acknowledged within a
+    /// certain time frame.
+    connected_at: Instant,
+    /// Indicates whether the connection init message has been received. This is
+    /// used to enforce the client cant send multiple connection init messages.
+    connection_init_received: bool,
+    /// Whether the connection init message has been received, validated and
+    /// therefore the connection acknowledged.
+    acknowledged: bool,
+    /// Current headers from the client (from connection init or last message).
+    ///
+    /// Not to be confused with http headers, these are NOT http headers, these
+    /// are either the map sent in the connection init message payload or the headers
+    /// property in the extensions of the subscribe message payload (graphql execution request).
+    ///
+    /// They are considered "current" because they can be updated by the client
+    /// on each subscribe message by providing new headers in the extensions.
+    current_headers: HeaderMap,
     /// Active subscriptions with their cancellation senders.
     active_subscriptions: HashMap<String, mpsc::Sender<()>>,
 }
@@ -68,6 +88,10 @@ impl WsState {
     fn new() -> Self {
         Self {
             last_heartbeat: Instant::now(),
+            connected_at: Instant::now(),
+            connection_init_received: false,
+            acknowledged: false,
+            current_headers: HeaderMap::new(),
             active_subscriptions: HashMap::new(),
         }
     }
@@ -178,10 +202,14 @@ async fn handle_text_frame(
         Ok(s) => s,
         Err(e) => {
             error!("Invalid UTF-8 in WebSocket message: {}", e);
-            return Some(ws::Message::Close(Some(ws::CloseReason {
-                code: ws::CloseCode::Invalid,
-                description: Some("Invalid UTF-8 in message".into()),
-            })));
+            return Some(ws::Message::Close(Some(
+                // this one is not in the CloseCode enum because it's an internal WebSocket
+                // transport error that has nothing to do with GraphQL over WebSockets
+                ws::CloseReason {
+                    code: ws::CloseCode::Invalid,
+                    description: Some("Invalid UTF-8 in message".into()),
+                },
+            )));
         }
     };
 
@@ -189,22 +217,28 @@ async fn handle_text_frame(
         Ok(msg) => msg,
         Err(e) => {
             error!("Failed to parse client message to JSON: {}", e);
-            return Some(ws::Message::Close(Some(ws::CloseReason {
-                code: ntex::ws::CloseCode::from(4400),
-                description: Some("Invalid message received".into()),
-            })));
+            return Some(CloseCode::BadRequest("Invalid message received").into());
         }
     };
 
     trace!(msg = ?client_msg, "Received client message");
 
     match client_msg {
+        ClientMessage::ConnectionInit {} => {
+            if state.borrow().connection_init_received {
+                return Some(CloseCode::TooManyInitialisationRequests.into());
+            }
+            state.borrow_mut().connection_init_received = true;
+
+            todo!("read payload and use it for the current headers");
+        }
         ClientMessage::Subscribe { id, mut payload } => {
+            if state.borrow().acknowledged == false {
+                return Some(CloseCode::Unauthorized.into());
+            }
+
             if state.borrow().active_subscriptions.contains_key(&id) {
-                return Some(ws::Message::Close(Some(ws::CloseReason {
-                    code: ws::CloseCode::from(4409),
-                    description: Some(format!("Subscriber for {id} already exists")),
-                })));
+                return Some(CloseCode::SubscriberAlreadyExists(id).into());
             }
 
             let maybe_supergraph = schema_state.current_supergraph();
@@ -395,6 +429,10 @@ async fn handle_text_frame(
             }
         }
         ClientMessage::Complete { id } => {
+            if state.borrow().acknowledged == false {
+                return Some(CloseCode::Unauthorized.into());
+            }
+
             if let Some(cancel_tx) = state.borrow_mut().active_subscriptions.remove(&id) {
                 trace!(id = %id, "Client requested subscription cancellation");
                 let _ = cancel_tx.try_send(());
@@ -429,9 +467,50 @@ fn extract_headers_from_extensions(
     header_map
 }
 
+enum CloseCode {
+    TooManyInitialisationRequests,
+    Unauthorized,
+    Forbidden(String),
+    BadRequest(&'static str),
+    SubscriberAlreadyExists(String),
+    InternalServerError(Option<String>),
+}
+
+impl From<CloseCode> for ws::Message {
+    fn from(msg: CloseCode) -> Self {
+        match msg {
+            CloseCode::TooManyInitialisationRequests => ws::Message::Close(Some(ws::CloseReason {
+                code: ws::CloseCode::from(4429),
+                description: Some("Too many initialisation requests".into()),
+            })),
+            CloseCode::Unauthorized => ws::Message::Close(Some(ws::CloseReason {
+                code: ntex::ws::CloseCode::from(4401),
+                description: Some("Unauthorized".into()),
+            })),
+            CloseCode::Forbidden(reason) => ws::Message::Close(Some(ws::CloseReason {
+                code: ntex::ws::CloseCode::from(4403),
+                description: Some(reason),
+            })),
+            CloseCode::BadRequest(reason) => ws::Message::Close(Some(ws::CloseReason {
+                code: ntex::ws::CloseCode::from(4400),
+                description: Some(reason.into()),
+            })),
+            CloseCode::SubscriberAlreadyExists(id) => ws::Message::Close(Some(ws::CloseReason {
+                code: ws::CloseCode::from(4409),
+                description: Some(format!("Subscriber for {id} already exists")),
+            })),
+            CloseCode::InternalServerError(reason) => ws::Message::Close(Some(ws::CloseReason {
+                code: ntex::ws::CloseCode::from(4500),
+                description: reason.or(Some("Internal Server Error".into())),
+            })),
+        }
+    }
+}
+
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum ClientMessage {
+    ConnectionInit {},
     Subscribe {
         id: String,
         payload: ExecutionRequest,
@@ -463,10 +542,7 @@ impl ServerMessage<'_> {
             Ok(value) => value,
             Err(err) => {
                 error!("Failed to serialize plan execution output body: {}", err);
-                return ws::Message::Close(Some(ws::CloseReason {
-                    code: ntex::ws::CloseCode::from(4500),
-                    description: Some("Internal Server Error".into()),
-                }));
+                return CloseCode::InternalServerError(None).into();
             }
         };
         ServerMessage::Next {
@@ -489,15 +565,13 @@ impl From<ServerMessage<'_>> for ws::Message {
             Ok(text) => ws::Message::Text(text.into()),
             Err(e) => {
                 error!("Failed to serialize server message to JSON: {}", e);
-                ws::Message::Close(Some(ws::CloseReason {
-                    code: ntex::ws::CloseCode::from(4500),
-                    description: Some("Internal Server Error".into()),
-                }))
+                CloseCode::InternalServerError(None).into()
             }
         }
     }
 }
 
+// NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl PipelineErrorVariant {
     fn into_server_message(&self, id: &str) -> ws::Message {
         let code = self.graphql_error_code();
@@ -511,22 +585,16 @@ impl PipelineErrorVariant {
         ServerMessage::error(id, &vec![graphql_error])
     }
     fn into_close_message(&self) -> ws::Message {
-        ws::Message::Close(Some(ws::CloseReason {
-            // TODO: always an internal server error if we're closing the connection?
-            code: ntex::ws::CloseCode::from(4500),
-            description: Some(self.graphql_error_code().to_string()),
-        }))
+        CloseCode::InternalServerError(Some(self.graphql_error_code().to_string())).into()
     }
 }
 
+// NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl JwtError {
     fn into_server_message(&self, id: &str) -> ws::Message {
         ServerMessage::error(id, &vec![self.into()])
     }
     fn into_close_message(&self) -> ws::Message {
-        ws::Message::Close(Some(ws::CloseReason {
-            code: ntex::ws::CloseCode::from(4403),
-            description: Some(self.error_code().to_string()),
-        }))
+        CloseCode::Forbidden(self.error_code().to_string()).into()
     }
 }
