@@ -97,6 +97,24 @@ impl WsState {
     }
 }
 
+/// Ensure a subscription is removed from active_subscriptions when dropped,
+/// regardless of how the subscription stream itself ends (normal completion,
+/// cancellation, panic (hopefully not), or future being dropped at an await point).
+struct SubscriptionGuard {
+    state: Rc<RefCell<WsState>>,
+    id: String,
+}
+
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        self.state
+            .borrow_mut()
+            .active_subscriptions
+            .remove(&self.id);
+        trace!(id = %self.id, "Subscription removed from active subscritpions");
+    }
+}
+
 /// Heartbeat ping interval.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// Client response to heartbeat timeout.
@@ -388,20 +406,26 @@ async fn handle_text_frame(
                     state
                         .borrow_mut()
                         .active_subscriptions
-                        .insert(id.to_string(), cancel_tx);
+                        .insert(id.clone(), cancel_tx);
+
+                    // automatically remove the subscription from active_subscriptions when dropped
+                    let _guard = SubscriptionGuard {
+                        state: state.clone(),
+                        id: id.clone(),
+                    };
 
                     let mut stream = response.body;
                     let mut client_completed = false;
-                    let id_string = id.to_string();
 
-                    trace!(id = %id_string, "Subscription started");
+                    trace!(id = %id, "Subscription started");
 
+                    let id_for_loop = id.clone();
                     loop {
                         tokio::select! {
                             maybe_item = stream.next() => {
                                 match maybe_item {
                                     Some(body) => {
-                                        let _ = sink.send(ServerMessage::next(&id_string, &body)).await;
+                                        let _ = sink.send(ServerMessage::next(&id_for_loop, &body)).await;
                                     }
                                     None => {
                                         break; // completed
@@ -415,13 +439,11 @@ async fn handle_text_frame(
                         }
                     }
 
-                    state.borrow_mut().active_subscriptions.remove(&id_string);
-
                     if client_completed {
-                        trace!(id = %id_string, "Subscription completed itself");
+                        trace!(id = %id, "Subscription completed itself");
                         None
                     } else {
-                        trace!(id = %id_string, "Subscription completed by client");
+                        trace!(id = %id, "Subscription completed by client");
                         Some(ServerMessage::complete(&id))
                     }
                 }
