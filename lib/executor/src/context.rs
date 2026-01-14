@@ -15,7 +15,7 @@ pub struct ExecutionContext<'a> {
     pub response_storage: ResponsesStorage,
     pub final_response: Value<'a>,
     pub errors: Vec<GraphQLError>,
-    pub output_rewrites: OutputRewritesStorage,
+    pub output_rewrites: OutputRewritesStorage<'a>,
     pub response_headers_aggregator: ResponseHeaderAggregator,
 }
 
@@ -33,7 +33,7 @@ impl<'a> Default for ExecutionContext<'a> {
 
 impl<'a> ExecutionContext<'a> {
     pub fn new(
-        query_plan: &QueryPlan,
+        query_plan: &'a QueryPlan,
         init_final_response: Value<'a>,
         init_errors: Vec<GraphQLError>,
     ) -> Self {
@@ -74,12 +74,12 @@ impl<'a> ExecutionContext<'a> {
 }
 
 #[derive(Default)]
-pub struct OutputRewritesStorage {
-    output_rewrites: HashMap<i64, Vec<FetchRewrite>>,
+pub struct OutputRewritesStorage<'exec> {
+    output_rewrites: HashMap<i64, &'exec [FetchRewrite]>,
 }
 
-impl OutputRewritesStorage {
-    pub fn from_query_plan(query_plan: &QueryPlan) -> OutputRewritesStorage {
+impl<'exec> OutputRewritesStorage<'exec> {
+    pub fn from_query_plan(query_plan: &'exec QueryPlan) -> OutputRewritesStorage<'exec> {
         let mut output_rewrites = OutputRewritesStorage {
             output_rewrites: HashMap::new(),
         };
@@ -91,13 +91,13 @@ impl OutputRewritesStorage {
         output_rewrites
     }
 
-    fn add_maybe(&mut self, fetch_node: &FetchNode) {
+    fn add_maybe(&mut self, fetch_node: &'exec FetchNode) {
         if let Some(rewrites) = &fetch_node.output_rewrites {
-            self.output_rewrites.insert(fetch_node.id, rewrites.clone());
+            self.output_rewrites.insert(fetch_node.id, rewrites);
         }
     }
 
-    pub fn get(&self, id: i64) -> Option<&Vec<FetchRewrite>> {
-        self.output_rewrites.get(&id)
+    pub fn get(&self, id: i64) -> Option<&'exec [FetchRewrite]> {
+        self.output_rewrites.get(&id).copied() // No clones?
     }
 }

@@ -45,9 +45,9 @@ pub fn apply_subgraph_response_headers(
     Ok(())
 }
 
-pub struct ResponseExpressionContext<'a, 'req> {
+pub struct ResponseExpressionContext<'a> {
     pub subgraph_name: &'a str,
-    pub client_request: &'a ClientRequestDetails<'a, 'req>,
+    pub client_request: &'a ClientRequestDetails<'a>,
     pub subgraph_headers: &'a HeaderMap,
 }
 

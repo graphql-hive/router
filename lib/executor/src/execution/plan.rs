@@ -44,13 +44,13 @@ use crate::{
     },
 };
 
-pub struct QueryPlanExecutionContext<'exec, 'req> {
+pub struct QueryPlanExecutionContext<'exec> {
     pub query_plan: &'exec QueryPlan,
-    pub projection_plan: &'exec Vec<FieldProjectionPlan>,
+    pub projection_plan: &'exec [FieldProjectionPlan],
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
-    pub client_request: &'exec ClientRequestDetails<'exec, 'req>,
+    pub client_request: &'exec ClientRequestDetails<'exec>,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
@@ -64,8 +64,8 @@ pub struct PlanExecutionOutput {
     pub error_count: usize,
 }
 
-pub async fn execute_query_plan<'exec, 'req>(
-    ctx: QueryPlanExecutionContext<'exec, 'req>,
+pub async fn execute_query_plan<'exec>(
+    ctx: QueryPlanExecutionContext<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
@@ -124,11 +124,11 @@ pub async fn execute_query_plan<'exec, 'req>(
     })
 }
 
-pub struct Executor<'exec, 'req> {
+pub struct Executor<'exec> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
     executors: &'exec SubgraphExecutorMap,
-    client_request: &'exec ClientRequestDetails<'exec, 'req>,
+    client_request: &'exec ClientRequestDetails<'exec>,
     headers_plan: &'exec HeaderRulesPlan,
     jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
     dedupe_subgraph_requests: bool,
@@ -179,28 +179,18 @@ enum ExecutionJob<'exec> {
     None,
 }
 
-impl<'exec> ExecutionJob<'exec> {
-    pub fn response(self) -> Option<SubgraphResponse<'exec>> {
-        match self {
-            ExecutionJob::Fetch(j) => Some(j.response),
-            ExecutionJob::FlattenFetch(j) => Some(j.response),
-            ExecutionJob::None => None,
-        }
-    }
-}
-
 struct PreparedFlattenData {
     representations: Vec<u8>,
     representation_hashes: Vec<u64>,
     representation_hash_to_index: HashMap<u64, usize>,
 }
 
-impl<'exec, 'req> Executor<'exec, 'req> {
+impl<'exec> Executor<'exec> {
     pub fn new(
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
-        client_request: &'exec ClientRequestDetails<'exec, 'req>,
+        client_request: &'exec ClientRequestDetails<'exec>,
         headers_plan: &'exec HeaderRulesPlan,
         jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
         dedupe_subgraph_requests: bool,
@@ -352,11 +342,11 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         Ok(())
     }
 
-    fn prepare_job_future<'wave>(
-        &'wave self,
-        node: &'wave PlanNode,
+    fn prepare_job_future(
+        &'exec self,
+        node: &'exec PlanNode,
         final_response: &Value<'exec>,
-    ) -> BoxFuture<'wave, Result<ExecutionJob<'wave>, PlanExecutionError>> {
+    ) -> BoxFuture<'exec, Result<ExecutionJob<'exec>, PlanExecutionError>> {
         match node {
             PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
             PlanNode::Flatten(flatten_node) => {
@@ -387,18 +377,12 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         ctx: &mut ExecutionContext<'exec>,
         response_bytes: Option<Bytes>,
         fetch_node_id: i64,
-    ) -> Option<&'exec Vec<FetchRewrite>> {
+    ) -> Option<&'exec [FetchRewrite]> {
         if let Some(response_bytes) = response_bytes {
             ctx.response_storage.add_response(response_bytes);
         }
 
-        // SAFETY: The `output_rewrites` are transmuted to the lifetime `'a`. This is safe
-        // because `output_rewrites` is part of `OutputRewritesStorage` which is owned by
-        // `ExecutionContext` and lives for `'a`.
-        let output_rewrites: Option<&'exec Vec<FetchRewrite>> =
-            unsafe { std::mem::transmute(ctx.output_rewrites.get(fetch_node_id)) };
-
-        output_rewrites
+        ctx.output_rewrites.get(fetch_node_id)
     }
 
     fn process_job_result(
@@ -494,12 +478,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                                     error_paths.push(error_path);
                                 }
                                 if let Some(entity) = entities.get(*entity_index) {
-                                    // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
-                                    // The transmute is to satisfy the compiler, but the lifetime
-                                    // is valid.
-                                    let new_val: Value<'_> =
-                                        unsafe { std::mem::transmute(entity.clone()) };
-                                    deep_merge(target, new_val);
+                                    deep_merge(target, entity.clone());
                                 }
                             }
                             index += 1;
@@ -531,7 +510,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     fn prepare_flatten_data(
         &self,
         final_response: &Value<'exec>,
-        flatten_node: &FlattenNode,
+        flatten_node: &'exec FlattenNode,
     ) -> Result<Option<PreparedFlattenData>, PlanExecutionError> {
         let fetch_node = match flatten_node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
@@ -612,34 +591,35 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     }
 
     async fn execute_flatten_fetch_node(
-        &self,
+        &'exec self,
         node: &'exec FlattenNode,
         representations: Option<Vec<u8>>,
         representation_hashes: Option<Vec<u64>>,
         filtered_representations_hashes: Option<HashMap<u64, usize>>,
-    ) -> Result<ExecutionJob<'_>, PlanExecutionError> {
-        Ok(match node.node.as_ref() {
-            PlanNode::Fetch(fetch_node) => ExecutionJob::FlattenFetch(FlattenFetchJob {
+    ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
+        let fetch_node = match node.node.as_ref() {
+            PlanNode::Fetch(fetch_node) => fetch_node,
+            _ => return Ok(ExecutionJob::None),
+        };
+
+        match self.execute_fetch_node(fetch_node, representations).await? {
+            ExecutionJob::Fetch(job) => Ok(ExecutionJob::FlattenFetch(FlattenFetchJob {
                 flatten_node_path: node.path.clone(),
-                response: self
-                    .execute_fetch_node(fetch_node, representations)
-                    .await?
-                    .response()
-                    .unwrap_or_default(),
-                fetch_node_id: fetch_node.id,
-                subgraph_name: &fetch_node.service_name,
+                response: job.response,
+                fetch_node_id: job.fetch_node_id,
+                subgraph_name: job.subgraph_name,
                 representation_hashes: representation_hashes.unwrap_or_default(),
                 representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
-            }),
-            _ => ExecutionJob::None,
-        })
+            })),
+            _ => Ok(ExecutionJob::None),
+        }
     }
 
     async fn execute_fetch_node(
-        &self,
+        &'exec self,
         node: &'exec FetchNode,
         representations: Option<Vec<u8>>,
-    ) -> Result<ExecutionJob<'_>, PlanExecutionError> {
+    ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
         // TODO: We could optimize header map creation by caching them per service name
         let mut headers_map = HeaderMap::new();
         modify_subgraph_request_headers(

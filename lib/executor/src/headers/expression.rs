@@ -29,7 +29,7 @@ fn header_map_to_vrl_value(headers: &HeaderMap) -> Value {
     Value::Object(obj)
 }
 
-impl From<&RequestExpressionContext<'_, '_>> for Value {
+impl From<&RequestExpressionContext<'_>> for Value {
     /// NOTE: If performance becomes an issue, consider pre-computing parts of this context that do not change
     fn from(ctx: &RequestExpressionContext) -> Self {
         // .subgraph
@@ -48,7 +48,7 @@ impl From<&RequestExpressionContext<'_, '_>> for Value {
     }
 }
 
-impl From<&ResponseExpressionContext<'_, '_>> for Value {
+impl From<&ResponseExpressionContext<'_>> for Value {
     /// NOTE: If performance becomes an issue, consider pre-computing parts of this context that do not change
     fn from(ctx: &ResponseExpressionContext) -> Self {
         // .subgraph

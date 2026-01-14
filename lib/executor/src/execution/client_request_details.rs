@@ -11,10 +11,10 @@ pub struct OperationDetails<'exec> {
     pub kind: &'static str,
 }
 
-pub struct ClientRequestDetails<'exec, 'req> {
-    pub method: &'req Method,
-    pub url: &'req http::Uri,
-    pub headers: &'req NtexHeaderMap,
+pub struct ClientRequestDetails<'exec> {
+    pub method: &'exec Method,
+    pub url: &'exec http::Uri,
+    pub headers: &'exec NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
     pub jwt: &'exec JwtRequestDetails,
 }
@@ -29,7 +29,7 @@ pub enum JwtRequestDetails {
     Unauthenticated,
 }
 
-impl From<&ClientRequestDetails<'_, '_>> for Value {
+impl From<&ClientRequestDetails<'_>> for Value {
     fn from(details: &ClientRequestDetails) -> Self {
         // .request.headers
         let headers_value = client_header_map_to_vrl_value(details.headers);
