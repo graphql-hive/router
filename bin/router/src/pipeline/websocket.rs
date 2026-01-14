@@ -530,7 +530,7 @@ impl From<CloseCode> for ws::Message {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMessage {
     ConnectionInit {},
     Subscribe {
@@ -543,7 +543,7 @@ enum ClientMessage {
 }
 
 #[derive(Serialize, Debug)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "snake_case")]
 enum ServerMessage<'a> {
     Next {
         id: &'a str,
