@@ -493,10 +493,10 @@ async fn handle_text_frame(
                     }
 
                     if client_completed {
-                        trace!(id = %id, "Subscription completed itself");
+                        trace!(id = %id, "Subscription completed by client");
                         None
                     } else {
-                        trace!(id = %id, "Subscription completed by client");
+                        trace!(id = %id, "Subscription completed itself");
                         Some(ServerMessage::complete(&id))
                     }
                 }
