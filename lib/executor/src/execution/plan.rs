@@ -165,7 +165,7 @@ struct FetchJob<'exec> {
 }
 
 struct FlattenFetchJob<'exec> {
-    flatten_node_path: FlattenNodePath,
+    flatten_node_path: &'exec FlattenNodePath,
     response: SubgraphResponse<'exec>,
     fetch_node_id: i64,
     subgraph_name: &'exec str,
@@ -604,7 +604,7 @@ impl<'exec> Executor<'exec> {
 
         match self.execute_fetch_node(fetch_node, representations).await? {
             ExecutionJob::Fetch(job) => Ok(ExecutionJob::FlattenFetch(FlattenFetchJob {
-                flatten_node_path: node.path.clone(),
+                flatten_node_path: &node.path,
                 response: job.response,
                 fetch_node_id: job.fetch_node_id,
                 subgraph_name: job.subgraph_name,
