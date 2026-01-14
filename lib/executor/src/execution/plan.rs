@@ -484,9 +484,10 @@ impl<'exec> Executor<'exec> {
                             index += 1;
                         },
                     );
+                    let affected_path = job.flatten_node_path.to_string();
                     ctx.handle_errors(
                         job.subgraph_name,
-                        Some(job.flatten_node_path.to_string()),
+                        Some(affected_path),
                         job.response.errors,
                         entity_index_error_map,
                     );
