@@ -608,7 +608,7 @@ enum ServerMessage<'a> {
     },
     Next {
         id: &'a str,
-        payload: &'a sonic_rs::Value,
+        payload: sonic_rs::Value,
     },
     Error {
         id: &'a str,
@@ -631,11 +631,7 @@ impl ServerMessage<'_> {
                 return CloseCode::InternalServerError(None).into();
             }
         };
-        ServerMessage::Next {
-            id,
-            payload: &payload,
-        }
-        .into()
+        ServerMessage::Next { id, payload }.into()
     }
     pub fn error(id: &str, payload: &[GraphQLError]) -> ws::Message {
         ServerMessage::Error { id, payload }.into()
