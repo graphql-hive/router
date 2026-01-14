@@ -21,8 +21,9 @@ use crate::{
     jwt::JwtAuthRuntime,
     logger::configure_logging,
     pipeline::{
-        graphql_request_handler, usage_reporting::init_hive_user_agent,
-        validation::max_depth_rule::MaxDepthRule,
+        graphql_request_handler,
+        usage_reporting::init_hive_user_agent,
+        validation::{max_depth_rule::MaxDepthRule, max_directives_rule::MaxDirectivesRule},
     },
 };
 
@@ -134,6 +135,11 @@ pub async fn configure_app_from_config(
     if let Some(max_depth_config) = &router_config_arc.limits.max_depth {
         validation_plan.add_rule(Box::new(MaxDepthRule {
             config: max_depth_config.clone(),
+        }));
+    }
+    if let Some(max_directives_config) = &router_config_arc.limits.max_directives {
+        validation_plan.add_rule(Box::new(MaxDirectivesRule {
+            config: max_directives_config.clone(),
         }));
     }
     let shared_state = Arc::new(RouterSharedState::new(
