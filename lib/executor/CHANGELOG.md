@@ -94,6 +94,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.3.3 (2026-01-14)
+
+### Fixes
+
+#### Improved Performance for Expressions
+
+This change introduces "lazy evaluation" for contextual information used in expressions (like dynamic timeouts).
+
+Previously, the Router would prepare and clone data (such as request details or subgraph names) every time it performed an operation, even if that data wasn't actually needed.
+Now, this work is only performed "on-demand" - for example, only if an expression is actually being executed.
+This reduces unnecessary CPU usage and memory allocations during the hot path of request execution.
+
+#### Moves `graphql-tools` to router repository
+
+This change moves the `graphql-tools` package to the Hive Router repository.
+
+## Own GraphQL Parser
+
+This change also introduces our own GraphQL parser (copy of `graphql_parser`), which is now used across all packages in the Hive Router monorepo. This allows us to have better control over parsing and potentially optimize it for our specific use cases.
+
 ## 6.3.2 (2026-01-12)
 
 ### Fixes
