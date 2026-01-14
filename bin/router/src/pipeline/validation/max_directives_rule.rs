@@ -27,32 +27,37 @@ impl ValidationRule for MaxDirectivesRule {
         error_collector: &mut ValidationErrorContext,
     ) {
         for definition in &ctx.operation.definitions {
-            if let Definition::Operation(op) = definition {
-                let mut visitor = MaxDirectivesVisitor {
-                    visited_fragments: HashMap::new(),
-                    ctx,
-                };
-                // First start counting directives from the operation definition
-                // `op.into()` will get `CountableNode`, then `count_directives` will
-                // start counting directives nestedly
-                let directives = visitor.count_directives(op.into());
-                if directives > self.config.n {
-                    let message = if self.config.expose_limits {
-                        format!(
-                            "Directives limit of {} exceeded, found {}",
-                            self.config.n, directives
-                        )
-                    } else {
-                        "Directives limit exceeded".to_string()
-                    };
+            let Definition::Operation(op) = definition else {
+                continue;
+            };
 
-                    error_collector.report_error(ValidationError {
-                        message,
-                        locations: vec![],
-                        error_code: self.error_code(),
-                    });
-                }
+            let mut visitor = MaxDirectivesVisitor {
+                visited_fragments: HashMap::new(),
+                ctx,
+            };
+            // First start counting directives from the operation definition
+            // `op.into()` will get `CountableNode`, then `count_directives` will
+            // start counting directives nestedly
+            let directives = visitor.count_directives(op.into());
+
+            if directives <= self.config.n {
+                continue;
             }
+
+            let message = if self.config.expose_limits {
+                format!(
+                    "Directives limit of {} exceeded, found {}",
+                    self.config.n, directives
+                )
+            } else {
+                "Directives limit exceeded".to_string()
+            };
+
+            error_collector.report_error(ValidationError {
+                message,
+                locations: vec![],
+                error_code: self.error_code(),
+            });
         }
     }
 }
@@ -65,52 +70,53 @@ struct MaxDirectivesVisitor<'a, 'b> {
 impl<'a> MaxDirectivesVisitor<'a, '_> {
     fn count_directives(&mut self, countable_node: CountableNode<'a>) -> usize {
         // Start with 0
-        let mut directive_cnt: usize = 0;
+        let mut directive_count: usize = 0;
         // Get the directives of the current node
         if let Some(directives) = countable_node.get_directives() {
-            directive_cnt += directives.len();
+            directive_count += directives.len();
         }
 
         // If it is a node that has selections, iterate over the selection set, and get their number of directives
         if let Some(selection_set) = countable_node.selection_set() {
             for selection in &selection_set.items {
                 let countable_node: CountableNode<'a> = selection.into();
-                directive_cnt += self.count_directives(countable_node);
+                directive_count += self.count_directives(countable_node);
             }
         }
 
         // If it is a fragment spread, we need to count directives of the used fragments
-        if let CountableNode::FragmentSpread(countable_node) = countable_node {
-            let fragment_name = countable_node.fragment_name.as_str();
-            // If it is already visited, add it to the total
-            if let Some(visited_fragment) = self.visited_fragments.get(fragment_name) {
-                // If it is counted already, use the cached value
-                if let VisitedFragment::Counted(visited_fragment_cnt) = visited_fragment {
-                    directive_cnt += visited_fragment_cnt;
-                }
-            } else {
-                // If not, let's mark it as Visiting initially to avoid infinite loops,
-                // because fragments can refer itself recursively at some point.
-                // See the tests at the bottom of this file to understand the use cases fully.
-                self.visited_fragments
-                    .insert(fragment_name, VisitedFragment::Visiting);
+        if let CountableNode::FragmentSpread(node) = countable_node {
+            let fragment_name = node.fragment_name.as_str();
 
-                // If the fragment is found, get the original Fragment Definition and convert it to CountableNode
-                if let Some(fragment_def) = self.ctx.known_fragments.get(fragment_name) {
-                    let countable_node: CountableNode<'a> = fragment_def.into();
-                    // Count directives of the fragment
-                    let fragment_directive_cnt = self.count_directives(countable_node);
-                    // We can now set the actual counted directives for this fragment
-                    self.visited_fragments.insert(
-                        fragment_name,
-                        VisitedFragment::Counted(fragment_directive_cnt),
-                    );
-                    directive_cnt += fragment_directive_cnt;
+            // Check if the fragment was already visited
+            match self.visited_fragments.get(fragment_name) {
+                Some(VisitedFragment::Counted(num)) => {
+                    return directive_count + num;
                 }
+                Some(VisitedFragment::Visiting) => return directive_count,
+                None => {}
+            }
+
+            // If not, mark it as Visiting initially to avoid infinite loops
+            self.visited_fragments
+                .insert(fragment_name, VisitedFragment::Visiting);
+
+            // If the fragment is found, get the original Fragment Definition and convert it to CountableNode
+            if let Some(fragment_def) = self.ctx.known_fragments.get(fragment_name) {
+                let countable_node: CountableNode<'a> = fragment_def.into();
+                // Count directives of the fragment
+                let fragment_directive_count = self.count_directives(countable_node);
+
+                // Update it with the actual count
+                self.visited_fragments.insert(
+                    fragment_name,
+                    VisitedFragment::Counted(fragment_directive_count),
+                );
+                directive_count += fragment_directive_count;
             }
         }
 
-        directive_cnt
+        directive_count
     }
 }
 

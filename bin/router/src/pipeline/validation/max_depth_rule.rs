@@ -27,30 +27,35 @@ impl ValidationRule for MaxDepthRule {
         error_collector: &mut ValidationErrorContext,
     ) {
         for definition in &ctx.operation.definitions {
-            if let Definition::Operation(op) = definition {
-                let mut visitor = MaxDepthVisitor {
-                    config: &self.config,
-                    visited_fragments: HashMap::new(),
-                    ctx,
-                };
-                let depth = visitor.count_depth(op.into(), None);
-                if depth > self.config.n {
-                    let message = if self.config.expose_limits {
-                        format!(
-                            "Query depth limit of {} exceeded, found {}.",
-                            self.config.n, depth
-                        )
-                    } else {
-                        "Query depth limit exceeded.".to_string()
-                    };
+            let Definition::Operation(op) = definition else {
+                continue;
+            };
 
-                    error_collector.report_error(ValidationError {
-                        message,
-                        locations: vec![],
-                        error_code: "MAX_DEPTH_EXCEEDED",
-                    });
-                }
+            let mut visitor = MaxDepthVisitor {
+                config: &self.config,
+                visited_fragments: HashMap::new(),
+                ctx,
+            };
+            let depth = visitor.count_depth(op.into(), None);
+
+            if depth <= self.config.n {
+                continue;
             }
+
+            let message = if self.config.expose_limits {
+                format!(
+                    "Query depth limit of {} exceeded, found {}.",
+                    self.config.n, depth
+                )
+            } else {
+                "Query depth limit exceeded.".to_string()
+            };
+
+            error_collector.report_error(ValidationError {
+                message,
+                locations: vec![],
+                error_code: "MAX_DEPTH_EXCEEDED",
+            });
         }
     }
 }
@@ -82,20 +87,21 @@ impl<'a> MaxDepthVisitor<'a, '_> {
         // Traverse the selection set if present
         if let Some(selection_set) = node.selection_set() {
             for child in &selection_set.items {
-                // If flatten_fragments is true, do not increase depth for fragments
-                if self.config.flatten_fragments
-                    && (matches!(child, Selection::FragmentSpread(_))
-                        || matches!(child, Selection::InlineFragment(_)))
-                {
-                    depth = cmp::max(depth, self.count_depth(child.into(), Some(parent_depth)));
+                // Decide whether to increase depth based on flatten_fragments config
+                let increase_by = if self.config.flatten_fragments
+                    && matches!(
+                        child,
+                        Selection::FragmentSpread(_) | Selection::InlineFragment(_)
+                    ) {
+                    0
                 } else {
-                    // Increase depth for other selections
-                    // OR if flatten_fragments is false, increase depth for all selections
-                    depth = cmp::max(
-                        depth,
-                        self.count_depth(child.into(), Some(parent_depth + 1)),
-                    );
-                }
+                    1
+                };
+
+                depth = cmp::max(
+                    depth,
+                    self.count_depth(child.into(), Some(parent_depth + increase_by)),
+                );
             }
         }
 
@@ -109,31 +115,32 @@ impl<'a> MaxDepthVisitor<'a, '_> {
 
             let fragment_name = node.fragment_name.as_str();
             // Find if the fragment was already visited
-            let visited_fragment = self.visited_fragments.get(fragment_name);
-            if let Some(visited_fragment_depth) = visited_fragment {
-                if let VisitedFragment::Counted(visited_fragment_depth) = visited_fragment_depth {
+            match self.visited_fragments.get(fragment_name) {
+                Some(VisitedFragment::Counted(visited_fragment_depth)) => {
                     // If it was already visited, return the cached depth
                     return parent_depth + visited_fragment_depth;
                 }
-            } else {
-                // If not, mark it as Visiting initially to avoid infinite loops,
-                // because fragments can refer itself recursively at some point.
-                // See the tests at the bottom of this file to understand the use cases fully.
+                Some(VisitedFragment::Visiting) => return depth,
+                None => {}
+            }
+
+            // If not, mark it as Visiting initially to avoid infinite loops,
+            // because fragments can refer itself recursively at some point.
+            // See the tests at the bottom of this file to understand the use cases fully.
+            self.visited_fragments
+                .insert(fragment_name, VisitedFragment::Visiting);
+
+            // Look up the fragment definition by its name
+            if let Some(fragment) = self.ctx.known_fragments.get(fragment_name) {
+                // Count the depth of the fragment
+                let fragment_depth = self.count_depth(fragment.into(), Some(0));
+
+                // Update it with the actual depth.
                 self.visited_fragments
-                    .insert(fragment_name, VisitedFragment::Visiting);
-                // Look up the fragment definition by its name
-                let fragment = self.ctx.known_fragments.get(fragment_name);
-                if let Some(fragment) = fragment {
-                    // Count the depth of the fragment
-                    let fragment_depth = self.count_depth(fragment.into(), Some(0));
+                    .insert(fragment_name, VisitedFragment::Counted(fragment_depth));
 
-                    // Update it with the actual depth.
-                    self.visited_fragments
-                        .insert(fragment_name, VisitedFragment::Counted(fragment_depth));
-
-                    // Update the overall depth
-                    depth = cmp::max(depth, parent_depth + fragment_depth);
-                }
+                // Update the overall depth
+                depth = cmp::max(depth, parent_depth + fragment_depth);
             }
         }
 
