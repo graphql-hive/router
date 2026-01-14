@@ -129,7 +129,7 @@ impl SchemaState {
         let metadata = planner.consumer_schema.schema_metadata();
         let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata)?;
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
-            supergraph_state.subgraph_endpoint_map,
+            &supergraph_state.subgraph_endpoint_map,
             router_config,
         )?;
 

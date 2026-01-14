@@ -1,17 +1,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::executors::common::HttpExecutionResponse;
-use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
-use dashmap::DashMap;
+use crate::executors::dedupe::request_fingerprint;
+use crate::executors::map::InflightRequestsMap;
+use crate::response::subgraph_response::SubgraphResponse;
 use futures::TryFutureExt;
-use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
 
-use bytes::{BufMut, Bytes, BytesMut};
-use http::HeaderMap;
+use bytes::{BufMut, Bytes};
 use http::HeaderValue;
+use http::{HeaderMap, StatusCode};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
@@ -29,7 +28,6 @@ use crate::utils::consts::COMMA;
 use crate::utils::consts::QUOTE;
 use crate::{executors::common::SubgraphExecutor, json_writer::write_and_escape_string};
 
-#[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
     pub subgraph_name: String,
     pub endpoint: http::Uri,
@@ -37,7 +35,7 @@ pub struct HTTPSubgraphExecutor {
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
     pub dedupe_enabled: bool,
-    pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub in_flight_requests: InflightRequestsMap,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -52,7 +50,7 @@ impl HTTPSubgraphExecutor {
         http_client: Arc<HttpClient>,
         semaphore: Arc<Semaphore>,
         dedupe_enabled: bool,
-        in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+        in_flight_requests: InflightRequestsMap,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -75,9 +73,9 @@ impl HTTPSubgraphExecutor {
         }
     }
 
-    fn build_request_body(
+    fn build_request_body<'a>(
         &self,
-        execution_request: &SubgraphExecutionRequest<'_>,
+        execution_request: &SubgraphExecutionRequest<'a>,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
         let mut body = Vec::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
@@ -139,7 +137,7 @@ impl HTTPSubgraphExecutor {
         body: Vec<u8>,
         headers: HeaderMap,
         timeout: Option<Duration>,
-    ) -> Result<SharedResponse, SubgraphExecutorError> {
+    ) -> Result<HttpResponse, SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
@@ -192,26 +190,22 @@ impl HTTPSubgraphExecutor {
             ));
         }
 
-        Ok(SharedResponse {
+        Ok(HttpResponse {
             status: parts.status,
             body,
-            headers: parts.headers,
+            headers: parts.headers.into(),
         })
     }
 
-    fn error_to_graphql_bytes(&self, error: SubgraphExecutorError) -> Bytes {
+    fn error_to_response<'exec>(&self, error: SubgraphExecutorError) -> SubgraphResponse<'exec> {
         let graphql_error: GraphQLError = error.into();
         let mut graphql_error = graphql_error.add_subgraph_name(&self.subgraph_name);
         graphql_error.message = "Failed to execute request to subgraph".to_string();
 
-        let errors = vec![graphql_error];
-        // This unwrap is safe as GraphQLError serialization shouldn't fail.
-        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-        let mut buffer = BytesMut::new();
-        buffer.put_slice(b"{\"errors\":");
-        buffer.put_slice(&errors_bytes);
-        buffer.put_slice(b"}");
-        buffer.freeze()
+        SubgraphResponse {
+            errors: Some(vec![graphql_error]),
+            ..Default::default()
+        }
     }
 
     fn log_error(&self, error: &SubgraphExecutorError) {
@@ -229,15 +223,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> HttpExecutionResponse {
+    ) -> SubgraphResponse<'a> {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
             Err(e) => {
                 self.log_error(&e);
-                return HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e),
-                    headers: Default::default(),
-                };
+                return self.error_to_response(e);
             }
         };
 
@@ -251,16 +242,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
             return match self._send_request(body, headers, timeout).await {
-                Ok(shared_response) => HttpExecutionResponse {
-                    body: shared_response.body,
-                    headers: shared_response.headers,
-                },
+                Ok(shared_response) => shared_response
+                    .deserialize_http_response()
+                    .unwrap_or_else(|err| self.error_to_response(err)),
                 Err(e) => {
                     self.log_error(&e);
-                    HttpExecutionResponse {
-                        body: self.error_to_graphql_bytes(e),
-                        headers: Default::default(),
-                    }
+                    self.error_to_response(e)
                 }
             };
         }
@@ -293,17 +280,44 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .await;
 
         match response_result {
-            Ok(shared_response) => HttpExecutionResponse {
-                body: shared_response.body.clone(),
-                headers: shared_response.headers.clone(),
-            },
+            Ok(shared_response) => shared_response
+                .deserialize_http_response()
+                .unwrap_or_else(|err| self.error_to_response(err)),
             Err(e) => {
                 self.log_error(&e);
-                HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e.clone()),
-                    headers: Default::default(),
-                }
+                self.error_to_response(e)
             }
         }
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct HttpResponse {
+    pub status: StatusCode,
+    pub headers: Arc<HeaderMap>,
+    pub body: Bytes,
+}
+
+impl HttpResponse {
+    fn deserialize_http_response<'a>(&self) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+        let bytes_ref: &[u8] = &self.body;
+
+        // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'a`.
+        // This is safe because the returned `SubgraphResponse` contains a clone of `self.body`
+        // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
+        // underlying data remains alive as long as the `SubgraphResponse` does.
+        // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
+        // creating a self-referential struct, which is why `unsafe` is required.
+        let bytes_ref: &'a [u8] = unsafe { std::mem::transmute(bytes_ref) };
+
+        sonic_rs::from_slice(bytes_ref)
+            .map_err(|err| SubgraphExecutorError::ResponseDeserializationFailure(err.to_string()))
+            .map(|mut resp: SubgraphResponse<'a>| {
+                // This is Arc
+                resp.headers = Some(self.headers.clone());
+                // Zero cost of cloning Bytes
+                resp.bytes = Some(self.body.clone());
+                resp
+            })
     }
 }
