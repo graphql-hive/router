@@ -28,7 +28,7 @@ use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::execution::client_request_details::JwtRequestDetails;
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
-use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
+use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use hive_router_query_planner::ast::operation::OperationDefinition;
 
 pub use metadata::{
@@ -60,18 +60,13 @@ pub enum AuthorizationDecision {
     Reject { errors: Vec<AuthorizationError> },
 }
 
-impl From<&AuthorizationError> for GraphQLError {
-    fn from(auth_error: &AuthorizationError) -> Self {
-        GraphQLError {
-            message: "Unauthorized field or type".into(),
-            path: None,
-            locations: None,
-            extensions: GraphQLErrorExtensions {
-                code: Some("UNAUTHORIZED_FIELD_OR_TYPE".into()),
-                affected_path: Some(auth_error.path.clone()),
-                ..Default::default()
-            },
-        }
+impl From<AuthorizationError> for GraphQLError {
+    fn from(auth_error: AuthorizationError) -> Self {
+        GraphQLError::from_message_and_code(
+            "Unauthorized field or type",
+            "UNAUTHORIZED_FIELD_OR_TYPE",
+        )
+        .add_affected_path(auth_error.path)
     }
 }
 

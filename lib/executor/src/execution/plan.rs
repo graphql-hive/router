@@ -37,7 +37,7 @@ use crate::{
         response::project_by_operation,
     },
     response::{
-        graphql_error::{GraphQLError, GraphQLErrorExtensions, GraphQLErrorPath},
+        graphql_error::{GraphQLError, GraphQLErrorPath},
         merge::deep_merge,
         subgraph_response::SubgraphResponse,
         value::Value,
@@ -436,13 +436,10 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         let response = match SubgraphResponse::deserialize(&mut deserializer) {
             Ok(response) => response,
             Err(e) => {
+                let code = "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILED";
                 let message = format!("Failed to deserialize subgraph response: {}", e);
-                let extensions = GraphQLErrorExtensions::new_from_code_and_service_name(
-                    "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILED",
-                    subgraph_name,
-                );
-                let error = GraphQLError::from_message_and_extensions(message, extensions);
-
+                let error = GraphQLError::from_message_and_code(message, code)
+                    .add_subgraph_name(subgraph_name);
                 ctx.errors.push(error);
                 return None;
             }

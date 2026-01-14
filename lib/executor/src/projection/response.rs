@@ -3,7 +3,7 @@ use crate::projection::plan::{
     FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
     ProjectionValueSource,
 };
-use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
+use crate::response::graphql_error::GraphQLError;
 use crate::response::value::Value;
 use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
@@ -376,12 +376,7 @@ fn project_selection_set_with_map<'a>(
                 buffer.put(QUOTE);
                 buffer.put(COLON);
                 buffer.put(NULL);
-                errors.push(GraphQLError {
-                    message: "Value is not a valid enum value".to_string(),
-                    locations: None,
-                    path: None,
-                    extensions: GraphQLErrorExtensions::default(),
-                });
+                errors.push(GraphQLError::from("Value is not a valid enum value"));
             }
             Err(FieldProjectionConditionError::InvalidFieldType) => {
                 if *first {
