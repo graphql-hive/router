@@ -61,16 +61,18 @@ struct WsState {
     /// The moment of the last heartbeat received from the client. This is used
     /// to detect client timeouts and drop the connection on timeout.
     last_heartbeat: Instant,
-    /// When was the connection established/opened. This is used mainly to track
-    /// which clients need to be kicked if they have not been acknowledged within a
-    /// certain time frame.
-    connected_at: Instant,
     /// Indicates whether the connection init message has been received. This is
     /// used to enforce the client cant send multiple connection init messages.
+    ///
+    /// Note that we dont use `connection_init_received` because we need to ensure
+    /// that no further connection init messages are accepted after the first one.
     connection_init_received: bool,
-    /// Whether the connection init message has been received, validated and
-    /// therefore the connection acknowledged.
-    acknowledged: bool,
+    /// Sender to indicate that the connection init has been received and that
+    /// the timeout task should cancel.
+    ///
+    /// When `None`, the connection init message has been received, validated and
+    /// therefore the connection acknowledged
+    acknowledged_tx: Option<oneshot::Sender<()>>,
     /// Current headers from the client (from connection init or last message).
     ///
     /// Not to be confused with http headers, these are NOT http headers, these
@@ -85,14 +87,22 @@ struct WsState {
 }
 
 impl WsState {
-    fn new() -> Self {
+    fn new(acknowledged: oneshot::Sender<()>) -> Self {
         Self {
             last_heartbeat: Instant::now(),
-            connected_at: Instant::now(),
             connection_init_received: false,
-            acknowledged: false,
+            acknowledged_tx: Some(acknowledged),
             current_headers: HeaderMap::new(),
             active_subscriptions: HashMap::new(),
+        }
+    }
+    /// Checks if the connection has been acknowledged; if not, returns a close
+    /// frame for the client.
+    fn check_acknowledged(&self) -> Option<ws::Message> {
+        if self.acknowledged_tx.is_none() {
+            Some(CloseCode::Unauthorized.into())
+        } else {
+            None
         }
     }
 }
@@ -145,6 +155,35 @@ async fn heartbeat(
     }
 }
 
+/// Connection init message received timeout.
+const CONNECTION_INIT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Monitor connection init timeout and close connection if init not received in time.
+async fn connection_init_timeout(
+    state: Rc<RefCell<WsState>>,
+    sink: web::ws::WsSink,
+    mut rx: oneshot::Receiver<()>,
+) {
+    match select(
+        Box::pin(ntex::time::sleep(CONNECTION_INIT_TIMEOUT)),
+        &mut rx,
+    )
+    .await
+    {
+        Either::Left(_) => {
+            // connection_init_received should always be here false, but double check
+            // just to avoid any potential race conditions (see handling of the connection
+            // init message below)
+            if !state.borrow().connection_init_received {
+                debug!("WebSocket connection init timeout, closing connection");
+                let _ = sink.send(CloseCode::ConnectionInitTimeout.into()).await;
+            }
+        }
+        Either::Right(_) => {
+            // cancelled, connection_init was received
+        }
+    }
+}
+
 async fn ws_service(
     sink: ws::WsSink,
     schema_state: Arc<SchemaState>,
@@ -153,11 +192,18 @@ async fn ws_service(
 {
     debug!("WebSocket connection opened");
 
-    let state = Rc::new(RefCell::new(WsState::new()));
+    let (heartbeat_tx, heartbeat_rx) = oneshot::channel();
+    let (init_timeout_tx, _) = oneshot::channel();
+    let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
 
-    let (tx, rx) = oneshot::channel();
+    let state = Rc::new(RefCell::new(WsState::new(acknowledged_tx)));
 
-    rt::spawn(heartbeat(state.clone(), sink.clone(), rx));
+    rt::spawn(heartbeat(state.clone(), sink.clone(), heartbeat_rx));
+    rt::spawn(connection_init_timeout(
+        state.clone(),
+        sink.clone(),
+        acknowledged_rx,
+    ));
 
     let service = fn_service(move |frame| {
         let sink = sink.clone();
@@ -202,8 +248,9 @@ async fn ws_service(
     });
 
     let on_shutdown = fn_shutdown(move || {
-        // stop heartbeat task on shutdown
-        let _ = tx.send(());
+        // stop heartbeat and init timeout tasks on shutdown
+        let _ = heartbeat_tx.send(());
+        let _ = init_timeout_tx.send(());
     });
 
     Ok(chain(service).and_then(on_shutdown))
@@ -248,12 +295,18 @@ async fn handle_text_frame(
             }
             state.borrow_mut().connection_init_received = true;
 
-            todo!("read payload and use it for the current headers");
+            // cancel the connection init timeout since we received the init message
+            if let Some(tx) = state.borrow_mut().acknowledged_tx.take() {
+                let _ = tx.send(());
+            }
+
+            debug!("Connection acknowledged");
+            // TODO: read payload and set it to the current_headers
+
+            None
         }
         ClientMessage::Subscribe { id, mut payload } => {
-            if state.borrow().acknowledged == false {
-                return Some(CloseCode::Unauthorized.into());
-            }
+            state.borrow().check_acknowledged()?;
 
             if state.borrow().active_subscriptions.contains_key(&id) {
                 return Some(CloseCode::SubscriberAlreadyExists(id).into());
@@ -451,9 +504,7 @@ async fn handle_text_frame(
             }
         }
         ClientMessage::Complete { id } => {
-            if state.borrow().acknowledged == false {
-                return Some(CloseCode::Unauthorized.into());
-            }
+            state.borrow().check_acknowledged()?;
 
             if let Some(cancel_tx) = state.borrow_mut().active_subscriptions.remove(&id) {
                 trace!(id = %id, "Client requested subscription cancellation");
@@ -490,6 +541,7 @@ fn extract_headers_from_extensions(
 }
 
 enum CloseCode {
+    ConnectionInitTimeout,
     TooManyInitialisationRequests,
     Unauthorized,
     Forbidden(String),
@@ -501,6 +553,10 @@ enum CloseCode {
 impl From<CloseCode> for ws::Message {
     fn from(msg: CloseCode) -> Self {
         match msg {
+            CloseCode::ConnectionInitTimeout => ws::Message::Close(Some(ws::CloseReason {
+                code: ws::CloseCode::from(4408),
+                description: Some("Connection initialisation timeout".into()),
+            })),
             CloseCode::TooManyInitialisationRequests => ws::Message::Close(Some(ws::CloseReason {
                 code: ws::CloseCode::from(4429),
                 description: Some("Too many initialisation requests".into()),
