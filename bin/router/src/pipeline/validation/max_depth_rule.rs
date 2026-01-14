@@ -87,20 +87,21 @@ impl<'a> MaxDepthVisitor<'a, '_> {
         // Traverse the selection set if present
         if let Some(selection_set) = node.selection_set() {
             for child in &selection_set.items {
-                // If flatten_fragments is true, do not increase depth for fragments
-                if self.config.flatten_fragments
-                    && (matches!(child, Selection::FragmentSpread(_))
-                        || matches!(child, Selection::InlineFragment(_)))
-                {
-                    depth = cmp::max(depth, self.count_depth(child.into(), Some(parent_depth)));
+                // Decide whether to increase depth based on flatten_fragments config
+                let increase_by = if self.config.flatten_fragments
+                    && matches!(
+                        child,
+                        Selection::FragmentSpread(_) | Selection::InlineFragment(_)
+                    ) {
+                    0
                 } else {
-                    // Increase depth for other selections
-                    // OR if flatten_fragments is false, increase depth for all selections
-                    depth = cmp::max(
-                        depth,
-                        self.count_depth(child.into(), Some(parent_depth + 1)),
-                    );
-                }
+                    1
+                };
+
+                depth = cmp::max(
+                    depth,
+                    self.count_depth(child.into(), Some(parent_depth + increase_by)),
+                );
             }
         }
 
