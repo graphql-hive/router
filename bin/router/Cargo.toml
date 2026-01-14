@@ -48,6 +48,7 @@ vrl = { workspace = true }
 serde_json = { workspace = true }
 regex-automata = { workspace = true }
 ahash = { workspace = true }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { workspace = true }
