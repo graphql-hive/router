@@ -63,7 +63,7 @@ pub async fn collect_usage_report<'a>(
     schema: Arc<Document<'static, String>>,
     duration: Duration,
     req: &HttpRequest,
-    client_request_details: &ClientRequestDetails<'a, 'a>,
+    client_request_details: &ClientRequestDetails<'a>,
     hive_usage_agent: &UsageAgent,
     usage_config: &UsageReportingConfig,
     execution_result: &PlanExecutionOutput,

@@ -1,9 +1,10 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use http::HeaderMap;
 use sonic_rs::Value;
+
+use crate::response::subgraph_response::SubgraphResponse;
 
 #[async_trait]
 pub trait SubgraphExecutor {
@@ -11,7 +12,7 @@ pub trait SubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> HttpExecutionResponse;
+    ) -> SubgraphResponse<'a>;
 
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
     where
@@ -44,9 +45,4 @@ impl SubgraphExecutionRequest<'_> {
             .get_or_insert_with(HashMap::new)
             .insert(key, value);
     }
-}
-
-pub struct HttpExecutionResponse {
-    pub body: Bytes,
-    pub headers: HeaderMap,
 }

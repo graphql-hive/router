@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use hive_router_query_planner::planner::plan_nodes::{FetchNode, FetchRewrite, QueryPlan};
+use hive_router_query_planner::planner::plan_nodes::{
+    FetchNode, FetchRewrite, FlattenNodePath, QueryPlan,
+};
 
 use crate::{
     headers::plan::ResponseHeaderAggregator,
@@ -15,7 +17,7 @@ pub struct ExecutionContext<'a> {
     pub response_storage: ResponsesStorage,
     pub final_response: Value<'a>,
     pub errors: Vec<GraphQLError>,
-    pub output_rewrites: OutputRewritesStorage,
+    pub output_rewrites: OutputRewritesStorage<'a>,
     pub response_headers_aggregator: ResponseHeaderAggregator,
 }
 
@@ -33,7 +35,7 @@ impl<'a> Default for ExecutionContext<'a> {
 
 impl<'a> ExecutionContext<'a> {
     pub fn new(
-        query_plan: &QueryPlan,
+        query_plan: &'a QueryPlan,
         init_final_response: Value<'a>,
         init_errors: Vec<GraphQLError>,
     ) -> Self {
@@ -49,16 +51,17 @@ impl<'a> ExecutionContext<'a> {
     pub fn handle_errors(
         &mut self,
         subgraph_name: &str,
-        affected_path: Option<String>,
+        affected_path: Option<&FlattenNodePath>,
         errors: Option<Vec<GraphQLError>>,
         entity_index_error_map: Option<HashMap<&usize, Vec<GraphQLErrorPath>>>,
     ) {
         if let Some(response_errors) = errors {
+            let affected_path = affected_path.map(|path| path.to_string());
             for response_error in response_errors {
                 let mut processed_error = response_error.add_subgraph_name(subgraph_name);
 
-                if let Some(path) = &affected_path {
-                    processed_error = processed_error.add_affected_path(path.clone());
+                if let Some(affected_path) = &affected_path {
+                    processed_error = processed_error.add_affected_path(affected_path.clone());
                 }
 
                 if let Some(entity_index_error_map) = &entity_index_error_map {
@@ -74,12 +77,12 @@ impl<'a> ExecutionContext<'a> {
 }
 
 #[derive(Default)]
-pub struct OutputRewritesStorage {
-    output_rewrites: HashMap<i64, Vec<FetchRewrite>>,
+pub struct OutputRewritesStorage<'exec> {
+    output_rewrites: HashMap<i64, &'exec [FetchRewrite]>,
 }
 
-impl OutputRewritesStorage {
-    pub fn from_query_plan(query_plan: &QueryPlan) -> OutputRewritesStorage {
+impl<'exec> OutputRewritesStorage<'exec> {
+    pub fn from_query_plan(query_plan: &'exec QueryPlan) -> OutputRewritesStorage<'exec> {
         let mut output_rewrites = OutputRewritesStorage {
             output_rewrites: HashMap::new(),
         };
@@ -91,13 +94,13 @@ impl OutputRewritesStorage {
         output_rewrites
     }
 
-    fn add_maybe(&mut self, fetch_node: &FetchNode) {
+    fn add_maybe(&mut self, fetch_node: &'exec FetchNode) {
         if let Some(rewrites) = &fetch_node.output_rewrites {
-            self.output_rewrites.insert(fetch_node.id, rewrites.clone());
+            self.output_rewrites.insert(fetch_node.id, rewrites);
         }
     }
 
-    pub fn get(&self, id: i64) -> Option<&Vec<FetchRewrite>> {
-        self.output_rewrites.get(&id)
+    pub fn get(&self, id: i64) -> Option<&'exec [FetchRewrite]> {
+        self.output_rewrites.get(&id).copied()
     }
 }
