@@ -300,6 +300,8 @@ async fn handle_text_frame(
                 let _ = tx.send(());
             }
 
+            let _ = sink.send(ServerMessage::ack(None).into()).await;
+
             debug!("Connection acknowledged");
             // TODO: read payload and set it to the current_headers
 
@@ -601,6 +603,9 @@ enum ClientMessage {
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ServerMessage<'a> {
+    ConnectionAck {
+        payload: Option<sonic_rs::Value>,
+    },
     Next {
         id: &'a str,
         payload: &'a sonic_rs::Value,
@@ -615,6 +620,9 @@ enum ServerMessage<'a> {
 }
 
 impl ServerMessage<'_> {
+    pub fn ack(payload: Option<sonic_rs::Value>) -> ws::Message {
+        ServerMessage::ConnectionAck { payload }.into()
+    }
     pub fn next(id: &str, body: &[u8]) -> ws::Message {
         let payload = match sonic_rs::from_slice(body) {
             Ok(value) => value,
