@@ -8,7 +8,7 @@ use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use http::Method;
 use ntex::channel::oneshot;
-use ntex::http::HeaderMap;
+use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::util::Bytes;
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
@@ -304,10 +304,11 @@ async fn handle_text_frame(
 
             debug!("Connection acknowledged");
 
-            if let Some(headers) = parse_headers_from_payload(payload) {
-                trace!(headers = ?headers, "Connection init message contains headers in the payload");
-                state.borrow_mut().current_headers = headers;
+            let header_map = parse_headers_from_connection_init_payload(payload);
+            if !header_map.is_empty() {
+                trace!(headers = ?header_map, "Connection init message contains headers in the payload");
             }
+            state.borrow_mut().current_headers = header_map;
 
             None
         }
@@ -377,9 +378,9 @@ async fn handle_text_frame(
             let query_plan_cancellation_token =
                 CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-            let headers = extract_headers_from_extensions(&payload.extensions);
+            let headers = parse_headers_from_extensions(&payload.extensions);
 
-            // TODO: update current headers in state
+            // TODO: should we update the current headers in state?
 
             let mut jwt_context: Option<JwtRequestContext> = None;
             if let Some(jwt) = &shared_state.jwt_auth_runtime {
@@ -530,50 +531,12 @@ async fn handle_text_frame(
     }
 }
 
-fn extract_headers_from_extensions(
-    extensions: &Option<HashMap<String, sonic_rs::Value>>,
-) -> ntex::http::HeaderMap {
-    let mut header_map = ntex::http::HeaderMap::new();
+/// Parses headers from a sonic_rs::Object into a HeaderMap. Only stringifiable
+/// values are included; nulls, arrays, objects and other non-primitive values
+/// are ignored.
+fn parse_headers_from_object(headers_obj: &sonic_rs::Object) -> HeaderMap {
+    let mut header_map = HeaderMap::new();
 
-    if let Some(ext) = extensions {
-        if let Some(headers_value) = ext.get("headers") {
-            if let Some(headers_obj) = headers_value.as_object() {
-                for (key, value) in headers_obj {
-                    if let Some(value_str) = value.as_str() {
-                        if let (Ok(name), Ok(val)) = (
-                            ntex::http::header::HeaderName::try_from(key),
-                            ntex::http::header::HeaderValue::try_from(value_str),
-                        ) {
-                            header_map.insert(name, val);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    header_map
-}
-
-fn parse_headers_from_payload(
-    payload: Option<ConnectionInitPayload>,
-) -> Option<ntex::http::HeaderMap> {
-    let payload = match payload {
-        Some(p) => p,
-        None => return None,
-    };
-
-    let headers_prop = match payload.fields.get("headers") {
-        Some(h) => h,
-        None => return None,
-    };
-
-    let headers_obj = match headers_prop.as_object() {
-        Some(obj) => obj,
-        None => return None,
-    };
-
-    let mut header_map = ntex::http::HeaderMap::new();
     for (key, value) in headers_obj {
         let value_str = if let Some(s) = value.as_str() {
             Some(s.to_string())
@@ -588,16 +551,40 @@ fn parse_headers_from_payload(
         };
 
         if let Some(val_str) = value_str {
-            if let (Ok(name), Ok(val)) = (
-                ntex::http::header::HeaderName::try_from(key),
-                ntex::http::header::HeaderValue::try_from(val_str),
-            ) {
+            if let (Ok(name), Ok(val)) = (HeaderName::try_from(key), HeaderValue::try_from(val_str))
+            {
                 header_map.insert(name, val);
             }
         }
     }
 
-    Some(header_map)
+    header_map
+}
+
+fn parse_headers_from_connection_init_payload(payload: Option<ConnectionInitPayload>) -> HeaderMap {
+    let mut header_map = HeaderMap::new();
+    if let Some(payload) = payload {
+        if let Some(headers_prop) = payload.fields.get("headers") {
+            if let Some(headers_obj) = headers_prop.as_object() {
+                header_map = parse_headers_from_object(headers_obj);
+            }
+        }
+    }
+    header_map
+}
+
+fn parse_headers_from_extensions(
+    extensions: &Option<HashMap<String, sonic_rs::Value>>,
+) -> HeaderMap {
+    let mut header_map = HeaderMap::new();
+    if let Some(ext) = extensions {
+        if let Some(headers_value) = ext.get("headers") {
+            if let Some(headers_obj) = headers_value.as_object() {
+                header_map = parse_headers_from_object(headers_obj);
+            }
+        }
+    }
+    header_map
 }
 
 enum CloseCode {
@@ -782,10 +769,7 @@ mod tests {
             .expect("Failed to create payload"),
         };
 
-        let headers = parse_headers_from_payload(Some(payload));
-
-        assert!(headers.is_some());
-        let headers = headers.unwrap();
+        let headers = parse_headers_from_connection_init_payload(Some(payload));
 
         assert_eq!(
             headers.get("authorization").unwrap().to_str().unwrap(),
