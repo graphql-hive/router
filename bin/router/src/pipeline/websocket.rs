@@ -308,6 +308,11 @@ async fn handle_text_frame(
 
             None
         }
+        ClientMessage::Ping {} => {
+            // respond with pong always, regardless of acknowledged state
+            // the client should be able to use subprotocol pings/pongs to check liveness
+            Some(ServerMessage::pong())
+        }
         ClientMessage::Subscribe { id, mut payload } => {
             state.borrow().check_acknowledged()?;
 
@@ -596,6 +601,8 @@ impl From<CloseCode> for ws::Message {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMessage {
     ConnectionInit {},
+    Ping {},
+    // TODO: implement digesting pongs from client using subprotocol ping/pong
     Subscribe {
         id: String,
         payload: ExecutionRequest,
@@ -612,6 +619,8 @@ enum ServerMessage<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<sonic_rs::Value>,
     },
+    Pong {},
+    // TODO: implement pinging from server using subprotocol ping/pong
     Next {
         id: &'a str,
         payload: sonic_rs::Value,
@@ -628,6 +637,9 @@ enum ServerMessage<'a> {
 impl ServerMessage<'_> {
     pub fn ack(payload: Option<sonic_rs::Value>) -> ws::Message {
         ServerMessage::ConnectionAck { payload }.into()
+    }
+    pub fn pong() -> ws::Message {
+        ServerMessage::Pong {}.into()
     }
     pub fn next(id: &str, body: &[u8]) -> ws::Message {
         let payload = match sonic_rs::from_slice(body) {
