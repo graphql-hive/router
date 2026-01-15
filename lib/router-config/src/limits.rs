@@ -27,7 +27,6 @@ pub struct LimitsConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MaxDepthRuleConfig {
-    #[serde(default = "default_max_depth")]
     /// Depth threshold
     pub n: usize,
 
@@ -44,21 +43,6 @@ pub struct MaxDepthRuleConfig {
     pub expose_limits: bool,
 }
 
-impl Default for MaxDepthRuleConfig {
-    fn default() -> Self {
-        MaxDepthRuleConfig {
-            n: default_max_depth(),
-            ignore_introspection: default_ignore_introspection(),
-            flatten_fragments: default_flatten_fragments(),
-            expose_limits: default_expose_limits(),
-        }
-    }
-}
-
-fn default_max_depth() -> usize {
-    6
-}
-
 fn default_ignore_introspection() -> bool {
     true
 }
@@ -73,7 +57,6 @@ fn default_expose_limits() -> bool {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MaxDirectivesRuleConfig {
-    #[serde(default = "default_max_directives")]
     /// Directives threshold
     pub n: usize,
 
@@ -82,39 +65,12 @@ pub struct MaxDirectivesRuleConfig {
     pub expose_limits: bool,
 }
 
-fn default_max_directives() -> usize {
-    50
-}
-
-impl Default for MaxDirectivesRuleConfig {
-    fn default() -> Self {
-        MaxDirectivesRuleConfig {
-            n: default_max_directives(),
-            expose_limits: default_expose_limits(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MaxTokensRuleConfig {
-    #[serde(default = "default_max_tokens")]
     /// Tokens threshold
     pub n: usize,
 
     #[serde(default = "default_expose_limits")]
     /// Whether to expose the limits in the error message.
     pub expose_limits: bool,
-}
-
-fn default_max_tokens() -> usize {
-    1000
-}
-
-impl Default for MaxTokensRuleConfig {
-    fn default() -> Self {
-        MaxTokensRuleConfig {
-            n: default_max_tokens(),
-            expose_limits: default_expose_limits(),
-        }
-    }
 }
