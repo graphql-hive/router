@@ -754,24 +754,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_parse_connection_init_payload_to_headers() {
-        let payload = ConnectionInitPayload {
-            fields: sonic_rs::from_str(
-                &json!({
-                    "headers": {
-                        "authorization": "Bearer token123",
-                        "x-custom-header": "custom-value",
-                        "x-number": 42,
-                        "x-bool": true,
-                        "x-float": 3.14
-                    }
-                })
-                .to_string(),
-            )
-            .expect("Failed to create payload"),
-        };
+    fn should_parse_headers_from_object() {
+        let headers_json = json!({
+            "authorization": "Bearer token123",
+            "x-custom-header": "custom-value",
+            "x-number": 42,
+            "x-bool": true,
+            "x-float": 3.14
+        });
 
-        let headers = parse_headers_from_connection_init_payload(Some(payload));
+        let headers_obj = headers_json.as_object().expect("Failed to get object");
+
+        let headers = parse_headers_from_object(headers_obj);
 
         assert_eq!(
             headers.get("authorization").unwrap().to_str().unwrap(),
