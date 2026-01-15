@@ -61,17 +61,18 @@ struct WsState {
     /// The moment of the last heartbeat received from the client. This is used
     /// to detect stale clients and drop the connection on timeout.
     last_heartbeat: Instant,
-    /// Indicates whether the connection init message has been received. This is
-    /// used to enforce the client cant send multiple connection init messages.
+    /// Indicates whether the connection init message has been received.
     ///
-    /// Note that we dont use `connection_init_received` because we need to ensure
-    /// that no further connection init messages are accepted after the first one.
+    /// This flag is only used to enforce the client cant send multiple connection
+    /// init messages.
+    ///
+    /// Do not confuse it with acknowledged_tx.
     connection_init_received: bool,
     /// Sender to indicate that the connection init has been received and that
     /// the timeout task should cancel.
     ///
     /// When `None`, the connection init message has been received, validated and
-    /// therefore the connection acknowledged
+    /// therefore the connection acknowledged.
     acknowledged_tx: Option<oneshot::Sender<()>>,
     /// Current headers from the client (from connection init or last message).
     ///
@@ -104,24 +105,6 @@ impl WsState {
         } else {
             None
         }
-    }
-}
-
-/// Ensure a subscription is removed from active_subscriptions when dropped,
-/// regardless of how the subscription stream itself ends (normal completion,
-/// cancellation, panic (hopefully not), or future being dropped at an await point).
-struct SubscriptionGuard {
-    state: Rc<RefCell<WsState>>,
-    id: String,
-}
-
-impl Drop for SubscriptionGuard {
-    fn drop(&mut self) {
-        self.state
-            .borrow_mut()
-            .active_subscriptions
-            .remove(&self.id);
-        trace!(id = %self.id, "Subscription removed from active subscritpions");
     }
 }
 
@@ -215,9 +198,6 @@ async fn ws_service(
                 ws::Frame::Text(text) => {
                     handle_text_frame(text, sink, state, &schema_state, &shared_state).await
                 }
-                // we don't support binary frames
-                // TODO: should we drop the connection altogether?
-                ws::Frame::Binary(_) => None,
                 // heartbeat
                 web::ws::Frame::Ping(msg) => {
                     state.borrow_mut().last_heartbeat = Instant::now();
@@ -227,6 +207,13 @@ async fn ws_service(
                     state.borrow_mut().last_heartbeat = Instant::now();
                     None
                 }
+                // we don't support binary frames
+                ws::Frame::Binary(_) => Some(ws::Message::Close(Some(ws::CloseReason {
+                    // this one is not in the CloseCode enum because it's an internal WebSocket
+                    // transport error that has nothing to do with GraphQL over WebSockets
+                    code: ws::CloseCode::Unsupported,
+                    description: Some("Unsupported message type".into()),
+                }))),
                 // closing connection. we cant send any more message so we just None
                 ws::Frame::Close(msg) => {
                     if let Some(close_reason) = msg {
@@ -271,7 +258,7 @@ async fn handle_text_frame(
                 // this one is not in the CloseCode enum because it's an internal WebSocket
                 // transport error that has nothing to do with GraphQL over WebSockets
                 ws::CloseReason {
-                    code: ws::CloseCode::Invalid,
+                    code: ws::CloseCode::Unsupported,
                     description: Some("Invalid UTF-8 in message".into()),
                 },
             )));
@@ -397,7 +384,8 @@ async fn handle_text_frame(
                     }
                     Err(err) => {
                         let _ = sink.send(err.into_server_message(&id)).await;
-                        // TODO: we report error as graphql error, but should we also close the connection? we're dealing with auth so it might be safer to close
+                        // we report error as graphql error, but we also close the
+                        // connection since we're dealing with auth so let's be safe
                         return Some(err.into_close_message());
                     }
                 }
@@ -530,6 +518,24 @@ async fn handle_text_frame(
             }
             None
         }
+    }
+}
+
+/// Ensure a subscription is removed from active_subscriptions when dropped,
+/// regardless of how the subscription stream itself ends (normal completion,
+/// cancellation, panic (hopefully not), or future being dropped at an await point).
+struct SubscriptionGuard {
+    state: Rc<RefCell<WsState>>,
+    id: String,
+}
+
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        self.state
+            .borrow_mut()
+            .active_subscriptions
+            .remove(&self.id);
+        trace!(id = %self.id, "Subscription removed from active subscritpions");
     }
 }
 
