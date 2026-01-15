@@ -77,9 +77,10 @@ impl RouterSharedState {
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
         hive_usage_agent: Option<UsageAgent>,
+        validation_plan: ValidationPlan,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
-            validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
+            validation_plan,
             headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
             parse_cache: moka::future::Cache::new(1000),
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,

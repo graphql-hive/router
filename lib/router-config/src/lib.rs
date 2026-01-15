@@ -6,6 +6,7 @@ pub mod graphiql;
 pub mod headers;
 pub mod http_server;
 pub mod jwt_auth;
+pub mod limits;
 pub mod log;
 pub mod override_labels;
 pub mod override_subgraph_urls;
@@ -100,6 +101,10 @@ pub struct HiveRouterConfig {
     /// Configuration for usage reporting to GraphQL Hive.
     #[serde(default)]
     pub usage_reporting: usage_reporting::UsageReportingConfig,
+
+    #[serde(default)]
+    /// Configuration for checking the limits such as query depth, complexity, etc.
+    pub limits: limits::LimitsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
