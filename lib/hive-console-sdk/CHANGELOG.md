@@ -1,3 +1,9 @@
+## 0.3.2 (2026-01-15)
+
+### Fixes
+
+- Downgrade `reqwest` to `v0.12` to avoid runtime crash from `rustls` `CryptoProvider` introduced in reqwest `v0.13`.
+
 ## 0.3.1 (2026-01-14)
 
 ### Fixes
