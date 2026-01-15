@@ -26,7 +26,7 @@ graphql-tools =  { path = "../../lib/graphql-tools", version = "0.4.1" }
 tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
-reqwest = { workspace = true, default-features = false,  features = [ "blocking", "rustls-tls" ] }
+reqwest = { workspace = true }
 sonic-rs = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
