@@ -4,6 +4,7 @@ use graphql_tools::ast::ext::SchemaDocumentExtension;
 use graphql_tools::ast::FieldByNameExtension;
 use graphql_tools::ast::TypeDefinitionExtension;
 use graphql_tools::ast::TypeExtension;
+use graphql_tools::parser::minify_query_document;
 use graphql_tools::parser::schema::InputObjectType;
 use moka::sync::Cache;
 use std::cmp::Ordering;
@@ -15,7 +16,6 @@ use graphql_tools::ast::{
     visit_document, OperationTransformer, OperationVisitor, OperationVisitorContext, Transformed,
     TransformedValue,
 };
-pub use graphql_tools::parser::minify_query;
 use graphql_tools::parser::parse_query;
 use graphql_tools::parser::query::{
     Definition, Directive, Document, Field, FragmentDefinition, Number, OperationDefinition,
@@ -866,8 +866,7 @@ impl OperationProcessor {
 
         let normalized = normalize_operation(&parsed);
 
-        let printed =
-            minify_query(format!("{}", normalized.clone()).as_str()).map_err(|e| e.to_string())?;
+        let printed = minify_query_document(&normalized);
         let hash = format!("{:x}", md5::compute(printed.clone()));
 
         Ok(Some(ProcessedOperation {
