@@ -2030,7 +2030,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-dropper-simple",
@@ -2061,7 +2061,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.30"
+version = "0.0.31"
 dependencies = [
  "ahash",
  "anyhow",
