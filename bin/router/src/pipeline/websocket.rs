@@ -223,9 +223,9 @@ async fn ws_service(
                             "WebSocket connection closed",
                         );
                     }
-                    // cancel all active subscriptions on close allowing a clean shutdown.
                     // clearing the map will drop all the senders, which will
-                    // in turn cancel all active subscription streams
+                    // in turn cancel all active subscription streams and perform
+                    // the cleanup in there
                     state.borrow_mut().active_subscriptions.clear();
                     None
                 }
@@ -502,6 +502,10 @@ async fn handle_text_frame(
 
                     if cancelled {
                         trace!(id = %id, "Subscription cancelled");
+                        // we dont emit complete on cancelled subscriptions.
+                        // they're either deliberately cancelled by the client
+                        // or dropped due to connection close, either way
+                        // we dont/cant inform the client with a complete message
                         None
                     } else {
                         trace!(id = %id, "Subscription completed");
