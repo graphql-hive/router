@@ -13,9 +13,9 @@ use hive_router_internal::expressions::vrl::compiler::Program as VrlProgram;
 use hive_router_internal::expressions::vrl::core::Value as VrlValue;
 use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
 use http::Uri;
-use hyper_tls::HttpsConnector;
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::{
-    client::legacy::Client,
+    client::legacy::{connect::HttpConnector, Client},
     rt::{TokioExecutor, TokioTimer},
 };
 use tokio::sync::{OnceCell, Semaphore};
@@ -65,14 +65,23 @@ pub struct SubgraphExecutorMap {
     in_flight_requests: InflightRequestsMap,
 }
 
+fn build_https_executor() -> HttpsConnector<HttpConnector> {
+    HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .expect("no native root CA certificates found")
+        .https_or_http()
+        .enable_http1()
+        .enable_http2()
+        .build()
+}
+
 impl SubgraphExecutorMap {
     pub fn new(config: Arc<HiveRouterConfig>, global_timeout: DurationOrProgram) -> Self {
-        let https = HttpsConnector::new();
         let client: HttpClient = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.traffic_shaping.all.pool_idle_timeout)
             .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host)
-            .build(https);
+            .build(build_https_executor());
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
@@ -378,7 +387,7 @@ impl SubgraphExecutorMap {
                         .pool_timer(TokioTimer::new())
                         .pool_idle_timeout(pool_idle_timeout)
                         .pool_max_idle_per_host(self.max_connections_per_host)
-                        .build(HttpsConnector::new()),
+                        .build(build_https_executor()),
                 );
             }
         }

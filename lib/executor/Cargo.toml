@@ -36,7 +36,7 @@ ahash = { workspace = true }
 strum = { version = "0.27.2", features = ["derive"] }
 ntex = { workspace = true }
 
-hyper-tls = { version = "0.6.0", features = ["vendored"] }
+hyper-rustls = { version = "0.27.7", features = ["http1", "http2", "aws-lc-rs"]}
 hyper-util = { version = "0.1.16", features = [
   "client",
   "client-legacy",
