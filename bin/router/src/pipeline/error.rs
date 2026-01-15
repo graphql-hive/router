@@ -145,6 +145,7 @@ pub struct FailedExecutionResult {
 
 // This allows easy conversion from PipelineError to FailedExecutionResult
 // FailedExecutionResult is agnostic to HTTP so later on we can use it with different serialization formats
+// Example usage -> https://github.com/graphql-hive/router/pull/652/changes#diff-f3dc2f2d579374645281d6950414266d8984195dbf45c00f0a754ceca8550aadR95
 impl From<PipelineError> for FailedExecutionResult {
     fn from(error: PipelineError) -> Self {
         if let PipelineError::ValidationErrors(validation_errors) = error {
