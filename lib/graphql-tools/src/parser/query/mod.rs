@@ -9,4 +9,4 @@ mod minify;
 pub use self::ast::*;
 pub use self::error::ParseError;
 pub use self::grammar::{consume_definition, parse_query};
-pub use self::minify::minify_query;
+pub use self::minify::{minify_query, minify_query_document};
