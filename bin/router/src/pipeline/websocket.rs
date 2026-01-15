@@ -289,7 +289,7 @@ async fn handle_text_frame(
     trace!(msg = ?client_msg, "Received client message");
 
     match client_msg {
-        ClientMessage::ConnectionInit {} => {
+        ClientMessage::ConnectionInit { payload } => {
             if state.borrow().connection_init_received {
                 return Some(CloseCode::TooManyInitialisationRequests.into());
             }
@@ -304,7 +304,10 @@ async fn handle_text_frame(
 
             debug!("Connection acknowledged");
 
-            // TODO: read payload and set it to the current_headers
+            if let Some(headers) = parse_headers_from_payload(&payload) {
+                trace!(headers = ?headers, "Connection init message contains headers in the payload");
+                state.borrow_mut().current_headers = headers;
+            }
 
             None
         }
@@ -552,6 +555,51 @@ fn extract_headers_from_extensions(
     header_map
 }
 
+fn parse_headers_from_payload(
+    payload: &Option<ConnectionInitPayload>,
+) -> Option<ntex::http::HeaderMap> {
+    let payload = match payload {
+        Some(p) => p,
+        None => return None,
+    };
+
+    let headers_prop = match payload.fields.get("headers") {
+        Some(h) => h,
+        None => return None,
+    };
+
+    let headers_obj = match headers_prop.as_object() {
+        Some(obj) => obj,
+        None => return None,
+    };
+
+    let mut header_map = ntex::http::HeaderMap::new();
+    for (key, value) in headers_obj {
+        let value_str = if let Some(s) = value.as_str() {
+            Some(s.to_string())
+        } else if let Some(b) = value.as_bool() {
+            Some(b.to_string())
+        } else if let Some(i) = value.as_i64() {
+            Some(i.to_string())
+        } else if let Some(f) = value.as_f64() {
+            Some(f.to_string())
+        } else {
+            None // ignore nulls, arrays, objects and whatever else
+        };
+
+        if let Some(val_str) = value_str {
+            if let (Ok(name), Ok(val)) = (
+                ntex::http::header::HeaderName::try_from(key),
+                ntex::http::header::HeaderValue::try_from(val_str),
+            ) {
+                header_map.insert(name, val);
+            }
+        }
+    }
+
+    Some(header_map)
+}
+
 enum CloseCode {
     ConnectionInitTimeout,
     TooManyInitialisationRequests,
@@ -600,7 +648,9 @@ impl From<CloseCode> for ws::Message {
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMessage {
-    ConnectionInit {},
+    ConnectionInit {
+        payload: Option<ConnectionInitPayload>,
+    },
     Ping {},
     // TODO: implement digesting pongs from client using subprotocol ping/pong
     Subscribe {
@@ -610,6 +660,15 @@ enum ClientMessage {
     Complete {
         id: String,
     },
+}
+
+/// The connection init message payload MUST be a map of string to arbitrary JSON
+/// values as per the spec. We represent this as a HashMap<String, Value> and use
+/// serde(flatten) to capture all fields for easier parsing to headers later.
+#[derive(Deserialize, Debug)]
+struct ConnectionInitPayload {
+    #[serde(flatten)]
+    fields: HashMap<String, sonic_rs::Value>,
 }
 
 #[derive(Serialize, Debug)]
@@ -696,5 +755,48 @@ impl JwtError {
     }
     fn into_close_message(&self) -> ws::Message {
         CloseCode::Forbidden(self.error_code().to_string()).into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sonic_rs::json;
+
+    use super::*;
+
+    #[test]
+    fn should_parse_connection_init_payload_to_headers() {
+        let payload = ConnectionInitPayload {
+            fields: sonic_rs::from_str(
+                &json!({
+                    "headers": {
+                        "authorization": "Bearer token123",
+                        "x-custom-header": "custom-value",
+                        "x-number": 42,
+                        "x-bool": true,
+                        "x-float": 3.14
+                    }
+                })
+                .to_string(),
+            )
+            .expect("Failed to create payload"),
+        };
+
+        let headers = parse_headers_from_payload(&Some(payload));
+
+        assert!(headers.is_some());
+        let headers = headers.unwrap();
+
+        assert_eq!(
+            headers.get("authorization").unwrap().to_str().unwrap(),
+            "Bearer token123"
+        );
+        assert_eq!(
+            headers.get("x-custom-header").unwrap().to_str().unwrap(),
+            "custom-value"
+        );
+        assert_eq!(headers.get("x-number").unwrap().to_str().unwrap(), "42");
+        assert_eq!(headers.get("x-bool").unwrap().to_str().unwrap(), "true");
+        assert_eq!(headers.get("x-float").unwrap().to_str().unwrap(), "3.14");
     }
 }
