@@ -59,7 +59,7 @@ pub async fn ws_index(
 
 struct WsState {
     /// The moment of the last heartbeat received from the client. This is used
-    /// to detect client timeouts and drop the connection on timeout.
+    /// to detect stale clients and drop the connection on timeout.
     last_heartbeat: Instant,
     /// Indicates whether the connection init message has been received. This is
     /// used to enforce the client cant send multiple connection init messages.
