@@ -2149,6 +2149,7 @@ dependencies = [
  "insta",
  "itoa",
  "ntex",
+ "openssl",
  "regex-automata",
  "ryu",
  "serde",
@@ -3185,6 +3186,7 @@ dependencies = [
  "ntex-service",
  "ntex-tls",
  "ntex-util",
+ "openssl",
  "percent-encoding",
  "pin-project-lite",
  "regex",
@@ -3370,6 +3372,7 @@ dependencies = [
  "ntex-net",
  "ntex-service",
  "ntex-util",
+ "openssl",
 ]
 
 [[package]]

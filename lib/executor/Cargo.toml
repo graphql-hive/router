@@ -52,6 +52,7 @@ indexmap = "2.10.0"
 bumpalo = "3.19.0"
 async-stream = "0.3.6"
 futures-util = "0.3.31"
+tls_openssl = { version = "0.10", package = "openssl" }
 
 [dev-dependencies]
 subgraphs = { path = "../../bench/subgraphs" }
