@@ -307,6 +307,8 @@ async fn handle_text_frame(
             let header_map = parse_headers_from_connection_init_payload(payload);
             if !header_map.is_empty() {
                 trace!(headers = ?header_map, "Connection init message contains headers in the payload");
+            } else {
+                trace!("Connection init message does not contain headers in the payload");
             }
             state.borrow_mut().current_headers = header_map;
 
