@@ -39,9 +39,10 @@ pub async fn execute_plan(
     expose_query_plan: &ExposeQueryPlanMode,
     planned_request: PlannedRequest<'_>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
-    let extensions = if matches!(expose_query_plan, ExposeQueryPlanMode::Yes)
-        || matches!(expose_query_plan, ExposeQueryPlanMode::DryRun)
-    {
+    let extensions = if matches!(
+        expose_query_plan,
+        ExposeQueryPlanMode::Yes | ExposeQueryPlanMode::DryRun
+    ) {
         Some(HashMap::from_iter([(
             "queryPlan".to_string(),
             sonic_rs::to_value(&planned_request.query_plan_payload).unwrap(),
