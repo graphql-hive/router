@@ -66,3 +66,8 @@ ahash = "0.8.12"
 once_cell = "1.21.3"
 anyhow = "1.0.100"
 moka = { version = "0.12.11", features = ["future", "sync"] }
+strum = { version = "0.27.2", features = ["derive"] }
+
+# uses branch until https://github.com/picoHz/mediatype/pull/25 lands
+[patch.crates-io]
+mediatype = { git = "https://github.com/enisdenjo/mediatype", branch = "public-new-unchecked" }

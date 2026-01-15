@@ -10,7 +10,7 @@ use sonic_rs::Value;
 use tracing::{trace, warn};
 
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::header::APPLICATION_JSON_STR;
+use crate::pipeline::header::SingleContentType;
 
 #[derive(serde::Deserialize, Debug)]
 struct GETQueryParams {
@@ -83,7 +83,7 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
 }
 
 #[inline]
-pub async fn get_execution_request(
+pub async fn get_execution_request_from_http_request(
     req: &HttpRequest,
     body_bytes: Bytes,
 ) -> Result<ExecutionRequest, PipelineError> {
@@ -111,7 +111,7 @@ pub async fn get_execution_request(
                     let content_type_str = value
                         .to_str()
                         .map_err(|_| PipelineError::InvalidHeaderValue(CONTENT_TYPE))?;
-                    if !content_type_str.contains(*APPLICATION_JSON_STR) {
+                    if !content_type_str.contains(SingleContentType::JSON.as_ref()) {
                         warn!(
                             "Invalid content type on a POST request: {}",
                             content_type_str
