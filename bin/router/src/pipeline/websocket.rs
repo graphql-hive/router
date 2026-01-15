@@ -378,7 +378,7 @@ async fn handle_text_frame(
             let query_plan_cancellation_token =
                 CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-            let headers = parse_headers_from_extensions(&payload.extensions);
+            let headers = parse_headers_from_extensions(payload.extensions.as_ref());
 
             // TODO: should we update the current headers in state?
 
@@ -574,7 +574,7 @@ fn parse_headers_from_connection_init_payload(payload: Option<ConnectionInitPayl
 }
 
 fn parse_headers_from_extensions(
-    extensions: &Option<HashMap<String, sonic_rs::Value>>,
+    extensions: Option<&HashMap<String, sonic_rs::Value>>,
 ) -> HeaderMap {
     let mut header_map = HeaderMap::new();
     if let Some(ext) = extensions {
