@@ -304,7 +304,7 @@ async fn handle_text_frame(
 
             debug!("Connection acknowledged");
 
-            if let Some(headers) = parse_headers_from_payload(&payload) {
+            if let Some(headers) = parse_headers_from_payload(payload) {
                 trace!(headers = ?headers, "Connection init message contains headers in the payload");
                 state.borrow_mut().current_headers = headers;
             }
@@ -556,7 +556,7 @@ fn extract_headers_from_extensions(
 }
 
 fn parse_headers_from_payload(
-    payload: &Option<ConnectionInitPayload>,
+    payload: Option<ConnectionInitPayload>,
 ) -> Option<ntex::http::HeaderMap> {
     let payload = match payload {
         Some(p) => p,
@@ -782,7 +782,7 @@ mod tests {
             .expect("Failed to create payload"),
         };
 
-        let headers = parse_headers_from_payload(&Some(payload));
+        let headers = parse_headers_from_payload(Some(payload));
 
         assert!(headers.is_some());
         let headers = headers.unwrap();
