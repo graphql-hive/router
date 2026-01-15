@@ -223,7 +223,9 @@ async fn ws_service(
                             "WebSocket connection closed",
                         );
                     }
-                    // cancel all active subscriptions on close allowing shutdown
+                    // cancel all active subscriptions on close allowing a clean shutdown.
+                    // clearing the map will drop all the senders, which will
+                    // in turn cancel all active subscription streams
                     state.borrow_mut().active_subscriptions.clear();
                     None
                 }
@@ -474,7 +476,7 @@ async fn handle_text_frame(
                     };
 
                     let mut stream = response.body;
-                    let mut client_completed = false;
+                    let mut cancelled = false;
 
                     trace!(id = %id, "Subscription started");
 
@@ -492,17 +494,17 @@ async fn handle_text_frame(
                                 }
                             }
                             _ = cancel_rx.recv() => {
-                                client_completed = true;
+                                cancelled = true;
                                 break; // cancelled
                             }
                         }
                     }
 
-                    if client_completed {
-                        trace!(id = %id, "Subscription completed by client");
+                    if cancelled {
+                        trace!(id = %id, "Subscription cancelled");
                         None
                     } else {
-                        trace!(id = %id, "Subscription completed itself");
+                        trace!(id = %id, "Subscription completed");
                         Some(ServerMessage::complete(&id))
                     }
                 }
