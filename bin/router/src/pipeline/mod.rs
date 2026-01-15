@@ -55,7 +55,7 @@ pub mod query_plan;
 pub mod sse;
 pub mod usage_reporting;
 pub mod validation;
-pub mod websocket;
+pub mod websocket_server;
 
 static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
 

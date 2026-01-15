@@ -21,7 +21,7 @@ use crate::{
     jwt::JwtAuthRuntime,
     logger::configure_logging,
     pipeline::{
-        graphql_request_handler, usage_reporting::init_hive_user_agent, websocket::ws_index,
+        graphql_request_handler, usage_reporting::init_hive_user_agent, websocket_server::ws_index,
     },
 };
 
