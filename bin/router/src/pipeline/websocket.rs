@@ -369,9 +369,14 @@ async fn handle_text_frame(
             let query_plan_cancellation_token =
                 CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-            let headers = parse_headers_from_extensions(payload.extensions.as_ref());
+            let mut headers = parse_headers_from_extensions(payload.extensions.as_ref());
 
-            // TODO: should we update the current headers in state?
+            // merge with current headers from state
+            for (key, value) in state.borrow().current_headers.iter() {
+                headers.insert(key.clone(), value.clone());
+            }
+
+            // TODO: we should also update the current headers in state, right?
 
             let mut jwt_context: Option<JwtRequestContext> = None;
             if let Some(jwt) = &shared_state.jwt_auth_runtime {
