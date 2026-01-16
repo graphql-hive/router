@@ -2062,6 +2062,7 @@ dependencies = [
  "mockito",
  "moka",
  "once_cell",
+ "parking_lot 0.12.5",
  "recloser",
  "regex-automata",
  "regress",

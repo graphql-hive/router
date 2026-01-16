@@ -21,6 +21,7 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+parking_lot = { workspace = true }
 md5 = "0.8.0"
 serde_json = { workspace = true }
 moka = { workspace = true }

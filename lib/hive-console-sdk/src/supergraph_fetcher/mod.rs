@@ -1,4 +1,4 @@
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 use tokio::sync::TryLockError;
 
 use crate::circuit_breaker::CircuitBreakerError;
@@ -34,6 +34,8 @@ pub enum SupergraphFetcherError {
     HTTPClientCreation(reqwest::Error),
     #[error("Network error: {0}")]
     Network(reqwest_middleware::Error),
+    #[error("Server error: {0}")]
+    ServerError(u16),
     #[error("Parsing response failed: {0}")]
     ResponseParse(reqwest::Error),
     #[error("Reading the etag record failed: {0:?}")]

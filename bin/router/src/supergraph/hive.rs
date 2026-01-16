@@ -22,6 +22,9 @@ impl From<SupergraphFetcherError> for LoadSupergraphError {
             SupergraphFetcherError::ResponseParse(e) => {
                 LoadSupergraphError::NetworkResponseError(e)
             }
+            SupergraphFetcherError::ServerError(status) => LoadSupergraphError::NetworkError(
+                reqwest_middleware::Error::Middleware(anyhow::anyhow!("Server error: {}", status)),
+            ),
             SupergraphFetcherError::ETagRead(e) => {
                 LoadSupergraphError::LockError(format!("Failed to read etag: {:?}", e))
             }
