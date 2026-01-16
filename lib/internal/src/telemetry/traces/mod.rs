@@ -34,6 +34,7 @@ pub mod compatibility;
 pub mod control;
 pub mod hive_console_exporter;
 pub mod spans;
+pub mod stdout_exporter;
 
 pub struct Tracer<Subscriber> {
     pub layer: OpenTelemetryLayer<Subscriber, trace::Tracer>,
@@ -133,6 +134,17 @@ fn setup_exporters(
                     tracer_provider_builder.with_span_processor(build_batched_span_processor(
                         &otlp_config.batch_processor,
                         HttpCompatibilityExporter::new(exporter, sem_conv_mode),
+                    ));
+            }
+            TracingExporterConfig::Stdout(stdout_config) => {
+                if !stdout_config.enabled {
+                    continue;
+                }
+
+                tracer_provider_builder =
+                    tracer_provider_builder.with_span_processor(build_batched_span_processor(
+                        &stdout_config.batch_processor,
+                        stdout_exporter::StdoutExporter::new(),
                     ));
             }
         }

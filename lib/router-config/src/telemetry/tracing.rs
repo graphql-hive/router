@@ -205,12 +205,28 @@ impl TryFrom<&OtlpGrpcTlsConfig> for tonic::transport::ClientTlsConfig {
 pub enum TracingExporterConfig {
     #[serde(rename = "otlp")]
     Otlp(TracingOtlpConfig),
+    #[serde(rename = "stdout")]
+    Stdout(StdoutExporterConfig),
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct StdoutExporterConfig {
+    #[serde(default = "default_stdout_config_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub batch_processor: BatchProcessorConfig,
+}
+
+fn default_stdout_config_enabled() -> bool {
+    true
 }
 
 impl TracingExporterConfig {
     fn is_enabled(&self) -> bool {
         match self {
             TracingExporterConfig::Otlp(otlp_config) => otlp_config.enabled,
+            TracingExporterConfig::Stdout(stdout_config) => stdout_config.enabled,
         }
     }
 }
