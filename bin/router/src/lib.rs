@@ -19,7 +19,11 @@ use crate::{
         probes::{health_check_handler, readiness_check_handler},
     },
     jwt::JwtAuthRuntime,
-    pipeline::{graphql_request_handler, usage_reporting::init_hive_usage_agent},
+    pipeline::{
+        graphql_request_handler,
+        header::{RequestAccepts, TEXT_HTML_CONTENT_TYPE},
+        usage_reporting::init_hive_usage_agent,
+    },
     telemetry::HeaderExtractor,
 };
 
@@ -31,11 +35,14 @@ use hive_router_internal::telemetry::{
     traces::spans::http_request::HttpServerRequestSpan,
 };
 use http::header::RETRY_AFTER;
+use http::{header::CONTENT_TYPE, Method};
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
 use tracing::{info, warn, Instrument};
+
+static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
 async fn graphql_endpoint_handler(
     request: HttpRequest,
@@ -43,6 +50,16 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
+    if request.method() == Method::GET && request.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
+        if app_state.router_config.graphiql.enabled {
+            return web::HttpResponse::Ok()
+                .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)
+                .body(GRAPHIQL_HTML);
+        } else {
+            return web::HttpResponse::NotFound().into();
+        }
+    }
+
     let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
         propagator.extract(&HeaderExtractor(request.headers()))
     });

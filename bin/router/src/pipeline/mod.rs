@@ -11,7 +11,7 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{header::CONTENT_TYPE, HeaderValue, Method};
+use http::HeaderValue;
 use ntex::{
     http::ResponseBuilder,
     util::Bytes,
@@ -29,7 +29,7 @@ use crate::{
         execution_request::get_execution_request,
         header::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
-            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
+            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON,
         },
         normalize::normalize_request_with_cache,
         parser::parse_operation_with_cache,
@@ -56,8 +56,6 @@ pub mod query_plan;
 pub mod usage_reporting;
 pub mod validation;
 
-static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
-
 #[inline]
 pub async fn graphql_request_handler(
     req: &HttpRequest,
@@ -66,16 +64,6 @@ pub async fn graphql_request_handler(
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
 ) -> web::HttpResponse {
-    if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
-        if shared_state.router_config.graphiql.enabled {
-            return web::HttpResponse::Ok()
-                .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)
-                .body(GRAPHIQL_HTML);
-        } else {
-            return web::HttpResponse::NotFound().into();
-        }
-    }
-
     match execute_pipeline(req, body_bytes, supergraph, shared_state, schema_state).await {
         Ok(response) => {
             let response_bytes = Bytes::from(response.body);
