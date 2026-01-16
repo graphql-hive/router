@@ -34,6 +34,22 @@ mod tests {
         fn to_string(&self) -> String;
     }
 
+    impl HeaderMapAsStringExt for NtexHeaderMap {
+        fn to_string(&self) -> String {
+            let mut buffer = String::new();
+
+            for (name, value) in self.iter() {
+                buffer.push_str(&format!(
+                    "{}: {}\n",
+                    name.as_str(),
+                    value.to_str().unwrap_or("<invalid utf8>")
+                ));
+            }
+
+            buffer
+        }
+    }
+
     impl HeaderMapAsStringExt for HeaderMap {
         fn to_string(&self) -> String {
             let mut buffer = String::new();
@@ -353,7 +369,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut final_headers = HeaderMap::new();
+        let mut final_headers = NtexHeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
@@ -417,7 +433,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut final_headers = HeaderMap::new();
+        let mut final_headers = NtexHeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
@@ -474,7 +490,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut final_headers = HeaderMap::new();
+        let mut final_headers = NtexHeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
@@ -531,7 +547,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut final_headers = HeaderMap::new();
+        let mut final_headers = NtexHeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
@@ -583,7 +599,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut final_headers = HeaderMap::new();
+        let mut final_headers = NtexHeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"

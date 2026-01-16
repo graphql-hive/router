@@ -1,6 +1,6 @@
-use http::{header::ACCEPT, HeaderValue};
+use http::header::ACCEPT;
 use lazy_static::lazy_static;
-use ntex::web::HttpRequest;
+use ntex::{http::header::HeaderValue, web::HttpRequest};
 
 lazy_static! {
     pub static ref APPLICATION_JSON_STR: &'static str = "application/json";

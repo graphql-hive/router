@@ -1,17 +1,14 @@
 use std::{sync::Arc, time::Instant};
 
-use hive_router_plan_executor::{
-    execution::{
-        client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-        plan::PlanExecutionOutput,
-    },
-    response::graphql_error::GraphQLError,
+use hive_router_plan_executor::execution::client_request_details::{
+    ClientRequestDetails, JwtRequestDetails, OperationDetails,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{header::CONTENT_TYPE, HeaderValue, Method};
+use http::{header::CONTENT_TYPE, Method};
 use ntex::{
+    http::header::HeaderValue,
     http::ResponseBuilder,
     util::Bytes,
     web::{self, HttpRequest},
@@ -74,67 +71,33 @@ pub async fn graphql_request_handler(
         }
     }
 
-    match execute_pipeline(req, body_bytes, supergraph, shared_state, schema_state).await {
-        Ok(response) => {
-            let response_bytes = Bytes::from(response.body);
-            let response_headers = response.headers;
+    let response_content_type: &'static HeaderValue =
+        if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
+            &APPLICATION_GRAPHQL_RESPONSE_JSON
+        } else {
+            &APPLICATION_JSON
+        };
 
-            let response_content_type: &'static HeaderValue =
-                if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
-                    &APPLICATION_GRAPHQL_RESPONSE_JSON
-                } else {
-                    &APPLICATION_JSON
-                };
+    execute_pipeline(
+        req,
+        body_bytes,
+        supergraph,
+        shared_state,
+        schema_state,
+        response_content_type,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        let accept_ok = !req.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
 
-            let mut response_builder = web::HttpResponse::Ok();
-            for (header_name, header_value) in response_headers {
-                if let Some(header_name) = header_name {
-                    response_builder.header(header_name, header_value);
-                }
-            }
+        let status = error.default_status_code(accept_ok);
 
-            response_builder
-                .header(http::header::CONTENT_TYPE, response_content_type)
-                .body(response_bytes)
-        }
-        Err(error) => {
-            let accept_ok = !req.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
+        let result = FailedExecutionResult::from(error);
 
-            let status = error.default_status_code(accept_ok);
-
-            if let PipelineError::ValidationErrors(validation_errors) = error {
-                let validation_error_result = FailedExecutionResult {
-                    errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-                };
-
-                return ResponseBuilder::new(status).json(&validation_error_result);
-            }
-
-            if let PipelineError::AuthorizationFailed(authorization_errors) = error {
-                let authorization_error_result = FailedExecutionResult {
-                    errors: Some(
-                        authorization_errors
-                            .into_iter()
-                            .map(|error| error.into())
-                            .collect(),
-                    ),
-                };
-
-                return ResponseBuilder::new(status).json(&authorization_error_result);
-            }
-
-            let code = error.graphql_error_code();
-            let message = error.graphql_error_message();
-
-            let graphql_error = GraphQLError::from_message_and_code(message, code);
-
-            let result = FailedExecutionResult {
-                errors: Some(vec![graphql_error]),
-            };
-
-            ResponseBuilder::new(status).json(&result)
-        }
-    }
+        ResponseBuilder::new(status)
+            .content_type(response_content_type)
+            .json(&result)
+    })
 }
 
 #[inline]
@@ -145,7 +108,8 @@ pub async fn execute_pipeline(
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
-) -> Result<PlanExecutionOutput, PipelineError> {
+    response_content_type: &'static HeaderValue,
+) -> Result<ntex::http::Response, PipelineError> {
     let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
@@ -256,6 +220,7 @@ pub async fn execute_pipeline(
         variable_payload: &variable_payload,
         client_request_details: &client_request_details,
         authorization_errors,
+        response_content_type,
     };
     let execution_result = execute_plan(req, supergraph, shared_state, planned_request).await?;
 
@@ -274,5 +239,5 @@ pub async fn execute_pipeline(
         }
     }
 
-    Ok(execution_result)
+    Ok(execution_result.response)
 }
