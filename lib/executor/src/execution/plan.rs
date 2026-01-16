@@ -768,7 +768,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     Some(OperationKind::Mutation) => "mutation",
                     Some(OperationKind::Subscription) => "subscription",
                 },
-                client_document_hash: &node.operation.hash.to_string(),
+                client_document_hash: node.operation.hash.to_string().as_str(),
             });
 
             if let Some(jwt_forwarding_plan) = &self.jwt_forwarding_plan {

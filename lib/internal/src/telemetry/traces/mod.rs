@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use hive_router_config::{
     primitives::value_or_expression::ValueOrExpression,
     telemetry::{
-        hive::HiveTelemetryConfig,
+        hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
         tracing::{BatchProcessorConfig, OtlpProtocol, TracingExporterConfig},
         TelemetryConfig,
     },
@@ -19,16 +19,13 @@ use opentelemetry_sdk::{
     Resource,
 };
 use tracing_opentelemetry::OpenTelemetryLayer;
-use vrl::core::Value;
 
 use self::compatibility::HttpCompatibilityExporter;
-use crate::{
-    expressions::{CompileExpression, ExecutableProgram},
-    telemetry::{
-        error::TelemetryError,
-        traces::hive_console_exporter::HiveConsoleExporter,
-        utils::{build_metadata, build_tls_config},
-    },
+use crate::telemetry::{
+    error::TelemetryError,
+    resolve_value_or_expression,
+    traces::hive_console_exporter::HiveConsoleExporter,
+    utils::{build_metadata, build_tls_config},
 };
 
 pub use control::{disabled_span, is_level_enabled, is_tracing_enabled, set_tracing_enabled};
@@ -173,7 +170,7 @@ fn setup_hive_exporter(
 ) -> Result<TracerProviderBuilder, TelemetryError> {
     let endpoint = resolve_value_or_expression(&config.endpoint, "Hive Tracing endpoint")?;
     let token = match &config.token {
-        Some(t) => resolve_value_or_expression(t, "Hive Tracing token")?,
+        Some(t) => resolve_value_or_expression(t, "Hive Telemetry token")?,
         None => {
             return Err(TelemetryError::TracesExporterSetup(
                 "Hive Tracing token is required but not provided".to_string(),
@@ -181,13 +178,20 @@ fn setup_hive_exporter(
         }
     };
     let target = match &config.target {
-        Some(t) => resolve_value_or_expression(t, "Hive Tracing target")?,
+        Some(t) => resolve_value_or_expression(t, "Hive Telemetry target")?,
         None => {
             return Err(TelemetryError::TracesExporterSetup(
                 "Hive Tracing target is required but not provided".to_string(),
             ))
         }
     };
+
+    if !is_uuid_target_ref(&token) && !is_slug_target_ref(&token) {
+        return Err(TelemetryError::TracesExporterSetup(format!(
+            "Invalid Hive Tracing target format: '{}'. It must be either in slug format '$organizationSlug/$projectSlug/$targetSlug' or UUID format 'a0f4c605-6541-4350-8cfe-b31f21a4bf80'",
+            target
+        )));
+    }
 
     ensure_single_protocol_config(
         "Hive Tracing",
@@ -252,50 +256,6 @@ fn setup_hive_exporter(
             HiveConsoleExporter::new(exporter),
         )),
     )
-}
-
-fn evaluate_expression_as_string(
-    expression: &str,
-    context: &str,
-) -> Result<String, TelemetryError> {
-    Ok(expression
-        // compile
-        .compile_expression(None)
-        .map_err(|e| {
-            TelemetryError::TracesExporterSetup(format!(
-                "Failed to compile {} expression: {}",
-                context, e
-            ))
-        })?
-        // execute
-        .execute(Value::Null) // no input context as we are in setup phase
-        .map_err(|e| {
-            TelemetryError::TracesExporterSetup(format!(
-                "Failed to execute {} expression: {}",
-                context, e
-            ))
-        })?
-        // coerce
-        .as_str()
-        .ok_or_else(|| {
-            TelemetryError::TracesExporterSetup(format!(
-                "{} expression must return a string",
-                context
-            ))
-        })?
-        .to_string())
-}
-
-pub(crate) fn resolve_value_or_expression(
-    value_or_expr: &ValueOrExpression<String>,
-    context: &str,
-) -> Result<String, TelemetryError> {
-    match value_or_expr {
-        ValueOrExpression::Value(v) => Ok(v.clone()),
-        ValueOrExpression::Expression { expression } => {
-            evaluate_expression_as_string(expression, context)
-        }
-    }
 }
 
 pub(crate) fn resolve_string_map(

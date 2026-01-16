@@ -19,7 +19,7 @@ use crate::{
         probes::{health_check_handler, readiness_check_handler},
     },
     jwt::JwtAuthRuntime,
-    pipeline::{graphql_request_handler, usage_reporting::init_hive_user_agent},
+    pipeline::{graphql_request_handler, usage_reporting::init_hive_usage_agent},
     telemetry::HeaderExtractor,
 };
 
@@ -129,12 +129,11 @@ pub async fn configure_app_from_config(
         false => None,
     };
 
-    let hive_usage_agent = match router_config.usage_reporting.enabled {
-        true => Some(init_hive_user_agent(
-            bg_tasks_manager,
-            &router_config.usage_reporting,
-        )?),
-        false => None,
+    let hive_usage_agent = match router_config.telemetry.hive.as_ref() {
+        Some(hive_config) if hive_config.usage_reporting.enabled => {
+            Some(init_hive_usage_agent(bg_tasks_manager, hive_config)?)
+        }
+        _ => None,
     };
 
     let router_config_arc = Arc::new(router_config);

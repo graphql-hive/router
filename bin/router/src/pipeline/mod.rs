@@ -154,6 +154,26 @@ pub async fn execute_pipeline(
     let operation_span = GraphQLOperationSpan::new();
     async {
         let start = Instant::now();
+        let client_name = req
+            .headers()
+            .get(
+                &shared_state
+                    .router_config
+                    .telemetry
+                    .client_identification
+                    .name_header,
+            )
+            .and_then(|v| v.to_str().ok());
+        let client_version = req
+            .headers()
+            .get(
+                &shared_state
+                    .router_config
+                    .telemetry
+                    .client_identification
+                    .version_header,
+            )
+            .and_then(|v| v.to_str().ok());
         perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
         let jwt_request_details = match &shared_state.jwt_auth_runtime {
             Some(jwt_auth_runtime) => match jwt_auth_runtime
@@ -179,6 +199,7 @@ pub async fn execute_pipeline(
 
         operation_span.record_document(&parser_payload.minified_document);
         operation_span.record_operation_identity((&parser_payload).into());
+        operation_span.record_client_identity(client_name, client_version);
         operation_span.record_hive_operation_hash(&parser_payload.hive_operation_hash);
 
         validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload)
@@ -254,19 +275,29 @@ pub async fn execute_pipeline(
         )
         .await?;
 
-        if shared_state.router_config.usage_reporting.enabled {
-            if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-                usage_reporting::collect_usage_report(
-                    supergraph.supergraph_schema.clone(),
-                    start.elapsed(),
-                    req,
-                    &client_request_details,
-                    hive_usage_agent,
-                    &shared_state.router_config.usage_reporting,
-                    &execution_result,
-                )
-                .await;
-            }
+        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+            usage_reporting::collect_usage_report(
+                supergraph.supergraph_schema.clone(),
+                start.elapsed(),
+                client_name,
+                client_version,
+                &client_request_details,
+                hive_usage_agent,
+                shared_state
+                    .router_config
+                    .telemetry
+                    .hive
+                    .as_ref()
+                    .map(|c| &c.usage_reporting)
+                    .expect(
+                        // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
+                        // the UsageAgent is only created when usage reporting is enabled.
+                        // Thus, this expect should never panic.
+                        "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
+                    ),
+                &execution_result,
+            )
+            .await;
         }
 
         Ok(execution_result)
