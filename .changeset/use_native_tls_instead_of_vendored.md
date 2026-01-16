@@ -13,4 +13,4 @@ The `router` is using [AWS-LC](https://aws.amazon.com/security/opensource/crypto
 
 ## If you are using `hive-router` Crate
 
-Users who depends on `hive-router` crate and use it as a library, will need to configure the `rustls` provider that they prefer. See [`rustls` README](https://github.com/rustls/rustls#cryptography-providers) for instructions.
+If you're using the `hive-router` crate as a library, the router provides the `init_rustls_crypto_provider()` function that automatically configures AWS-LC as the default cryptographic provider. You can call this function early in your application startup before initializing the router. Alternatively, you can configure your own `rustls` provider before calling router initialization. See the [`rustls` documentation](https://github.com/rustls/rustls#cryptography-providers) for instructions on setting up a custom provider.
