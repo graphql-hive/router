@@ -14,7 +14,7 @@ use http::{HeaderMap, StatusCode};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
-use hyper_tls::HttpsConnector;
+use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 use tracing::debug;

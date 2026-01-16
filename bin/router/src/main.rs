@@ -1,10 +1,12 @@
-use hive_router::router_entrypoint;
+use hive_router::{init_rustls_crypto_provider, router_entrypoint};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[ntex::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_rustls_crypto_provider();
+
     match router_entrypoint().await {
         Ok(_) => Ok(()),
         Err(err) => {
