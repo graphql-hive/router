@@ -6,7 +6,7 @@ use hive_router::{
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use ntex::{
-    http::Request,
+    http::{client::ClientRequest, Request},
     web::{
         self,
         test::{self, TestRequest},
@@ -14,6 +14,7 @@ use ntex::{
     },
     Pipeline, Service,
 };
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
 use subgraphs::{
     start_subgraphs_server, RequestInterceptor, RequestLog, SubgraphsServiceState,
@@ -259,4 +260,96 @@ impl<T> Drop for TestRouterApp<T> {
     fn drop(&mut self) {
         self.bg_tasks_manager.shutdown();
     }
+}
+
+// v2
+
+pub struct TestRouterConf {
+    config: HiveRouterConfig,
+}
+
+impl TestRouterConf {
+    pub fn inline(config_yaml: &str) -> Self {
+        let router_config = parse_yaml_config(config_yaml.to_string()).unwrap();
+        TestRouterConf {
+            config: router_config,
+        }
+    }
+}
+
+impl From<HiveRouterConfig> for TestRouterConf {
+    fn from(config: HiveRouterConfig) -> Self {
+        TestRouterConf { config }
+    }
+}
+
+pub struct TestRouter {
+    pub serv: test::TestServer,
+    bg_tasks_manager: BackgroundTasksManager,
+}
+
+impl TestRouter {
+    pub fn graphql_request(&self) -> ClientRequest {
+        self.serv
+            .post("/graphql")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/graphql-response+json")
+    }
+}
+
+impl Drop for TestRouter {
+    fn drop(&mut self) {
+        self.bg_tasks_manager.shutdown();
+    }
+}
+
+pub async fn test_router(conf: TestRouterConf) -> Result<TestRouter, Box<dyn std::error::Error>> {
+    let mut bg_tasks_manager = BackgroundTasksManager::new();
+
+    let (shared_state, schema_state) =
+        configure_app_from_config(conf.config, &mut bg_tasks_manager).await?;
+
+    let serv = test::server(move || {
+        web::App::new()
+            .state(shared_state.clone())
+            .state(schema_state.clone())
+            .configure(configure_ntex_app)
+    });
+
+    info!("waiting for health check to pass...");
+
+    loop {
+        match serv.get("/health").send().await {
+            Ok(response) => {
+                if response.status() == 200 {
+                    break;
+                }
+            }
+            Err(err) => {
+                warn!("Server not healthy yet, retrying in 100ms: {:?}", err);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    info!("waiting for readiness check to pass...");
+
+    loop {
+        match serv.get("/readiness").send().await {
+            Ok(response) => {
+                if response.status() == 200 {
+                    break;
+                }
+            }
+            Err(err) => {
+                warn!("Server not ready, retrying in 100ms: {:?}", err);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    Ok(TestRouter {
+        serv,
+        bg_tasks_manager,
+    })
 }
