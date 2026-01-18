@@ -272,7 +272,7 @@ impl<'exec> Executor<'exec> {
 
         for child in &node.nodes {
             // Box the future to make its lifetime valid for the concurrency scope
-            let job_future = Box::pin(self.prepare_job_future(child, &ctx.final_response));
+            let job_future = self.prepare_job_future(child, &ctx.final_response);
             scope.spawn(job_future);
         }
 
@@ -294,38 +294,40 @@ impl<'exec> Executor<'exec> {
         Ok(())
     }
 
-    async fn prepare_job_future<'wave>(
+    fn prepare_job_future<'wave>(
         &'exec self,
         node: &'exec PlanNode,
         final_response: &'wave Value<'exec>,
-    ) -> Result<Option<ExecutionJob<'exec>>, PlanExecutionError> {
-        match node {
-            PlanNode::Fetch(fetch_node) => {
-                Ok(Some(self.execute_fetch_node(fetch_node, None).await?))
+    ) -> BoxFuture<'wave, Result<Option<ExecutionJob<'exec>>, PlanExecutionError>> {
+        Box::pin(async move {
+            match node {
+                PlanNode::Fetch(fetch_node) => {
+                    Ok(Some(self.execute_fetch_node(fetch_node, None).await?))
+                }
+                PlanNode::Flatten(flatten_node) => {
+                    let Some(p) = self.prepare_flatten_data(final_response, flatten_node)? else {
+                        return Ok(None);
+                    };
+                    Ok(self
+                        .execute_flatten_fetch_node(
+                            flatten_node,
+                            Some(p.representations),
+                            Some(p.representation_hashes),
+                            Some(p.representation_hash_to_index),
+                        )
+                        .await?)
+                }
+                PlanNode::Condition(node) => {
+                    let Some(node) = condition_node_by_variables(node, self.variable_values) else {
+                        return Ok(None);
+                    };
+                    // Box::pin the future for recursive calls to have the correct lifetime
+                    self.prepare_job_future(node, final_response).await
+                }
+                // Our Query Planner does not produce any other plan node types in ParallelNode
+                _ => Ok(None),
             }
-            PlanNode::Flatten(flatten_node) => {
-                let Some(p) = self.prepare_flatten_data(final_response, flatten_node)? else {
-                    return Ok(None);
-                };
-                Ok(self
-                    .execute_flatten_fetch_node(
-                        flatten_node,
-                        Some(p.representations),
-                        Some(p.representation_hashes),
-                        Some(p.representation_hash_to_index),
-                    )
-                    .await?)
-            }
-            PlanNode::Condition(node) => {
-                let Some(node) = condition_node_by_variables(node, self.variable_values) else {
-                    return Ok(None);
-                };
-                // Box::pin the future for recursive calls to have the correct lifetime
-                Box::pin(self.prepare_job_future(node, final_response)).await
-            }
-            // Our Query Planner does not produce any other plan node types in ParallelNode
-            _ => Ok(None),
-        }
+        })
     }
 
     fn process_subgraph_response(
