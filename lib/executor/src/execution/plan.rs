@@ -87,10 +87,8 @@ pub async fn execute_query_plan<'exec>(
         ctx.operation_type_name == "Query",
     );
 
-    if ctx.query_plan.node.is_some() {
-        executor
-            .execute(&mut exec_ctx, ctx.query_plan.node.as_ref())
-            .await?;
+    if let Some(node) = &ctx.query_plan.node {
+        executor.execute_plan_node(&mut exec_ctx, node).await?;
     }
 
     let mut response_headers = HeaderMap::new();
@@ -206,20 +204,18 @@ impl<'exec> Executor<'exec> {
         }
     }
 
-    pub async fn execute(
+    pub async fn execute_plan_node(
         &'exec self,
         ctx: &mut ExecutionContext<'exec>,
-        plan: Option<&'exec PlanNode>,
+        plan: &'exec PlanNode,
     ) -> Result<(), PlanExecutionError> {
         match plan {
-            Some(PlanNode::Fetch(node)) => self.execute_fetch_wave(ctx, node).await,
-            Some(PlanNode::Parallel(node)) => self.execute_parallel_wave(ctx, node).await,
-            Some(PlanNode::Sequence(node)) => self.execute_sequence_wave(ctx, node).await,
+            PlanNode::Fetch(node) => self.execute_fetch_wave(ctx, node).await,
+            PlanNode::Parallel(node) => self.execute_parallel_wave(ctx, node).await,
+            PlanNode::Sequence(node) => self.execute_sequence_wave(ctx, node).await,
             // Plans produced by our Query Planner can only start with: Fetch, Sequence or Parallel.
             // Any other node type at the root is not supported, do nothing
-            Some(_) => Ok(()),
-            // An empty plan is valid, just do nothing
-            None => Ok(()),
+            _ => Ok(()),
         }
     }
 
@@ -279,97 +275,39 @@ impl<'exec> Executor<'exec> {
         Ok(())
     }
 
-    async fn execute_plan_node(
+    fn prepare_job_future<'wave>(
         &'exec self,
-        ctx: &mut ExecutionContext<'exec>,
         node: &'exec PlanNode,
-    ) -> Result<(), PlanExecutionError> {
-        match node {
-            PlanNode::Fetch(fetch_node) => match self.execute_fetch_node(fetch_node, None).await {
-                Ok(job) => {
-                    self.process_job_result(ctx, job)?;
-                }
-                Err(err) => {
-                    self.log_error(&err);
-                    ctx.errors.push(err.into());
-                }
-            },
-            PlanNode::Parallel(parallel_node) => {
-                self.execute_parallel_wave(ctx, parallel_node).await?;
-            }
-            PlanNode::Flatten(flatten_node) => {
-                match self.prepare_flatten_data(&ctx.final_response, flatten_node) {
-                    Ok(Some(p)) => {
-                        match self
-                            .execute_flatten_fetch_node(
+        final_response: &'wave Value<'exec>,
+    ) -> BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>> {
+        Box::pin(async move {
+            match node {
+                PlanNode::Fetch(fetch_node) => self.execute_fetch_node(fetch_node, None).await,
+                PlanNode::Flatten(flatten_node) => {
+                    match self.prepare_flatten_data(final_response, flatten_node) {
+                        Ok(Some(p)) => {
+                            self.execute_flatten_fetch_node(
                                 flatten_node,
                                 Some(p.representations),
                                 Some(p.representation_hashes),
                                 Some(p.representation_hash_to_index),
                             )
                             .await
-                        {
-                            Ok(job) => {
-                                self.process_job_result(ctx, job)?;
-                            }
-                            Err(err) => {
-                                self.log_error(&err);
-                                ctx.errors.push(err.into());
-                            }
                         }
-                    }
-                    Ok(None) => { /* do nothing */ }
-                    Err(err) => {
-                        self.log_error(&err);
-                        ctx.errors.push(err.into());
+                        Ok(None) => Ok(ExecutionJob::None),
+                        Err(e) => Err(e),
                     }
                 }
-            }
-            PlanNode::Sequence(sequence_node) => {
-                self.execute_sequence_wave(ctx, sequence_node).await?;
-            }
-            PlanNode::Condition(condition_node) => {
-                if let Some(node) =
-                    condition_node_by_variables(condition_node, self.variable_values)
-                {
-                    Box::pin(self.execute_plan_node(ctx, node)).await?;
+                PlanNode::Condition(node) => {
+                    match condition_node_by_variables(node, self.variable_values) {
+                        Some(node) => self.prepare_job_future(node, final_response).await, // This is already clean.
+                        None => Ok(ExecutionJob::None),
+                    }
                 }
+                // Our Query Planner does not produce any other plan node types in ParallelNode
+                _ => Ok(ExecutionJob::None),
             }
-            // An unsupported plan node was found, do nothing.
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    fn prepare_job_future(
-        &'exec self,
-        node: &'exec PlanNode,
-        final_response: &Value<'exec>,
-    ) -> BoxFuture<'exec, Result<ExecutionJob<'exec>, PlanExecutionError>> {
-        match node {
-            PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
-            PlanNode::Flatten(flatten_node) => {
-                match self.prepare_flatten_data(final_response, flatten_node) {
-                    Ok(Some(p)) => Box::pin(self.execute_flatten_fetch_node(
-                        flatten_node,
-                        Some(p.representations),
-                        Some(p.representation_hashes),
-                        Some(p.representation_hash_to_index),
-                    )),
-                    Ok(None) => Box::pin(async { Ok(ExecutionJob::None) }),
-                    Err(e) => Box::pin(async move { Err(e) }),
-                }
-            }
-            PlanNode::Condition(node) => {
-                match condition_node_by_variables(node, self.variable_values) {
-                    Some(node) => Box::pin(self.prepare_job_future(node, final_response)), // This is already clean.
-                    None => Box::pin(async { Ok(ExecutionJob::None) }),
-                }
-            }
-            // Our Query Planner does not produce any other plan node types in ParallelNode
-            _ => Box::pin(async { Ok(ExecutionJob::None) }),
-        }
+        })
     }
 
     fn process_subgraph_response(
