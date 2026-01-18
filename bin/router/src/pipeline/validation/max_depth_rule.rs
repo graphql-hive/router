@@ -448,33 +448,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_with_detailed_error_message_when_expose_limits_is_true() {
-        let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
-            config: MaxDepthRuleConfig {
-                n: 2,
-                ignore_introspection: true,
-                flatten_fragments: false,
-            },
-        })]);
-
-        let schema: graphql_tools::static_graphql::schema::Document =
-            parse_schema(TYPE_DEFS).expect("Failed to parse schema");
-
-        let doc: graphql_tools::static_graphql::query::Document =
-            parse_query(QUERY).expect("Failed to parse query");
-
-        let errors = graphql_tools::validation::validate::validate(&schema, &doc, &validation_plan);
-
-        assert!(
-            !errors.is_empty(),
-            "Expected validation errors but found none"
-        );
-
-        let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit exceeded.");
-    }
-
-    #[test]
     fn rejects_for_fragment_named_schema_exceeding_max_depth() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {

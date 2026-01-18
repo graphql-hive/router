@@ -177,7 +177,7 @@ mod tests {
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Directives exceeded.");
+        assert_eq!(errors[0].message, "Directives limit exceeded.");
     }
 
     #[test]
@@ -206,7 +206,7 @@ mod tests {
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Directives exceeded.");
+        assert_eq!(errors[0].message, "Directives limit exceeded.");
     }
 
     #[test]
@@ -257,24 +257,6 @@ mod tests {
 
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].message, "Directives limit exceeded.");
-    }
-
-    #[test]
-    fn rejects_with_detailed_error_message_when_expose_limits_is_true() {
-        let schema = parse_schema(TYPE_DEFS)
-            .expect("Failed to parse schema")
-            .into_static();
-        let query = parse_query(QUERY)
-            .expect("Failed to parse query")
-            .into_static();
-        let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
-            config: MaxDirectivesRuleConfig { n: 3 },
-        })]);
-
-        let errors = validate(&schema, &query, &validation_plan);
-
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Directives exceeded.");
     }
 
     #[test]
