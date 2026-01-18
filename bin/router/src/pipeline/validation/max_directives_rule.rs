@@ -26,21 +26,21 @@ impl ValidationRule for MaxDirectivesRule {
         ctx: &mut OperationVisitorContext<'_>,
         error_collector: &mut ValidationErrorContext,
     ) {
+        let mut visitor = MaxDirectivesVisitor {
+            visited_fragments: HashMap::new(),
+            ctx,
+            limit_checker: LimitChecker {
+                limit: self.config.n,
+                limit_name: "Directives",
+                expose_limits: self.config.expose_limits,
+                error_code: self.error_code(),
+            },
+        };
         for definition in &ctx.operation.definitions {
             let Definition::Operation(op) = definition else {
                 continue;
             };
 
-            let mut visitor = MaxDirectivesVisitor {
-                visited_fragments: HashMap::new(),
-                ctx,
-                limit_checker: LimitChecker {
-                    limit: self.config.n,
-                    limit_name: "Directives",
-                    expose_limits: self.config.expose_limits,
-                    error_code: self.error_code(),
-                },
-            };
             // First start counting directives from the operation definition
             // `op.into()` will get `CountableNode`, then `count_directives` will
             // start counting directives nestedly
@@ -53,7 +53,7 @@ impl ValidationRule for MaxDirectivesRule {
 
 struct MaxDirectivesVisitor<'a, 'b> {
     visited_fragments: HashMap<&'a str, VisitedFragment>,
-    ctx: &'b mut OperationVisitorContext<'a>,
+    ctx: &'b OperationVisitorContext<'a>,
     limit_checker: LimitChecker,
 }
 

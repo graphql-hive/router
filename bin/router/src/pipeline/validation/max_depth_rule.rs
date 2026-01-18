@@ -26,21 +26,20 @@ impl ValidationRule for MaxDepthRule {
         ctx: &mut OperationVisitorContext<'_>,
         error_collector: &mut ValidationErrorContext,
     ) {
+        let mut visitor = MaxDepthVisitor {
+            config: &self.config,
+            visited_fragments: HashMap::new(),
+            ctx,
+            limit_checker: LimitChecker {
+                limit: self.config.n,
+                limit_name: "Query depth",
+                expose_limits: self.config.expose_limits,
+                error_code: self.error_code(),
+            },
+        };
         for definition in &ctx.operation.definitions {
             let Definition::Operation(op) = definition else {
                 continue;
-            };
-
-            let mut visitor = MaxDepthVisitor {
-                config: &self.config,
-                visited_fragments: HashMap::new(),
-                ctx,
-                limit_checker: LimitChecker {
-                    limit: self.config.n,
-                    limit_name: "Query depth",
-                    expose_limits: self.config.expose_limits,
-                    error_code: self.error_code(),
-                },
             };
             if let Err(err) = visitor.count_depth(op.into(), None) {
                 error_collector.report_error(err);
@@ -52,7 +51,7 @@ impl ValidationRule for MaxDepthRule {
 struct MaxDepthVisitor<'a, 'b> {
     config: &'b MaxDepthRuleConfig,
     visited_fragments: HashMap<&'a str, VisitedFragment>,
-    ctx: &'b mut OperationVisitorContext<'a>,
+    ctx: &'b OperationVisitorContext<'a>,
     limit_checker: LimitChecker,
 }
 
