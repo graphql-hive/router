@@ -33,7 +33,7 @@ limits:
 
 This configuration helps to prevent excessive use of directives in queries, which can lead to performance issues.
 
-# Max Tokens
+## Max Tokens
 
 Additionally, we have introduced a new configuration option to limit the maximum number of tokens in incoming GraphQL operations. This feature is designed to prevent excessively large queries that could impact server performance.
 

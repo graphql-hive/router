@@ -10,7 +10,7 @@ use graphql_tools::{
 };
 use hive_router_config::limits::MaxDepthRuleConfig;
 
-use crate::pipeline::validation::shared::{CountableNode, VisitedFragment};
+use crate::pipeline::validation::shared::{CountableNode, LimitChecker, VisitedFragment};
 
 pub struct MaxDepthRule {
     pub config: MaxDepthRuleConfig,
@@ -35,27 +35,16 @@ impl ValidationRule for MaxDepthRule {
                 config: &self.config,
                 visited_fragments: HashMap::new(),
                 ctx,
+                limit_checker: LimitChecker {
+                    limit: self.config.n,
+                    limit_name: "Query depth",
+                    expose_limits: self.config.expose_limits,
+                    error_code: self.error_code(),
+                },
             };
-            let depth = visitor.count_depth(op.into(), None);
-
-            if depth <= self.config.n {
-                continue;
+            if let Err(err) = visitor.count_depth(op.into(), None) {
+                error_collector.report_error(err);
             }
-
-            let message = if self.config.expose_limits {
-                format!(
-                    "Query depth limit of {} exceeded, found {}.",
-                    self.config.n, depth
-                )
-            } else {
-                "Query depth limit exceeded.".to_string()
-            };
-
-            error_collector.report_error(ValidationError {
-                message,
-                locations: vec![],
-                error_code: "MAX_DEPTH_EXCEEDED",
-            });
         }
     }
 }
@@ -64,16 +53,21 @@ struct MaxDepthVisitor<'a, 'b> {
     config: &'b MaxDepthRuleConfig,
     visited_fragments: HashMap<&'a str, VisitedFragment>,
     ctx: &'b mut OperationVisitorContext<'a>,
+    limit_checker: LimitChecker,
 }
 
 impl<'a> MaxDepthVisitor<'a, '_> {
-    fn count_depth(&mut self, node: CountableNode<'a>, parent_depth: Option<usize>) -> usize {
+    fn count_depth(
+        &mut self,
+        node: CountableNode<'a>,
+        parent_depth: Option<usize>,
+    ) -> Result<usize, ValidationError> {
         // If introspection queries are to be ignored, skip them from the root
         if self.config.ignore_introspection {
             if let CountableNode::Field(field) = node {
                 let field_name = field.name.as_str();
                 if field_name == "__schema" || field_name == "__type" {
-                    return 0;
+                    return Ok(0);
                 }
             }
         }
@@ -82,7 +76,7 @@ impl<'a> MaxDepthVisitor<'a, '_> {
         let mut parent_depth = parent_depth.unwrap_or(0);
 
         // Current depth starts as parent depth
-        let mut depth = parent_depth;
+        let mut depth = self.limit_checker.check_count(parent_depth)?;
 
         // Traverse the selection set if present
         if let Some(selection_set) = node.selection_set() {
@@ -100,7 +94,7 @@ impl<'a> MaxDepthVisitor<'a, '_> {
 
                 depth = cmp::max(
                     depth,
-                    self.count_depth(child.into(), Some(parent_depth + increase_by)),
+                    self.count_depth(child.into(), Some(parent_depth + increase_by))?,
                 );
             }
         }
@@ -118,9 +112,11 @@ impl<'a> MaxDepthVisitor<'a, '_> {
             match self.visited_fragments.get(fragment_name) {
                 Some(VisitedFragment::Counted(visited_fragment_depth)) => {
                     // If it was already visited, return the cached depth
-                    return parent_depth + visited_fragment_depth;
+                    return self
+                        .limit_checker
+                        .check_count(parent_depth + visited_fragment_depth);
                 }
-                Some(VisitedFragment::Visiting) => return depth,
+                Some(VisitedFragment::Visiting) => return Ok(depth),
                 None => {}
             }
 
@@ -133,18 +129,22 @@ impl<'a> MaxDepthVisitor<'a, '_> {
             // Look up the fragment definition by its name
             if let Some(fragment) = self.ctx.known_fragments.get(fragment_name) {
                 // Count the depth of the fragment
-                let fragment_depth = self.count_depth(fragment.into(), Some(0));
+                let fragment_depth = self.count_depth(fragment.into(), Some(0))?;
 
                 // Update it with the actual depth.
                 self.visited_fragments
                     .insert(fragment_name, VisitedFragment::Counted(fragment_depth));
 
+                let parent_plus_fragment = self
+                    .limit_checker
+                    .check_count(parent_depth + fragment_depth)?;
+
                 // Update the overall depth
-                depth = cmp::max(depth, parent_depth + fragment_depth);
+                depth = cmp::max(depth, parent_plus_fragment);
             }
         }
 
-        depth
+        Ok(depth)
     }
 }
 
@@ -186,7 +186,12 @@ mod tests {
     #[test]
     fn works() {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
-            config: MaxDepthRuleConfig::default(),
+            config: MaxDepthRuleConfig {
+                n: 3,
+                ignore_introspection: true,
+                flatten_fragments: false,
+                expose_limits: true,
+            },
         })]);
 
         let schema: graphql_tools::static_graphql::schema::Document =
@@ -205,7 +210,9 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
                 n: 1,
-                ..Default::default()
+                ignore_introspection: true,
+                flatten_fragments: false,
+                expose_limits: true,
             },
         })]);
 
@@ -223,7 +230,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 1 exceeded, found 3.");
+        assert_eq!(error.message, "Query depth limit of 1 exceeded, found 2.");
     }
 
     #[test]
@@ -231,7 +238,9 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
                 n: 4,
-                ..Default::default()
+                ignore_introspection: true,
+                flatten_fragments: false,
+                expose_limits: true,
             },
         })]);
 
@@ -272,8 +281,9 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
                 n: 2,
+                ignore_introspection: true,
                 flatten_fragments: true,
-                ..Default::default()
+                expose_limits: true,
             },
         })]);
 
@@ -314,8 +324,9 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
                 n: 2,
+                ignore_introspection: true,
                 flatten_fragments: true,
-                ..Default::default()
+                expose_limits: true,
             },
         })]);
 
@@ -357,7 +368,8 @@ mod tests {
             config: MaxDepthRuleConfig {
                 n: 2,
                 ignore_introspection: true,
-                ..Default::default()
+                flatten_fragments: false,
+                expose_limits: true,
             },
         })]);
 
@@ -379,7 +391,9 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
                 n: 3,
-                ..Default::default()
+                ignore_introspection: true,
+                flatten_fragments: false,
+                expose_limits: true,
             },
         })]);
 
@@ -419,8 +433,9 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
                 n: 2,
+                ignore_introspection: true,
+                flatten_fragments: false,
                 expose_limits: false,
-                ..Default::default()
             },
         })]);
 
@@ -446,8 +461,9 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
                 n: 2,
+                ignore_introspection: true,
+                flatten_fragments: false,
                 expose_limits: true,
-                ..Default::default()
             },
         })]);
 
@@ -473,8 +489,9 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
                 n: 6,
+                ignore_introspection: true,
+                flatten_fragments: false,
                 expose_limits: true,
-                ..Default::default()
             },
         })]);
 
@@ -519,8 +536,9 @@ mod tests {
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
             config: MaxDepthRuleConfig {
                 n: 6,
+                ignore_introspection: true,
+                flatten_fragments: false,
                 expose_limits: true,
-                ..Default::default()
             },
         })]);
 
