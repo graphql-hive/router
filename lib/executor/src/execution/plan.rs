@@ -3,8 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use hive_router_query_planner::planner::plan_nodes::{
-    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
-    QueryPlan, SequenceNode,
+    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode, QueryPlan,
 };
 use http::HeaderMap;
 use sonic_rs::ValueRef;
@@ -176,12 +175,6 @@ enum ExecutionJob<'exec> {
     FlattenFetch(FlattenFetchJob<'exec>),
 }
 
-struct PreparedFlattenData {
-    representations: Vec<u8>,
-    representation_hashes: Vec<u64>,
-    representation_hash_to_index: HashMap<u64, usize>,
-}
-
 impl<'exec> Executor<'exec> {
     pub fn new(
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
@@ -209,16 +202,56 @@ impl<'exec> Executor<'exec> {
         plan: &'exec PlanNode,
     ) -> Result<(), PlanExecutionError> {
         match plan {
-            PlanNode::Fetch(node) => self.execute_fetch_wave(ctx, node).await,
-            PlanNode::Parallel(node) => self.execute_parallel_wave(ctx, node).await,
-            PlanNode::Sequence(node) => self.execute_sequence_wave(ctx, node).await,
+            PlanNode::Fetch(node) => match self.execute_fetch_node(node, None).await {
+                Ok(result) => self.process_job_result(ctx, result),
+                Err(err) => {
+                    self.log_error(&err);
+                    ctx.errors.push(err.into());
+                    Ok(())
+                }
+            },
+            PlanNode::Parallel(node) => {
+                let mut scope = ConcurrencyScope::new();
+
+                for child in &node.nodes {
+                    let job_future = self.prepare_job_future(child, &ctx.final_response);
+                    scope.spawn(job_future);
+                }
+
+                let results = scope.join_all().await;
+
+                for result in results {
+                    match result {
+                        Ok(Some(job)) => {
+                            self.process_job_result(ctx, job)?;
+                        }
+                        Ok(None) => { /* do nothing */ }
+                        Err(err) => {
+                            self.log_error(&err);
+                            ctx.errors.push(err.into())
+                        }
+                    }
+                }
+
+                Ok(())
+            }
+            PlanNode::Sequence(node) => {
+                for child in &node.nodes {
+                    // Box::pin the future for recursive calls to have the correct lifetime
+                    // self.execute_plan_node can call back into execute_sequence_wave
+                    Box::pin(self.execute_plan_node(ctx, child)).await?;
+                }
+
+                Ok(())
+            }
             PlanNode::Flatten(node) => {
                 let Some(job) = self
-                    .execute_flatten_fetch_node(node, None, None, None)
+                    .execute_flatten_fetch_node(node, &ctx.final_response)
                     .await?
                 else {
                     return Ok(());
                 };
+
                 self.process_job_result(ctx, job)
             }
             PlanNode::Condition(node) => {
@@ -234,65 +267,6 @@ impl<'exec> Executor<'exec> {
         }
     }
 
-    async fn execute_fetch_wave(
-        &'exec self,
-        ctx: &mut ExecutionContext<'exec>,
-        node: &'exec FetchNode,
-    ) -> Result<(), PlanExecutionError> {
-        match self.execute_fetch_node(node, None).await {
-            Ok(result) => self.process_job_result(ctx, result),
-            Err(err) => {
-                self.log_error(&err);
-                ctx.errors.push(err.into());
-                Ok(())
-            }
-        }
-    }
-
-    async fn execute_sequence_wave(
-        &'exec self,
-        ctx: &mut ExecutionContext<'exec>,
-        node: &'exec SequenceNode,
-    ) -> Result<(), PlanExecutionError> {
-        for child in &node.nodes {
-            // Box::pin the future for recursive calls to have the correct lifetime
-            // self.execute_plan_node can call back into execute_sequence_wave
-            Box::pin(self.execute_plan_node(ctx, child)).await?;
-        }
-
-        Ok(())
-    }
-
-    async fn execute_parallel_wave(
-        &'exec self,
-        ctx: &mut ExecutionContext<'exec>,
-        node: &'exec ParallelNode,
-    ) -> Result<(), PlanExecutionError> {
-        let mut scope = ConcurrencyScope::new();
-
-        for child in &node.nodes {
-            let job_future = self.prepare_job_future(child, &ctx.final_response);
-            scope.spawn(job_future);
-        }
-
-        let results = scope.join_all().await;
-
-        for result in results {
-            match result {
-                Ok(Some(job)) => {
-                    self.process_job_result(ctx, job)?;
-                }
-                Ok(None) => { /* do nothing */ }
-                Err(err) => {
-                    self.log_error(&err);
-                    ctx.errors.push(err.into())
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     fn prepare_job_future<'wave>(
         &'exec self,
         node: &'exec PlanNode,
@@ -303,19 +277,9 @@ impl<'exec> Executor<'exec> {
                 PlanNode::Fetch(fetch_node) => {
                     Ok(Some(self.execute_fetch_node(fetch_node, None).await?))
                 }
-                PlanNode::Flatten(flatten_node) => {
-                    let Some(p) = self.prepare_flatten_data(final_response, flatten_node)? else {
-                        return Ok(None);
-                    };
-                    Ok(self
-                        .execute_flatten_fetch_node(
-                            flatten_node,
-                            Some(p.representations),
-                            Some(p.representation_hashes),
-                            Some(p.representation_hash_to_index),
-                        )
-                        .await?)
-                }
+                PlanNode::Flatten(flatten_node) => Ok(self
+                    .execute_flatten_fetch_node(flatten_node, final_response)
+                    .await?),
                 PlanNode::Condition(node) => {
                     let Some(node) = condition_node_by_variables(node, self.variable_values) else {
                         return Ok(None);
@@ -455,15 +419,15 @@ impl<'exec> Executor<'exec> {
         Ok(())
     }
 
-    fn prepare_flatten_data(
-        &self,
-        final_response: &Value<'exec>,
+    async fn execute_flatten_fetch_node<'wave>(
+        &'exec self,
         flatten_node: &'exec FlattenNode,
-    ) -> Result<Option<PreparedFlattenData>, PlanExecutionError> {
-        let fetch_node = match flatten_node.node.as_ref() {
-            PlanNode::Fetch(fetch_node) => fetch_node,
-            _ => return Ok(None),
+        final_response: &'wave Value<'exec>,
+    ) -> Result<Option<ExecutionJob<'exec>>, PlanExecutionError> {
+        let PlanNode::Fetch(fetch_node) = flatten_node.node.as_ref() else {
+            return Ok(None);
         };
+
         let requires_nodes = match fetch_node.requires.as_ref() {
             Some(nodes) => nodes,
             None => return Ok(None),
@@ -531,36 +495,20 @@ impl<'exec> Executor<'exec> {
             return Ok(None);
         }
 
-        Ok(Some(PreparedFlattenData {
-            representations: filtered_representations,
-            representation_hashes,
-            representation_hash_to_index: filtered_representations_hashes,
-        }))
-    }
-
-    async fn execute_flatten_fetch_node(
-        &'exec self,
-        node: &'exec FlattenNode,
-        representations: Option<Vec<u8>>,
-        representation_hashes: Option<Vec<u64>>,
-        filtered_representations_hashes: Option<HashMap<u64, usize>>,
-    ) -> Result<Option<ExecutionJob<'exec>>, PlanExecutionError> {
-        let PlanNode::Fetch(fetch_node) = &node.node.as_ref() else {
-            return Ok(None);
-        };
-
-        let ExecutionJob::Fetch(job) = self.execute_fetch_node(fetch_node, representations).await?
+        let ExecutionJob::Fetch(job) = self
+            .execute_fetch_node(fetch_node, Some(filtered_representations))
+            .await?
         else {
             return Ok(None);
         };
 
         Ok(Some(ExecutionJob::FlattenFetch(FlattenFetchJob {
-            flatten_node_path: &node.path,
+            flatten_node_path: &flatten_node.path,
             response: job.response,
             fetch_node_id: fetch_node.id,
             subgraph_name: &fetch_node.service_name,
-            representation_hashes: representation_hashes.unwrap_or_default(),
-            representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
+            representation_hashes,
+            representation_hash_to_index: filtered_representations_hashes,
         })))
     }
 
