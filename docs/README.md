@@ -1674,7 +1674,6 @@ It is used to prevent too large queries that could lead to overfetching or DOS a
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**expose\_limits**|`boolean`|Whether to expose the limits in the error message.<br/>Default: `true`<br/>|no|
 |**flatten\_fragments**|`boolean`|Flatten fragment spreads and inline fragments when calculating depth.<br/>Default: `false`<br/>|no|
 |**ignore\_introspection**|`boolean`|Ignore the depth of introspection queries.<br/>Default: `true`<br/>|no|
 |**n**|`integer`|Depth threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
@@ -1692,7 +1691,6 @@ It is used to prevent too many directives that could lead to overfetching or DOS
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**expose\_limits**|`boolean`|Whether to expose the limits in the error message.<br/>Default: `true`<br/>|no|
 |**n**|`integer`|Directives threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
 
 <a name="limitsmax_tokens"></a>
@@ -1708,7 +1706,6 @@ It is used to prevent too large queries that could lead to overfetching or DOS a
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**expose\_limits**|`boolean`|Whether to expose the limits in the error message.<br/>Default: `true`<br/>|no|
 |**n**|`integer`|Tokens threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
 
 <a name="log"></a>
