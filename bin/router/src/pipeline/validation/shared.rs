@@ -4,7 +4,6 @@ use graphql_tools::{
         Directive, Field, FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition,
         Selection, SelectionSet,
     },
-    validation::utils::ValidationError,
 };
 
 /**
@@ -108,39 +107,4 @@ impl<'a> From<&'a OperationDefinition> for CountableNode<'a> {
 pub enum VisitedFragment {
     Counted(usize),
     Visiting,
-}
-
-/**
- * The LimitCounter struct is a utility to help
- * with counting and enforcing limits in validation rules.
- */
-pub struct LimitChecker {
-    pub limit: usize,
-    pub limit_name: &'static str,
-    pub expose_limits: bool,
-    pub error_code: &'static str,
-}
-
-impl LimitChecker {
-    pub fn check_count(&self, counted: usize) -> Result<usize, ValidationError> {
-        if counted > self.limit {
-            if self.expose_limits {
-                return Err(ValidationError {
-                    locations: vec![],
-                    message: format!(
-                        "{} limit of {} exceeded, found {}.",
-                        self.limit_name, self.limit, counted
-                    ),
-                    error_code: self.error_code,
-                });
-            } else {
-                return Err(ValidationError {
-                    locations: vec![],
-                    message: format!("{} limit exceeded.", self.limit_name),
-                    error_code: self.error_code,
-                });
-            }
-        }
-        Ok(counted)
-    }
 }

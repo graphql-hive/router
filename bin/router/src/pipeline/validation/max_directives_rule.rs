@@ -10,7 +10,7 @@ use graphql_tools::{
 };
 use hive_router_config::limits::MaxDirectivesRuleConfig;
 
-use crate::pipeline::validation::shared::{CountableNode, LimitChecker, VisitedFragment};
+use crate::pipeline::validation::shared::{CountableNode, VisitedFragment};
 
 pub struct MaxDirectivesRule {
     pub config: MaxDirectivesRuleConfig,
@@ -27,14 +27,9 @@ impl ValidationRule for MaxDirectivesRule {
         error_collector: &mut ValidationErrorContext,
     ) {
         let mut visitor = MaxDirectivesVisitor {
+            config: &self.config,
             visited_fragments: HashMap::with_capacity(ctx.known_fragments.len()),
             ctx,
-            limit_checker: LimitChecker {
-                limit: self.config.n,
-                limit_name: "Directives",
-                expose_limits: self.config.expose_limits,
-                error_code: self.error_code(),
-            },
         };
         for definition in &ctx.operation.definitions {
             let Definition::Operation(op) = definition else {
@@ -52,12 +47,28 @@ impl ValidationRule for MaxDirectivesRule {
 }
 
 struct MaxDirectivesVisitor<'a, 'b> {
+    config: &'b MaxDirectivesRuleConfig,
     visited_fragments: HashMap<&'a str, VisitedFragment>,
     ctx: &'b OperationVisitorContext<'a>,
-    limit_checker: LimitChecker,
 }
 
 impl<'a> MaxDirectivesVisitor<'a, '_> {
+    fn check_limit(&self, count: usize) -> Result<usize, ValidationError> {
+        if count > self.config.n {
+            let message = if self.config.expose_limits {
+                format!("Directives limit of {} exceeded.", self.config.n)
+            } else {
+                "Directives limit exceeded.".to_string()
+            };
+            Err(ValidationError {
+                locations: vec![],
+                message,
+                error_code: "MAX_DIRECTIVES_EXCEEDED",
+            })
+        } else {
+            Ok(count)
+        }
+    }
     fn count_directives(
         &mut self,
         countable_node: CountableNode<'a>,
@@ -66,9 +77,7 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
         let mut directive_count: usize = 0;
         // Get the directives of the current node
         if let Some(directives) = countable_node.get_directives() {
-            directive_count = self
-                .limit_checker
-                .check_count(directive_count + directives.len())?;
+            directive_count = self.check_limit(directive_count + directives.len())?;
         }
 
         // If it is a node that has selections, iterate over the selection set, and get their number of directives
@@ -76,9 +85,7 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
             for selection in &selection_set.items {
                 let countable_node: CountableNode<'a> = selection.into();
                 let child_directives = self.count_directives(countable_node)?;
-                directive_count = self
-                    .limit_checker
-                    .check_count(directive_count + child_directives)?;
+                directive_count = self.check_limit(directive_count + child_directives)?;
             }
         }
 
@@ -89,7 +96,7 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
             // Check if the fragment was already visited
             match self.visited_fragments.get(fragment_name) {
                 Some(VisitedFragment::Counted(num)) => {
-                    return self.limit_checker.check_count(directive_count + num);
+                    return self.check_limit(directive_count + num);
                 }
                 Some(VisitedFragment::Visiting) => return Ok(directive_count),
                 None => {}
@@ -110,9 +117,7 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
                     fragment_name,
                     VisitedFragment::Counted(fragment_directive_count),
                 );
-                directive_count = self
-                    .limit_checker
-                    .check_count(directive_count + fragment_directive_count)?;
+                directive_count = self.check_limit(directive_count + fragment_directive_count)?;
             }
         }
 
@@ -183,10 +188,7 @@ mod tests {
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(
-            errors[0].message,
-            "Directives limit of 3 exceeded, found 4."
-        );
+        assert_eq!(errors[0].message, "Directives limit of 3 exceeded.");
     }
 
     #[test]
@@ -218,10 +220,7 @@ mod tests {
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(
-            errors[0].message,
-            "Directives limit of 3 exceeded, found 4."
-        );
+        assert_eq!(errors[0].message, "Directives limit of 3 exceeded.");
     }
 
     #[test]
@@ -298,10 +297,7 @@ mod tests {
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(
-            errors[0].message,
-            "Directives limit of 3 exceeded, found 4."
-        );
+        assert_eq!(errors[0].message, "Directives limit of 3 exceeded.");
     }
 
     #[test]

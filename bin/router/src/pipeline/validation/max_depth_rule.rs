@@ -10,7 +10,7 @@ use graphql_tools::{
 };
 use hive_router_config::limits::MaxDepthRuleConfig;
 
-use crate::pipeline::validation::shared::{CountableNode, LimitChecker, VisitedFragment};
+use crate::pipeline::validation::shared::{CountableNode, VisitedFragment};
 
 pub struct MaxDepthRule {
     pub config: MaxDepthRuleConfig,
@@ -30,12 +30,6 @@ impl ValidationRule for MaxDepthRule {
             config: &self.config,
             visited_fragments: HashMap::with_capacity(ctx.known_fragments.len()),
             ctx,
-            limit_checker: LimitChecker {
-                limit: self.config.n,
-                limit_name: "Query depth",
-                expose_limits: self.config.expose_limits,
-                error_code: self.error_code(),
-            },
         };
         for definition in &ctx.operation.definitions {
             let Definition::Operation(op) = definition else {
@@ -52,10 +46,25 @@ struct MaxDepthVisitor<'a, 'b> {
     config: &'b MaxDepthRuleConfig,
     visited_fragments: HashMap<&'a str, VisitedFragment>,
     ctx: &'b OperationVisitorContext<'a>,
-    limit_checker: LimitChecker,
 }
 
 impl<'a> MaxDepthVisitor<'a, '_> {
+    fn check_limit(&self, count: usize) -> Result<usize, ValidationError> {
+        if count > self.config.n {
+            let message = if self.config.expose_limits {
+                format!("Query depth limit of {} exceeded.", self.config.n)
+            } else {
+                "Query depth limit exceeded.".to_string()
+            };
+            Err(ValidationError {
+                locations: vec![],
+                message,
+                error_code: "MAX_DEPTH_EXCEEDED",
+            })
+        } else {
+            Ok(count)
+        }
+    }
     fn count_depth(
         &mut self,
         node: CountableNode<'a>,
@@ -75,7 +84,7 @@ impl<'a> MaxDepthVisitor<'a, '_> {
         let mut parent_depth = parent_depth.unwrap_or(0);
 
         // Current depth starts as parent depth
-        let mut depth = self.limit_checker.check_count(parent_depth)?;
+        let mut depth = self.check_limit(parent_depth)?;
 
         // Traverse the selection set if present
         if let Some(selection_set) = node.selection_set() {
@@ -111,9 +120,7 @@ impl<'a> MaxDepthVisitor<'a, '_> {
             match self.visited_fragments.get(fragment_name) {
                 Some(VisitedFragment::Counted(visited_fragment_depth)) => {
                     // If it was already visited, return the cached depth
-                    return self
-                        .limit_checker
-                        .check_count(parent_depth + visited_fragment_depth);
+                    return self.check_limit(parent_depth + visited_fragment_depth);
                 }
                 Some(VisitedFragment::Visiting) => return Ok(depth),
                 None => {}
@@ -134,9 +141,7 @@ impl<'a> MaxDepthVisitor<'a, '_> {
                 self.visited_fragments
                     .insert(fragment_name, VisitedFragment::Counted(fragment_depth));
 
-                let parent_plus_fragment = self
-                    .limit_checker
-                    .check_count(parent_depth + fragment_depth)?;
+                let parent_plus_fragment = self.check_limit(parent_depth + fragment_depth)?;
 
                 // Update the overall depth
                 depth = cmp::max(depth, parent_plus_fragment);
@@ -229,7 +234,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 1 exceeded, found 2.");
+        assert_eq!(error.message, "Query depth limit of 1 exceeded.");
     }
 
     #[test]
@@ -272,7 +277,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 4 exceeded, found 5.");
+        assert_eq!(error.message, "Query depth limit of 4 exceeded.");
     }
 
     #[test]
@@ -315,7 +320,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 2 exceeded, found 3.");
+        assert_eq!(error.message, "Query depth limit of 2 exceeded.");
     }
 
     #[test]
@@ -356,7 +361,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 2 exceeded, found 3.");
+        assert_eq!(error.message, "Query depth limit of 2 exceeded.");
     }
 
     const INTROSPECTION_QUERY: &'static str =
@@ -424,7 +429,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 3 exceeded, found 5.");
+        assert_eq!(error.message, "Query depth limit of 3 exceeded.");
     }
 
     #[test]
@@ -480,7 +485,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 2 exceeded, found 3.");
+        assert_eq!(error.message, "Query depth limit of 2 exceeded.");
     }
 
     #[test]
@@ -527,7 +532,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 6 exceeded, found 8.");
+        assert_eq!(error.message, "Query depth limit of 6 exceeded.");
     }
 
     #[test]
@@ -579,6 +584,6 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 6 exceeded, found 8.");
+        assert_eq!(error.message, "Query depth limit of 6 exceeded.");
     }
 }
