@@ -5,9 +5,8 @@ use hive_router_internal::expressions::{
     values::boolean::BooleanOrProgram, CompileExpression, ExpressionCompileError,
 };
 use hive_router_plan_executor::{
-    execution::client_request_details,
-    introspection::resolve::IntrospectionContext,
-    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
+    execution::client_request_details, introspection::resolve::IntrospectionContext,
+    response::graphql_error::GraphQLError,
 };
 use vrl::core::Value as VrlValue;
 
@@ -28,7 +27,7 @@ pub fn compile_introspection_policy(
 pub fn handle_introspection_policy(
     introspection_policy_prog: &BooleanOrProgram,
     introspection_context: &mut IntrospectionContext,
-    client_request_details: &client_request_details::ClientRequestDetails<'_, '_>,
+    client_request_details: &client_request_details::ClientRequestDetails<'_>,
     initial_errors: &mut Vec<GraphQLError>,
 ) -> Result<(), PipelineError> {
     let is_enabled = introspection_policy_prog
@@ -49,8 +48,8 @@ pub fn handle_introspection_policy(
 }
 
 pub fn create_introspection_disabled_error() -> GraphQLError {
-    GraphQLError::from_message_and_extensions(
-        "Introspection queries are disabled.".into(),
-        GraphQLErrorExtensions::new_from_code("INTROSPECTION_DISABLED"),
+    GraphQLError::from_message_and_code(
+        "Introspection queries are disabled.",
+        "INTROSPECTION_DISABLED",
     )
 }
