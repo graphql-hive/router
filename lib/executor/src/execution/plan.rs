@@ -212,6 +212,15 @@ impl<'exec> Executor<'exec> {
             PlanNode::Fetch(node) => self.execute_fetch_wave(ctx, node).await,
             PlanNode::Parallel(node) => self.execute_parallel_wave(ctx, node).await,
             PlanNode::Sequence(node) => self.execute_sequence_wave(ctx, node).await,
+            PlanNode::Flatten(node) => {
+                let Some(job) = self
+                    .execute_flatten_fetch_node(node, None, None, None)
+                    .await?
+                else {
+                    return Ok(());
+                };
+                self.process_job_result(ctx, job)
+            }
             PlanNode::Condition(node) => {
                 let Some(node) = condition_node_by_variables(node, self.variable_values) else {
                     return Ok(());
