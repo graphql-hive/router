@@ -122,7 +122,7 @@ pub struct LimitChecker {
 }
 
 impl LimitChecker {
-    pub fn check_count(&mut self, counted: usize) -> Result<usize, ValidationError> {
+    pub fn check_count(&self, counted: usize) -> Result<usize, ValidationError> {
         if counted > self.limit {
             if self.expose_limits {
                 return Err(ValidationError {
