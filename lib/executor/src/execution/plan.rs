@@ -240,6 +240,8 @@ impl<'exec> Executor<'exec> {
         node: &'exec SequenceNode,
     ) -> Result<(), PlanExecutionError> {
         for child in &node.nodes {
+            // Box::pin the future for recursive calls to have the correct lifetime
+            // self.execute_plan_node can call back into execute_sequence_wave
             Box::pin(self.execute_plan_node(ctx, child)).await?;
         }
 
@@ -254,7 +256,8 @@ impl<'exec> Executor<'exec> {
         let mut scope = ConcurrencyScope::new();
 
         for child in &node.nodes {
-            let job_future = self.prepare_job_future(child, &ctx.final_response);
+            // Box the future to make its lifetime valid for the concurrency scope
+            let job_future = Box::pin(self.prepare_job_future(child, &ctx.final_response));
             scope.spawn(job_future);
         }
 
@@ -275,39 +278,38 @@ impl<'exec> Executor<'exec> {
         Ok(())
     }
 
-    fn prepare_job_future<'wave>(
+    async fn prepare_job_future<'wave>(
         &'exec self,
         node: &'exec PlanNode,
         final_response: &'wave Value<'exec>,
-    ) -> BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>> {
-        Box::pin(async move {
-            match node {
-                PlanNode::Fetch(fetch_node) => self.execute_fetch_node(fetch_node, None).await,
-                PlanNode::Flatten(flatten_node) => {
-                    match self.prepare_flatten_data(final_response, flatten_node) {
-                        Ok(Some(p)) => {
-                            self.execute_flatten_fetch_node(
-                                flatten_node,
-                                Some(p.representations),
-                                Some(p.representation_hashes),
-                                Some(p.representation_hash_to_index),
-                            )
-                            .await
-                        }
-                        Ok(None) => Ok(ExecutionJob::None),
-                        Err(e) => Err(e),
+    ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
+        match node {
+            PlanNode::Fetch(fetch_node) => self.execute_fetch_node(fetch_node, None).await,
+            PlanNode::Flatten(flatten_node) => {
+                match self.prepare_flatten_data(final_response, flatten_node) {
+                    Ok(Some(p)) => {
+                        self.execute_flatten_fetch_node(
+                            flatten_node,
+                            Some(p.representations),
+                            Some(p.representation_hashes),
+                            Some(p.representation_hash_to_index),
+                        )
+                        .await
                     }
+                    Ok(None) => Ok(ExecutionJob::None),
+                    Err(e) => Err(e),
                 }
-                PlanNode::Condition(node) => {
-                    match condition_node_by_variables(node, self.variable_values) {
-                        Some(node) => self.prepare_job_future(node, final_response).await, // This is already clean.
-                        None => Ok(ExecutionJob::None),
-                    }
-                }
-                // Our Query Planner does not produce any other plan node types in ParallelNode
-                _ => Ok(ExecutionJob::None),
             }
-        })
+            PlanNode::Condition(node) => {
+                match condition_node_by_variables(node, self.variable_values) {
+                    // Box::pin the future for recursive calls to have the correct lifetime
+                    Some(node) => Box::pin(self.prepare_job_future(node, final_response)).await, // This is already clean.
+                    None => Ok(ExecutionJob::None),
+                }
+            }
+            // Our Query Planner does not produce any other plan node types in ParallelNode
+            _ => Ok(ExecutionJob::None),
+        }
     }
 
     fn process_subgraph_response(
