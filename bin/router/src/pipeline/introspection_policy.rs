@@ -41,15 +41,11 @@ pub fn handle_introspection_policy(
 
     if !is_enabled {
         introspection_context.query = None;
-        initial_errors.push(create_introspection_disabled_error());
+        initial_errors.push(GraphQLError::from_message_and_code(
+            "Introspection queries are disabled.",
+            "INTROSPECTION_DISABLED",
+        ));
     }
 
     Ok(())
-}
-
-pub fn create_introspection_disabled_error() -> GraphQLError {
-    GraphQLError::from_message_and_code(
-        "Introspection queries are disabled.",
-        "INTROSPECTION_DISABLED",
-    )
 }
