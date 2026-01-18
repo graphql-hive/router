@@ -271,7 +271,6 @@ impl<'exec> Executor<'exec> {
         let mut scope = ConcurrencyScope::new();
 
         for child in &node.nodes {
-            // Box the future to make its lifetime valid for the concurrency scope
             let job_future = self.prepare_job_future(child, &ctx.final_response);
             scope.spawn(job_future);
         }
@@ -321,7 +320,6 @@ impl<'exec> Executor<'exec> {
                     let Some(node) = condition_node_by_variables(node, self.variable_values) else {
                         return Ok(None);
                     };
-                    // Box::pin the future for recursive calls to have the correct lifetime
                     self.prepare_job_future(node, final_response).await
                 }
                 // Our Query Planner does not produce any other plan node types in ParallelNode
