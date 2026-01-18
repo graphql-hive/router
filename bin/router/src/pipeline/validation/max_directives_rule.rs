@@ -27,7 +27,7 @@ impl ValidationRule for MaxDirectivesRule {
         error_collector: &mut ValidationErrorContext,
     ) {
         let mut visitor = MaxDirectivesVisitor {
-            visited_fragments: HashMap::new(),
+            visited_fragments: HashMap::with_capacity(ctx.known_fragments.len()),
             ctx,
             limit_checker: LimitChecker {
                 limit: self.config.n,

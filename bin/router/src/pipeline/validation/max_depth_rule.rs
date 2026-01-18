@@ -28,7 +28,7 @@ impl ValidationRule for MaxDepthRule {
     ) {
         let mut visitor = MaxDepthVisitor {
             config: &self.config,
-            visited_fragments: HashMap::new(),
+            visited_fragments: HashMap::with_capacity(ctx.known_fragments.len()),
             ctx,
             limit_checker: LimitChecker {
                 limit: self.config.n,

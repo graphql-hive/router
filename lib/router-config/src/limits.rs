@@ -7,21 +7,21 @@ pub struct LimitsConfig {
     /// If not specified, depth limiting is disabled.
     ///
     /// It is used to prevent too large queries that could lead to overfetching or DOS attacks.
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_depth: Option<MaxDepthRuleConfig>,
 
     /// Configuration of limiting the number of directives in the incoming GraphQL operations.
     /// If not specified, directive limiting is disabled.
     ///
     /// It is used to prevent too many directives that could lead to overfetching or DOS attacks.
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_directives: Option<MaxDirectivesRuleConfig>,
 
     /// Configuration of limiting the number of tokens in the incoming GraphQL operations.
     /// If not specified, token limiting is disabled.
     ///
     /// It is used to prevent too large queries that could lead to overfetching or DOS attacks.
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<MaxTokensRuleConfig>,
 }
 
