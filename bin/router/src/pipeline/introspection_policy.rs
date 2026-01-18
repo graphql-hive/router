@@ -28,8 +28,11 @@ pub fn handle_introspection_policy(
     introspection_policy_prog: &BooleanOrProgram,
     introspection_context: &mut IntrospectionContext,
     client_request_details: &client_request_details::ClientRequestDetails<'_>,
-    initial_errors: &mut Vec<GraphQLError>,
-) -> Result<(), PipelineError> {
+) -> Result<Option<GraphQLError>, PipelineError> {
+    // If no introspection query is present, nothing to do
+    if introspection_context.query.is_none() {
+        return Ok(None);
+    }
     let is_enabled = introspection_policy_prog
         .resolve(|| {
             let mut context_map = BTreeMap::new();
@@ -41,11 +44,11 @@ pub fn handle_introspection_policy(
 
     if !is_enabled {
         introspection_context.query = None;
-        initial_errors.push(GraphQLError::from_message_and_code(
+        Ok(Some(GraphQLError::from_message_and_code(
             "Introspection queries are disabled.",
             "INTROSPECTION_DISABLED",
-        ));
+        )))
+    } else {
+        Ok(None)
     }
-
-    Ok(())
 }

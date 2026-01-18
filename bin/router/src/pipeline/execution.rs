@@ -108,13 +108,12 @@ pub async fn execute_plan(
         );
     }
 
-    if introspection_context.query.is_some() {
-        handle_introspection_policy(
-            &app_state.introspection_policy,
-            &mut introspection_context,
-            planned_request.client_request_details,
-            &mut initial_errors,
-        )?;
+    if let Some(introspection_disabled_error) = handle_introspection_policy(
+        &app_state.introspection_policy,
+        &mut introspection_context,
+        planned_request.client_request_details,
+    )? {
+        initial_errors.push(introspection_disabled_error);
     }
 
     execute_query_plan(QueryPlanExecutionContext {
