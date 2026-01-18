@@ -32,7 +32,6 @@ pub struct TokenStream<'a> {
     recursion_limit: usize,
     token_limit: Option<usize>,
     token_count: usize,
-    expose_limits: bool,
 }
 
 impl TokenStream<'_> {
@@ -133,11 +132,11 @@ fn check_float(value: &str, exponent: Option<usize>, real: Option<usize>) -> boo
 
 impl<'a> TokenStream<'a> {
     pub fn new(s: &'a str) -> TokenStream<'a> {
-        Self::with_recursion_limit(s, 50, None, false)
+        Self::with_recursion_limit(s, 50, None)
     }
 
-    pub fn new_with_limit(s: &'a str, token_limit: usize, expose_limits: bool) -> TokenStream<'a> {
-        Self::with_recursion_limit(s, 50, Some(token_limit), expose_limits)
+    pub fn new_with_token_limit(s: &'a str, token_limit: usize) -> TokenStream<'a> {
+        Self::with_recursion_limit(s, 50, Some(token_limit))
     }
 
     /// Specify a limit to recursive parsing. Note that increasing the limit
@@ -147,7 +146,6 @@ impl<'a> TokenStream<'a> {
         s: &'a str,
         recursion_limit: usize,
         token_limit: Option<usize>,
-        expose_limits: bool,
     ) -> TokenStream<'a> {
         let mut me = TokenStream {
             buf: s,
@@ -157,7 +155,6 @@ impl<'a> TokenStream<'a> {
             recursion_limit,
             token_limit,
             token_count: 0,
-            expose_limits,
         };
         me.skip_whitespace();
         me
@@ -179,14 +176,7 @@ impl<'a> TokenStream<'a> {
     fn take_token(&mut self) -> Result<(Kind, usize), Error<Token<'a>, Token<'a>>> {
         if let Some(limit) = self.token_limit {
             if self.token_count >= limit {
-                if self.expose_limits {
-                    return Err(Error::message_format(format!(
-                        "Token limit of {} exceeded",
-                        limit
-                    )));
-                } else {
-                    return Err(Error::message_static_message("Token limit exceeded"));
-                }
+                return Err(Error::message_static_message("Token limit exceeded"));
             }
         }
         use self::Kind::*;

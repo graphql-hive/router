@@ -258,15 +258,14 @@ where
     handle_token_stream(tokens)
 }
 
-pub fn parse_query_with_limit<'a, S>(
+pub fn parse_query_with_token_limit<'a, S>(
     s: &'a str,
     token_limit: usize,
-    expose_limit: bool,
 ) -> Result<Document<'a, S>, ParseError>
 where
     S: Text<'a>,
 {
-    let tokens = TokenStream::new_with_limit(s, token_limit, expose_limit);
+    let tokens = TokenStream::new_with_token_limit(s, token_limit);
     handle_token_stream(tokens)
 }
 

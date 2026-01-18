@@ -51,14 +51,9 @@ struct MaxDepthVisitor<'a, 'b> {
 impl<'a> MaxDepthVisitor<'a, '_> {
     fn check_limit(&self, count: usize) -> Result<usize, ValidationError> {
         if count > self.config.n {
-            let message = if self.config.expose_limits {
-                format!("Query depth limit of {} exceeded.", self.config.n)
-            } else {
-                "Query depth limit exceeded.".to_string()
-            };
             Err(ValidationError {
                 locations: vec![],
-                message,
+                message: "Query depth limit exceeded.".to_string(),
                 error_code: "MAX_DEPTH_EXCEEDED",
             })
         } else {
@@ -194,7 +189,6 @@ mod tests {
                 n: 3,
                 ignore_introspection: true,
                 flatten_fragments: false,
-                expose_limits: true,
             },
         })]);
 
@@ -216,7 +210,6 @@ mod tests {
                 n: 1,
                 ignore_introspection: true,
                 flatten_fragments: false,
-                expose_limits: true,
             },
         })]);
 
@@ -234,7 +227,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 1 exceeded.");
+        assert_eq!(error.message, "Query depth limit exceeded.");
     }
 
     #[test]
@@ -244,7 +237,6 @@ mod tests {
                 n: 4,
                 ignore_introspection: true,
                 flatten_fragments: false,
-                expose_limits: true,
             },
         })]);
 
@@ -277,7 +269,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 4 exceeded.");
+        assert_eq!(error.message, "Query depth limit exceeded.");
     }
 
     #[test]
@@ -287,7 +279,6 @@ mod tests {
                 n: 2,
                 ignore_introspection: true,
                 flatten_fragments: true,
-                expose_limits: true,
             },
         })]);
 
@@ -320,7 +311,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 2 exceeded.");
+        assert_eq!(error.message, "Query depth limit exceeded.");
     }
 
     #[test]
@@ -330,7 +321,6 @@ mod tests {
                 n: 2,
                 ignore_introspection: true,
                 flatten_fragments: true,
-                expose_limits: true,
             },
         })]);
 
@@ -361,7 +351,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 2 exceeded.");
+        assert_eq!(error.message, "Query depth limit exceeded.");
     }
 
     const INTROSPECTION_QUERY: &'static str =
@@ -373,7 +363,6 @@ mod tests {
                 n: 2,
                 ignore_introspection: true,
                 flatten_fragments: false,
-                expose_limits: true,
             },
         })]);
 
@@ -397,7 +386,6 @@ mod tests {
                 n: 3,
                 ignore_introspection: true,
                 flatten_fragments: false,
-                expose_limits: true,
             },
         })]);
 
@@ -429,7 +417,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 3 exceeded.");
+        assert_eq!(error.message, "Query depth limit exceeded.");
     }
 
     #[test]
@@ -439,7 +427,6 @@ mod tests {
                 n: 2,
                 ignore_introspection: true,
                 flatten_fragments: false,
-                expose_limits: false,
             },
         })]);
 
@@ -467,7 +454,6 @@ mod tests {
                 n: 2,
                 ignore_introspection: true,
                 flatten_fragments: false,
-                expose_limits: true,
             },
         })]);
 
@@ -485,7 +471,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 2 exceeded.");
+        assert_eq!(error.message, "Query depth limit exceeded.");
     }
 
     #[test]
@@ -495,7 +481,6 @@ mod tests {
                 n: 6,
                 ignore_introspection: true,
                 flatten_fragments: false,
-                expose_limits: true,
             },
         })]);
 
@@ -532,7 +517,7 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 6 exceeded.");
+        assert_eq!(error.message, "Query depth limit exceeded.");
     }
 
     #[test]
@@ -542,7 +527,6 @@ mod tests {
                 n: 6,
                 ignore_introspection: true,
                 flatten_fragments: false,
-                expose_limits: true,
             },
         })]);
 
@@ -584,6 +568,6 @@ mod tests {
         );
 
         let error = &errors[0];
-        assert_eq!(error.message, "Query depth limit of 6 exceeded.");
+        assert_eq!(error.message, "Query depth limit exceeded.");
     }
 }

@@ -55,14 +55,9 @@ struct MaxDirectivesVisitor<'a, 'b> {
 impl<'a> MaxDirectivesVisitor<'a, '_> {
     fn check_limit(&self, count: usize) -> Result<usize, ValidationError> {
         if count > self.config.n {
-            let message = if self.config.expose_limits {
-                format!("Directives limit of {} exceeded.", self.config.n)
-            } else {
-                "Directives limit exceeded.".to_string()
-            };
             Err(ValidationError {
                 locations: vec![],
-                message,
+                message: "Directives limit exceeded.".to_string(),
                 error_code: "MAX_DIRECTIVES_EXCEEDED",
             })
         } else {
@@ -159,10 +154,7 @@ mod tests {
             .expect("Failed to parse query")
             .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
-            config: MaxDirectivesRuleConfig {
-                n: 5,
-                expose_limits: true,
-            },
+            config: MaxDirectivesRuleConfig { n: 5 },
         })]);
 
         let errors = validate(&schema, &query, &validation_plan);
@@ -179,16 +171,13 @@ mod tests {
             .expect("Failed to parse query")
             .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
-            config: MaxDirectivesRuleConfig {
-                n: 3,
-                expose_limits: true,
-            },
+            config: MaxDirectivesRuleConfig { n: 3 },
         })]);
 
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Directives limit of 3 exceeded.");
+        assert_eq!(errors[0].message, "Directives exceeded.");
     }
 
     #[test]
@@ -211,16 +200,13 @@ mod tests {
         .into_static();
 
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
-            config: MaxDirectivesRuleConfig {
-                n: 3,
-                expose_limits: true,
-            },
+            config: MaxDirectivesRuleConfig { n: 3 },
         })]);
 
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Directives limit of 3 exceeded.");
+        assert_eq!(errors[0].message, "Directives exceeded.");
     }
 
     #[test]
@@ -247,10 +233,7 @@ mod tests {
         .into_static();
 
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
-            config: MaxDirectivesRuleConfig {
-                n: 5,
-                expose_limits: true,
-            },
+            config: MaxDirectivesRuleConfig { n: 5 },
         })]);
 
         let errors = validate(&schema, &query, &validation_plan);
@@ -267,10 +250,7 @@ mod tests {
             .expect("Failed to parse query")
             .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
-            config: MaxDirectivesRuleConfig {
-                n: 3,
-                expose_limits: false,
-            },
+            config: MaxDirectivesRuleConfig { n: 3 },
         })]);
 
         let errors = validate(&schema, &query, &validation_plan);
@@ -288,16 +268,13 @@ mod tests {
             .expect("Failed to parse query")
             .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
-            config: MaxDirectivesRuleConfig {
-                n: 3,
-                expose_limits: true,
-            },
+            config: MaxDirectivesRuleConfig { n: 3 },
         })]);
 
         let errors = validate(&schema, &query, &validation_plan);
 
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Directives limit of 3 exceeded.");
+        assert_eq!(errors[0].message, "Directives exceeded.");
     }
 
     #[test]
@@ -321,10 +298,7 @@ mod tests {
         .expect("Failed to parse query")
         .into_static();
         let validation_plan = ValidationPlan::from(vec![Box::new(MaxDirectivesRule {
-            config: MaxDirectivesRuleConfig {
-                n: 1,
-                expose_limits: false,
-            },
+            config: MaxDirectivesRuleConfig { n: 1 },
         })]);
         let errors = validate(&schema, &query, &validation_plan);
         assert_eq!(errors.len(), 1);

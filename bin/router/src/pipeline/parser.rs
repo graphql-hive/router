@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use graphql_tools::parser::query::Document;
 use hive_router_query_planner::utils::parsing::{
-    safe_parse_operation, safe_parse_operation_with_limit,
+    safe_parse_operation, safe_parse_operation_with_token_limit,
 };
 use xxhash_rust::xxh3::Xxh3;
 
@@ -34,9 +34,7 @@ pub async fn parse_operation_with_cache(
         cached
     } else {
         let parsed = match app_state.router_config.limits.max_tokens.as_ref() {
-            Some(cfg) => {
-                safe_parse_operation_with_limit(&execution_params.query, cfg.n, cfg.expose_limits)
-            }
+            Some(cfg) => safe_parse_operation_with_token_limit(&execution_params.query, cfg.n),
             _ => safe_parse_operation(&execution_params.query),
         }
         .map_err(|err| {

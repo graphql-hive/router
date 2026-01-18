@@ -37,10 +37,6 @@ pub struct MaxDepthRuleConfig {
     #[serde(default = "default_flatten_fragments")]
     /// Flatten fragment spreads and inline fragments when calculating depth.
     pub flatten_fragments: bool,
-
-    #[serde(default = "default_expose_limits")]
-    /// Whether to expose the limits in the error message.
-    pub expose_limits: bool,
 }
 
 fn default_ignore_introspection() -> bool {
@@ -51,26 +47,14 @@ fn default_flatten_fragments() -> bool {
     false
 }
 
-fn default_expose_limits() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MaxDirectivesRuleConfig {
     /// Directives threshold
     pub n: usize,
-
-    #[serde(default = "default_expose_limits")]
-    /// Whether to expose the limits in the error message.
-    pub expose_limits: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MaxTokensRuleConfig {
     /// Tokens threshold
     pub n: usize,
-
-    #[serde(default = "default_expose_limits")]
-    /// Whether to expose the limits in the error message.
-    pub expose_limits: bool,
 }
