@@ -174,7 +174,6 @@ struct FlattenFetchJob<'exec> {
 enum ExecutionJob<'exec> {
     Fetch(FetchJob<'exec>),
     FlattenFetch(FlattenFetchJob<'exec>),
-    None,
 }
 
 struct PreparedFlattenData {
@@ -213,6 +212,13 @@ impl<'exec> Executor<'exec> {
             PlanNode::Fetch(node) => self.execute_fetch_wave(ctx, node).await,
             PlanNode::Parallel(node) => self.execute_parallel_wave(ctx, node).await,
             PlanNode::Sequence(node) => self.execute_sequence_wave(ctx, node).await,
+            PlanNode::Condition(node) => {
+                let Some(node) = condition_node_by_variables(node, self.variable_values) else {
+                    return Ok(());
+                };
+                // Box::pin the future for recursive calls to have the correct lifetime
+                Box::pin(self.execute_plan_node(ctx, node)).await
+            }
             // Plans produced by our Query Planner can only start with: Fetch, Sequence or Parallel.
             // Any other node type at the root is not supported, do nothing
             _ => Ok(()),
@@ -265,9 +271,10 @@ impl<'exec> Executor<'exec> {
 
         for result in results {
             match result {
-                Ok(job) => {
+                Ok(Some(job)) => {
                     self.process_job_result(ctx, job)?;
                 }
+                Ok(None) => { /* do nothing */ }
                 Err(err) => {
                     self.log_error(&err);
                     ctx.errors.push(err.into())
@@ -282,33 +289,33 @@ impl<'exec> Executor<'exec> {
         &'exec self,
         node: &'exec PlanNode,
         final_response: &'wave Value<'exec>,
-    ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
+    ) -> Result<Option<ExecutionJob<'exec>>, PlanExecutionError> {
         match node {
-            PlanNode::Fetch(fetch_node) => self.execute_fetch_node(fetch_node, None).await,
+            PlanNode::Fetch(fetch_node) => {
+                Ok(Some(self.execute_fetch_node(fetch_node, None).await?))
+            }
             PlanNode::Flatten(flatten_node) => {
-                match self.prepare_flatten_data(final_response, flatten_node) {
-                    Ok(Some(p)) => {
-                        self.execute_flatten_fetch_node(
-                            flatten_node,
-                            Some(p.representations),
-                            Some(p.representation_hashes),
-                            Some(p.representation_hash_to_index),
-                        )
-                        .await
-                    }
-                    Ok(None) => Ok(ExecutionJob::None),
-                    Err(e) => Err(e),
-                }
+                let Some(p) = self.prepare_flatten_data(final_response, flatten_node)? else {
+                    return Ok(None);
+                };
+                Ok(self
+                    .execute_flatten_fetch_node(
+                        flatten_node,
+                        Some(p.representations),
+                        Some(p.representation_hashes),
+                        Some(p.representation_hash_to_index),
+                    )
+                    .await?)
             }
             PlanNode::Condition(node) => {
-                match condition_node_by_variables(node, self.variable_values) {
-                    // Box::pin the future for recursive calls to have the correct lifetime
-                    Some(node) => Box::pin(self.prepare_job_future(node, final_response)).await, // This is already clean.
-                    None => Ok(ExecutionJob::None),
-                }
+                let Some(node) = condition_node_by_variables(node, self.variable_values) else {
+                    return Ok(None);
+                };
+                // Box::pin the future for recursive calls to have the correct lifetime
+                Box::pin(self.prepare_job_future(node, final_response)).await
             }
             // Our Query Planner does not produce any other plan node types in ParallelNode
-            _ => Ok(ExecutionJob::None),
+            _ => Ok(None),
         }
     }
 
@@ -435,9 +442,6 @@ impl<'exec> Executor<'exec> {
                     entity_index_error_map,
                 );
             }
-            ExecutionJob::None => {
-                // nothing to do
-            }
         }
         Ok(())
     }
@@ -531,23 +535,24 @@ impl<'exec> Executor<'exec> {
         representations: Option<Vec<u8>>,
         representation_hashes: Option<Vec<u64>>,
         filtered_representations_hashes: Option<HashMap<u64, usize>>,
-    ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
-        let fetch_node = match node.node.as_ref() {
-            PlanNode::Fetch(fetch_node) => fetch_node,
-            _ => return Ok(ExecutionJob::None),
+    ) -> Result<Option<ExecutionJob<'exec>>, PlanExecutionError> {
+        let PlanNode::Fetch(fetch_node) = &node.node.as_ref() else {
+            return Ok(None);
         };
 
-        match self.execute_fetch_node(fetch_node, representations).await? {
-            ExecutionJob::Fetch(job) => Ok(ExecutionJob::FlattenFetch(FlattenFetchJob {
-                flatten_node_path: &node.path,
-                response: job.response,
-                fetch_node_id: job.fetch_node_id,
-                subgraph_name: job.subgraph_name,
-                representation_hashes: representation_hashes.unwrap_or_default(),
-                representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
-            })),
-            _ => Ok(ExecutionJob::None),
-        }
+        let ExecutionJob::Fetch(job) = self.execute_fetch_node(fetch_node, representations).await?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(ExecutionJob::FlattenFetch(FlattenFetchJob {
+            flatten_node_path: &node.path,
+            response: job.response,
+            fetch_node_id: fetch_node.id,
+            subgraph_name: &fetch_node.service_name,
+            representation_hashes: representation_hashes.unwrap_or_default(),
+            representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
+        })))
     }
 
     async fn execute_fetch_node(
