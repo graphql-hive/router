@@ -11,6 +11,7 @@
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
+|[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{}`<br/>||
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
@@ -90,6 +91,7 @@ jwt:
     - name: authorization
       prefix: Bearer
       source: header
+limits: {}
 log:
   filter: null
   format: json
@@ -1644,6 +1646,67 @@ The first one that is found will be used.
   source: header
 
 ```
+
+<a name="limits"></a>
+## limits: object
+
+Configuration for checking the limits such as query depth, complexity, etc.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**max\_depth**](#limitsmax_depth)|`object`, `null`|Configuration of limiting the depth of the incoming GraphQL operations.<br/>|yes|
+|[**max\_directives**](#limitsmax_directives)|`object`, `null`|Configuration of limiting the number of directives in the incoming GraphQL operations.<br/>|yes|
+|[**max\_tokens**](#limitsmax_tokens)|`object`, `null`|Configuration of limiting the number of tokens in the incoming GraphQL operations.<br/>|yes|
+
+<a name="limitsmax_depth"></a>
+### limits\.max\_depth: object,null
+
+Configuration of limiting the depth of the incoming GraphQL operations.
+If not specified, depth limiting is disabled.
+
+It is used to prevent too large queries that could lead to overfetching or DOS attacks.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**flatten\_fragments**|`boolean`|Flatten fragment spreads and inline fragments when calculating depth.<br/>Default: `false`<br/>|no|
+|**ignore\_introspection**|`boolean`|Ignore the depth of introspection queries.<br/>Default: `true`<br/>|no|
+|**n**|`integer`|Depth threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
+
+<a name="limitsmax_directives"></a>
+### limits\.max\_directives: object,null
+
+Configuration of limiting the number of directives in the incoming GraphQL operations.
+If not specified, directive limiting is disabled.
+
+It is used to prevent too many directives that could lead to overfetching or DOS attacks.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**n**|`integer`|Directives threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
+
+<a name="limitsmax_tokens"></a>
+### limits\.max\_tokens: object,null
+
+Configuration of limiting the number of tokens in the incoming GraphQL operations.
+If not specified, token limiting is disabled.
+
+It is used to prevent too large queries that could lead to overfetching or DOS attacks.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**n**|`integer`|Tokens threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
 
 <a name="log"></a>
 ## log: object

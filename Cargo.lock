@@ -2087,6 +2087,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "async-trait",
+ "combine",
  "cookie",
  "criterion",
  "futures",
