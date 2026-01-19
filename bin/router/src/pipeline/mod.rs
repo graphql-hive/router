@@ -199,7 +199,7 @@ pub async fn graphql_request_handler(
 }
 
 #[inline]
-#[allow(clippy::await_holding_refcell_ref, clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_pipeline<'exec>(
     cancellation_token: &CancellationToken,
     client_request_details: &ClientRequestDetails<'exec>,
