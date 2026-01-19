@@ -19,12 +19,12 @@ use hive_router_internal::telemetry::{
     traces::set_tracing_enabled,
     OpenTelemetry,
 };
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt::time::UtcTime, EnvFilter};
+use tracing_subscriber::{filter::filter_fn, fmt::time::UtcTime, EnvFilter};
 use tracing_subscriber::{
     fmt::{self},
     layer::SubscriberExt,
 };
+use tracing_subscriber::{util::SubscriberInitExt, Layer};
 
 pub struct HeaderExtractor<'a>(pub &'a ntex::http::HeaderMap);
 
@@ -82,7 +82,13 @@ pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
 
     let tracer_provider = tracer.as_ref().map(|t| t.provider.clone());
 
-    let registry = tracing_subscriber::registry().with(tracer.map(|t| t.layer));
+    let registry = tracing_subscriber::registry().with(
+        tracer
+            .map(|t| t.layer)
+            // Drop events from tracing macros (info!, error!, etc.),
+            // but accept those from span.add_event()
+            .with_filter(filter_fn(|metadata| metadata.is_span())),
+    );
 
     let is_terminal = std::io::stdout().is_terminal();
     match config.log.format {
