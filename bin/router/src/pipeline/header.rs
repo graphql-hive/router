@@ -173,7 +173,7 @@ impl RequestAccepts for HttpRequest {
             .headers()
             .get(ACCEPT)
             .and_then(|value| value.to_str().ok())
-            .unwrap_or("");
+            .unwrap_or_default();
 
         let agreed = negotiate_content_type(content_types).map_err(|err| {
             error!("Failed to parse Accept header: {}", err);
