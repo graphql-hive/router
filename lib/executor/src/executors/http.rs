@@ -311,7 +311,13 @@ impl HttpResponse {
         let bytes_ref: &'a [u8] = unsafe { std::mem::transmute(bytes_ref) };
 
         sonic_rs::from_slice(bytes_ref)
-            .map_err(|err| SubgraphExecutorError::ResponseDeserializationFailure(err.to_string()))
+            .map_err(|err| {
+                tracing::error!(
+                    "Failed to deserialize the following subgraph response: {}",
+                    String::from_utf8_lossy(bytes_ref)
+                );
+                SubgraphExecutorError::ResponseDeserializationFailure(err.to_string())
+            })
             .map(|mut resp: SubgraphResponse<'a>| {
                 // This is Arc
                 resp.headers = Some(self.headers.clone());
