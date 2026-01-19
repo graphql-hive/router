@@ -1,6 +1,7 @@
 /// OpenTelemetry standard attributes
 pub const OTEL_STATUS_CODE: &str = "otel.status_code";
 pub const OTEL_KIND: &str = "otel.kind";
+pub const OTEL_DROP: &str = "otel.drop";
 
 /// OpenTelemetry standard attributes for errors
 pub const ERROR_TYPE: &str = "error.type";

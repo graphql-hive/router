@@ -66,3 +66,7 @@ insta = { workspace = true }
 [[bench]]
 name = "router_benches"
 harness = false
+
+[[bench]]
+name = "parser_benches"
+harness = false

@@ -21,6 +21,7 @@ use opentelemetry_sdk::{
 use tracing_opentelemetry::OpenTelemetryLayer;
 
 use self::compatibility::HttpCompatibilityExporter;
+use self::filtering_exporter::FilteringSpanExporter;
 use crate::telemetry::{
     error::TelemetryError,
     resolve_value_or_expression,
@@ -32,6 +33,7 @@ pub use control::{disabled_span, is_level_enabled, is_tracing_enabled, set_traci
 
 pub mod compatibility;
 pub mod control;
+pub mod filtering_exporter;
 pub mod hive_console_exporter;
 pub mod spans;
 pub mod stdout_exporter;
@@ -163,7 +165,7 @@ fn build_batched_span_processor(
     config: &BatchProcessorConfig,
     exporter: impl trace::SpanExporter + 'static,
 ) -> BatchSpanProcessor {
-    BatchSpanProcessor::builder(exporter)
+    BatchSpanProcessor::builder(FilteringSpanExporter::new(exporter))
         .with_batch_config(
             BatchConfigBuilder::default()
                 .with_max_concurrent_exports(config.max_concurrent_exports as usize)

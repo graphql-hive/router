@@ -10,7 +10,7 @@ use crate::{
         spans::{
             attributes::{
                 self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
-                HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND,
+                HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND, OTEL_DROP,
             },
             kind::{HiveEventKind, HiveSpanKind},
             TARGET_NAME,
@@ -356,6 +356,7 @@ impl GraphQLOperationSpan {
             "hive.graphql.operation.hash" = Empty,
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
+            OTEL_DROP = Empty,
         );
         GraphQLOperationSpan { span }
     }
@@ -403,6 +404,10 @@ impl GraphQLOperationSpan {
         if let Some(version) = client_version {
             self.span.record(attributes::HIVE_CLIENT_VERSION, version);
         }
+    }
+
+    pub fn mark_trace_for_drop(&self) {
+        self.span.record(OTEL_DROP, true);
     }
 }
 
