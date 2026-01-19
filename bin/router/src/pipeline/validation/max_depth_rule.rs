@@ -543,4 +543,37 @@ mod tests {
         let error = &errors[0];
         assert_eq!(error.message, "Query depth limit exceeded.");
     }
+
+    #[test]
+    fn skips_unknown_fragment() {
+        // This rule is not responsible for checking unknown fragments.
+        // That should be done by another rule.
+        // Here we just ensure that unknown fragments are skipped
+        let validation_plan = ValidationPlan::from(vec![Box::new(MaxDepthRule {
+            config: MaxDepthRuleConfig {
+                n: 2,
+                ignore_introspection: true,
+                flatten_fragments: false,
+            },
+        })]);
+
+        let schema: graphql_tools::static_graphql::schema::Document =
+            parse_schema(TYPE_DEFS).expect("Failed to parse schema");
+
+        let doc: graphql_tools::static_graphql::query::Document = parse_query(
+            r#"
+      query {
+        ...UnknownFragment
+      }
+        "#,
+        )
+        .expect("Failed to parse query");
+
+        let errors = graphql_tools::validation::validate::validate(&schema, &doc, &validation_plan);
+
+        assert!(
+            errors.is_empty(),
+            "Expected no validation errors but found some"
+        );
+    }
 }

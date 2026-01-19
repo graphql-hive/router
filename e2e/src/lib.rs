@@ -15,6 +15,10 @@ mod http;
 #[cfg(test)]
 mod jwt;
 #[cfg(test)]
+mod max_depth;
+#[cfg(test)]
+mod max_directives;
+#[cfg(test)]
 mod max_tokens;
 #[cfg(test)]
 mod override_subgraph_urls;

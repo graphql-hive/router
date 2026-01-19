@@ -1,5 +1,5 @@
 use async_graphql::{
-    ComplexObject, EmptyMutation, EmptySubscription, Interface, Object, Schema, SimpleObject, ID,
+    ComplexObject, EmptyMutation, EmptySubscription, ID, Interface, Object, Schema, SimpleObject
 };
 use lazy_static::lazy_static;
 
