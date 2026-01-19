@@ -177,3 +177,30 @@ pub fn configure_ntex_app(cfg: &mut web::ServiceConfig, graphql_path: &str) {
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }
+
+/// Initializes the rustls cryptographic provider for the entire process.
+///
+/// Rustls requires a cryptographic provider to be set as the default before any TLS operations occur.
+/// Installs AWS-LC, as `ring` is no longer maintained.
+///
+/// This function should be called early in the application startup, before any rustls-based TLS
+/// connections are established.
+/// In the hive-router binary and docker image, it's called automatically during router initialization.
+/// This ensures that all TLS operations throughout the application can use the configured provider.
+///
+/// This function can only be called successfully once per process.
+/// Subsequent calls will log a warning, but will not fail.
+///
+///
+/// This allows consumers of the `hive-router` crate to use their own cryptographic provider if needed,
+/// by calling this function or setting their own provider before initializing the router.
+///
+/// This function does not return an error. If the provider is already installed, it logs a warning.
+pub fn init_rustls_crypto_provider() {
+    if rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .is_err()
+    {
+        warn!("Rustls crypto provider already installed");
+    }
+}

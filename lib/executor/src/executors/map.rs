@@ -13,9 +13,9 @@ use hive_router_internal::expressions::vrl::compiler::Program as VrlProgram;
 use hive_router_internal::expressions::vrl::core::Value as VrlValue;
 use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
 use http::Uri;
-use hyper_tls::HttpsConnector;
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::{
-    client::legacy::Client,
+    client::legacy::{connect::HttpConnector, Client},
     rt::{TokioExecutor, TokioTimer},
 };
 use tokio::sync::{OnceCell, Semaphore};
@@ -65,18 +65,27 @@ pub struct SubgraphExecutorMap {
     in_flight_requests: InflightRequestsMap,
 }
 
+fn build_https_executor() -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
+    HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .map_err(|e| SubgraphExecutorError::NativeTlsCertificatesError(e.to_string()))
+        .map(|b| b.https_or_http().enable_http1().enable_http2().build())
+}
+
 impl SubgraphExecutorMap {
-    pub fn new(config: Arc<HiveRouterConfig>, global_timeout: DurationOrProgram) -> Self {
-        let https = HttpsConnector::new();
+    pub fn new(
+        config: Arc<HiveRouterConfig>,
+        global_timeout: DurationOrProgram,
+    ) -> Result<Self, SubgraphExecutorError> {
         let client: HttpClient = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.traffic_shaping.all.pool_idle_timeout)
             .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host)
-            .build(https);
+            .build(build_https_executor()?);
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
-        SubgraphExecutorMap {
+        Ok(SubgraphExecutorMap {
             executors_by_subgraph: Default::default(),
             static_endpoints_by_subgraph: Default::default(),
             expression_endpoints_by_subgraph: Default::default(),
@@ -87,7 +96,7 @@ impl SubgraphExecutorMap {
             in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
             timeouts_by_subgraph: Default::default(),
             global_timeout,
-        }
+        })
     }
 
     pub fn from_http_endpoint_map(
@@ -101,7 +110,7 @@ impl SubgraphExecutorMap {
         .map_err(|err| {
             SubgraphExecutorError::RequestTimeoutExpressionBuild("all".to_string(), err.diagnostics)
         })?;
-        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), global_timeout);
+        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), global_timeout)?;
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.iter() {
             let endpoint_config = config
@@ -335,7 +344,7 @@ impl SubgraphExecutorMap {
             .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
             .clone();
 
-        let subgraph_config = self.resolve_subgraph_config(subgraph_name);
+        let subgraph_config = self.resolve_subgraph_config(subgraph_name)?;
 
         let executor = HTTPSubgraphExecutor::new(
             subgraph_name.to_string(),
@@ -358,7 +367,10 @@ impl SubgraphExecutorMap {
 
     /// Resolves traffic shaping configuration for a specific subgraph, applying subgraph-specific
     /// overrides on top of global settings
-    fn resolve_subgraph_config<'a>(&'a self, subgraph_name: &'a str) -> ResolvedSubgraphConfig<'a> {
+    fn resolve_subgraph_config<'a>(
+        &'a self,
+        subgraph_name: &'a str,
+    ) -> Result<ResolvedSubgraphConfig<'a>, SubgraphExecutorError> {
         let mut config = ResolvedSubgraphConfig {
             client: self.client.clone(),
             timeout_config: &self.config.traffic_shaping.all.request_timeout,
@@ -366,7 +378,7 @@ impl SubgraphExecutorMap {
         };
 
         let Some(subgraph_config) = self.config.traffic_shaping.subgraphs.get(subgraph_name) else {
-            return config;
+            return Ok(config);
         };
 
         // Override client only if pool idle timeout is customized
@@ -378,7 +390,7 @@ impl SubgraphExecutorMap {
                         .pool_timer(TokioTimer::new())
                         .pool_idle_timeout(pool_idle_timeout)
                         .pool_max_idle_per_host(self.max_connections_per_host)
-                        .build(HttpsConnector::new()),
+                        .build(build_https_executor()?),
                 );
             }
         }
@@ -392,7 +404,7 @@ impl SubgraphExecutorMap {
             config.timeout_config = custom_timeout;
         }
 
-        config
+        Ok(config)
     }
 
     /// Compiles and registers a timeout for a specific subgraph.

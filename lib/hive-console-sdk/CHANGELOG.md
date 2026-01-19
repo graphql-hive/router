@@ -1,3 +1,19 @@
+## 0.3.3 (2026-01-16)
+
+### Fixes
+
+#### Add `minify_query_document` for optimized query minification
+
+Implements `minify_query_document` to minify parsed GraphQL operations directly, avoiding the need for an intermediate `Display` step. This new approach uses `itoa` and `ryu` for efficient integer and float formatting.
+
+By minifying the query document representation instead of the query string, we achieve performance improvements: query minification time is reduced from 4μs to 500ns, and unnecessary allocations are eliminated.
+
+Includes benchmarks and tests to validate the performance gains and correctness of the new implementation.
+
+#### Update reqwest default features
+
+In this version, we've updated the `features` used by the `reqwest` dependency. By default, this Crate is using `rustls` for TLS.
+
 ## 0.3.2 (2026-01-15)
 
 ### Fixes

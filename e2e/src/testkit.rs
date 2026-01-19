@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    RouterSharedState, SchemaState,
+    init_rustls_crypto_provider, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use ntex::{
@@ -179,6 +179,7 @@ pub async fn init_router_from_config(
     >,
     Box<dyn std::error::Error>,
 > {
+    init_rustls_crypto_provider();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let http_config = router_config.http.clone();
     let graphql_path = http_config.graphql_endpoint();
