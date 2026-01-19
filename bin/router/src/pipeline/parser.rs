@@ -1,7 +1,9 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use combine::easy::Info;
 use graphql_tools::parser::query::Document;
+use graphql_tools::validation::utils::ValidationError;
 use hive_router_query_planner::utils::parsing::{
     safe_parse_operation, safe_parse_operation_with_token_limit,
 };
@@ -38,6 +40,20 @@ pub async fn parse_operation_with_cache(
             _ => safe_parse_operation(&execution_params.query),
         }
         .map_err(|err| {
+            if let Some(combine::stream::easy::Error::Message(Info::Static(msg))) =
+                err.0.errors.first()
+            {
+                if *msg == "Token limit exceeded" {
+                    return PipelineError::ValidationErrors(
+                        vec![ValidationError {
+                            locations: vec![err.0.position],
+                            message: "Token limit exceeded.".to_string(),
+                            error_code: "TOKEN_LIMIT_EXCEEDED",
+                        }]
+                        .into(),
+                    );
+                }
+            }
             error!("Failed to parse GraphQL operation: {}", err);
             PipelineError::FailedToParseOperation(err)
         })?;

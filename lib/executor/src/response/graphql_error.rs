@@ -49,7 +49,7 @@ impl From<&ValidationError> for GraphQLError {
             message: val.message.to_string(),
             locations: Some(val.locations.iter().map(|pos| pos.into()).collect()),
             path: None,
-            extensions: GraphQLErrorExtensions::new_from_code("GRAPHQL_VALIDATION_FAILED"),
+            extensions: GraphQLErrorExtensions::new_from_code(val.error_code),
         }
     }
 }
