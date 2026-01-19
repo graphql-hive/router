@@ -371,7 +371,7 @@ mod test {
     }
 
     #[test]
-    #[should_panic(expected = "number too large")]
+    #[should_panic(expected = "PosOverflow")]
     fn large_integer() {
         ast("{ a(x: 10000000000000000000000000000 }");
     }
