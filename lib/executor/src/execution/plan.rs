@@ -28,9 +28,7 @@ use crate::{
         schema::SchemaMetadata,
     },
     projection::{
-        plan::FieldProjectionPlan,
-        request::{project_requires},
-        response::project_by_operation,
+        plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath},
@@ -529,7 +527,8 @@ impl<'exec> Executor<'exec> {
             normalized_path,
             self.schema_metadata,
             &mut |entity| {
-                let hash = entity.to_hash(&requires_nodes.items, &self.schema_metadata.possible_types);
+                let hash =
+                    entity.to_hash(&requires_nodes.items, &self.schema_metadata.possible_types);
 
                 if !entity.is_null() {
                     representation_hashes.push(hash);

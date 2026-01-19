@@ -4,7 +4,7 @@ use hive_router_query_planner::ast::selection_item::SelectionItem;
 use crate::{
     introspection::schema::PossibleTypes,
     json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
-    projection::{error::ProjectionError, response::project_without_selection_set},
+    projection::{error::ProjectionError, response::serialize_value_to_buffer},
     response::value::Value,
     utils::consts::{
         CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, OPEN_BRACE, OPEN_BRACKET, QUOTE, TRUE,
@@ -136,7 +136,7 @@ fn project_requires_internal(
         Value::Object(entity_obj) => {
             if requires_selections.is_empty() {
                 // It is probably a scalar with an object value, so we write it directly
-                project_without_selection_set(entity, buffer);
+                serialize_value_to_buffer(entity, buffer);
                 return Ok(true);
             }
             if entity_obj.is_empty() {
@@ -256,10 +256,8 @@ fn project_requires_map_mut(
                     _ => type_condition,
                 };
                 // For projection, both sides of the condition are valid
-                if possible_types
-                    .entity_satisfies_type_condition(type_name, type_condition)
-                    || possible_types
-                        .entity_satisfies_type_condition(type_condition, type_name)
+                if possible_types.entity_satisfies_type_condition(type_name, type_condition)
+                    || possible_types.entity_satisfies_type_condition(type_condition, type_name)
                 {
                     project_requires_map_mut(
                         possible_types,

@@ -148,7 +148,7 @@ pub fn project_by_operation(
     Ok(buffer)
 }
 
-pub fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
+pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
     match data {
         Value::Null => buffer.put(NULL),
         Value::Bool(true) => buffer.put(TRUE),
@@ -166,7 +166,7 @@ pub fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
                 }
                 write_and_escape_string(buffer, key);
                 buffer.put(COLON);
-                project_without_selection_set(val, buffer);
+                serialize_value_to_buffer(val, buffer);
                 first = false;
             }
             buffer.put(CLOSE_BRACE);
@@ -178,7 +178,7 @@ pub fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
                 if !first {
                     buffer.put(COMMA);
                 }
-                project_without_selection_set(item, buffer);
+                serialize_value_to_buffer(item, buffer);
                 first = false;
             }
             buffer.put(CLOSE_BRACKET);
@@ -247,7 +247,7 @@ fn project_selection_set<'a>(
                 }
                 ProjectionValueSource::ResponseData { selections: None } => {
                     // If the selection has no sub-selections, we serialize the whole object
-                    project_without_selection_set(data, buffer);
+                    serialize_value_to_buffer(data, buffer);
                 }
                 ProjectionValueSource::Null => {
                     // This should not happen as we are in an object case, but just in case
@@ -257,7 +257,7 @@ fn project_selection_set<'a>(
         }
         _ => {
             // If the data is not an object or array, we serialize it directly
-            project_without_selection_set(data, buffer);
+            serialize_value_to_buffer(data, buffer);
         }
     };
     Ok(())
