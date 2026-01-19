@@ -4,19 +4,21 @@ mod max_directives_e2e_tests {
     use sonic_rs::{from_slice, to_string_pretty, Value};
 
     use crate::testkit::{
-        SubgraphsServer, init_graphql_request, init_router_from_config_inline, wait_for_readiness
+        init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
     };
 
     #[ntex::test]
     async fn allows_query_within_max_directives() {
         let _subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_inline(r#"
+        let app = init_router_from_config_inline(
+            r#"
         limits:
             max_directives:
                 n: 8
-        "#)
-            .await
-            .unwrap();
+        "#,
+        )
+        .await
+        .unwrap();
         wait_for_readiness(&app.app).await;
         let req = init_graphql_request(
             "query { 
@@ -60,13 +62,15 @@ mod max_directives_e2e_tests {
     #[ntex::test]
     async fn rejects_query_exceeding_max_directives() {
         let _subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_inline(r#"
+        let app = init_router_from_config_inline(
+            r#"
         limits:
             max_directives:
                 n: 5
-        "#)
-            .await
-            .unwrap();
+        "#,
+        )
+        .await
+        .unwrap();
         wait_for_readiness(&app.app).await;
 
         let req = init_graphql_request(

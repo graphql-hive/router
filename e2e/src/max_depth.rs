@@ -4,9 +4,9 @@ mod max_depth_e2e_tests {
     use sonic_rs::{from_slice, to_string_pretty, Value};
 
     use crate::testkit::{
-        SubgraphsServer, init_graphql_request, init_router_from_config_inline, wait_for_readiness
+        init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
     };
-        const QUERY: &'static str = r#"
+    const QUERY: &'static str = r#"
             query {
                 me {
                     name
@@ -20,18 +20,17 @@ mod max_depth_e2e_tests {
     #[ntex::test]
     async fn allows_query_within_max_depth() {
         let _subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_inline(r#"
+        let app = init_router_from_config_inline(
+            r#"
         limits:
             max_depth:
                 n: 3
-        "#)
-            .await
-            .unwrap();
+        "#,
+        )
+        .await
+        .unwrap();
         wait_for_readiness(&app.app).await;
-        let req = init_graphql_request(
-            QUERY,
-            None,
-        );
+        let req = init_graphql_request(QUERY, None);
 
         let resp = test::call_service(&app.app, req.to_request()).await;
         let body = test::read_body(resp).await;
@@ -58,19 +57,18 @@ mod max_depth_e2e_tests {
     #[ntex::test]
     async fn rejects_query_exceeding_max_depth() {
         let _subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_inline(r#"
+        let app = init_router_from_config_inline(
+            r#"
         limits:
             max_depth:
                 n: 1
-        "#)
-            .await
-            .unwrap();
+        "#,
+        )
+        .await
+        .unwrap();
         wait_for_readiness(&app.app).await;
 
-        let req = init_graphql_request(
-            QUERY,
-            None,
-        );
+        let req = init_graphql_request(QUERY, None);
         let resp = test::call_service(&app.app, req.to_request()).await;
         let body = test::read_body(resp).await;
         let json_body: Value = from_slice(&body).unwrap();
@@ -91,13 +89,15 @@ mod max_depth_e2e_tests {
     #[ntex::test]
     async fn unknown_fragments() {
         let _subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_inline(r#"
+        let app = init_router_from_config_inline(
+            r#"
         limits:
             max_depth:
                 n: 3
-        "#)
-            .await
-            .unwrap();
+        "#,
+        )
+        .await
+        .unwrap();
         wait_for_readiness(&app.app).await;
         let req = init_graphql_request(
             r#"
