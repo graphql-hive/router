@@ -148,7 +148,7 @@ pub fn project_by_operation(
     Ok(buffer)
 }
 
-fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
+pub fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
     match data {
         Value::Null => buffer.put(NULL),
         Value::Bool(true) => buffer.put(TRUE),

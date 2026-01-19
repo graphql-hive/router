@@ -4,7 +4,7 @@ use hive_router_query_planner::ast::selection_item::SelectionItem;
 use crate::{
     introspection::schema::PossibleTypes,
     json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
-    projection::error::ProjectionError,
+    projection::{error::ProjectionError, response::project_without_selection_set},
     response::value::Value,
     utils::consts::{
         CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, OPEN_BRACE, OPEN_BRACKET, QUOTE, TRUE,
@@ -12,18 +12,8 @@ use crate::{
     },
 };
 
-pub struct RequestProjectionContext<'a> {
-    pub possible_types: &'a PossibleTypes,
-}
-
-impl<'a> RequestProjectionContext<'a> {
-    pub fn new(possible_types: &'a PossibleTypes) -> Self {
-        Self { possible_types }
-    }
-}
-
 pub fn project_requires(
-    ctx: &RequestProjectionContext,
+    possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
     entity: &Value,
     buffer: &mut Vec<u8>,
@@ -31,7 +21,7 @@ pub fn project_requires(
     response_key: Option<&str>,
 ) -> Result<bool, ProjectionError> {
     project_requires_internal(
-        ctx,
+        possible_types,
         requires_selections,
         entity,
         buffer,
@@ -41,7 +31,7 @@ pub fn project_requires(
 }
 
 fn project_requires_internal(
-    ctx: &RequestProjectionContext,
+    possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
     entity: &Value,
     buffer: &mut Vec<u8>,
@@ -129,7 +119,7 @@ fn project_requires_internal(
             let mut first = true;
             for entity_item in entity_array {
                 let projected = project_requires_internal(
-                    ctx,
+                    possible_types,
                     requires_selections,
                     entity_item,
                     buffer,
@@ -146,10 +136,7 @@ fn project_requires_internal(
         Value::Object(entity_obj) => {
             if requires_selections.is_empty() {
                 // It is probably a scalar with an object value, so we write it directly
-                let vec = sonic_rs::to_vec(entity_obj).map_err(|e| {
-                    ProjectionError::CustomScalarSerializationFailure(e.to_string())
-                })?;
-                buffer.put_slice(&vec);
+                project_without_selection_set(entity, buffer);
                 return Ok(true);
             }
             if entity_obj.is_empty() {
@@ -159,7 +146,7 @@ fn project_requires_internal(
             let parent_first = first;
             let mut first = true;
             project_requires_map_mut(
-                ctx,
+                possible_types,
                 requires_selections,
                 entity_obj,
                 buffer,
@@ -180,7 +167,7 @@ fn project_requires_internal(
 }
 
 fn project_requires_map_mut(
-    ctx: &RequestProjectionContext,
+    possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
     entity_obj: &Vec<(&str, Value<'_>)>,
     buffer: &mut Vec<u8>,
@@ -246,7 +233,7 @@ fn project_requires_map_mut(
                 }
 
                 let projected = project_requires_internal(
-                    ctx,
+                    possible_types,
                     &requires_selection.selections.items,
                     original,
                     buffer,
@@ -269,15 +256,13 @@ fn project_requires_map_mut(
                     _ => type_condition,
                 };
                 // For projection, both sides of the condition are valid
-                if ctx
-                    .possible_types
+                if possible_types
                     .entity_satisfies_type_condition(type_name, type_condition)
-                    || ctx
-                        .possible_types
+                    || possible_types
                         .entity_satisfies_type_condition(type_condition, type_name)
                 {
                     project_requires_map_mut(
-                        ctx,
+                        possible_types,
                         &requires_selection.selections.items,
                         entity_obj,
                         buffer,

@@ -29,7 +29,7 @@ use crate::{
     },
     projection::{
         plan::FieldProjectionPlan,
-        request::{project_requires, RequestProjectionContext},
+        request::{project_requires},
         response::project_by_operation,
     },
     response::{
@@ -520,7 +520,6 @@ impl<'exec> Executor<'exec> {
         let normalized_path = flatten_node.path.as_slice();
         let mut filtered_representations = Vec::new();
         filtered_representations.put(OPEN_BRACKET);
-        let proj_ctx = RequestProjectionContext::new(&self.schema_metadata.possible_types);
         let mut representation_hashes: Vec<u64> = Vec::new();
         let mut filtered_representations_hashes: HashMap<u64, usize> = HashMap::new();
         let arena = bumpalo::Bump::new();
@@ -530,7 +529,7 @@ impl<'exec> Executor<'exec> {
             normalized_path,
             self.schema_metadata,
             &mut |entity| {
-                let hash = entity.to_hash(&requires_nodes.items, proj_ctx.possible_types);
+                let hash = entity.to_hash(&requires_nodes.items, &self.schema_metadata.possible_types);
 
                 if !entity.is_null() {
                     representation_hashes.push(hash);
@@ -551,7 +550,7 @@ impl<'exec> Executor<'exec> {
                 };
 
                 let is_projected = project_requires(
-                    &proj_ctx,
+                    &self.schema_metadata.possible_types,
                     &requires_nodes.items,
                     entity,
                     &mut filtered_representations,
