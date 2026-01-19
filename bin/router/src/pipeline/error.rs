@@ -18,7 +18,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     jwt::errors::JwtError,
     pipeline::{
-        authorization::AuthorizationError, header::SingleContentType,
+        authorization::AuthorizationError,
+        header::{ResponseMode, SingleContentType},
         progressive_override::LabelEvaluationError,
     },
 };
@@ -152,8 +153,13 @@ impl PipelineError {
         }
     }
 
-    pub fn into_response(self, content_type: Option<SingleContentType>) -> web::HttpResponse {
-        let prefer_ok = content_type.unwrap_or_default() == SingleContentType::JSON;
+    pub fn into_response(self, response_mode: Option<ResponseMode>) -> web::HttpResponse {
+        let response_mode = response_mode.unwrap_or_default();
+        let prefer_ok = matches!(
+            response_mode,
+            ResponseMode::SingleOnly(SingleContentType::JSON)
+                | ResponseMode::Dual(SingleContentType::JSON, _)
+        );
 
         let status = self.default_status_code(prefer_ok);
 

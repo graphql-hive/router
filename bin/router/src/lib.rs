@@ -21,6 +21,7 @@ use crate::{
     jwt::JwtAuthRuntime,
     logger::configure_logging,
     pipeline::{
+        error::PipelineError,
         graphql_request_handler,
         header::{RequestAccepts, TEXT_HTML_MIME},
         usage_reporting::init_hive_user_agent,
@@ -60,19 +61,14 @@ async fn graphql_endpoint_handler(
             return early_response;
         }
 
-        // Aggree on the response content type so that errors can be handled
+        // agree on the response content type so that errors can be handled
         // properly outside the request handler.
-        let (single_content_type, stream_content_type) = match request.negotiate() {
-            Ok((single, stream)) => (single, stream),
+        let response_mode = match request.negotiate() {
+            Ok(response_mode) => response_mode,
             Err(err) => return err.into_response(None),
         };
 
-        if request.method() == Method::GET
-        && single_content_type.is_none()
-        // coming soon
-        // && stream_content_type.is_none()
-        && request.can_accept_http()
-        {
+        if request.method() == Method::GET && response_mode.is_none() && request.can_accept_http() {
             if app_state.router_config.graphiql.enabled {
                 return web::HttpResponse::Ok()
                     .header(CONTENT_TYPE, TEXT_HTML_MIME)
@@ -82,11 +78,18 @@ async fn graphql_endpoint_handler(
             }
         }
 
+        // not a graphiql request and no supported content types
+        let response_mode = match response_mode {
+            Some(mode) => mode,
+            None => {
+                return PipelineError::UnsupportedContentType.into_response(response_mode);
+            }
+        };
+
         let mut res = match graphql_request_handler(
             &request,
             body_bytes,
-            single_content_type.clone(),
-            stream_content_type,
+            &response_mode,
             supergraph,
             app_state.get_ref(),
             schema_state.get_ref(),
@@ -94,7 +97,7 @@ async fn graphql_endpoint_handler(
         .await
         {
             Ok(response) => response,
-            Err(err) => return err.into_response(single_content_type),
+            Err(err) => return err.into_response(Some(response_mode)),
         };
 
         // Apply CORS headers to the final response if CORS is configured.

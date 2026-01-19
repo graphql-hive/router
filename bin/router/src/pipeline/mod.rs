@@ -22,7 +22,7 @@ use crate::{
         error::PipelineError,
         execution::{execute_plan, ExposeQueryPlanMode, PlannedRequest, EXPOSE_QUERY_PLAN_HEADER},
         execution_request::get_execution_request_from_http_request,
-        header::{SingleContentType, StreamContentType},
+        header::ResponseMode,
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::parse_operation_with_cache,
         progressive_override::request_override_context,
@@ -52,8 +52,7 @@ pub mod validation;
 pub async fn graphql_request_handler(
     req: &HttpRequest,
     body_bytes: Bytes,
-    single_content_type: Option<SingleContentType>,
-    _stream_content_type: Option<StreamContentType>,
+    response_mode: &ResponseMode,
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
@@ -90,10 +89,19 @@ pub async fn graphql_request_handler(
 
     if is_subscription
     // coming soon
-    // && stream_content_type.is_none()
+    // && !response_mode.can_stream()
     {
         return Err(PipelineError::SubscriptionsNotSupported);
     }
+
+    let single_content_type = match response_mode {
+        ResponseMode::SingleOnly(single) => single,
+        ResponseMode::Dual(single, _) => single,
+        _ => {
+            // streaming responses coming soon
+            return Err(PipelineError::UnsupportedContentType);
+        }
+    };
 
     let variable_payload =
         coerce_request_variables(supergraph, &mut execution_request, &normalize_payload)?;
@@ -176,13 +184,6 @@ pub async fn graphql_request_handler(
         }
     }
 
-    let accepted_content_type: &'static str = match single_content_type {
-        Some(content_type) => content_type.into(),
-        None => {
-            return Err(PipelineError::UnsupportedContentType);
-        }
-    };
-
     let response_bytes = Bytes::from(response.body);
     let response_headers = response.headers;
 
@@ -194,7 +195,7 @@ pub async fn graphql_request_handler(
     }
 
     Ok(response_builder
-        .header(http::header::CONTENT_TYPE, accepted_content_type)
+        .header(http::header::CONTENT_TYPE, single_content_type.as_ref())
         .body(response_bytes))
 }
 
