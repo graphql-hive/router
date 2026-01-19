@@ -68,7 +68,11 @@ impl<S> OpenTelemetry<S> {
             .build();
 
         let tracer = traces_provider.tracer_with_scope(scope);
-        let traces_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        let traces_layer = tracing_opentelemetry::layer()
+            .with_tracer(tracer)
+            .with_tracked_inactivity(false)
+            .with_location(false)
+            .with_threads(false);
 
         Ok(OpenTelemetry {
             tracer: Some(traces::Tracer {
