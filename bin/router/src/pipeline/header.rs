@@ -16,11 +16,7 @@ pub const TEXT_HTML_MIME: &str = "text/html";
 /// Non-streamable (single) content types for GraphQL responses.
 #[derive(PartialEq, Default, Debug, Clone, IntoStaticStr, EnumString, AsRefStr, EnumIter)]
 pub enum SingleContentType {
-    /// GraphQL over HTTP spec (`application/graphql-response+json`)
-    ///
-    /// Read more: https://graphql.github.io/graphql-over-http
-    #[strum(serialize = "application/graphql-response+json")]
-    GraphQLResponseJSON,
+    // The order of the variants here matters for negotiation with `Accept: */*`.
     /// Legacy GraphQL over HTTP (`application/json`)
     ///
     /// Default for regular queries and mutations.
@@ -29,6 +25,11 @@ pub enum SingleContentType {
     #[default]
     #[strum(serialize = "application/json")]
     JSON,
+    /// GraphQL over HTTP spec (`application/graphql-response+json`)
+    ///
+    /// Read more: https://graphql.github.io/graphql-over-http
+    #[strum(serialize = "application/graphql-response+json")]
+    GraphQLResponseJSON,
 }
 
 impl TryFrom<&MediaType<'_>> for SingleContentType {
@@ -69,6 +70,7 @@ impl SingleContentType {
 /// Streamable content types for GraphQL responses.
 #[derive(PartialEq, Default, Debug, IntoStaticStr, EnumString, AsRefStr, EnumIter)]
 pub enum StreamContentType {
+    // The order of the variants here matters for negotiation with `Accept: */*`.
     /// Incremental Delivery over HTTP (`multipart/mixed`)
     ///
     /// Default for subscriptions.
@@ -179,12 +181,11 @@ fn negotiate_content_type(
     accept_header: Option<&str>,
 ) -> Result<Option<ResponseMode>, <Accept as FromStr>::Err> {
     let accept_header = accept_header.unwrap_or_default();
-    if accept_header.is_empty() {
-        return Ok(Some(ResponseMode::Dual(
-            SingleContentType::default(),
-            StreamContentType::default(),
-        )));
-    }
+    let accept_header = if accept_header.is_empty() {
+        "*/*" // no header is same as this, but we want headers_accept to do the negotiation to be consistent
+    } else {
+        accept_header
+    };
 
     let accept = Accept::from_str(accept_header)?;
 
@@ -259,6 +260,13 @@ mod tests {
         let cases = vec![
             (
                 "",
+                ResponseMode::Dual(
+                    SingleContentType::JSON,
+                    StreamContentType::IncrementalDelivery,
+                ),
+            ),
+            (
+                "*/*",
                 ResponseMode::Dual(
                     SingleContentType::JSON,
                     StreamContentType::IncrementalDelivery,
