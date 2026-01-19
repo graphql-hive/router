@@ -209,6 +209,8 @@ pub fn is_introspection_query_only<'a>(
     // Early escape for queries with no fragment spreads
     if !contains_fragment_spreads(selection_set) {
         // TODO: when having 100000000000 inline fragmnents, it will iterate over them all, potentiall vulnerability
+        // NOTE: I checked how deep the inline fragments can be, and according to graphql_tools::parser, and it's TokenStream,
+        // it can be up to 50 levels. After that, the parser errors.
         return check_root_fields_without_fragments(selection_set);
     }
 
