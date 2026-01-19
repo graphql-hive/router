@@ -30,6 +30,18 @@ pub fn project_requires(
     )
 }
 
+fn write_response_key(first: bool, response_key: Option<&str>, buffer: &mut Vec<u8>) {
+    if !first {
+        buffer.put(COMMA);
+    }
+    if let Some(response_key) = response_key {
+        buffer.put(QUOTE);
+        buffer.put(response_key.as_bytes());
+        buffer.put(QUOTE);
+        buffer.put(COLON);
+    }
+}
+
 fn project_requires_internal(
     possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
@@ -43,77 +55,27 @@ fn project_requires_internal(
             return Ok(false);
         }
         Value::Bool(b) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-                buffer.put(if b == &true { TRUE } else { FALSE });
-            } else {
-                buffer.put(if b == &true { TRUE } else { FALSE });
-            }
+            write_response_key(first, response_key, buffer);
+            buffer.put(if b == &true { TRUE } else { FALSE });
         }
         Value::F64(n) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-            }
+            write_response_key(first, response_key, buffer);
             write_f64(buffer, *n);
         }
         Value::I64(n) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-            }
+            write_response_key(first, response_key, buffer);
             write_i64(buffer, *n);
         }
         Value::U64(n) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-            }
+            write_response_key(first, response_key, buffer);
             write_u64(buffer, *n);
         }
         Value::String(s) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-            }
+            write_response_key(first, response_key, buffer);
             write_and_escape_string(buffer, s);
         }
         Value::Array(entity_array) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-            }
+            write_response_key(first, response_key, buffer);
             buffer.put(OPEN_BRACKET);
 
             let mut first = true;
@@ -206,15 +168,7 @@ fn project_requires_map_mut(
                 }
 
                 if *first {
-                    if !parent_first {
-                        buffer.put(COMMA);
-                    }
-                    if let Some(parent_response_key) = parent_response_key {
-                        buffer.put(QUOTE);
-                        buffer.put(parent_response_key.as_bytes());
-                        buffer.put(QUOTE);
-                        buffer.put(COLON);
-                    }
+                    write_response_key(parent_first, parent_response_key, buffer);
                     buffer.put(OPEN_BRACE);
                     // Write __typename only if the object has other fields
                     if let Some(type_name) = entity_obj
