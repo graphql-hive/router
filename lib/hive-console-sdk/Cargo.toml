@@ -14,7 +14,7 @@ graphql-tools =  { path = "../graphql-tools", version = "0.4.2" }
 
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-reqwest = { workspace = true, features = [ "blocking", "trust-dns"] }
+reqwest = { workspace = true, features = [ "blocking" ] }
 reqwest-retry = { workspace = true }
 reqwest-middleware = { workspace = true, features = ["json"]}
 anyhow = { workspace = true }
