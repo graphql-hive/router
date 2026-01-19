@@ -122,8 +122,9 @@ impl From<&MediaType<'_>> for StreamContentType {
 /// Reads the `Accept` header contents and returns a tuple of accepted/parsed content types.
 /// It perform negotiation and respects q-weights.
 fn negotiate_content_type(
-    accept_header: &str,
+    accept_header: Option<&str>,
 ) -> Result<(Option<SingleContentType>, Option<StreamContentType>), HeaderError> {
+    let accept_header = accept_header.unwrap_or_default();
     if accept_header.is_empty() {
         return Ok((
             Some(SingleContentType::default()),
@@ -172,8 +173,7 @@ impl RequestAccepts for HttpRequest {
         let content_types = self
             .headers()
             .get(ACCEPT)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default();
+            .and_then(|value| value.to_str().ok());
 
         let agreed = negotiate_content_type(content_types).map_err(|err| {
             error!("Failed to parse Accept header: {}", err);
@@ -232,7 +232,7 @@ mod tests {
 
         for (accept_header, expected_single, expected_stream) in cases {
             let (single, stream) =
-                negotiate_content_type(accept_header).expect("unable to parse accept header");
+                negotiate_content_type(Some(accept_header)).expect("unable to parse accept header");
             assert_eq!(single, expected_single, "wrong single content type");
             assert_eq!(stream, expected_stream, "wrong stream content type");
         }
