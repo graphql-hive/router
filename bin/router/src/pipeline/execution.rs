@@ -69,10 +69,10 @@ pub async fn execute_plan(
             vec![],
             &extensions,
             planned_request.normalized_payload.root_type_name,
-            &vec![],
+            &[],
             &None,
             1000, // TODO: what would the estimate be here?
-            &introspection_context.metadata,
+            introspection_context.metadata,
         )
         .with_plan_context(LazyPlanContext {
             subgraph_name: || None,
@@ -83,7 +83,7 @@ pub async fn execute_plan(
                 "Failed to project query plan to extensions during dry-run: {}",
                 err
             );
-            PipelineError::PlanExecutionError(err.into())
+            PipelineError::PlanExecutionError(err)
         })?;
 
         return Ok(PlanExecutionOutput {
