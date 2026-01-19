@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod override_subgraph_urls_e2e_tests {
     use ntex::web::test;
-    use sonic_rs::{from_slice, JsonValueTrait as _, Value};
+    use sonic_rs::{from_slice, Value};
 
     use crate::testkit::{
         init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
@@ -77,17 +77,18 @@ mod override_subgraph_urls_e2e_tests {
         let body = test::read_body(resp).await;
         let json_body: Value = from_slice(&body).unwrap();
 
-        assert!(
-            json_body["errors"][0]["message"]
-                .as_str()
-                .unwrap()
-                .starts_with("Failed to"),
-            "Expected subgraph request failure"
-        );
-        assert_eq!(
-            json_body["errors"][0]["extensions"]["code"],
-            "SUBGRAPH_REQUEST_FAILURE"
-        );
+        insta::assert_snapshot!(sonic_rs::to_string_pretty(&json_body).unwrap(), @r###"
+        {
+          "errors": [
+            {
+              "message": "Failed to send request to subgraph \"http://0.0.0.0:4200/accounts\": client error (Connect)",
+              "extensions": {
+                "code": "SUBGRAPH_REQUEST_FAILURE",
+                "serviceName": "accounts"
+              }
+            }
+          ]
+        }"###);
 
         let subgraph_requests = subgraphs_server
             .get_subgraph_requests_log("accounts")
