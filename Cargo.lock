@@ -2924,7 +2924,8 @@ checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 [[package]]
 name = "mediatype"
 version = "0.21.0"
-source = "git+https://github.com/enisdenjo/mediatype?branch=public-new-unchecked#67e61f964749f8b2d9b647fea8ceaca16682254d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "120fa187be19d9962f0926633453784691731018a2bf936ddb4e29101b79c4a7"
 
 [[package]]
 name = "memchr"

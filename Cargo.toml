@@ -69,7 +69,3 @@ anyhow = "1.0.100"
 moka = { version = "0.12.11", features = ["future", "sync"] }
 hyper-rustls = { version = "0.27.7", features = ["http1", "http2"] }
 strum = { version = "0.27.2", features = ["derive"] }
-
-# uses branch until https://github.com/picoHz/mediatype/pull/25 lands
-[patch.crates-io]
-mediatype = { git = "https://github.com/enisdenjo/mediatype", branch = "public-new-unchecked" }

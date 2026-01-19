@@ -1,9 +1,9 @@
 use headers_accept::Accept;
 use http::header::ACCEPT;
-use mediatype::MediaType;
+use mediatype::{MediaType, Name, ReadParams};
 use ntex::web::HttpRequest;
 use std::str::FromStr;
-use strum::{AsRefStr, EnumString, IntoStaticStr};
+use strum::{AsRefStr, EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 use tracing::error;
 
 use crate::pipeline::error::PipelineError;
@@ -11,43 +11,10 @@ use crate::pipeline::error::PipelineError;
 /// Non-GraphQL content type, used to detect if the client can accept GraphiQL responses.
 pub const TEXT_HTML_MIME: &str = "text/html";
 
-const JSON_MEDIA_TYPE: MediaType =
-    MediaType::new(mediatype::names::APPLICATION, mediatype::names::JSON);
-
-const GRAPHQL_RESPONSE_JSON_MEDIA_TYPE: MediaType = MediaType::from_parts(
-    mediatype::names::APPLICATION,
-    mediatype::Name::new_unchecked("graphql-response"),
-    Some(mediatype::names::JSON),
-    &[],
-);
-
-const INCREMENTAL_DELIVERY_MEDIA_TYPE: MediaType =
-    MediaType::new(mediatype::names::MULTIPART, mediatype::names::MIXED);
-
-const SSE_MEDIA_TYPE: MediaType =
-    MediaType::new(mediatype::names::TEXT, mediatype::names::EVENT_STREAM);
-
-const APOLLO_MULTIPART_HTTP_MEDIA_TYPE: MediaType = MediaType::from_parts(
-    mediatype::names::MULTIPART,
-    mediatype::names::MIXED,
-    None,
-    &[(
-        mediatype::Name::new_unchecked("subscriptionSpec"),
-        mediatype::Value::new_unchecked("1.0"),
-    )],
-);
-
-const SUPPORTED_SINGLE_MEDIA_TYPES: &[MediaType] =
-    &[JSON_MEDIA_TYPE, GRAPHQL_RESPONSE_JSON_MEDIA_TYPE];
-
-const SUPPORTED_STREAM_MEDIA_TYPES: &[MediaType] = &[
-    SSE_MEDIA_TYPE,
-    INCREMENTAL_DELIVERY_MEDIA_TYPE,
-    APOLLO_MULTIPART_HTTP_MEDIA_TYPE,
-];
-
+// IMPORTANT: make sure that the serialized string representations are valid because
+//            there is an unwrap in the SingleContentType::media_types() method.
 /// Non-streamable (single) content types for GraphQL responses.
-#[derive(PartialEq, Default, Debug, Clone, IntoStaticStr, EnumString, AsRefStr)]
+#[derive(PartialEq, Default, Debug, Clone, IntoStaticStr, EnumString, AsRefStr, EnumIter)]
 pub enum SingleContentType {
     /// GraphQL over HTTP spec (`application/graphql-response+json`)
     ///
@@ -64,25 +31,43 @@ pub enum SingleContentType {
     JSON,
 }
 
-impl From<&MediaType<'_>> for SingleContentType {
-    fn from(media_type: &MediaType) -> Self {
-        if media_type == &GRAPHQL_RESPONSE_JSON_MEDIA_TYPE {
-            SingleContentType::GraphQLResponseJSON
+impl TryFrom<&MediaType<'_>> for SingleContentType {
+    type Error = &'static str;
+
+    /// The only thing where the conversion can fail is if the media type is not supported.
+    fn try_from(media_type: &MediaType) -> Result<Self, Self::Error> {
+        let essence_media_type_string = media_type.essence().to_string();
+        if essence_media_type_string == SingleContentType::GraphQLResponseJSON.as_ref() {
+            Ok(SingleContentType::GraphQLResponseJSON)
+        } else if essence_media_type_string == SingleContentType::JSON.as_ref() {
+            Ok(SingleContentType::JSON)
         } else {
-            SingleContentType::JSON
+            Err("Unsupported single content type")
         }
     }
 }
 
+impl SingleContentType {
+    // no consts until https://github.com/picoHz/mediatype/pull/25 lands
+    pub fn media_types() -> Vec<MediaType<'static>> {
+        // first collect the string representations to keep them alive
+        // in order to parse them into MediaType instances that _borrow_
+        // the items from the vec
+        let strs: Vec<&'static str> = SingleContentType::iter().map(|ct| ct.into()).collect();
+        strs.iter()
+            .map(|s| {
+                MediaType::parse(s)
+                    // SAFETY: we control the strings being parsed here. see the enum variants
+                    .unwrap()
+            })
+            .collect()
+    }
+}
+
+// IMPORTANT: make sure that the serialized string representations are valid because
+//            there is an unwrap in the StreamContentType::media_types() method.
 /// Streamable content types for GraphQL responses.
-///
-/// The into static str will return the string representation of the content type as to be sent
-/// back to the client in the `Content-Type` header.
-///
-/// For example, if during negotiation the client accepts `multipart/mixed;subscriptionsSpec="1.0"`,
-/// this function will return `multipart/mixed; boundary=graphql` because that is the expected
-/// content type value for multipart HTTP responses.
-#[derive(PartialEq, Default, Debug, IntoStaticStr, EnumString, AsRefStr)]
+#[derive(PartialEq, Default, Debug, IntoStaticStr, EnumString, AsRefStr, EnumIter)]
 pub enum StreamContentType {
     /// Incremental Delivery over HTTP (`multipart/mixed`)
     ///
@@ -90,7 +75,7 @@ pub enum StreamContentType {
     ///
     /// Read more: https://github.com/graphql/graphql-over-http/blob/c144dbd89cbea6bde0045205e34e01002f9f9ba0/rfcs/IncrementalDelivery.md
     #[default]
-    #[strum(serialize = "multipart/mixed; boundary=-")]
+    #[strum(serialize = "multipart/mixed")]
     IncrementalDelivery,
     /// GraphQL over SSE (`text/event-stream`)
     ///
@@ -102,19 +87,47 @@ pub enum StreamContentType {
     /// Apollo Multipart HTTP protocol (`multipart/mixed;subscriptionSpec="1.0"`)
     ///
     /// Read more: https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol
-    #[strum(serialize = r#"multipart/mixed; boundary=graphql"#)]
+    #[strum(serialize = r#"multipart/mixed;subscriptionSpec="1.0""#)]
     ApolloMultipartHTTP,
 }
 
-impl From<&MediaType<'_>> for StreamContentType {
-    fn from(media_type: &MediaType) -> Self {
-        if media_type == &INCREMENTAL_DELIVERY_MEDIA_TYPE {
-            StreamContentType::IncrementalDelivery
-        } else if media_type == &SSE_MEDIA_TYPE {
-            StreamContentType::SSE
+impl TryFrom<&MediaType<'_>> for StreamContentType {
+    type Error = &'static str;
+
+    /// The only thing where the conversion can fail is if the media type is not supported.
+    fn try_from(media_type: &MediaType) -> Result<Self, Self::Error> {
+        let essence_media_type_string = media_type.essence().to_string();
+        if essence_media_type_string == StreamContentType::IncrementalDelivery.as_ref() {
+            if media_type
+                .get_param(Name::new_unchecked("subscriptionSpec"))
+                .is_some_and(|s| s.unquoted_str() == "1.0")
+            {
+                Ok(StreamContentType::ApolloMultipartHTTP)
+            } else {
+                Ok(StreamContentType::IncrementalDelivery)
+            }
+        } else if essence_media_type_string == StreamContentType::SSE.as_ref() {
+            Ok(StreamContentType::SSE)
         } else {
-            StreamContentType::ApolloMultipartHTTP
+            Err("Unsupported stream content type")
         }
+    }
+}
+
+impl StreamContentType {
+    // no consts until https://github.com/picoHz/mediatype/pull/25 lands
+    pub fn media_types() -> Vec<MediaType<'static>> {
+        // first collect the string representations to keep them alive
+        // in order to parse them into MediaType instances that _borrow_
+        // the items from the vec
+        let strs: Vec<&'static str> = StreamContentType::iter().map(|ct| ct.into()).collect();
+        strs.iter()
+            .map(|s| {
+                MediaType::parse(s)
+                    // SAFETY: we control the strings being parsed here. see the enum variants
+                    .unwrap()
+            })
+            .collect()
     }
 }
 
@@ -172,13 +185,17 @@ fn negotiate_content_type(
             StreamContentType::default(),
         )));
     }
+
     let accept = Accept::from_str(accept_header)?;
-    let agreed_single = accept
-        .negotiate(SUPPORTED_SINGLE_MEDIA_TYPES)
-        .map(|t| t.into());
+
+    let agreed_single: Option<SingleContentType> = accept
+        .negotiate(SingleContentType::media_types().iter())
+        .and_then(|t| t.try_into().ok()); // we dont care about the conversion error, it _should_ not happen
+
     let agreed_stream = accept
-        .negotiate(SUPPORTED_STREAM_MEDIA_TYPES)
-        .map(|t| t.into());
+        .negotiate(StreamContentType::media_types().iter())
+        .and_then(|t| t.try_into().ok()); // we dont care about the conversion error, it _should_ not happen
+
     match (agreed_single, agreed_stream) {
         (Some(single), Some(stream)) => Ok(Some(ResponseMode::Dual(single, stream))),
         (Some(single), None) => Ok(Some(ResponseMode::SingleOnly(single))),
