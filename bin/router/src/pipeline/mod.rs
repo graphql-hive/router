@@ -185,12 +185,6 @@ pub async fn execute_pipeline(
         let mut execution_request = get_execution_request(req, body_bytes).await?;
         let parser_payload = parse_operation_with_cache(shared_state, &execution_request).await?;
 
-        // This is where we decide if to drop a trace,
-        // when the introspection queries are configured to be ignored by Telemetry
-        if parser_payload.is_introspection_only && !shared_state.router_config.telemetry.tracing.instrumentation.introspection {
-          operation_span.mark_trace_for_drop();
-        }
-
         operation_span.record_document(&parser_payload.minified_document);
         operation_span.record_operation_identity((&parser_payload).into());
         operation_span.record_client_identity(client_name, client_version);
@@ -206,6 +200,13 @@ pub async fn execute_pipeline(
             &parser_payload,
         )
         .await?;
+
+        // This is where we decide if to drop a trace,
+        // when the introspection queries are configured to be ignored by Telemetry
+        if normalize_payload.is_introspection_only && !shared_state.router_config.telemetry.tracing.instrumentation.introspection {
+          operation_span.mark_trace_for_drop();
+        }
+
         let variable_payload =
             coerce_request_variables(req, supergraph, &mut execution_request, &normalize_payload)?;
 

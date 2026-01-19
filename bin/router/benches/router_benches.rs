@@ -59,6 +59,7 @@ fn authorization_benchmark(c: &mut Criterion) {
                 operation_type: "query".to_string(),
                 client_document_hash: "".to_string(),
             },
+            is_introspection_only: false,
         }
     }
 
