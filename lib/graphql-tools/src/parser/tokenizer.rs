@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self};
 
 use combine::easy::{Error, Errors, Info};
 use combine::error::StreamError;
@@ -30,6 +30,8 @@ pub struct TokenStream<'a> {
     off: usize,
     next_state: Option<(usize, Token<'a>, usize, Pos)>,
     recursion_limit: usize,
+    token_limit: Option<usize>,
+    token_count: usize,
 }
 
 impl TokenStream<'_> {
@@ -130,19 +132,29 @@ fn check_float(value: &str, exponent: Option<usize>, real: Option<usize>) -> boo
 
 impl<'a> TokenStream<'a> {
     pub fn new(s: &'a str) -> TokenStream<'a> {
-        Self::with_recursion_limit(s, 50)
+        Self::with_recursion_limit(s, 50, None)
+    }
+
+    pub fn new_with_token_limit(s: &'a str, token_limit: usize) -> TokenStream<'a> {
+        Self::with_recursion_limit(s, 50, Some(token_limit))
     }
 
     /// Specify a limit to recursive parsing. Note that increasing the limit
     /// from the default may represent a security issue since a maliciously
     /// crafted input may cause a stack overflow, crashing the process.
-    pub(crate) fn with_recursion_limit(s: &'a str, recursion_limit: usize) -> TokenStream<'a> {
+    pub(crate) fn with_recursion_limit(
+        s: &'a str,
+        recursion_limit: usize,
+        token_limit: Option<usize>,
+    ) -> TokenStream<'a> {
         let mut me = TokenStream {
             buf: s,
             position: Pos { line: 1, column: 1 },
             off: 0,
             next_state: None,
             recursion_limit,
+            token_limit,
+            token_count: 0,
         };
         me.skip_whitespace();
         me
@@ -154,10 +166,19 @@ impl<'a> TokenStream<'a> {
     fn advance_token<T>(&mut self, kind: Kind, size: usize) -> Result<(Kind, usize), T> {
         self.position.column += size;
         self.off += size;
+        // Should be counted?
+        if self.token_limit.is_some() {
+            self.token_count += 1;
+        }
         Ok((kind, size))
     }
 
     fn take_token(&mut self) -> Result<(Kind, usize), Error<Token<'a>, Token<'a>>> {
+        if let Some(limit) = self.token_limit {
+            if self.token_count >= limit {
+                return Err(Error::message_static_message("Token limit exceeded"));
+            }
+        }
         use self::Kind::*;
         let mut iter = self.buf[self.off..].char_indices();
         let cur_char = match iter.next() {

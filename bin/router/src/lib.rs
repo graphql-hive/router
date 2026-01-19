@@ -25,11 +25,13 @@ use crate::{
         graphql_request_handler,
         header::{RequestAccepts, TEXT_HTML_MIME},
         usage_reporting::init_hive_user_agent,
+        validation::{max_depth_rule::MaxDepthRule, max_directives_rule::MaxDirectivesRule},
     },
 };
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
+use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
 use http::{
     header::{CONTENT_TYPE, RETRY_AFTER},
@@ -166,10 +168,22 @@ pub async fn configure_app_from_config(
     let schema_state =
         SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
     let schema_state_arc = Arc::new(schema_state);
+    let mut validation_plan = default_rules_validation_plan();
+    if let Some(max_depth_config) = &router_config_arc.limits.max_depth {
+        validation_plan.add_rule(Box::new(MaxDepthRule {
+            config: max_depth_config.clone(),
+        }));
+    }
+    if let Some(max_directives_config) = &router_config_arc.limits.max_directives {
+        validation_plan.add_rule(Box::new(MaxDirectivesRule {
+            config: max_directives_config.clone(),
+        }));
+    }
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc,
         jwt_runtime,
         hive_usage_agent,
+        validation_plan,
     )?);
 
     Ok((shared_state, schema_state_arc))

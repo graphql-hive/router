@@ -254,7 +254,25 @@ pub fn parse_query<'a, S>(s: &'a str) -> Result<Document<'a, S>, ParseError>
 where
     S: Text<'a>,
 {
-    let mut tokens = TokenStream::new(s);
+    let tokens = TokenStream::new(s);
+    handle_token_stream(tokens)
+}
+
+pub fn parse_query_with_token_limit<'a, S>(
+    s: &'a str,
+    token_limit: usize,
+) -> Result<Document<'a, S>, ParseError>
+where
+    S: Text<'a>,
+{
+    let tokens = TokenStream::new_with_token_limit(s, token_limit);
+    handle_token_stream(tokens)
+}
+
+fn handle_token_stream<'a, S>(mut tokens: TokenStream<'a>) -> Result<Document<'a, S>, ParseError>
+where
+    S: Text<'a>,
+{
     let (doc, _) = many1(parser(definition))
         .map(|d| Document { definitions: d })
         .skip(eof())
@@ -353,7 +371,7 @@ mod test {
     }
 
     #[test]
-    #[should_panic(expected = "number too large")]
+    #[should_panic(expected = "PosOverflow")]
     fn large_integer() {
         ast("{ a(x: 10000000000000000000000000000 }");
     }
@@ -385,7 +403,7 @@ mod test {
         let err = consume_definition::<String>("where a > 1 => 10.0")
             .expect_err("Expected parse to fail with an error");
         let err = format!("{}", err);
-        assert_eq!(err, "query parse error: Parse error at 1:1\nUnexpected `where[Name]`\nExpected {, query, mutation, subscription or fragment\n");
+        assert_eq!(err, "Parse error at 1:1\nUnexpected `where[Name]`\nExpected {, query, mutation, subscription or fragment\n");
     }
 
     #[test]
@@ -401,7 +419,7 @@ mod test {
         let err = format!("{}", result.unwrap_err());
         assert_eq!(
             &err,
-            "query parse error: Parse error at 1:114\nExpected ]\nRecursion limit exceeded\n"
+            "Parse error at 1:114\nExpected ]\nRecursion limit exceeded\n"
         )
     }
 }

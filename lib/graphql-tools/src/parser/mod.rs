@@ -91,5 +91,6 @@ pub mod schema;
 pub use format::Style;
 pub use position::Pos;
 pub use query::parse_query;
+pub use query::parse_query_with_token_limit;
 pub use query::{minify_query, minify_query_document};
 pub use schema::parse_schema;
