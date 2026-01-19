@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod disable_introspection_e2e_tests {
     use ntex::web::test;
-    use sonic_rs::{from_slice, JsonContainerTrait, JsonValueTrait, Value};
+    use sonic_rs::{from_slice, to_string_pretty, Value};
 
     use crate::testkit::{
         init_graphql_request, init_router_from_config_file, wait_for_readiness, EnvVarGuard,
@@ -22,10 +22,18 @@ mod disable_introspection_e2e_tests {
         let body = test::read_body(resp).await;
         let json_body: Value = from_slice(&body).unwrap();
 
-        let errors = json_body.get("errors").unwrap().as_array().unwrap();
-        assert_eq!(errors.len(), 1);
-        let message = errors[0].get("message").unwrap().as_str().unwrap();
-        assert_eq!(message, "Introspection queries are disabled.");
+        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        {
+          "errors": [
+            {
+              "message": "Introspection queries are disabled",
+              "extensions": {
+                "code": "INTROSPECTION_DISABLED"
+              }
+            }
+          ]
+        }
+        "###);
     }
 
     #[ntex::test]
@@ -42,12 +50,18 @@ mod disable_introspection_e2e_tests {
 
         let body = test::read_body(resp).await;
         let json_body: Value = from_slice(&body).unwrap();
-        println!("AA: {:#?}", json_body);
 
-        let query_type_name = json_body["data"]["__schema"]["queryType"]["name"]
-            .as_str()
-            .expect("Expected query type name in response");
-        assert_eq!(query_type_name, "Query");
+        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        {
+          "data": {
+            "__schema": {
+              "queryType": {
+                "name": "Query"
+              }
+            }
+          }
+        }
+        "#);
     }
 
     #[ntex::test]
@@ -64,10 +78,18 @@ mod disable_introspection_e2e_tests {
         let body = test::read_body(resp).await;
         let json_body: Value = from_slice(&body).unwrap();
 
-        let errors = json_body.get("errors").unwrap().as_array().unwrap();
-        assert_eq!(errors.len(), 1);
-        let message = errors[0].get("message").unwrap().as_str().unwrap();
-        assert_eq!(message, "Introspection queries are disabled.");
+        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        {
+          "errors": [
+            {
+              "message": "Introspection queries are disabled",
+              "extensions": {
+                "code": "INTROSPECTION_DISABLED"
+              }
+            }
+          ]
+        }
+        "###);
     }
 
     #[ntex::test]
@@ -83,9 +105,16 @@ mod disable_introspection_e2e_tests {
 
         let body = test::read_body(resp).await;
         let json_body: Value = from_slice(&body).unwrap();
-        let query_type_name = json_body["data"]["__schema"]["queryType"]["name"]
-            .as_str()
-            .unwrap();
-        assert_eq!(query_type_name, "Query");
+        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        {
+          "data": {
+            "__schema": {
+              "queryType": {
+                "name": "Query"
+              }
+            }
+          }
+        }
+        "#);
     }
 }
