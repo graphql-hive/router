@@ -1,5 +1,4 @@
 use headers_accept::Accept;
-use headers_core::Error as HeaderError;
 use http::header::ACCEPT;
 use mediatype::MediaType;
 use ntex::web::HttpRequest;
@@ -123,7 +122,7 @@ impl From<&MediaType<'_>> for StreamContentType {
 /// It perform negotiation and respects q-weights.
 fn negotiate_content_type(
     accept_header: Option<&str>,
-) -> Result<(Option<SingleContentType>, Option<StreamContentType>), HeaderError> {
+) -> Result<(Option<SingleContentType>, Option<StreamContentType>), <Accept as FromStr>::Err> {
     let accept_header = accept_header.unwrap_or_default();
     if accept_header.is_empty() {
         return Ok((

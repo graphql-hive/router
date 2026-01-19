@@ -61,7 +61,6 @@ arc-swap = "1.7.1"
 lasso2 = "0.8.2"
 anyhow = { workspace = true }
 mediatype = "0.21.0"
-headers-core = "0.3.0"
 headers-accept = "0.3.0"
 
 [dev-dependencies]

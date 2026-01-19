@@ -2112,7 +2112,6 @@ dependencies = [
  "futures",
  "graphql-tools",
  "headers-accept",
- "headers-core",
  "hive-console-sdk",
  "hive-router-config",
  "hive-router-internal",
