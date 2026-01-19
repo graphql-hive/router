@@ -204,6 +204,16 @@ pub async fn execute_pipeline(
         // This is where we decide if to drop a trace,
         // when the introspection queries are configured to be ignored by Telemetry
         if normalize_payload.is_introspection_only && !shared_state.router_config.telemetry.tracing.instrumentation.introspection {
+          // We could move this check to the parsing phase (right after parsing),
+          // but that would make it vulnerable to DoS attacks.
+          // An attacker could craft deeply nested inline fragments (which bypass the tokenizer's recursion limit - 50)
+          // to cause a giant slowdown of the router.
+          //
+          // By checking here (post-normalization), we benefit from GraphQL validation that has already run,
+          //  enforcing max depth/complexity, so queries with excessive complexity have already been rejected.
+          //
+          // The only big downside here is that when a query is rejected during the validaiton phase,
+          // we don't have any means to drop the query introspection-only from being sent to OTel Collectors.
           operation_span.mark_trace_for_drop();
         }
 
