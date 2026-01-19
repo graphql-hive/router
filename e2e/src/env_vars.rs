@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod env_vars_e2e_tests {
     use ntex::web::test;
-    use sonic_rs::{from_slice, JsonValueTrait, Value};
+    use sonic_rs::{from_slice, Value};
 
     use crate::testkit::{
         init_graphql_request, init_router_from_config_file, wait_for_readiness, EnvVarGuard,
@@ -67,7 +67,7 @@ mod env_vars_e2e_tests {
             {
                 "errors": [
                     {
-                        "message": "Failed to send request to subgraph \"http://0.0.0.0:4200/accounts\": client error (Connect)",
+                        "message": "Failed to send request to subgraph \"http://0.0.0.0:4100/accounts\": client error (Connect)",
                         "extensions": {
                             "code": "SUBGRAPH_REQUEST_FAILURE",
                             "serviceName": "accounts"
