@@ -77,8 +77,11 @@ mod override_subgraph_urls_e2e_tests {
         let body = test::read_body(resp).await;
         let json_body: Value = from_slice(&body).unwrap();
 
-        insta::assert_snapshot!(sonic_rs::to_string_pretty(&json_body).unwrap(), @r###"
+        insta::assert_snapshot!(sonic_rs::to_string_pretty(&json_body).unwrap(), @r#"
         {
+          "data": {
+            "users": null
+          },
           "errors": [
             {
               "message": "Failed to send request to subgraph \"http://0.0.0.0:4200/accounts\": client error (Connect)",
@@ -88,7 +91,8 @@ mod override_subgraph_urls_e2e_tests {
               }
             }
           ]
-        }"###);
+        }
+        "#);
 
         let subgraph_requests = subgraphs_server
             .get_subgraph_requests_log("accounts")
