@@ -210,10 +210,10 @@ pub async fn execute_pipeline(
           // to cause a giant slowdown of the router.
           //
           // By checking here (post-normalization), we benefit from GraphQL validation that has already run,
-          //  enforcing max depth/complexity, so queries with excessive complexity have already been rejected.
+          // enforcing max depth/complexity, so queries with excessive complexity have already been rejected.
           //
-          // The only big downside here is that when a query is rejected during the validaiton phase,
-          // we don't have any means to drop the query introspection-only from being sent to OTel Collectors.
+          // Trade-off: When a query is rejected during the validation phase (before we reach here),
+          // we cannot identify if it was introspection-only, so traces will still be sent to OTel Collectors.
           operation_span.mark_trace_for_drop();
         }
 
