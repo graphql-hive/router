@@ -4,10 +4,7 @@ use hive_router_config::introspection_policy::IntrospectionPermissionConfig;
 use hive_router_internal::expressions::{
     values::boolean::BooleanOrProgram, CompileExpression, ExpressionCompileError,
 };
-use hive_router_plan_executor::{
-    execution::client_request_details, introspection::resolve::IntrospectionContext,
-    response::graphql_error::GraphQLError,
-};
+use hive_router_plan_executor::execution::client_request_details;
 use vrl::core::Value as VrlValue;
 
 use crate::pipeline::error::PipelineError;
@@ -26,13 +23,8 @@ pub fn compile_introspection_policy(
 
 pub fn handle_introspection_policy(
     introspection_policy_prog: &BooleanOrProgram,
-    introspection_context: &mut IntrospectionContext,
     client_request_details: &client_request_details::ClientRequestDetails<'_>,
-) -> Result<Option<GraphQLError>, PipelineError> {
-    // If no introspection query is present, nothing to do
-    if introspection_context.query.is_none() {
-        return Ok(None);
-    }
+) -> Result<(), PipelineError> {
     let is_enabled = introspection_policy_prog
         .resolve(|| {
             let mut context_map = BTreeMap::new();
@@ -43,12 +35,8 @@ pub fn handle_introspection_policy(
         .map_err(|e| PipelineError::IntrospectionPermissionEvaluationError(e.to_string()))?;
 
     if !is_enabled {
-        introspection_context.query = None;
-        Ok(Some(GraphQLError::from_message_and_code(
-            "Introspection queries are disabled.",
-            "INTROSPECTION_DISABLED",
-        )))
+        Err(PipelineError::IntrospectionDisabled)
     } else {
-        Ok(None)
+        Ok(())
     }
 }

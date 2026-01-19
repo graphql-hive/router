@@ -96,8 +96,13 @@ pub enum PipelineError {
     #[strum(serialize = "JWT_FORWARDING_ERROR")]
     JwtForwardingError(JwtForwardingError),
 
+    // Introspection permission errors
     #[error("Failed to evaluate introspection expression: {0}")]
+    #[strum(serialize = "INTROSPECTION_PERMISSION_EVALUATION_ERROR")]
     IntrospectionPermissionEvaluationError(String),
+    #[error("Introspection queries are disabled")]
+    #[strum(serialize = "INTROSPECTION_DISABLED")]
+    IntrospectionDisabled,
 }
 
 impl PipelineError {
@@ -146,6 +151,7 @@ impl PipelineError {
             (Self::IntrospectionPermissionEvaluationError(_), _) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
+            (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
         }
     }
 }

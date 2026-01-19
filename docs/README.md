@@ -70,7 +70,6 @@ http:
   graphql_endpoint: /graphql
   host: 0.0.0.0
   port: 4000
-introspection: null
 jwt:
   allowed_algorithms:
     - HS256
