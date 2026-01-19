@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod error_handling_e2e_tests {
     use ntex::web::test;
-    use sonic_rs::{from_slice, to_string_pretty, JsonContainerTrait, JsonValueTrait, Value};
+    use sonic_rs::{from_slice, to_string_pretty, Value};
 
     use crate::testkit::{
         init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
