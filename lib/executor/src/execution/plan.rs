@@ -117,7 +117,8 @@ pub async fn execute_query_plan<'exec, 'req>(
 
     if error_count > 0 {
         ctx.span.record_error_count(error_count);
-        ctx.span.record_errors(&exec_ctx.errors);
+        ctx.span
+            .record_errors(|| exec_ctx.errors.iter().map(|e| e.into()).collect());
     }
 
     let body = project_by_operation(
@@ -464,7 +465,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             Ok(response) => {
                 if let (Some(errors), Some(span)) = (&response.errors, &span) {
                     span.record_error_count(errors.len());
-                    span.record_errors(errors);
+                    span.record_errors(|| errors.iter().map(|e| e.into()).collect());
                 }
                 response
             }

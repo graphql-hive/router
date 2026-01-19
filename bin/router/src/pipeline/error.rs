@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use graphql_tools::validation::utils::ValidationError;
+use hive_router_internal::graphql::ObservedError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
     response::graphql_error::GraphQLError,
@@ -145,4 +146,16 @@ impl PipelineError {
 pub struct FailedExecutionResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<GraphQLError>>,
+}
+
+impl From<&PipelineError> for ObservedError {
+    fn from(value: &PipelineError) -> Self {
+        Self {
+            code: Some(value.graphql_error_code().to_string()),
+            message: value.graphql_error_message(),
+            path: None,
+            service_name: None,
+            affected_path: None,
+        }
+    }
 }

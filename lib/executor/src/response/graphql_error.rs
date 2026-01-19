@@ -1,7 +1,7 @@
 use core::fmt;
 use graphql_tools::parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
-use hive_router_internal::graphql::{ObservedGraphQLError, PathSegment};
+use hive_router_internal::graphql::{ObservedError, PathSegment};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use sonic_rs::Value;
 use std::collections::HashMap;
@@ -121,30 +121,20 @@ impl GraphQLError {
     }
 }
 
-impl ObservedGraphQLError for GraphQLError {
-    fn get_code(&self) -> Option<&str> {
-        self.extensions.code.as_deref()
-    }
-
-    fn get_message(&self) -> &str {
-        &self.message
-    }
-
-    fn get_path(&self) -> Option<impl Iterator<Item = PathSegment<'_>> + '_> {
-        self.path.as_ref().map(|p| {
-            p.segments.iter().map(|segment| match segment {
-                GraphQLErrorPathSegment::String(s) => PathSegment::Field(s.as_str()),
-                GraphQLErrorPathSegment::Index(i) => PathSegment::Index(*i),
-            })
-        })
-    }
-
-    fn get_service_name(&self) -> Option<&str> {
-        self.extensions.service_name.as_deref()
-    }
-
-    fn get_affected_path(&self) -> Option<&str> {
-        self.extensions.affected_path.as_deref()
+impl From<&GraphQLError> for ObservedError {
+    fn from(value: &GraphQLError) -> Self {
+        Self {
+            code: value.extensions.code.clone(),
+            message: value.message.clone(),
+            path: value.path.as_ref().map(|p| {
+                ObservedError::format_path(p.segments.iter().map(|segment| match segment {
+                    GraphQLErrorPathSegment::String(s) => PathSegment::Field(s.as_str()),
+                    GraphQLErrorPathSegment::Index(i) => PathSegment::Index(*i),
+                }))
+            }),
+            service_name: value.extensions.service_name.clone(),
+            affected_path: value.extensions.affected_path.clone(),
+        }
     }
 }
 

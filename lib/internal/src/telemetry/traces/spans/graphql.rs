@@ -1,10 +1,9 @@
 use opentelemetry::KeyValue;
-use std::fmt::Write;
 use tracing::{field::Empty, info_span, Level, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
-    graphql::{ObservedGraphQLError, PathSegment},
+    graphql::ObservedError,
     telemetry::traces::{
         disabled_span, is_level_enabled,
         spans::{
@@ -376,8 +375,13 @@ impl GraphQLOperationSpan {
             .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count);
     }
 
-    pub fn record_errors<T: ObservedGraphQLError>(&self, errors: &[T]) {
-        record_error_codes_to_span(&self.span, errors);
+    pub fn record_errors(&self, errors_fn: impl FnOnce() -> Vec<ObservedError>) {
+        if self.is_disabled() {
+            return;
+        }
+
+        let errors = errors_fn();
+        record_error_codes_to_span(&self.span, &errors);
         record_error_events_to_span(&self.span, errors);
     }
 
@@ -461,8 +465,13 @@ impl GraphQLSubgraphOperationSpan {
             .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count);
     }
 
-    pub fn record_errors<T: ObservedGraphQLError>(&self, errors: &[T]) {
-        record_error_codes_to_span(&self.span, errors);
+    pub fn record_errors(&self, errors_fn: impl FnOnce() -> Vec<ObservedError>) {
+        if self.is_disabled() {
+            return;
+        }
+
+        let errors = errors_fn();
+        record_error_codes_to_span(&self.span, &errors);
         record_error_events_to_span(&self.span, errors);
     }
 
@@ -482,12 +491,11 @@ impl GraphQLSubgraphOperationSpan {
     }
 }
 
-fn record_error_codes_to_span<T: ObservedGraphQLError>(span: &Span, errors: &[T]) {
-    if span.is_disabled() {
-        return;
-    }
-
-    let mut codes: Vec<&str> = errors.iter().filter_map(|e| e.get_code()).collect();
+fn record_error_codes_to_span(span: &Span, errors: &[ObservedError]) {
+    let mut codes: Vec<&str> = errors
+        .iter()
+        .filter_map(|e| e.code.as_ref().map(|s| s.as_str()))
+        .collect();
 
     if codes.is_empty() {
         return;
@@ -499,17 +507,13 @@ fn record_error_codes_to_span<T: ObservedGraphQLError>(span: &Span, errors: &[T]
     span.record(attributes::HIVE_GRAPHQL_ERROR_CODES, codes.join(","));
 }
 
-fn record_error_events_to_span<T: ObservedGraphQLError>(span: &Span, errors: &[T]) {
-    if span.is_disabled() {
-        return;
-    }
-
+fn record_error_events_to_span(span: &Span, errors: Vec<ObservedError>) {
     if errors.is_empty() {
         return;
     }
 
     for error in errors {
-        let message = error.get_message();
+        let message = &error.message;
         let mut attributes: Vec<KeyValue> = Vec::with_capacity(5);
         let kind: &'static str = HiveEventKind::GraphQLError.into();
 
@@ -517,37 +521,25 @@ fn record_error_events_to_span<T: ObservedGraphQLError>(span: &Span, errors: &[T
         attributes.push(KeyValue::new(ERROR_MESSAGE, message.to_string()));
         attributes.push(KeyValue::new(
             ERROR_TYPE,
-            error.get_code().unwrap_or("unknown").to_string(),
+            error.code.unwrap_or(String::from("unknown")).to_string(),
         ));
 
-        if let Some(service_name) = error.get_service_name() {
+        if let Some(service_name) = error.service_name {
             attributes.push(KeyValue::new(
                 HIVE_ERROR_SUBGRAPH_NAME,
                 service_name.to_string(),
             ));
         }
 
-        if let Some(affected_path) = error.get_affected_path() {
+        if let Some(affected_path) = error.affected_path {
             attributes.push(KeyValue::new(
                 HIVE_ERROR_AFFECTED_PATH,
                 affected_path.to_string(),
             ));
         }
 
-        if let Some(path) = error.get_path() {
-            let mut path_str = String::new();
-            let mut first = true;
-            for segment in path {
-                if !first {
-                    path_str.push('.');
-                }
-                match segment {
-                    PathSegment::Field(name) => path_str.push_str(name),
-                    PathSegment::Index(idx) => write!(path_str, "{}", idx).unwrap(),
-                }
-                first = false;
-            }
-            attributes.push(KeyValue::new(HIVE_ERROR_PATH, path_str));
+        if let Some(path) = error.path {
+            attributes.push(KeyValue::new(HIVE_ERROR_PATH, path));
         }
 
         span.add_event(message.to_string(), attributes);
