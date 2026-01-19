@@ -403,7 +403,7 @@ mod test {
         let err = consume_definition::<String>("where a > 1 => 10.0")
             .expect_err("Expected parse to fail with an error");
         let err = format!("{}", err);
-        assert_eq!(err, "query parse error: Parse error at 1:1\nUnexpected `where[Name]`\nExpected {, query, mutation, subscription or fragment\n");
+        assert_eq!(err, "Parse error at 1:1\nUnexpected `where[Name]`\nExpected {, query, mutation, subscription or fragment\n");
     }
 
     #[test]
