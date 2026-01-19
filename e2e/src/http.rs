@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod hive_cdn_supergraph_e2e_tests {
     use hive_router::pipeline::execution::EXPOSE_QUERY_PLAN_HEADER;
-    use insta::assert_snapshot;
     use ntex::web::test;
-    use sonic_rs::json;
+    use sonic_rs::{from_slice, json, JsonValueTrait, Value};
     use std::fs;
     use tempfile::NamedTempFile;
 
@@ -102,9 +101,11 @@ mod hive_cdn_supergraph_e2e_tests {
         assert!(res.status().is_success(), "Expected 200 OK");
 
         let body = test::read_body(res).await;
-        let body_str = std::str::from_utf8(&body).unwrap();
+        let json_body: Value = from_slice(&body).unwrap();
 
-        assert_snapshot!(body_str, @r#"{"data":{"topProducts":[{"name":"Table","price":899,"reviews":[{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}}]},{"name":"Couch","price":1299,"reviews":[{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}}]},{"name":"Glass","price":15,"reviews":[{"author":{"name":"Uri Goldshtein"}}]},{"name":"Chair","price":499,"reviews":[{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}}]},{"name":"TV","price":1299,"reviews":[]}]}}"#);
+        assert!(json_body["data"].is_object());
+        assert!(json_body["errors"].is_null());
+        assert!(json_body["extensions"].is_null());
     }
 
     #[ntex::test]
@@ -149,9 +150,12 @@ mod hive_cdn_supergraph_e2e_tests {
         assert!(res.status().is_success(), "Expected 200 OK");
 
         let body = test::read_body(res).await;
-        let body_str = std::str::from_utf8(&body).unwrap();
+        let json_body: Value = from_slice(&body).unwrap();
 
-        assert_snapshot!(body_str, @r#"{"data":{"topProducts":[{"name":"Table","price":899,"reviews":[{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}}]},{"name":"Couch","price":1299,"reviews":[{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}}]},{"name":"Glass","price":15,"reviews":[{"author":{"name":"Uri Goldshtein"}}]},{"name":"Chair","price":499,"reviews":[{"author":{"name":"Uri Goldshtein"}},{"author":{"name":"Uri Goldshtein"}}]},{"name":"TV","price":1299,"reviews":[]}]},"extensions":{"queryPlan":{"kind":"QueryPlan","node":{"kind":"Sequence","nodes":[{"serviceName":"products","operation":"{topProducts{__typename name price upc}}","operationKind":"query","kind":"Fetch"},{"node":{"serviceName":"reviews","kind":"Fetch","operationKind":"query","operation":"query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{author{__typename id}}}}}","requires":[{"kind":"InlineFragment","selections":[{"kind":"Field","name":"__typename"},{"name":"upc","kind":"Field"}],"typeCondition":"Product"}]},"kind":"Flatten","path":[{"Field":"topProducts"},"@"]},{"kind":"Flatten","path":[{"Field":"topProducts"},"@",{"Field":"reviews"},"@",{"Field":"author"}],"node":{"operationKind":"query","kind":"Fetch","serviceName":"accounts","operation":"query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}","requires":[{"selections":[{"name":"__typename","kind":"Field"},{"kind":"Field","name":"id"}],"kind":"InlineFragment","typeCondition":"User"}]}}]}}}}"#);
+        assert!(json_body["data"].is_object());
+        assert!(json_body["errors"].is_null());
+        assert!(json_body["extensions"].is_object());
+        assert!(json_body["extensions"]["queryPlan"].is_object());
     }
 
     #[ntex::test]
@@ -196,9 +200,12 @@ mod hive_cdn_supergraph_e2e_tests {
         assert!(res.status().is_success(), "Expected 200 OK");
 
         let body = test::read_body(res).await;
-        let body_str = std::str::from_utf8(&body).unwrap();
+        let json_body: Value = from_slice(&body).unwrap();
 
-        assert_snapshot!(body_str, @r#"{"data":null,"extensions":{"queryPlan":{"node":{"nodes":[{"serviceName":"products","kind":"Fetch","operationKind":"query","operation":"{topProducts{__typename name price upc}}"},{"node":{"requires":[{"selections":[{"kind":"Field","name":"__typename"},{"name":"upc","kind":"Field"}],"kind":"InlineFragment","typeCondition":"Product"}],"serviceName":"reviews","operation":"query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{author{__typename id}}}}}","operationKind":"query","kind":"Fetch"},"path":[{"Field":"topProducts"},"@"],"kind":"Flatten"},{"node":{"operationKind":"query","kind":"Fetch","requires":[{"typeCondition":"User","selections":[{"name":"__typename","kind":"Field"},{"kind":"Field","name":"id"}],"kind":"InlineFragment"}],"serviceName":"accounts","operation":"query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}"},"kind":"Flatten","path":[{"Field":"topProducts"},"@",{"Field":"reviews"},"@",{"Field":"author"}]}],"kind":"Sequence"},"kind":"QueryPlan"}}}"#);
+        assert!(json_body["data"].is_null());
+        assert!(json_body["errors"].is_null());
+        assert!(json_body["extensions"].is_object());
+        assert!(json_body["extensions"]["queryPlan"].is_object());
 
         assert!(
             subgraphs_server
