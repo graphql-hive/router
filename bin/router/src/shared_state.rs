@@ -117,6 +117,6 @@ pub enum SharedStateError {
     OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
     #[error("error creating hive usage agent: {0}")]
     UsageAgent(#[from] Box<AgentError>),
-    #[error("invalid disable introspection config: {0}")]
-    DisableIntrospectionCompile(#[from] Box<ExpressionCompileError>),
+    #[error("invalid introspection config: {0}")]
+    IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
 }
