@@ -29,6 +29,7 @@ use crate::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
             APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
         },
+        introspection_policy::handle_introspection_policy,
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::parse_operation_with_cache,
         progressive_override::request_override_context,
@@ -47,6 +48,7 @@ pub mod error;
 pub mod execution;
 pub mod execution_request;
 pub mod header;
+pub mod introspection_policy;
 pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
@@ -178,11 +180,6 @@ pub async fn execute_pipeline(
         &parser_payload,
     )
     .await?;
-    let variable_payload =
-        coerce_request_variables(req, supergraph, &mut execution_request, &normalize_payload)?;
-
-    let query_plan_cancellation_token =
-        CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
     let client_request_details = ClientRequestDetails {
         method: req.method(),
@@ -200,6 +197,20 @@ pub async fn execute_pipeline(
         },
         jwt: &jwt_request_details,
     };
+
+    if normalize_payload.operation_for_introspection.is_some() {
+        handle_introspection_policy(&shared_state.introspection_policy, &client_request_details)?;
+    }
+
+    let variable_payload = coerce_request_variables(
+        req,
+        supergraph,
+        &mut execution_request.variables,
+        &normalize_payload,
+    )?;
+
+    let query_plan_cancellation_token =
+        CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
     let progressive_override_ctx = request_override_context(
         &shared_state.override_labels_evaluator,

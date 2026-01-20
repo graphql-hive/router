@@ -60,8 +60,9 @@ cookie = "0.18.1"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
 anyhow = { workspace = true }
-combine= { workspace = true }
+combine = { workspace = true }
 strum = { workspace = true }
+insta = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
