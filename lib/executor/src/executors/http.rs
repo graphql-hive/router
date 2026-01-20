@@ -168,19 +168,22 @@ impl HTTPSubgraphExecutor {
 
         debug!("making http request to {}", self.endpoint.to_string());
 
-        let parent_context = tracing::Span::current().context();
-
-        // TODO: let's decide at some point if the tracing headers
-        //       should be part of the fingerprint or not.
-        get_text_map_propagator(|propagator| {
-            propagator.inject_context(&parent_context, &mut TraceHeaderInjector(req.headers_mut()));
-        });
-
         let http_request_span = HttpClientRequestSpan::from_request(&req);
         let span = http_request_span.span.clone();
+
         async {
             let current_context = tracing::Span::current().context();
             let span_context = current_context.span().span_context().clone();
+
+            // TODO: let's decide at some point if the tracing headers
+            //       should be part of the fingerprint or not.
+            get_text_map_propagator(|propagator| {
+                propagator.inject_context(
+                    &current_context,
+                    &mut TraceHeaderInjector(req.headers_mut()),
+                );
+            });
+
             let res_fut =
                 self.http_client
                     .request(req)
