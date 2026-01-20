@@ -38,14 +38,19 @@ impl TryFrom<&MediaType<'_>> for SingleContentType {
 
     /// The only thing where the conversion can fail is if the media type is not supported.
     fn try_from(media_type: &MediaType) -> Result<Self, Self::Error> {
-        let essence_media_type_string = media_type.essence().to_string();
-        if essence_media_type_string == SingleContentType::GraphQLResponseJSON.as_ref() {
-            Ok(SingleContentType::GraphQLResponseJSON)
-        } else if essence_media_type_string == SingleContentType::JSON.as_ref() {
-            Ok(SingleContentType::JSON)
-        } else {
-            Err("Unsupported single content type")
+        let ty = media_type.ty.as_str();
+        let subty = media_type.subty.as_str();
+        let suffix = media_type.suffix.as_ref().map(|s| s.as_str());
+
+        if ty == "application" {
+            if subty == "graphql-response" && suffix == Some("json") {
+                return Ok(SingleContentType::GraphQLResponseJSON);
+            } else if subty == "json" && suffix.is_none() {
+                return Ok(SingleContentType::JSON);
+            }
         }
+
+        Err("Unsupported single content type")
     }
 }
 
@@ -103,21 +108,23 @@ impl TryFrom<&MediaType<'_>> for StreamContentType {
 
     /// The only thing where the conversion can fail is if the media type is not supported.
     fn try_from(media_type: &MediaType) -> Result<Self, Self::Error> {
-        let essence_media_type_string = media_type.essence().to_string();
-        if essence_media_type_string == StreamContentType::IncrementalDelivery.as_ref() {
+        let ty = media_type.ty.as_str();
+        let subty = media_type.subty.as_str();
+
+        if ty == "multipart" && subty == "mixed" {
             if media_type
                 .get_param(Name::new_unchecked("subscriptionSpec"))
                 .is_some_and(|s| s.unquoted_str() == "1.0")
             {
-                Ok(StreamContentType::ApolloMultipartHTTP)
+                return Ok(StreamContentType::ApolloMultipartHTTP);
             } else {
-                Ok(StreamContentType::IncrementalDelivery)
+                return Ok(StreamContentType::IncrementalDelivery);
             }
-        } else if essence_media_type_string == StreamContentType::SSE.as_ref() {
-            Ok(StreamContentType::SSE)
-        } else {
-            Err("Unsupported stream content type")
+        } else if ty == "text" && subty == "event-stream" {
+            return Ok(StreamContentType::SSE);
         }
+
+        Err("Unsupported stream content type")
     }
 }
 
