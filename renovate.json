@@ -15,6 +15,14 @@
       "matchManagers": ["github-actions"],
       "automerge": true,
       "automergeType": "pr"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "reqwest dependencies",
+      "groupSlug": "all-reqwest-minor-patch",
+      "matchPackageNames": [
+        "/reqwest*/"
+      ]
     }
   ]
 }
