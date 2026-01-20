@@ -13,8 +13,10 @@ mod tests {
             ClientRequestDetails, JwtRequestDetails, OperationDetails,
         },
         headers::{
-            compile::compile_headers_plan, plan::ResponseHeaderAggregator,
-            request::modify_subgraph_request_headers, response::apply_subgraph_response_headers,
+            compile::compile_headers_plan,
+            plan::ResponseHeaderAggregator,
+            request::modify_subgraph_request_headers,
+            response::{apply_subgraph_response_headers, modify_client_response_headers},
         },
     };
     use hive_router_config::parse_yaml_config;
@@ -368,9 +370,7 @@ mod tests {
         .unwrap();
 
         let mut final_headers = NtexHeaderMap::new();
-        accumulator
-            .modify_client_response_headers(&mut final_headers)
-            .unwrap();
+        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
           x-resp: resp-value-2
@@ -434,9 +434,7 @@ mod tests {
         .unwrap();
 
         let mut final_headers = NtexHeaderMap::new();
-        accumulator
-            .modify_client_response_headers(&mut final_headers)
-            .unwrap();
+        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
           x-resp: resp-value-1
@@ -493,9 +491,7 @@ mod tests {
         .unwrap();
 
         let mut final_headers = NtexHeaderMap::new();
-        accumulator
-            .modify_client_response_headers(&mut final_headers)
-            .unwrap();
+        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
           x-stuff: val1, val2
@@ -552,9 +548,7 @@ mod tests {
         .unwrap();
 
         let mut final_headers = NtexHeaderMap::new();
-        accumulator
-            .modify_client_response_headers(&mut final_headers)
-            .unwrap();
+        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
           set-cookie: a=1
@@ -606,9 +600,7 @@ mod tests {
         .unwrap();
 
         let mut final_headers = NtexHeaderMap::new();
-        accumulator
-            .modify_client_response_headers(&mut final_headers)
-            .unwrap();
+        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
           x-original-forwarded-for: 1.2.3.4

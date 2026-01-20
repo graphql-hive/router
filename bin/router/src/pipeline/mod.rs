@@ -1,9 +1,12 @@
 use std::{sync::Arc, time::Instant};
 use tracing::error;
 
-use hive_router_plan_executor::execution::{
-    client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-    plan::PlanExecutionOutput,
+use hive_router_plan_executor::{
+    execution::{
+        client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
+        plan::PlanExecutionOutput,
+    },
+    headers::response::modify_client_response_headers,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -198,8 +201,7 @@ pub async fn graphql_request_handler(
         .body(response.body);
 
     if let Some(response_headers_aggregator) = response.response_headers_aggregator {
-        response_headers_aggregator
-            .modify_client_response_headers(http_response.headers_mut())
+        modify_client_response_headers(response_headers_aggregator, http_response.headers_mut())
             .map_err(PipelineError::HeaderPropagation)?;
     }
 
