@@ -6,7 +6,7 @@ pub mod pipeline;
 mod schema_state;
 mod shared_state;
 mod supergraph;
-mod telemetry;
+pub mod telemetry;
 mod utils;
 
 use std::sync::Arc;

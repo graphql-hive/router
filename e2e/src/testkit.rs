@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    RouterSharedState, SchemaState,
+    telemetry, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use ntex::{
@@ -17,6 +17,9 @@ use ntex::{
 use sonic_rs::json;
 use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState};
 use tracing::{info, warn};
+use tracing_subscriber::{fmt, layer::SubscriberExt, Registry};
+
+pub mod otel;
 
 pub fn init_graphql_request(op: &str, variables: Option<sonic_rs::Value>) -> TestRequest {
     let body = json!({
@@ -179,26 +182,35 @@ pub async fn init_router_from_config(
     >,
     Box<dyn std::error::Error>,
 > {
-    let mut bg_tasks_manager = BackgroundTasksManager::new();
-    let http_config = router_config.http.clone();
-    let graphql_path = http_config.graphql_endpoint();
-    let (shared_state, schema_state) =
-        configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
+    let subscriber = Registry::default().with(fmt::layer().with_test_writer());
+    Ok(tracing::subscriber::with_default(subscriber, async || {
+        let mut bg_tasks_manager = BackgroundTasksManager::new();
+        let http_config = router_config.http.clone();
+        let graphql_path = http_config.graphql_endpoint();
 
-    let ntex_app = test::init_service(
-        web::App::new()
-            .state(shared_state.clone())
-            .state(schema_state.clone())
-            .configure(|m| configure_ntex_app(m, &graphql_path)),
-    )
-    .await;
+        let _otel_telemetry = telemetry::init(&router_config);
 
-    Ok(TestRouterApp {
-        app: ntex_app,
-        shared_state,
-        schema_state,
-        bg_tasks_manager,
+        let (shared_state, schema_state) =
+            configure_app_from_config(router_config, &mut bg_tasks_manager)
+                .await
+                .unwrap();
+
+        let ntex_app = test::init_service(
+            web::App::new()
+                .state(shared_state.clone())
+                .state(schema_state.clone())
+                .configure(|m| configure_ntex_app(m, &graphql_path)),
+        )
+        .await;
+
+        TestRouterApp {
+            app: ntex_app,
+            shared_state,
+            schema_state,
+            bg_tasks_manager,
+        }
     })
+    .await)
 }
 
 /// A guard that sets an environment variable to a specified value upon creation

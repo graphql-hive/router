@@ -42,7 +42,7 @@ impl Extractor for HeaderExtractor<'_> {
 }
 
 #[derive(Default, Clone)]
-pub(crate) struct OpenTelemetryProviders {
+pub struct OpenTelemetryProviders {
     pub tracer: Option<SdkTracerProvider>,
 }
 
@@ -61,7 +61,7 @@ impl OpenTelemetryProviders {
     }
 }
 
-pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
+pub fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
     let timer = UtcTime::rfc_3339();
     let filter = EnvFilter::from_str(config.log.env_filter_str())
         .unwrap_or_else(|e| panic!("failed to initialize env-filter logger: {}", e));
@@ -92,34 +92,40 @@ pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
 
     let is_terminal = std::io::stdout().is_terminal();
     match config.log.format {
-        LogFormat::PrettyTree => registry
-            .with(
-                tracing_tree::HierarchicalLayer::new(2)
-                    .with_ansi(is_terminal)
-                    .with_bracketed_fields(true)
-                    .with_deferred_spans(false)
-                    .with_wraparound(25)
-                    .with_indent_lines(true)
-                    .with_timer(tracing_tree::time::Uptime::default())
-                    .with_thread_names(false)
-                    .with_thread_ids(false)
-                    .with_targets(false),
-            )
-            .with(filter)
-            .init(),
-        LogFormat::Json => registry
-            .with(fmt::layer().json().with_timer(timer))
-            .with(filter)
-            .init(),
-        LogFormat::PrettyCompact => registry
-            .with(
-                fmt::layer()
-                    .compact()
-                    .with_ansi(is_terminal)
-                    .with_timer(timer),
-            )
-            .with(filter)
-            .init(),
+        LogFormat::PrettyTree => {
+            let _ = registry
+                .with(
+                    tracing_tree::HierarchicalLayer::new(2)
+                        .with_ansi(is_terminal)
+                        .with_bracketed_fields(true)
+                        .with_deferred_spans(false)
+                        .with_wraparound(25)
+                        .with_indent_lines(true)
+                        .with_timer(tracing_tree::time::Uptime::default())
+                        .with_thread_names(false)
+                        .with_thread_ids(false)
+                        .with_targets(false),
+                )
+                .with(filter)
+                .try_init();
+        }
+        LogFormat::Json => {
+            let _ = registry
+                .with(fmt::layer().json().with_timer(timer))
+                .with(filter)
+                .try_init();
+        }
+        LogFormat::PrettyCompact => {
+            let _ = registry
+                .with(
+                    fmt::layer()
+                        .compact()
+                        .with_ansi(is_terminal)
+                        .with_timer(timer),
+                )
+                .with(filter)
+                .try_init();
+        }
     };
 
     OpenTelemetryProviders {

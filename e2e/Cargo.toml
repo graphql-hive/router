@@ -17,10 +17,18 @@ lazy_static = { workspace = true }
 jsonwebtoken = { workspace = true }
 insta = { workspace = true }
 reqwest = { workspace = true }
+opentelemetry-otlp = { workspace = true, features = ["http-proto"] }
+opentelemetry-proto = { workspace = true }
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = "1.0"
 
 hive-router = { path = "../bin/router" }
 hive-router-config = { path = "../lib/router-config" }
+hive-router-internal = { path = "../lib/internal" }
 subgraphs = { path = "../bench/subgraphs" }
 
 mockito = "1.7.0"
 tempfile = "3.23.0"
+hex = "0.4"
+tiny_http = "0.12"

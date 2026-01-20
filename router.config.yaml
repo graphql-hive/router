@@ -1,0 +1,14 @@
+supergraph:
+  source: file
+  path: ./bench/supergraph.graphql
+telemetry:
+  tracing:
+    exporters:
+      - enabled: true
+        kind: stdout
+        # endpoint: https://in-otel.hyperdx.io/v1/traces
+        # kind: otlp
+        # protocol: http
+        # http:
+        #   headers:
+        #     authorization: "f4b47a3d-51be-49ce-a2cf-99b2ae290996"
