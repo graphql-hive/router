@@ -18,7 +18,6 @@ tracing = { workspace = true }
 sonic-rs = { workspace = true }
 vrl = { workspace = true }
 humantime = "2.3.0"
-once_cell = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 async-trait = { workspace = true }

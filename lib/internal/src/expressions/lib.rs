@@ -1,5 +1,5 @@
-use once_cell::sync::Lazy;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use hive_router_config::traffic_shaping::DurationOrExpression;
@@ -18,13 +18,13 @@ use crate::expressions::{
     ProgramResolutionError,
 };
 
-static VRL_FUNCTIONS: Lazy<Vec<Box<dyn Function>>> = Lazy::new(|| {
+static VRL_FUNCTIONS: LazyLock<Vec<Box<dyn Function>>> = LazyLock::new(|| {
     let mut funcs = vrl::stdlib::all();
     // Our custom functions:
     funcs.push(Box::new(Env));
     funcs
 });
-static VRL_TIMEZONE: Lazy<VrlTimeZone> = Lazy::new(VrlTimeZone::default);
+static VRL_TIMEZONE: LazyLock<VrlTimeZone> = LazyLock::new(VrlTimeZone::default);
 
 /// This trait provides a unified way to convert VRL values to specific Rust types.
 pub trait FromVrlValue: Sized {
