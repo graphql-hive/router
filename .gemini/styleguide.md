@@ -45,6 +45,7 @@ Gemini must **request changes (block the PR)** when any of the following appear:
 - **H. Naming that hides intent:** cryptic abbreviations, misleading words, type-hiding via wild generics without good reason.
 - **I. Unbounded growth patterns:** maps/vectors with unbounded cardinality in hot paths without explicit caps/eviction.
 - **J. Unsafe without proof:** `unsafe` blocks without precise safety comments, tests, or measurable wins.
+- **K. Panic-inducing functions without explanatory messages:** Any use of `unwrap()`, `unwrap_or_else()`, or similar functions that can panic must include a descriptive error message via `expect()` or `panic!()` explaining why the condition should never occur. This aids debugging and makes invariants explicit. Example: `.expect("we control the strings being parsed here; this should never fail")` or `.unwrap_or_else(|| panic!("invariant violation: expected valid content type, but parsing failed"))`.
 
 ---
 
