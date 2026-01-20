@@ -283,37 +283,39 @@ fn write_agg(
     }
 }
 
-/// Modify the outgoing client response headers based on the aggregated headers from subgraphs.
-pub fn modify_client_response_headers(
-    agg: ResponseHeaderAggregator,
-    out: &mut HeaderMap,
-) -> Result<(), HeaderRuleRuntimeError> {
-    for (name, (agg_strategy, mut values)) in agg.entries {
-        if values.is_empty() {
-            continue;
-        }
-
-        if is_never_join_header(&name) {
-            // never-join headers must be emitted as multiple header fields
-            for value in values {
-                out.append(name.clone(), value);
+impl ResponseHeaderAggregator {
+    /// Modify the outgoing client response headers based on the aggregated headers from subgraphs.
+    pub fn modify_client_response_headers(
+        self,
+        out: &mut ntex::http::HeaderMap,
+    ) -> Result<(), HeaderRuleRuntimeError> {
+        for (name, (agg_strategy, mut values)) in self.entries {
+            if values.is_empty() {
+                continue;
             }
-            continue;
+
+            if is_never_join_header(&name) {
+                // never-join headers must be emitted as multiple header fields
+                for value in values {
+                    out.append(name.clone(), value.into());
+                }
+                continue;
+            }
+
+            if values.len() == 1 {
+                out.insert(name, values.pop().unwrap().into());
+                continue;
+            }
+
+            if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
+                let joined = join_with_comma(&values)
+                    .map_err(|_| HeaderRuleRuntimeError::BadHeaderValue(name.to_string()))?;
+                out.insert(name, joined.into());
+            }
         }
 
-        if values.len() == 1 {
-            out.insert(name, values.pop().unwrap());
-            continue;
-        }
-
-        if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
-            let joined = join_with_comma(&values)
-                .map_err(|_| HeaderRuleRuntimeError::BadHeaderValue(name.to_string()))?;
-            out.insert(name, joined);
-        }
+        Ok(())
     }
-
-    Ok(())
 }
 
 #[inline]

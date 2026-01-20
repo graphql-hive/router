@@ -16,7 +16,7 @@ use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::projection::response::project_by_operation;
 use hive_router_plan_executor::response::value::Value;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use http::{HeaderMap, HeaderName};
+use http::HeaderName;
 
 pub static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
@@ -88,7 +88,7 @@ pub async fn execute_plan(
 
         return Ok(PlanExecutionOutput {
             body,
-            headers: HeaderMap::new(),
+            response_headers_aggregator: None,
             error_count: 0,
         });
     }

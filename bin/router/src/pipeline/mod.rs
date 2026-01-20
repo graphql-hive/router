@@ -187,25 +187,23 @@ pub async fn graphql_request_handler(
                 &client_request_details,
                 hive_usage_agent,
                 &shared_state.router_config.usage_reporting,
-                &response,
+                response.error_count,
             )
             .await;
         }
     }
 
-    let response_bytes = Bytes::from(response.body);
-    let response_headers = response.headers;
+    let mut http_response = web::HttpResponse::Ok()
+        .header(http::header::CONTENT_TYPE, single_content_type.as_ref())
+        .body(response.body);
 
-    let mut response_builder = web::HttpResponse::Ok();
-    for (header_name, header_value) in response_headers {
-        if let Some(header_name) = header_name {
-            response_builder.header(header_name, header_value);
-        }
+    if let Some(response_headers_aggregator) = response.response_headers_aggregator {
+        response_headers_aggregator
+            .modify_client_response_headers(http_response.headers_mut())
+            .map_err(PipelineError::HeaderPropagation)?;
     }
 
-    Ok(response_builder
-        .header(http::header::CONTENT_TYPE, single_content_type.as_ref())
-        .body(response_bytes))
+    Ok(http_response)
 }
 
 #[inline]
@@ -277,8 +275,5 @@ pub async fn execute_pipeline<'exec>(
         authorization_errors,
     };
 
-    let pipeline_result =
-        execute_plan(supergraph, shared_state, expose_query_plan, planned_request).await?;
-
-    Ok(pipeline_result)
+    execute_plan(supergraph, shared_state, expose_query_plan, planned_request).await
 }
