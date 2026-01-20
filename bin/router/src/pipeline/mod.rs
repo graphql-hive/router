@@ -1,18 +1,15 @@
 use std::{sync::Arc, time::Instant};
+use tracing::error;
 
-use hive_router_plan_executor::{
-    execution::{
-        client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-        plan::PlanExecutionOutput,
-    },
-    response::graphql_error::GraphQLError,
+use hive_router_plan_executor::execution::{
+    client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
+    plan::PlanExecutionOutput,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{header::CONTENT_TYPE, HeaderValue, Method};
+use http::Method;
 use ntex::{
-    http::ResponseBuilder,
     util::Bytes,
     web::{self, HttpRequest},
 };
@@ -20,15 +17,12 @@ use ntex::{
 use crate::{
     pipeline::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
-        coerce_variables::coerce_request_variables,
+        coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
-        error::{FailedExecutionResult, PipelineError},
-        execution::{execute_plan, PlannedRequest},
-        execution_request::get_execution_request,
-        header::{
-            RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
-            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
-        },
+        error::PipelineError,
+        execution::{execute_plan, ExposeQueryPlanMode, PlannedRequest, EXPOSE_QUERY_PLAN_HEADER},
+        execution_request::get_execution_request_from_http_request,
+        header::ResponseMode,
         introspection_policy::handle_introspection_policy,
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::parse_operation_with_cache,
@@ -56,103 +50,64 @@ pub mod query_plan;
 pub mod usage_reporting;
 pub mod validation;
 
-static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
-
 #[inline]
 pub async fn graphql_request_handler(
     req: &HttpRequest,
     body_bytes: Bytes,
+    response_mode: &ResponseMode,
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
-) -> web::HttpResponse {
-    if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
-        if shared_state.router_config.graphiql.enabled {
-            return web::HttpResponse::Ok()
-                .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)
-                .body(GRAPHIQL_HTML);
-        } else {
-            return web::HttpResponse::NotFound().into();
-        }
-    }
+) -> Result<web::HttpResponse, PipelineError> {
+    let started_at = Instant::now();
 
-    match execute_pipeline(req, body_bytes, supergraph, shared_state, schema_state).await {
-        Ok(response) => {
-            let response_bytes = Bytes::from(response.body);
-            let response_headers = response.headers;
-
-            let response_content_type: &'static HeaderValue =
-                if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
-                    &APPLICATION_GRAPHQL_RESPONSE_JSON
-                } else {
-                    &APPLICATION_JSON
-                };
-
-            let mut response_builder = web::HttpResponse::Ok();
-            for (header_name, header_value) in response_headers {
-                if let Some(header_name) = header_name {
-                    response_builder.header(header_name, header_value);
-                }
-            }
-
-            response_builder
-                .header(http::header::CONTENT_TYPE, response_content_type)
-                .body(response_bytes)
-        }
-        Err(error) => {
-            let accept_ok = !req.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
-
-            let status = error.default_status_code(accept_ok);
-
-            if let PipelineError::ValidationErrors(validation_errors) = error {
-                let validation_error_result = FailedExecutionResult {
-                    errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-                };
-
-                return ResponseBuilder::new(status).json(&validation_error_result);
-            }
-
-            if let PipelineError::AuthorizationFailed(authorization_errors) = error {
-                let authorization_error_result = FailedExecutionResult {
-                    errors: Some(
-                        authorization_errors
-                            .into_iter()
-                            .map(|error| error.into())
-                            .collect(),
-                    ),
-                };
-
-                return ResponseBuilder::new(status).json(&authorization_error_result);
-            }
-
-            let code = error.graphql_error_code();
-            let message = error.graphql_error_message();
-
-            let graphql_error = GraphQLError::from_message_and_code(message, code);
-
-            let result = FailedExecutionResult {
-                errors: Some(vec![graphql_error]),
-            };
-
-            ResponseBuilder::new(status).json(&result)
-        }
-    }
-}
-
-#[inline]
-#[allow(clippy::await_holding_refcell_ref)]
-pub async fn execute_pipeline(
-    req: &HttpRequest,
-    body_bytes: Bytes,
-    supergraph: &SupergraphData,
-    shared_state: &Arc<RouterSharedState>,
-    schema_state: &Arc<SchemaState>,
-) -> Result<PlanExecutionOutput, PipelineError> {
-    let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
+
+    let mut execution_request =
+        get_execution_request_from_http_request(req, body_bytes.clone()).await?;
+
+    let parser_payload = parse_operation_with_cache(shared_state, &execution_request).await?;
+    validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload).await?;
+
+    let normalize_payload = normalize_request_with_cache(
+        supergraph,
+        schema_state,
+        &execution_request,
+        &parser_payload,
+    )
+    .await?;
+
+    if req.method() == Method::GET {
+        if let Some(OperationKind::Mutation) = normalize_payload.operation_for_plan.operation_kind {
+            error!("Mutation is not allowed over GET, stopping");
+            return Err(PipelineError::MutationNotAllowedOverHttpGet);
+        }
+    }
+
+    let is_subscription = matches!(
+        normalize_payload.operation_for_plan.operation_kind,
+        Some(OperationKind::Subscription)
+    );
+
+    if is_subscription
+    // coming soon
+    // && !response_mode.can_stream()
+    {
+        return Err(PipelineError::SubscriptionsNotSupported);
+    }
+
+    let single_content_type = match response_mode {
+        ResponseMode::SingleOnly(single) => single,
+        ResponseMode::Dual(single, _) => single,
+        _ => {
+            // streaming responses coming soon
+            return Err(PipelineError::UnsupportedContentType);
+        }
+    };
+
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
-            .validate_request(req, &shared_state.jwt_claims_cache)
+            .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
             .await
             .map_err(PipelineError::JwtError)?
         {
@@ -168,18 +123,6 @@ pub async fn execute_pipeline(
         },
         None => JwtRequestDetails::Unauthenticated,
     };
-
-    let mut execution_request = get_execution_request(req, body_bytes).await?;
-    let parser_payload = parse_operation_with_cache(shared_state, &execution_request).await?;
-    validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload).await?;
-
-    let normalize_payload = normalize_request_with_cache(
-        supergraph,
-        schema_state,
-        &execution_request,
-        &parser_payload,
-    )
-    .await?;
 
     let client_request_details = ClientRequestDetails {
         method: req.method(),
@@ -203,7 +146,6 @@ pub async fn execute_pipeline(
     }
 
     let variable_payload = coerce_request_variables(
-        req,
         supergraph,
         &mut execution_request.variables,
         &normalize_payload,
@@ -212,19 +154,85 @@ pub async fn execute_pipeline(
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
+    let mut expose_query_plan = ExposeQueryPlanMode::No;
+    if shared_state.router_config.query_planner.allow_expose {
+        if let Some(expose_qp_header) = req.headers().get(&EXPOSE_QUERY_PLAN_HEADER) {
+            let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
+            match str_value {
+                "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
+                "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
+                _ => {}
+            }
+        }
+    }
+
+    let response = execute_pipeline(
+        &query_plan_cancellation_token,
+        &client_request_details,
+        &normalize_payload,
+        &variable_payload,
+        &expose_query_plan,
+        supergraph,
+        shared_state,
+        schema_state,
+    )
+    .await?;
+
+    if shared_state.router_config.usage_reporting.enabled {
+        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+            usage_reporting::collect_usage_report(
+                supergraph.supergraph_schema.clone(),
+                started_at.elapsed(),
+                req,
+                &client_request_details,
+                hive_usage_agent,
+                &shared_state.router_config.usage_reporting,
+                &response,
+            )
+            .await;
+        }
+    }
+
+    let response_bytes = Bytes::from(response.body);
+    let response_headers = response.headers;
+
+    let mut response_builder = web::HttpResponse::Ok();
+    for (header_name, header_value) in response_headers {
+        if let Some(header_name) = header_name {
+            response_builder.header(header_name, header_value);
+        }
+    }
+
+    Ok(response_builder
+        .header(http::header::CONTENT_TYPE, single_content_type.as_ref())
+        .body(response_bytes))
+}
+
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_pipeline<'exec>(
+    cancellation_token: &CancellationToken,
+    client_request_details: &ClientRequestDetails<'exec>,
+    normalize_payload: &Arc<GraphQLNormalizationPayload>,
+    variable_payload: &CoerceVariablesPayload,
+    expose_query_plan: &ExposeQueryPlanMode,
+    supergraph: &SupergraphData,
+    shared_state: &Arc<RouterSharedState>,
+    schema_state: &Arc<SchemaState>,
+) -> Result<PlanExecutionOutput, PipelineError> {
     let progressive_override_ctx = request_override_context(
         &shared_state.override_labels_evaluator,
-        &client_request_details,
+        client_request_details,
     )
     .map_err(PipelineError::LabelEvaluationError)?;
 
     let decision = enforce_operation_authorization(
         &shared_state.router_config,
-        &normalize_payload,
+        normalize_payload,
         &supergraph.authorization,
         &supergraph.metadata,
-        &variable_payload,
-        &jwt_request_details,
+        variable_payload,
+        client_request_details.jwt,
     );
 
     let (normalize_payload, authorization_errors) = match decision {
@@ -257,33 +265,20 @@ pub async fn execute_pipeline(
         schema_state,
         &normalize_payload,
         &progressive_override_ctx,
-        &query_plan_cancellation_token,
+        cancellation_token,
     )
     .await?;
 
     let planned_request = PlannedRequest {
         normalized_payload: &normalize_payload,
         query_plan_payload: &query_plan_payload,
-        variable_payload: &variable_payload,
-        client_request_details: &client_request_details,
+        variable_payload,
+        client_request_details,
         authorization_errors,
     };
-    let execution_result = execute_plan(req, supergraph, shared_state, planned_request).await?;
 
-    if shared_state.router_config.usage_reporting.enabled {
-        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-            usage_reporting::collect_usage_report(
-                supergraph.supergraph_schema.clone(),
-                start.elapsed(),
-                req,
-                &client_request_details,
-                hive_usage_agent,
-                &shared_state.router_config.usage_reporting,
-                &execution_result,
-            )
-            .await;
-        }
-    }
+    let pipeline_result =
+        execute_plan(supergraph, shared_state, expose_query_plan, planned_request).await?;
 
-    Ok(execution_result)
+    Ok(pipeline_result)
 }

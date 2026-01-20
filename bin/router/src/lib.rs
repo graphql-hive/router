@@ -21,7 +21,9 @@ use crate::{
     jwt::JwtAuthRuntime,
     logger::configure_logging,
     pipeline::{
+        error::PipelineError,
         graphql_request_handler,
+        header::{RequestAccepts, TEXT_HTML_MIME},
         usage_reporting::init_hive_user_agent,
         validation::{max_depth_rule::MaxDepthRule, max_directives_rule::MaxDirectivesRule},
     },
@@ -31,12 +33,17 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
-use http::header::RETRY_AFTER;
+use http::{
+    header::{CONTENT_TYPE, RETRY_AFTER},
+    Method,
+};
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
 use tracing::{info, warn};
+
+static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
 async fn graphql_endpoint_handler(
     request: HttpRequest,
@@ -56,14 +63,44 @@ async fn graphql_endpoint_handler(
             return early_response;
         }
 
-        let mut res = graphql_request_handler(
+        // agree on the response content type so that errors can be handled
+        // properly outside the request handler.
+        let response_mode = match request.negotiate() {
+            Ok(response_mode) => response_mode,
+            Err(err) => return err.into_response(None),
+        };
+
+        if request.method() == Method::GET && response_mode.is_none() && request.can_accept_http() {
+            if app_state.router_config.graphiql.enabled {
+                return web::HttpResponse::Ok()
+                    .header(CONTENT_TYPE, TEXT_HTML_MIME)
+                    .body(GRAPHIQL_HTML);
+            } else {
+                return web::HttpResponse::NotFound().into();
+            }
+        }
+
+        // not a graphiql request and no supported content types
+        let response_mode = match response_mode {
+            Some(mode) => mode,
+            None => {
+                return PipelineError::UnsupportedContentType.into_response(response_mode);
+            }
+        };
+
+        let mut res = match graphql_request_handler(
             &request,
             body_bytes,
+            &response_mode,
             supergraph,
             app_state.get_ref(),
             schema_state.get_ref(),
         )
-        .await;
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => return err.into_response(Some(response_mode)),
+        };
 
         // Apply CORS headers to the final response if CORS is configured.
         if let Some(cors) = app_state.cors_runtime.as_ref() {

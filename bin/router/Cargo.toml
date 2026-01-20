@@ -51,7 +51,6 @@ ahash = { workspace = true }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
 hyper-rustls = { workspace = true, features = ["aws-lc-rs"]}
 
-
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { workspace = true }
 ulid = "1.2.1"
@@ -63,6 +62,9 @@ anyhow = { workspace = true }
 combine = { workspace = true }
 strum = { workspace = true }
 insta = { workspace = true }
+mediatype = "0.21.0"
+headers-accept = "0.3.0"
+once_cell = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

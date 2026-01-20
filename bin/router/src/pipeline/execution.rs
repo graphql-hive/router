@@ -9,17 +9,19 @@ use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
+use hive_router_plan_executor::execution::error::{IntoPlanExecutionError, LazyPlanContext};
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
+use hive_router_plan_executor::projection::response::project_by_operation;
+use hive_router_plan_executor::response::value::Value;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use http::HeaderName;
-use ntex::web::HttpRequest;
+use http::{HeaderMap, HeaderName};
 
-static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
+pub static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum ExposeQueryPlanMode {
+pub enum ExposeQueryPlanMode {
     Yes,
     No,
     DryRun,
@@ -35,36 +37,11 @@ pub struct PlannedRequest<'req> {
 
 #[inline]
 pub async fn execute_plan(
-    req: &HttpRequest,
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
+    expose_query_plan: &ExposeQueryPlanMode,
     planned_request: PlannedRequest<'_>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
-    let mut expose_query_plan = ExposeQueryPlanMode::No;
-
-    if app_state.router_config.query_planner.allow_expose {
-        if let Some(expose_qp_header) = req.headers().get(&EXPOSE_QUERY_PLAN_HEADER) {
-            let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
-
-            match str_value {
-                "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
-                "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
-                _ => {}
-            }
-        }
-    }
-
-    let extensions = if expose_query_plan == ExposeQueryPlanMode::Yes
-        || expose_query_plan == ExposeQueryPlanMode::DryRun
-    {
-        Some(HashMap::from_iter([(
-            "queryPlan".to_string(),
-            sonic_rs::to_value(&planned_request.query_plan_payload).unwrap(),
-        )]))
-    } else {
-        None
-    };
-
     let introspection_context = IntrospectionContext {
         query: planned_request
             .normalized_payload
@@ -73,6 +50,48 @@ pub async fn execute_plan(
         schema: &supergraph.planner.consumer_schema.document,
         metadata: &supergraph.metadata,
     };
+
+    let extensions = if matches!(
+        expose_query_plan,
+        ExposeQueryPlanMode::Yes | ExposeQueryPlanMode::DryRun
+    ) {
+        Some(HashMap::from_iter([(
+            "queryPlan".to_string(),
+            sonic_rs::to_value(&planned_request.query_plan_payload).unwrap(),
+        )]))
+    } else {
+        None
+    };
+
+    if matches!(expose_query_plan, ExposeQueryPlanMode::DryRun) {
+        let body = project_by_operation(
+            &Value::Null,
+            vec![],
+            &extensions,
+            planned_request.normalized_payload.root_type_name,
+            &[],
+            &None,
+            0,
+            introspection_context.metadata,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || None,
+            affected_path: || None,
+        })
+        .map_err(|err| {
+            tracing::error!(
+                "Failed to project query plan to extensions during dry-run: {}",
+                err
+            );
+            PipelineError::PlanExecutionError(err)
+        })?;
+
+        return Ok(PlanExecutionOutput {
+            body,
+            headers: HeaderMap::new(),
+            error_count: 0,
+        });
+    }
 
     let jwt_forward_plan: Option<JwtAuthForwardingPlan> = if app_state
         .router_config
