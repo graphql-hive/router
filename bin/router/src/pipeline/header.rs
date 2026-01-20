@@ -2,6 +2,7 @@ use headers_accept::Accept;
 use http::header::ACCEPT;
 use mediatype::{MediaType, Name, ReadParams};
 use ntex::web::HttpRequest;
+use once_cell::sync::Lazy;
 use std::str::FromStr;
 use strum::{AsRefStr, EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 use tracing::error;
@@ -48,20 +49,24 @@ impl TryFrom<&MediaType<'_>> for SingleContentType {
     }
 }
 
+static SINGLE_CONTENT_TYPE_MEDIA_TYPES: Lazy<Vec<MediaType<'static>>> = Lazy::new(|| {
+    // first collect the string representations to keep them alive
+    // in order to parse them into MediaType instances that _borrow_
+    // the items from the vec
+    let strs: Vec<&'static str> = SingleContentType::iter().map(|ct| ct.into()).collect();
+    strs.iter()
+        .map(|s| {
+            MediaType::parse(s)
+                // SAFETY: we control the strings being parsed here. see the enum variants
+                .unwrap()
+        })
+        .collect()
+});
+
 impl SingleContentType {
     // no consts until https://github.com/picoHz/mediatype/pull/25 lands
-    pub fn media_types() -> Vec<MediaType<'static>> {
-        // first collect the string representations to keep them alive
-        // in order to parse them into MediaType instances that _borrow_
-        // the items from the vec
-        let strs: Vec<&'static str> = SingleContentType::iter().map(|ct| ct.into()).collect();
-        strs.iter()
-            .map(|s| {
-                MediaType::parse(s)
-                    // SAFETY: we control the strings being parsed here. see the enum variants
-                    .unwrap()
-            })
-            .collect()
+    pub fn media_types() -> &'static Vec<MediaType<'static>> {
+        &SINGLE_CONTENT_TYPE_MEDIA_TYPES
     }
 }
 
@@ -116,20 +121,24 @@ impl TryFrom<&MediaType<'_>> for StreamContentType {
     }
 }
 
+static STREAM_CONTENT_TYPE_MEDIA_TYPES: Lazy<Vec<MediaType<'static>>> = Lazy::new(|| {
+    // first collect the string representations to keep them alive
+    // in order to parse them into MediaType instances that _borrow_
+    // the items from the vec
+    let strs: Vec<&'static str> = StreamContentType::iter().map(|ct| ct.into()).collect();
+    strs.iter()
+        .map(|s| {
+            MediaType::parse(s)
+                // SAFETY: we control the strings being parsed here. see the enum variants
+                .unwrap()
+        })
+        .collect()
+});
+
 impl StreamContentType {
     // no consts until https://github.com/picoHz/mediatype/pull/25 lands
-    pub fn media_types() -> Vec<MediaType<'static>> {
-        // first collect the string representations to keep them alive
-        // in order to parse them into MediaType instances that _borrow_
-        // the items from the vec
-        let strs: Vec<&'static str> = StreamContentType::iter().map(|ct| ct.into()).collect();
-        strs.iter()
-            .map(|s| {
-                MediaType::parse(s)
-                    // SAFETY: we control the strings being parsed here. see the enum variants
-                    .unwrap()
-            })
-            .collect()
+    pub fn media_types() -> &'static Vec<MediaType<'static>> {
+        &STREAM_CONTENT_TYPE_MEDIA_TYPES
     }
 }
 

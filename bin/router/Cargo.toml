@@ -63,6 +63,7 @@ combine= { workspace = true }
 strum = { workspace = true }
 mediatype = "0.21.0"
 headers-accept = "0.3.0"
+once_cell = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
