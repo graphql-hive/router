@@ -11,91 +11,98 @@ use hive_router_query_planner::{
 use http::{HeaderName, Method, StatusCode};
 use ntex::web::error::QueryPayloadError;
 use serde::{Deserialize, Serialize};
+use strum::IntoStaticStr;
 
 use crate::{
     jwt::errors::JwtError,
     pipeline::{authorization::AuthorizationError, progressive_override::LabelEvaluationError},
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, IntoStaticStr)]
 pub enum PipelineError {
     // HTTP-related errors
     #[error("Unsupported HTTP method: {0}")]
+    #[strum(serialize = "METHOD_NOT_ALLOWED")]
     UnsupportedHttpMethod(Method),
     #[error("Header '{0}' has invalid value")]
+    #[strum(serialize = "INVALID_HEADER")]
     InvalidHeaderValue(HeaderName),
     #[error("Content-Type header is missing")]
+    #[strum(serialize = "MISSING_CONTENT_TYPE_HEADER")]
     MissingContentTypeHeader,
     #[error("Content-Type header is not supported")]
+    #[strum(serialize = "UNSUPPORTED_CONTENT_TYPE")]
     UnsupportedContentType,
 
     // GET Specific pipeline errors
     #[error("Failed to deserialize query parameters")]
+    #[strum(serialize = "INVALID_QUERY_PARAMS")]
     GetInvalidQueryParams,
     #[error("Missing query parameter: {0}")]
+    #[strum(serialize = "MISSING_QUERY_PARAM")]
     GetMissingQueryParam(&'static str),
     #[error("Cannot perform mutations over GET")]
+    #[strum(serialize = "MUTATION_NOT_ALLOWED_OVER_HTTP_GET")]
     MutationNotAllowedOverHttpGet,
     #[error("Failed to parse query parameters")]
+    #[strum(serialize = "UNPROCESSABLE_QUERY_PARAMS")]
     GetUnprocessableQueryParams(QueryPayloadError),
 
     // GraphQL-specific errors
     #[error("Failed to parse GraphQL request payload")]
+    #[strum(serialize = "BAD_REQUEST")]
     FailedToParseBody(sonic_rs::Error),
     #[error("Failed to parse GraphQL variables JSON")]
+    #[strum(serialize = "BAD_REQUEST")]
     FailedToParseVariables(sonic_rs::Error),
     #[error("Failed to parse GraphQL extensions JSON")]
+    #[strum(serialize = "BAD_REQUEST")]
     FailedToParseExtensions(sonic_rs::Error),
     #[error("Failed to parse GraphQL operation: {0}")]
+    #[strum(serialize = "GRAPHQL_PARSE_FAILED")]
     FailedToParseOperation(graphql_tools::parser::query::ParseError),
     #[error("Failed to normalize GraphQL operation")]
+    #[strum(serialize = "OPERATION_RESOLUTION_FAILURE")]
     NormalizationError(NormalizationError),
     #[error("Failed to collect GraphQL variables: {0}")]
+    #[strum(serialize = "BAD_USER_INPUT")]
     VariablesCoercionError(String),
     #[error("Validation errors")]
+    #[strum(serialize = "GRAPHQL_VALIDATION_FAILED")]
     ValidationErrors(Arc<Vec<ValidationError>>),
     #[error("Authorization failed")]
+    #[strum(serialize = "UNAUTHORIZED_OPERATION")]
     AuthorizationFailed(Vec<AuthorizationError>),
     #[error("Failed to execute a plan: {0}")]
+    #[strum(serialize = "PLAN_EXECUTION_FAILED")]
     PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
+    #[strum(serialize = "QUERY_PLAN_BUILD_FAILED")]
     PlannerError(Arc<PlannerError>),
     #[error(transparent)]
+    #[strum(serialize = "OVERRIDE_LABEL_EVALUATION_FAILED")]
     LabelEvaluationError(LabelEvaluationError),
 
     // HTTP Security-related errors
     #[error("Required CSRF header(s) not present")]
+    #[strum(serialize = "CSRF_PREVENTION_FAILED")]
     CsrfPreventionFailed,
 
     // JWT-auth plugin errors
     #[error(transparent)]
+    #[strum(serialize = "JWT_ERROR")]
     JwtError(JwtError),
     #[error("Failed to forward jwt: {0}")]
+    #[strum(serialize = "JWT_FORWARDING_ERROR")]
     JwtForwardingError(JwtForwardingError),
 }
 
 impl PipelineError {
     pub fn graphql_error_code(&self) -> &'static str {
         match self {
-            Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
-            Self::PlannerError(_) => "QUERY_PLAN_BUILD_FAILED",
-            Self::PlanExecutionError(_) => "QUERY_PLAN_EXECUTION_FAILED",
-            Self::LabelEvaluationError(_) => "OVERRIDE_LABEL_EVALUATION_FAILED",
-            Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
-            Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
-            Self::VariablesCoercionError(_) => "BAD_USER_INPUT",
-            Self::AuthorizationFailed(_) => "UNAUTHORIZED_OPERATION",
-            Self::NormalizationError(NormalizationError::OperationNotFound) => {
-                "OPERATION_RESOLUTION_FAILURE"
-            }
-            Self::NormalizationError(NormalizationError::SpecifiedOperationNotFound {
-                operation_name: _,
-            }) => "OPERATION_RESOLUTION_FAILURE",
-            Self::NormalizationError(NormalizationError::MultipleMatchingOperationsFound) => {
-                "OPERATION_RESOLUTION_FAILURE"
-            }
             Self::JwtError(err) => err.error_code(),
-            _ => "BAD_REQUEST",
+            Self::PlanExecutionError(err) => err.error_code(),
+            _ => self.into(),
         }
     }
 
