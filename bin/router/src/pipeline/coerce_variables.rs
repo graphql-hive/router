@@ -9,7 +9,6 @@ use sonic_rs::{JsonValueTrait, Value};
 use tracing::{error, trace, warn};
 
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 
@@ -32,7 +31,7 @@ impl CoerceVariablesPayload {
 pub fn coerce_request_variables(
     req: &HttpRequest,
     supergraph: &SupergraphData,
-    execution_params: &mut ExecutionRequest,
+    variables: &mut HashMap<String, Value>,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
 ) -> Result<CoerceVariablesPayload, PipelineError> {
     if req.method() == Method::GET {
@@ -47,7 +46,7 @@ pub fn coerce_request_variables(
 
     match collect_variables(
         &normalized_operation.operation_for_plan,
-        &mut execution_params.variables,
+        variables,
         &supergraph.metadata,
     ) {
         Ok(values) => {

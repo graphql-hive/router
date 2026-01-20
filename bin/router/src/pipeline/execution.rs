@@ -4,7 +4,6 @@ use std::sync::Arc;
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::introspection_policy::handle_introspection_policy;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
@@ -94,13 +93,6 @@ pub async fn execute_plan(
     } else {
         None
     };
-
-    if introspection_context.query.is_some() {
-        handle_introspection_policy(
-            &app_state.introspection_policy,
-            planned_request.client_request_details,
-        )?;
-    }
 
     execute_query_plan(QueryPlanExecutionContext {
         query_plan: planned_request.query_plan_payload,
