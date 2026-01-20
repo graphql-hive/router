@@ -50,7 +50,6 @@ regex-automata = { workspace = true }
 ahash = { workspace = true }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
 hyper-rustls = { workspace = true, features = ["aws-lc-rs"]}
-strum = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { workspace = true }
@@ -61,6 +60,7 @@ arc-swap = "1.7.1"
 lasso2 = "0.8.2"
 anyhow = { workspace = true }
 combine= { workspace = true }
+strum = { workspace = true }
 mediatype = "0.21.0"
 headers-accept = "0.3.0"
 
