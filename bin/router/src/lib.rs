@@ -8,19 +8,15 @@ mod schema_state;
 mod shared_state;
 mod supergraph;
 mod utils;
+mod error;
 
 use std::sync::Arc;
 
 use crate::{
-    background_tasks::BackgroundTasksManager,
-    consts::ROUTER_VERSION,
-    http_utils::{
+    background_tasks::BackgroundTasksManager, consts::ROUTER_VERSION, error::RouterEntrypointError, http_utils::{
         landing_page::landing_page_handler,
         probes::{health_check_handler, readiness_check_handler},
-    },
-    jwt::JwtAuthRuntime,
-    logger::configure_logging,
-    pipeline::{graphql_request_handler, usage_reporting::init_hive_user_agent},
+    }, jwt::JwtAuthRuntime, logger::configure_logging, pipeline::{graphql_request_handler, usage_reporting::init_hive_user_agent}
 };
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
@@ -75,7 +71,7 @@ async fn graphql_endpoint_handler(
     }
 }
 
-pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn router_entrypoint() -> Result<(), RouterEntrypointError> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     configure_logging(&router_config.log);
@@ -94,21 +90,22 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
             .configure(|m| configure_ntex_app(m, http_config.graphql_endpoint()))
             .default_service(web::to(move || landing_page_handler(lp_gql_path.clone())))
     })
-    .bind(addr)?
+    .bind(addr)
+    .map_err(|bind_err| RouterEntrypointError::HttpServerBindError(bind_err))
+    ?
     .run()
-    .await
-    .map_err(|err| err.into());
+    .await;
 
-    info!("server stopped, clearning background tasks");
+    info!("server stopped, clearing background tasks");
     bg_tasks_manager.shutdown();
 
-    maybe_error
+    maybe_error.map_err(|e| RouterEntrypointError::HttpServerRunError(e))
 }
 
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     bg_tasks_manager: &mut BackgroundTasksManager,
-) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), Box<dyn std::error::Error>> {
+) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), RouterEntrypointError> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
         false => None,

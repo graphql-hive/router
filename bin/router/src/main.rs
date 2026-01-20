@@ -12,7 +12,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(err) => {
             eprintln!("Failed to start Hive Router:\n  {}", err);
 
-            Err(err)
+            Err(err.into())
         }
     }
 }
