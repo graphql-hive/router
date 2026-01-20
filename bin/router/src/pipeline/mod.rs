@@ -6,7 +6,6 @@ use hive_router_plan_executor::{
         client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
         plan::PlanExecutionOutput,
     },
-    headers::response::modify_client_response_headers,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -178,6 +177,7 @@ pub async fn graphql_request_handler(
         supergraph,
         shared_state,
         schema_state,
+        single_content_type.into(),
     )
     .await?;
 
@@ -196,16 +196,7 @@ pub async fn graphql_request_handler(
         }
     }
 
-    let mut http_response = web::HttpResponse::Ok()
-        .header(http::header::CONTENT_TYPE, single_content_type.as_ref())
-        .body(response.body);
-
-    if let Some(response_headers_aggregator) = response.response_headers_aggregator {
-        modify_client_response_headers(response_headers_aggregator, http_response.headers_mut())
-            .map_err(PipelineError::HeaderPropagation)?;
-    }
-
-    Ok(http_response)
+    Ok(response.response)
 }
 
 #[inline]
@@ -219,6 +210,7 @@ pub async fn execute_pipeline<'exec>(
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
+    response_content_type: &'static str,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let progressive_override_ctx = request_override_context(
         &shared_state.override_labels_evaluator,
@@ -275,6 +267,7 @@ pub async fn execute_pipeline<'exec>(
         variable_payload,
         client_request_details,
         authorization_errors,
+        response_content_type,
     };
 
     execute_plan(supergraph, shared_state, expose_query_plan, planned_request).await
