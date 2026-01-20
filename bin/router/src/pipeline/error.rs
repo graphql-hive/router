@@ -103,6 +103,14 @@ pub enum PipelineError {
     #[strum(serialize = "JWT_FORWARDING_ERROR")]
     JwtForwardingError(JwtForwardingError),
 
+    // Introspection permission errors
+    #[error("Failed to evaluate introspection expression: {0}")]
+    #[strum(serialize = "INTROSPECTION_PERMISSION_EVALUATION_ERROR")]
+    IntrospectionPermissionEvaluationError(String),
+    #[error("Introspection queries are disabled")]
+    #[strum(serialize = "INTROSPECTION_DISABLED")]
+    IntrospectionDisabled,
+
     // Subscription-related errors
     #[error("Subscriptions are not supported")]
     #[strum(serialize = "SUBSCRIPTIONS_NOT_SUPPORTED")]
@@ -155,6 +163,10 @@ impl PipelineError {
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
             (Self::JwtError(err), _) => err.status_code(),
+            (Self::IntrospectionPermissionEvaluationError(_), _) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+            (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
         }

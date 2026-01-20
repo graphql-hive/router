@@ -23,6 +23,7 @@ use crate::{
         execution::{execute_plan, ExposeQueryPlanMode, PlannedRequest, EXPOSE_QUERY_PLAN_HEADER},
         execution_request::get_execution_request_from_http_request,
         header::ResponseMode,
+        introspection_policy::handle_introspection_policy,
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::parse_operation_with_cache,
         progressive_override::request_override_context,
@@ -41,6 +42,7 @@ pub mod error;
 pub mod execution;
 pub mod execution_request;
 pub mod header;
+pub mod introspection_policy;
 pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
@@ -103,12 +105,6 @@ pub async fn graphql_request_handler(
         }
     };
 
-    let variable_payload =
-        coerce_request_variables(supergraph, &mut execution_request, &normalize_payload)?;
-
-    let query_plan_cancellation_token =
-        CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
-
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
             .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
@@ -144,6 +140,19 @@ pub async fn graphql_request_handler(
         },
         jwt: &jwt_request_details,
     };
+
+    if normalize_payload.operation_for_introspection.is_some() {
+        handle_introspection_policy(&shared_state.introspection_policy, &client_request_details)?;
+    }
+
+    let variable_payload = coerce_request_variables(
+        supergraph,
+        &mut execution_request.variables,
+        &normalize_payload,
+    )?;
+
+    let query_plan_cancellation_token =
+        CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
     let mut expose_query_plan = ExposeQueryPlanMode::No;
     if shared_state.router_config.query_planner.allow_expose {

@@ -59,8 +59,9 @@ cookie = "0.18.1"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
 anyhow = { workspace = true }
-combine= { workspace = true }
+combine = { workspace = true }
 strum = { workspace = true }
+insta = { workspace = true }
 mediatype = "0.21.0"
 headers-accept = "0.3.0"
 once_cell = { workspace = true }
