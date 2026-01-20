@@ -1,6 +1,8 @@
 use std::{sync::Arc, time::Instant};
 
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLOperationSpan;
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLOperationSpan, GraphQLVariableCoercionSpan,
+};
 use hive_router_plan_executor::{
     execution::{
         client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
@@ -217,8 +219,11 @@ pub async fn execute_pipeline(
           operation_span.mark_trace_for_drop();
         }
 
+        let span = GraphQLVariableCoercionSpan::new();
+        let guard = span.span.enter();
         let variable_payload =
-            coerce_request_variables(req, supergraph, &mut execution_request, &normalize_payload)?;
+            coerce_request_variables(req, supergraph, &mut execution_request, &normalize_payload).inspect_err(span.observe_error())?;
+        drop(guard);
 
         let query_plan_cancellation_token =
             CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);

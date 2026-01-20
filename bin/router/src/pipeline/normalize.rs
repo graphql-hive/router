@@ -1,3 +1,4 @@
+use futures::TryFutureExt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -142,5 +143,6 @@ pub async fn normalize_request_with_cache(
         }
     }
     .instrument(normalize_span.clone())
+    .inspect_err(normalize_span.observe_error())
     .await
 }

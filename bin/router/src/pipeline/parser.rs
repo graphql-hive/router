@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use futures::TryFutureExt;
 use graphql_tools::parser::minify_query;
 use graphql_tools::parser::query::{Definition, Document, OperationDefinition};
 use hive_console_sdk::agent::utils::normalize_operation as hive_sdk_normalize_operation;
@@ -144,5 +145,6 @@ pub async fn parse_operation_with_cache(
         Ok(payload)
     }
     .instrument(parse_span.clone())
+    .inspect_err(parse_span.observe_error())
     .await
 }

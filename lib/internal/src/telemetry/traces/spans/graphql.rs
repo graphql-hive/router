@@ -52,6 +52,8 @@ impl GraphQLParseSpan {
             "graphql.operation.name" = Empty,
             "graphql.operation.type" = Empty,
             "graphql.document.hash" = Empty,
+            "hive.graphql.error.count" = Empty,
+            "hive.graphql.error.codes" = Empty,
         );
         GraphQLParseSpan { span }
     }
@@ -73,6 +75,26 @@ impl GraphQLParseSpan {
         // if let Some(id) = &identity.document_id {
         //     self.span().record(attributes::GRAPHQL_OPERATION_ID, id.as_str());
         // }
+    }
+
+    pub fn record_error<T>(&self, error: T)
+    where
+        T: Into<ObservedError>,
+    {
+        if self.is_disabled() {
+            return;
+        }
+
+        let error = error.into();
+        record_error_code_to_span(&self.span, &error);
+        record_error_event_to_span(&self.span, error);
+    }
+
+    pub fn observe_error<E>(&self) -> impl FnOnce(&E) + '_
+    where
+        for<'a> &'a E: Into<ObservedError>,
+    {
+        |err| self.record_error(err)
     }
 }
 
@@ -151,6 +173,26 @@ impl GraphQLVariableCoercionSpan {
         );
         GraphQLVariableCoercionSpan { span }
     }
+
+    pub fn record_error<T>(&self, error: T)
+    where
+        T: Into<ObservedError>,
+    {
+        if self.is_disabled() {
+            return;
+        }
+
+        let error = error.into();
+        record_error_code_to_span(&self.span, &error);
+        record_error_event_to_span(&self.span, error);
+    }
+
+    pub fn observe_error<E>(&self) -> impl FnOnce(&E) + '_
+    where
+        for<'a> &'a E: Into<ObservedError>,
+    {
+        |err| self.record_error(err)
+    }
 }
 
 pub struct GraphQLNormalizeSpan {
@@ -185,12 +227,34 @@ impl GraphQLNormalizeSpan {
             "hive.kind" = kind,
             "otel.kind" = "Internal",
             "cache.hit" = Empty,
+            "hive.graphql.error.count" = Empty,
+            "hive.graphql.error.codes" = Empty,
         );
         GraphQLNormalizeSpan { span }
     }
 
     pub fn record_cache_hit(&self, hit: bool) {
         self.span.record(attributes::CACHE_HIT, hit);
+    }
+
+    pub fn record_error<T>(&self, error: T)
+    where
+        T: Into<ObservedError>,
+    {
+        if self.is_disabled() {
+            return;
+        }
+
+        let error = error.into();
+        record_error_code_to_span(&self.span, &error);
+        record_error_event_to_span(&self.span, error);
+    }
+
+    pub fn observe_error<E>(&self) -> impl FnOnce(&E) + '_
+    where
+        for<'a> &'a E: Into<ObservedError>,
+    {
+        |err| self.record_error(err)
     }
 }
 
@@ -225,6 +289,8 @@ impl GraphQLAuthorizeSpan {
             "GraphQL Document Authorization",
             "hive.kind" = kind,
             "otel.kind" = "Internal",
+            "hive.graphql.error.count" = Empty,
+            "hive.graphql.error.codes" = Empty,
         );
         GraphQLAuthorizeSpan { span }
     }
@@ -273,6 +339,26 @@ impl GraphQLPlanSpan {
 
     pub fn record_cache_hit(&self, hit: bool) {
         self.span.record(attributes::CACHE_HIT, hit);
+    }
+
+    pub fn record_error<T>(&self, error: T)
+    where
+        T: Into<ObservedError>,
+    {
+        if self.is_disabled() {
+            return;
+        }
+
+        let error = error.into();
+        record_error_code_to_span(&self.span, &error);
+        record_error_event_to_span(&self.span, error);
+    }
+
+    pub fn observe_error<E>(&self) -> impl FnOnce(&E) + '_
+    where
+        for<'a> &'a E: Into<ObservedError>,
+    {
+        |err| self.record_error(err)
     }
 }
 
@@ -491,6 +577,14 @@ impl GraphQLSubgraphOperationSpan {
     }
 }
 
+fn record_error_code_to_span(span: &Span, error: &ObservedError) {
+    let Some(code) = error.code.as_ref() else {
+        return;
+    };
+
+    span.record(attributes::HIVE_GRAPHQL_ERROR_CODES, code);
+}
+
 fn record_error_codes_to_span(span: &Span, errors: &[ObservedError]) {
     let mut codes: Vec<&str> = errors
         .iter()
@@ -507,42 +601,46 @@ fn record_error_codes_to_span(span: &Span, errors: &[ObservedError]) {
     span.record(attributes::HIVE_GRAPHQL_ERROR_CODES, codes.join(","));
 }
 
+fn record_error_event_to_span(span: &Span, error: ObservedError) {
+    let message = &error.message;
+    let mut attributes: Vec<KeyValue> = Vec::with_capacity(5);
+    let kind: &'static str = HiveEventKind::GraphQLError.into();
+
+    attributes.push(KeyValue::new(HIVE_KIND, kind));
+    attributes.push(KeyValue::new(ERROR_MESSAGE, message.to_string()));
+    attributes.push(KeyValue::new(
+        ERROR_TYPE,
+        error.code.unwrap_or(String::from("unknown")).to_string(),
+    ));
+
+    if let Some(service_name) = error.service_name {
+        attributes.push(KeyValue::new(
+            HIVE_ERROR_SUBGRAPH_NAME,
+            service_name.to_string(),
+        ));
+    }
+
+    if let Some(affected_path) = error.affected_path {
+        attributes.push(KeyValue::new(
+            HIVE_ERROR_AFFECTED_PATH,
+            affected_path.to_string(),
+        ));
+    }
+
+    if let Some(path) = error.path {
+        attributes.push(KeyValue::new(HIVE_ERROR_PATH, path));
+    }
+
+    span.add_event(message.to_string(), attributes);
+}
+
 fn record_error_events_to_span(span: &Span, errors: Vec<ObservedError>) {
     if errors.is_empty() {
         return;
     }
 
     for error in errors {
-        let message = &error.message;
-        let mut attributes: Vec<KeyValue> = Vec::with_capacity(5);
-        let kind: &'static str = HiveEventKind::GraphQLError.into();
-
-        attributes.push(KeyValue::new(HIVE_KIND, kind));
-        attributes.push(KeyValue::new(ERROR_MESSAGE, message.to_string()));
-        attributes.push(KeyValue::new(
-            ERROR_TYPE,
-            error.code.unwrap_or(String::from("unknown")).to_string(),
-        ));
-
-        if let Some(service_name) = error.service_name {
-            attributes.push(KeyValue::new(
-                HIVE_ERROR_SUBGRAPH_NAME,
-                service_name.to_string(),
-            ));
-        }
-
-        if let Some(affected_path) = error.affected_path {
-            attributes.push(KeyValue::new(
-                HIVE_ERROR_AFFECTED_PATH,
-                affected_path.to_string(),
-            ));
-        }
-
-        if let Some(path) = error.path {
-            attributes.push(KeyValue::new(HIVE_ERROR_PATH, path));
-        }
-
-        span.add_event(message.to_string(), attributes);
+        record_error_event_to_span(span, error);
     }
 }
 
