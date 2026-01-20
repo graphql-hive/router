@@ -18,8 +18,8 @@ async fn test_otlp_http_export_with_graphql_request() {
         .await
         .expect("Failed to start OTLP collector");
 
-    let otlp_endpoint = otlp_collector.traces_endpoint();
-    info!("OTLP collector started at: {}", otlp_endpoint);
+    let otlp_endpoint = otlp_collector.http_endpoint();
+    info!("OTLP HTTP collector started at: {}", otlp_endpoint);
 
     let subgraphs = SubgraphsServer::start().await;
 
@@ -201,8 +201,8 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         .await
         .expect("Failed to start OTLP collector");
 
-    let otlp_endpoint = otlp_collector.traces_endpoint();
-    info!("OTLP collector started at: {}", otlp_endpoint);
+    let otlp_endpoint = otlp_collector.grpc_endpoint();
+    info!("OTLP gRPC collector started at: {}", otlp_endpoint);
 
     let subgraphs = SubgraphsServer::start().await;
 

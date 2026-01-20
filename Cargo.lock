@@ -1431,6 +1431,8 @@ dependencies = [
  "tempfile",
  "tiny_http",
  "tokio",
+ "tokio-stream",
+ "tonic",
  "tracing",
  "tracing-subscriber",
 ]

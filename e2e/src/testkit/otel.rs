@@ -4,11 +4,17 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 
-use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::{
+    TraceService, TraceServiceServer,
+};
+use opentelemetry_proto::tonic::collector::trace::v1::{
+    ExportTraceServiceRequest, ExportTraceServiceResponse,
+};
+use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use opentelemetry_proto::tonic::trace::v1::{Span, Status};
 use prost::Message;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use tonic::{Request, Response, Status as TonicStatus};
 
 pub struct TraceParent<'a> {
     pub trace_id: &'a str,
@@ -58,63 +64,109 @@ pub struct OtlpRequest {
     pub body: Vec<u8>,
 }
 
-/// A simplified span representation for snapshot testing
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SnapshotSpan {
+#[derive(Clone)]
+pub struct CollectedSpan {
     pub id: String,
     pub name: String,
     pub kind: Option<SpanKind>,
     pub status: Option<Status>,
-    pub duration_ms: f64,
     pub attributes: BTreeMap<String, String>,
-    pub events: Vec<SnapshotEvent>,
+    pub events: Vec<CollectedEvent>,
 }
 
 /// A simplified event representation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SnapshotEvent {
+#[derive(Clone)]
+pub struct CollectedEvent {
     pub name: String,
     pub attributes: BTreeMap<String, String>,
 }
 
+/// gRPC service implementation for OTLP trace collection
+struct GrpcTraceCollector {
+    requests: Arc<Mutex<Vec<OtlpRequest>>>,
+}
+
+#[tonic::async_trait]
+impl TraceService for GrpcTraceCollector {
+    async fn export(
+        &self,
+        request: Request<ExportTraceServiceRequest>,
+    ) -> Result<Response<ExportTraceServiceResponse>, TonicStatus> {
+        let req = request.into_inner();
+
+        // Encode the request back to bytes for storage
+        let body = req.encode_to_vec();
+
+        info!("Captured gRPC OTLP export request");
+
+        // Store request
+        let otlp_req = OtlpRequest {
+            method: "POST".to_string(),
+            path: "/opentelemetry.proto.collector.trace.v1.TraceService/Export".to_string(),
+            headers: vec![],
+            body,
+        };
+
+        self.requests.lock().await.push(otlp_req);
+
+        Ok(Response::new(ExportTraceServiceResponse {
+            partial_success: None,
+        }))
+    }
+}
+
 /// Mock OTLP collector server that captures incoming trace export requests
 pub struct OtlpCollector {
-    pub address: String,
+    pub http_address: String,
+    pub grpc_address: String,
     requests: Arc<Mutex<Vec<OtlpRequest>>>,
-    _handle: std::thread::JoinHandle<()>,
+    _http_handle: Option<std::thread::JoinHandle<()>>,
+    _grpc_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl OtlpCollector {
     pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+
+        let (http_address, http_handle) = Self::start_http_server(requests.clone()).await?;
+        let (grpc_address, grpc_handle) = Self::start_grpc_server(requests.clone()).await?;
+
+        info!("OTLP HTTP collector server started on {}", http_address);
+        info!("OTLP gRPC collector server started on {}", grpc_address);
+
+        Ok(OtlpCollector {
+            http_address,
+            grpc_address,
+            requests,
+            _http_handle: Some(http_handle),
+            _grpc_handle: Some(grpc_handle),
+        })
+    }
+
+    async fn start_http_server(
+        requests: Arc<Mutex<Vec<OtlpRequest>>>,
+    ) -> Result<(String, std::thread::JoinHandle<()>), Box<dyn std::error::Error>> {
         let server = tiny_http::Server::http("127.0.0.1:0")
-            .map_err(|e| format!("Failed to start OTLP server: {}", e))?;
+            .map_err(|e| format!("Failed to start OTLP HTTP server: {}", e))?;
         let address_str = format!("http://{}", server.server_addr());
 
-        info!("OTLP collector server starting on {}", address_str);
-
-        let requests = Arc::new(Mutex::new(Vec::new()));
         let requests_clone = requests.clone();
-
-        // Spawn server in a background thread (tiny_http is blocking)
         let handle = std::thread::spawn(move || {
             for mut request in server.incoming_requests() {
                 let method = request.method().to_string();
                 let path = request.url().to_string();
 
-                // Extract headers
                 let headers: Vec<(String, String)> = request
                     .headers()
                     .iter()
                     .map(|h| (h.field.to_string(), h.value.to_string()))
                     .collect();
 
-                // Read body
                 let mut body = Vec::new();
                 let _ = request.as_reader().read_to_end(&mut body);
 
-                info!("Captured OTLP request: {} {}", method, path);
+                info!("Captured OTLP HTTP request: {} {}", method, path);
 
-                // Store request (need to block here since we're in a thread)
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
                     requests_clone.lock().await.push(OtlpRequest {
@@ -127,15 +179,44 @@ impl OtlpCollector {
             }
         });
 
-        Ok(OtlpCollector {
-            address: address_str,
-            requests,
-            _handle: handle,
-        })
+        Ok((address_str, handle))
     }
 
-    pub fn traces_endpoint(&self) -> String {
-        format!("{}/v1/traces", self.address)
+    async fn start_grpc_server(
+        requests: Arc<Mutex<Vec<OtlpRequest>>>,
+    ) -> Result<(String, tokio::task::JoinHandle<()>), Box<dyn std::error::Error>> {
+        // Create a TCP listener on a random port
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let grpc_address = format!("http://{}", addr);
+
+        let requests_clone = requests.clone();
+
+        let trace_service = GrpcTraceCollector {
+            requests: requests_clone,
+        };
+
+        // Spawn gRPC server
+        let handle = tokio::spawn(async move {
+            let result = tonic::transport::Server::builder()
+                .add_service(TraceServiceServer::new(trace_service))
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+                .await;
+
+            if let Err(e) = result {
+                eprintln!("gRPC server error: {}", e);
+            }
+        });
+
+        Ok((grpc_address, handle))
+    }
+
+    pub fn http_endpoint(&self) -> String {
+        format!("{}/v1/traces", self.http_address)
+    }
+
+    pub fn grpc_endpoint(&self) -> String {
+        self.grpc_address.clone()
     }
 
     pub async fn spans_from_request(
@@ -151,21 +232,13 @@ impl OtlpCollector {
     }
 }
 
-impl Drop for OtlpCollector {
-    fn drop(&mut self) {
-        // Server thread will terminate when server is dropped
-    }
-}
-
 /// Decode OTLP trace export request from raw protobuf bytes
 fn decode_trace_export_request(
     body: &[u8],
 ) -> Result<ExportTraceServiceRequest, Box<dyn std::error::Error>> {
-    let request = ExportTraceServiceRequest::decode(body)?;
-    Ok(request)
+    Ok(ExportTraceServiceRequest::decode(body)?)
 }
 
-/// Extract all spans from a trace export request
 fn extract_spans(request: &ExportTraceServiceRequest) -> Vec<Span> {
     let mut spans = Vec::new();
 
@@ -180,46 +253,43 @@ fn extract_spans(request: &ExportTraceServiceRequest) -> Vec<Span> {
     spans
 }
 
-/// Convert a span to a snapshot-friendly representation
-fn span_to_snapshot(span: &Span) -> SnapshotSpan {
-    let duration_nanos = span.end_time_unix_nano - span.start_time_unix_nano;
-    let duration_ms = duration_nanos as f64 / 1_000_000.0;
-
-    let mut attributes = BTreeMap::new();
-    for kv in &span.attributes {
-        let key = &kv.key;
-        if let Some(value) = &kv.value {
-            attributes.insert(key.clone(), format_attribute_value(value));
+impl From<&Span> for CollectedSpan {
+    fn from(span: &Span) -> Self {
+        let mut attributes = BTreeMap::new();
+        for kv in &span.attributes {
+            let key = &kv.key;
+            if let Some(value) = &kv.value {
+                attributes.insert(key.clone(), format_attribute_value(value));
+            }
         }
-    }
 
-    let events = span
-        .events
-        .iter()
-        .map(|event| SnapshotEvent {
-            name: event.name.clone(),
-            attributes: event
-                .attributes
-                .iter()
-                .map(|kv| {
-                    if let Some(value) = &kv.value {
-                        (kv.key.clone(), format_attribute_value(value))
-                    } else {
-                        (kv.key.clone(), "null".to_string())
-                    }
-                })
-                .collect(),
-        })
-        .collect();
+        let events = span
+            .events
+            .iter()
+            .map(|event| CollectedEvent {
+                name: event.name.clone(),
+                attributes: event
+                    .attributes
+                    .iter()
+                    .map(|kv| {
+                        if let Some(value) = &kv.value {
+                            (kv.key.clone(), format_attribute_value(value))
+                        } else {
+                            (kv.key.clone(), "null".to_string())
+                        }
+                    })
+                    .collect(),
+            })
+            .collect();
 
-    SnapshotSpan {
-        id: hex::encode(&span.span_id),
-        name: span.name.clone(),
-        kind: format_span_kind(span.kind),
-        status: span.status.clone(),
-        duration_ms,
-        attributes,
-        events,
+        CollectedSpan {
+            id: hex::encode(&span.span_id),
+            name: span.name.clone(),
+            kind: format_span_kind(span.kind),
+            status: span.status.clone(),
+            attributes,
+            events,
+        }
     }
 }
 
@@ -228,8 +298,6 @@ fn format_span_kind(kind: i32) -> Option<SpanKind> {
 }
 
 fn format_attribute_value(value: &opentelemetry_proto::tonic::common::v1::AnyValue) -> String {
-    use opentelemetry_proto::tonic::common::v1::any_value::Value;
-
     match &value.value {
         Some(Value::StringValue(s)) => s.clone(),
         Some(Value::IntValue(i)) => i.to_string(),
@@ -262,9 +330,8 @@ fn format_attribute_value(value: &opentelemetry_proto::tonic::common::v1::AnyVal
     }
 }
 
-/// Helper struct for span filtering and assertion
 pub struct SpanCollector {
-    spans: Vec<SnapshotSpan>,
+    spans: Vec<CollectedSpan>,
 }
 
 impl SpanCollector {
@@ -272,15 +339,11 @@ impl SpanCollector {
     pub fn from_bytes(body: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
         let request = decode_trace_export_request(body)?;
         let spans = extract_spans(&request);
-        let snapshot_spans = spans.iter().map(span_to_snapshot).collect();
-
-        Ok(SpanCollector {
-            spans: snapshot_spans,
-        })
+        let spans = spans.iter().map(|span| span.into()).collect();
+        Ok(SpanCollector { spans })
     }
 
-    /// Find spans by name prefix
-    pub fn by_hive_kind(&self, hive_kind: &str) -> Vec<&SnapshotSpan> {
+    pub fn by_hive_kind(&self, hive_kind: &str) -> Vec<&CollectedSpan> {
         self.spans
             .iter()
             .filter(|s| {
@@ -290,13 +353,9 @@ impl SpanCollector {
             })
             .collect()
     }
-
-    pub fn by_id(&self, id: &str) -> Option<&SnapshotSpan> {
-        self.spans.iter().find(|s| s.id == id)
-    }
 }
 
-impl Display for SnapshotSpan {
+impl Display for CollectedSpan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Span: {}", self.name)?;
 
@@ -318,7 +377,7 @@ impl Display for SnapshotSpan {
                 )?;
             }
             None => {
-                writeln!(f, "  Status: Node")?;
+                writeln!(f, "  Status: None")?;
             }
         }
 
