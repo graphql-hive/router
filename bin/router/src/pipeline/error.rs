@@ -3,7 +3,6 @@ use std::sync::Arc;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
-    headers::errors::HeaderRuleRuntimeError,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
@@ -119,10 +118,6 @@ pub enum PipelineError {
     #[error("Subscriptions are not supported over accepted transport(s)")]
     #[strum(serialize = "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED")]
     SubscriptionsTransportNotSupported,
-
-    #[error(transparent)]
-    #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
-    HeaderPropagation(HeaderRuleRuntimeError),
 }
 
 impl PipelineError {
@@ -174,7 +169,6 @@ impl PipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
-            (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
