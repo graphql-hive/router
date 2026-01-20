@@ -9,14 +9,12 @@ use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
-use hive_router_plan_executor::execution::error::{IntoPlanExecutionError, LazyPlanContext};
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
-use hive_router_plan_executor::projection::response::project_by_operation;
-use hive_router_plan_executor::response::value::Value;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
+use serde_json::json;
 
 pub static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
@@ -33,6 +31,7 @@ pub struct PlannedRequest<'req> {
     pub variable_payload: &'req CoerceVariablesPayload,
     pub client_request_details: &'req ClientRequestDetails<'req>,
     pub authorization_errors: Vec<AuthorizationError>,
+    pub response_content_type: &'static str,
 }
 
 #[inline]
@@ -64,31 +63,12 @@ pub async fn execute_plan(
     };
 
     if matches!(expose_query_plan, ExposeQueryPlanMode::DryRun) {
-        let body = project_by_operation(
-            &Value::Null,
-            vec![],
-            &extensions,
-            planned_request.normalized_payload.root_type_name,
-            &[],
-            &None,
-            0,
-            introspection_context.metadata,
-        )
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || None,
-            affected_path: || None,
-        })
-        .map_err(|err| {
-            tracing::error!(
-                "Failed to project query plan to extensions during dry-run: {}",
-                err
-            );
-            PipelineError::PlanExecutionError(err)
-        })?;
+        let response = ntex::http::Response::Ok().json(&json!({
+            "extensions": extensions,
+        }));
 
         return Ok(PlanExecutionOutput {
-            body,
-            response_headers_aggregator: None,
+            response,
             error_count: 0,
         });
     }
@@ -129,6 +109,7 @@ pub async fn execute_plan(
             .into_iter()
             .map(|e| e.into())
             .collect(),
+        response_content_type: planned_request.response_content_type,
     })
     .await
     .map_err(|err| {
