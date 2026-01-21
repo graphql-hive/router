@@ -128,7 +128,7 @@ impl TryFrom<&MediaType<'_>> for StreamContentType {
     }
 }
 
-static STREAM_CONTENT_TYPE_MEDIA_TYPES: LazyLock<Vec<MediaType<'static>>> = Lazy::new(|| {
+static STREAM_CONTENT_TYPE_MEDIA_TYPES: LazyLock<Vec<MediaType<'static>>> = LazyLock::new(|| {
     // first collect the string representations to keep them alive
     // in order to parse them into MediaType instances that _borrow_
     // the items from the vec
