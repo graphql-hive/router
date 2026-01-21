@@ -369,8 +369,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut final_headers = NtexHeaderMap::new();
-        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
+        let mut response_builder = ntex::http::Response::Ok();
+        modify_client_response_headers(accumulator, &mut response_builder).unwrap();
+        let response = response_builder.finish();
+        let final_headers = response.headers();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
           x-resp: resp-value-2
@@ -433,8 +435,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut final_headers = NtexHeaderMap::new();
-        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
+        let mut response_builder = ntex::http::Response::Ok();
+        modify_client_response_headers(accumulator, &mut response_builder).unwrap();
+        let response = response_builder.finish();
+        let final_headers = response.headers();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
           x-resp: resp-value-1
@@ -490,8 +494,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut final_headers = NtexHeaderMap::new();
-        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
+        let mut response_builder = ntex::http::Response::Ok();
+        modify_client_response_headers(accumulator, &mut response_builder).unwrap();
+        let response = response_builder.finish();
+        let final_headers = response.headers();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
           x-stuff: val1, val2
@@ -547,8 +553,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut final_headers = NtexHeaderMap::new();
-        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
+        let mut response_builder = ntex::http::Response::Ok();
+        modify_client_response_headers(accumulator, &mut response_builder).unwrap();
+        let response = response_builder.finish();
+        let final_headers = response.headers();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
           set-cookie: a=1
@@ -599,8 +607,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut final_headers = NtexHeaderMap::new();
-        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
+        let mut response_builder = ntex::http::Response::Ok();
+        modify_client_response_headers(accumulator, &mut response_builder).unwrap();
+        let response = response_builder.finish();
+        let final_headers = response.headers();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
           x-original-forwarded-for: 1.2.3.4

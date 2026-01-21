@@ -31,7 +31,6 @@ pub struct PlannedRequest<'req> {
     pub variable_payload: &'req CoerceVariablesPayload,
     pub client_request_details: &'req ClientRequestDetails<'req>,
     pub authorization_errors: Vec<AuthorizationError>,
-    pub response_content_type: &'static str,
 }
 
 #[inline]
@@ -63,12 +62,15 @@ pub async fn execute_plan(
     };
 
     if matches!(expose_query_plan, ExposeQueryPlanMode::DryRun) {
-        let response = ntex::http::Response::Ok().json(&json!({
+        let body_json = json!({
             "extensions": extensions,
-        }));
+        });
+
+        let body = sonic_rs::to_vec(&body_json).unwrap();
 
         return Ok(PlanExecutionOutput {
-            response,
+            body,
+            response_header_aggregator: None,
             error_count: 0,
         });
     }
@@ -109,7 +111,6 @@ pub async fn execute_plan(
             .into_iter()
             .map(|e| e.into())
             .collect(),
-        response_content_type: planned_request.response_content_type,
     })
     .await
     .map_err(|err| {

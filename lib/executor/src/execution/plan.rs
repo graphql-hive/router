@@ -19,9 +19,9 @@ use crate::{
     },
     executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     headers::{
-        plan::HeaderRulesPlan,
+        plan::{HeaderRulesPlan, ResponseHeaderAggregator},
         request::modify_subgraph_request_headers,
-        response::{apply_subgraph_response_headers, modify_client_response_headers},
+        response::apply_subgraph_response_headers,
     },
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
@@ -56,11 +56,11 @@ pub struct QueryPlanExecutionContext<'exec> {
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
-    pub response_content_type: &'exec str,
 }
 
 pub struct PlanExecutionOutput {
-    pub response: ntex::http::Response,
+    pub body: Vec<u8>,
+    pub response_header_aggregator: Option<ResponseHeaderAggregator>,
     pub error_count: usize,
 }
 
@@ -110,18 +110,9 @@ pub async fn execute_query_plan<'exec>(
         affected_path: || None,
     })?;
 
-    let mut response = ntex::http::Response::Ok()
-        .content_type(ctx.response_content_type)
-        .body(body);
-
-    modify_client_response_headers(exec_ctx.response_headers_aggregator, response.headers_mut())
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || None,
-            affected_path: || None,
-        })?;
-
     Ok(PlanExecutionOutput {
-        response,
+        body,
+        response_header_aggregator: exec_ctx.response_headers_aggregator.none_if_empty(),
         error_count,
     })
 }
