@@ -1,8 +1,7 @@
-pub use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
+use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::info;
 
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::{
     TraceService, TraceServiceServer,
@@ -13,8 +12,13 @@ use opentelemetry_proto::tonic::collector::trace::v1::{
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use opentelemetry_proto::tonic::trace::v1::{Span, Status};
 use prost::Message;
-use std::collections::BTreeMap;
 use tonic::{Request, Response, Status as TonicStatus};
+
+pub use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
+
+/// Forbidden ports for OTLP HTTP and gRPC servers.
+/// Those ports are reserved for other services used in e2e tests.
+static FORBIDDEN_PORTS: &[u16] = &[80, 443, 8080, 8443, 4000, 4200, 3000];
 
 pub struct TraceParent<'a> {
     pub trace_id: &'a str,
@@ -97,7 +101,7 @@ impl TraceService for GrpcTraceCollector {
         // Encode the request back to bytes for storage
         let body = req.encode_to_vec();
 
-        info!("Captured gRPC OTLP export request");
+        println!("Captured gRPC OTLP export request");
 
         // Store request
         let otlp_req = OtlpRequest {
@@ -131,8 +135,8 @@ impl OtlpCollector {
         let (http_address, http_handle) = Self::start_http_server(requests.clone()).await?;
         let (grpc_address, grpc_handle) = Self::start_grpc_server(requests.clone()).await?;
 
-        info!("OTLP HTTP collector server started on {}", http_address);
-        info!("OTLP gRPC collector server started on {}", grpc_address);
+        println!("OTLP HTTP collector server started on {}", http_address);
+        println!("OTLP gRPC collector server started on {}", grpc_address);
 
         Ok(OtlpCollector {
             http_address,
@@ -146,8 +150,22 @@ impl OtlpCollector {
     async fn start_http_server(
         requests: Arc<Mutex<Vec<OtlpRequest>>>,
     ) -> Result<(String, std::thread::JoinHandle<()>), Box<dyn std::error::Error>> {
-        let server = tiny_http::Server::http("127.0.0.1:0")
-            .map_err(|e| format!("Failed to start OTLP HTTP server: {}", e))?;
+        // Binding to port 0 tell the OS to assign a random available port.
+        let server = loop {
+            let server = tiny_http::Server::http("127.0.0.1:0")
+                .map_err(|e| format!("Failed to start OTLP HTTP server: {}", e))?;
+
+            let port = server
+                .server_addr()
+                .to_string()
+                .parse::<std::net::SocketAddr>()
+                .expect("Failed to parse socket address")
+                .port();
+
+            if !FORBIDDEN_PORTS.contains(&port) {
+                break server;
+            }
+        };
         let address_str = format!("http://{}", server.server_addr());
 
         let requests_clone = requests.clone();
@@ -165,7 +183,7 @@ impl OtlpCollector {
                 let mut body = Vec::new();
                 let _ = request.as_reader().read_to_end(&mut body);
 
-                info!("Captured OTLP HTTP request: {} {}", method, path);
+                println!("Captured OTLP HTTP request: {} {}", method, path);
 
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
@@ -185,9 +203,14 @@ impl OtlpCollector {
     async fn start_grpc_server(
         requests: Arc<Mutex<Vec<OtlpRequest>>>,
     ) -> Result<(String, tokio::task::JoinHandle<()>), Box<dyn std::error::Error>> {
-        // Create a TCP listener on a random port
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let addr = listener.local_addr()?;
+        // Binding to port 0 tell the OS to assign a random available port.
+        let (listener, addr) = loop {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let addr = listener.local_addr()?;
+            if !FORBIDDEN_PORTS.contains(&addr.port()) {
+                break (listener, addr);
+            }
+        };
         let grpc_address = format!("http://{}", addr);
 
         let requests_clone = requests.clone();
@@ -352,6 +375,29 @@ impl SpanCollector {
                     .map_or(false, |v| v == hive_kind)
             })
             .collect()
+    }
+
+    pub fn by_hive_kind_one(&self, hive_kind: &str) -> &CollectedSpan {
+        let spans: Vec<&CollectedSpan> = self
+            .spans
+            .iter()
+            .filter(|s| {
+                s.attributes
+                    .get("hive.kind")
+                    .map_or(false, |v| v == hive_kind)
+            })
+            .collect();
+
+        assert_eq!(
+            spans.len(),
+            1,
+            "Expected exactly one span with hive.kind = {}",
+            hive_kind
+        );
+
+        spans
+            .first()
+            .expect("Expected exactly one span with hive.kind = {hive_kind}")
     }
 }
 
