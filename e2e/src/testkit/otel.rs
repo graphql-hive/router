@@ -23,13 +23,15 @@ static FORBIDDEN_PORTS: &[u16] = &[80, 443, 8080, 8443, 4000, 4200, 3000];
 pub struct TraceParent<'a> {
     pub trace_id: &'a str,
     pub span_id: &'a str,
+    pub sampled: bool,
 }
 
 impl<'a> TraceParent<'a> {
     /// Generates W3C Trace Context traceparent header value.
     /// Format: "00-{trace_id}-{span_id}-{trace_flags}"
     pub fn to_string(&self) -> String {
-        format!("00-{}-{}-01", self.trace_id, self.span_id)
+        let flags = if self.sampled { "01" } else { "00" };
+        format!("00-{}-{}-{}", self.trace_id, self.span_id, flags)
     }
 
     pub fn parse(traceparent: &'a str) -> Self {
@@ -39,6 +41,7 @@ impl<'a> TraceParent<'a> {
         Self {
             trace_id: parts[1],
             span_id: parts[2],
+            sampled: parts[3] == "01",
         }
     }
 
@@ -196,6 +199,9 @@ impl OtlpCollector {
                         body,
                     });
                 });
+
+                // Without the response, the exporter will log an error saying the request failed to respond
+                let _ = request.respond(tiny_http::Response::from_string(""));
             }
         });
 
