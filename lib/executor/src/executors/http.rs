@@ -5,13 +5,13 @@ use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
 use futures::TryFutureExt;
-use hive_router_internal::telemetry::otel::opentelemetry::global::get_text_map_propagator;
 use hive_router_internal::telemetry::otel::opentelemetry::propagation::Injector;
 use hive_router_internal::telemetry::otel::opentelemetry::trace::{SpanContext, TraceContextExt};
 use hive_router_internal::telemetry::otel::tracing_opentelemetry::OpenTelemetrySpanExt;
 use hive_router_internal::telemetry::traces::spans::http_request::{
     HttpClientRequestSpan, HttpInflightRequestSpan,
 };
+use hive_router_internal::telemetry::TelemetryContext;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -44,6 +44,7 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub dedupe_enabled: bool,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub telemetry_context: Arc<TelemetryContext>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -64,6 +65,7 @@ impl HTTPSubgraphExecutor {
         semaphore: Arc<Semaphore>,
         dedupe_enabled: bool,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+        telemetry_context: Arc<TelemetryContext>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -83,6 +85,7 @@ impl HTTPSubgraphExecutor {
             semaphore,
             dedupe_enabled,
             in_flight_requests,
+            telemetry_context,
         }
     }
 
@@ -177,12 +180,8 @@ impl HTTPSubgraphExecutor {
 
             // TODO: let's decide at some point if the tracing headers
             //       should be part of the fingerprint or not.
-            get_text_map_propagator(|propagator| {
-                propagator.inject_context(
-                    &current_context,
-                    &mut TraceHeaderInjector(req.headers_mut()),
-                );
-            });
+            self.telemetry_context
+                .inject_context(&mut TraceHeaderInjector(req.headers_mut()));
 
             let res_fut =
                 self.http_client

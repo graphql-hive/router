@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use graphql_tools::parser::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
+use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
     introspection::schema::{SchemaMetadata, SchemaWithMetadata},
@@ -73,6 +74,7 @@ impl SchemaState {
 
     pub async fn new_from_config(
         bg_tasks_manager: &mut BackgroundTasksManager,
+        telemetry_context: Arc<TelemetryContext>,
         router_config: Arc<HiveRouterConfig>,
     ) -> Result<Self, SupergraphManagerError> {
         let (tx, mut rx) = mpsc::channel::<String>(1);
@@ -94,7 +96,7 @@ impl SchemaState {
             while let Some(new_sdl) = rx.recv().await {
                 debug!("Received new supergraph SDL, building new supergraph state...");
 
-                match Self::build_data(router_config.clone(), &new_sdl) {
+                match Self::build_data(router_config.clone(), telemetry_context.clone(), &new_sdl) {
                     Ok(new_data) => {
                         swappable_data_spawn_clone.store(Arc::new(Some(new_data)));
                         debug!("Supergraph updated successfully");
@@ -121,6 +123,7 @@ impl SchemaState {
 
     fn build_data(
         router_config: Arc<HiveRouterConfig>,
+        telemetry_context: Arc<TelemetryContext>,
         supergraph_sdl: &str,
     ) -> Result<SupergraphData, SupergraphManagerError> {
         let parsed_supergraph_sdl = parse_schema(supergraph_sdl);
@@ -131,6 +134,7 @@ impl SchemaState {
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
             supergraph_state.subgraph_endpoint_map,
             router_config,
+            telemetry_context,
         )?;
 
         Ok(SupergraphData {

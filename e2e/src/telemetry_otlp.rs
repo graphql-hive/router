@@ -20,7 +20,7 @@ async fn test_otlp_http_export_with_graphql_request() {
 
     let _subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -245,6 +245,8 @@ async fn test_otlp_http_export_with_graphql_request() {
         url.scheme: http
     "
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify OTLP exporter works with gRPC protocol
@@ -260,7 +262,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
 
     let _subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -485,6 +487,8 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         url.scheme: http
     "
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify Trace Context Propagation (traceparent)
@@ -501,7 +505,7 @@ async fn test_otlp_http_trace_context_propagation() {
 
     let subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -602,6 +606,8 @@ async fn test_otlp_http_trace_context_propagation() {
         downstream_traceparent.trace_id, upstream_traceparent.trace_id,
         "Expected trace_id to match"
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verifies parent-based sampler respects upstream sampling decision.
@@ -618,7 +624,7 @@ async fn test_otlp_parent_based_sampler() {
 
     let _subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -698,6 +704,8 @@ async fn test_otlp_parent_based_sampler() {
         http_server_span.trace_id, upstream_trace_id,
         "http.server span should have correct trace_id"
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify 0.0 sample rate
@@ -713,7 +721,7 @@ async fn test_otlp_zero_sample_rate() {
 
     let _subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -756,6 +764,8 @@ async fn test_otlp_zero_sample_rate() {
         true,
         "No spans should be exported when when sampling rate is 0.0, even if parent is sampled"
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify only deprecated attributes are emitted for deprecated mode
@@ -771,7 +781,7 @@ async fn test_deprecated_span_attributes() {
 
     let _subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -880,6 +890,8 @@ async fn test_deprecated_span_attributes() {
         url.scheme: http
     "
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify both spec-compliant and deprecated attributes are emitted for spec_and_deprecated mode
@@ -895,7 +907,7 @@ async fn test_spec_and_deprecated_span_attributes() {
 
     let _subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -1023,6 +1035,8 @@ async fn test_spec_and_deprecated_span_attributes() {
         url.scheme: http
     "
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify introspection queries are NOT instrumented by default
@@ -1036,7 +1050,7 @@ async fn test_otlp_introspection_disabled_by_default() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -1075,6 +1089,8 @@ async fn test_otlp_introspection_disabled_by_default() {
         true,
         "No spans should be exported for introspection queries by default"
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify introspection queries are instrumented when explicitly enabled
@@ -1088,7 +1104,7 @@ async fn test_otlp_introspection_enabled() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -1134,6 +1150,7 @@ async fn test_otlp_introspection_enabled() {
         http_server_span.name, "http.server",
         "Should have an http.server span for introspection when enabled"
     );
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify custom headers are sent with HTTP OTLP requests
@@ -1210,7 +1227,7 @@ async fn test_otlp_grpc_metadata() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -1260,6 +1277,8 @@ async fn test_otlp_grpc_metadata() {
         Some(&("custom-header".to_string(), "custom-value".to_string())),
         "Custom header not found in request headers"
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify default client identification
@@ -1275,7 +1294,7 @@ async fn test_default_client_identification() {
 
     let _subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -1338,6 +1357,8 @@ async fn test_default_client_identification() {
         target: hive-router
     "
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify custom client identification
@@ -1353,7 +1374,7 @@ async fn test_custom_client_identification() {
 
     let _subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -1419,6 +1440,8 @@ async fn test_custom_client_identification() {
         target: hive-router
     "
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify default resource attributes
@@ -1434,7 +1457,7 @@ async fn test_default_resource_attributes() {
 
     let _subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -1492,6 +1515,8 @@ async fn test_default_resource_attributes() {
         Some(&"opentelemetry".to_string()),
         "Expected 'telemetry.sdk.name' resource attribute to be 'opentelemetry'"
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify custom resource attributes
@@ -1507,7 +1532,7 @@ async fn test_custom_resource_attributes() {
 
     let _subgraphs = SubgraphsServer::start().await;
 
-    let app = init_router_from_config_inline(
+    let mut app = init_router_from_config_inline(
         format!(
             r#"
           supergraph:
@@ -1556,4 +1581,6 @@ async fn test_custom_resource_attributes() {
         Some(&"bar".to_string()),
         "Expected 'custom.foo' resource attribute to be 'bar'"
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
 }

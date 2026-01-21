@@ -1,30 +1,20 @@
 use std::{io::IsTerminal, str::FromStr};
 
-use hive_router_config::{
-    log::LogFormat, telemetry::tracing::TracingPropagationConfig, HiveRouterConfig,
-};
+use hive_router_config::{log::LogFormat, HiveRouterConfig};
 use hive_router_internal::telemetry::{
+    build_otel_layer_from_config,
     otel::{
-        opentelemetry::{
-            global::{set_text_map_propagator, set_tracer_provider},
-            propagation::{Extractor, TextMapCompositePropagator, TextMapPropagator},
-        },
-        opentelemetry_jaeger_propagator::Propagator as JaegerPropagator,
-        opentelemetry_sdk::{
-            propagation::{BaggagePropagator, TraceContextPropagator},
-            trace::{RandomIdGenerator, SdkTracerProvider},
-        },
-        opentelemetry_zipkin::Propagator as B3Propagator,
+        opentelemetry::{global::set_tracer_provider, propagation::Extractor},
+        opentelemetry_sdk::trace::{RandomIdGenerator, SdkTracerProvider},
     },
     traces::set_tracing_enabled,
-    OpenTelemetry,
 };
-use tracing_subscriber::{filter::filter_fn, fmt::time::UtcTime, EnvFilter};
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, Registry};
 use tracing_subscriber::{
     fmt::{self},
     layer::SubscriberExt,
 };
-use tracing_subscriber::{util::SubscriberInitExt, Layer};
 
 pub struct HeaderExtractor<'a>(pub &'a ntex::http::HeaderMap);
 
@@ -61,35 +51,10 @@ impl OpenTelemetryProviders {
     }
 }
 
-pub fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
+pub fn init_logging(config: &HiveRouterConfig, registry: Registry) {
     let timer = UtcTime::rfc_3339();
     let filter = EnvFilter::from_str(config.log.env_filter_str())
         .unwrap_or_else(|e| panic!("failed to initialize env-filter logger: {}", e));
-
-    let id_generator = RandomIdGenerator::default();
-
-    init_propagators(&config.telemetry.tracing.propagation);
-
-    let OpenTelemetry { tracer } =
-        OpenTelemetry::from_config(&config.telemetry, id_generator).unwrap();
-
-    if let Some(tracer) = &tracer {
-        set_tracing_enabled(true);
-        set_tracer_provider(tracer.provider.clone());
-    } else {
-        set_tracing_enabled(false);
-    }
-
-    let tracer_provider = tracer.as_ref().map(|t| t.provider.clone());
-
-    let registry = tracing_subscriber::registry().with(
-        tracer
-            .map(|t| t.layer)
-            // Drop events from tracing macros (info!, error!, etc.),
-            // but accept those from span.add_event()
-            .with_filter(filter_fn(|metadata| metadata.is_span())),
-    );
-
     let is_terminal = std::io::stdout().is_terminal();
     match config.log.format {
         LogFormat::PrettyTree => {
@@ -127,34 +92,28 @@ pub fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
                 .try_init();
         }
     };
+}
+
+pub fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
+    let id_generator = RandomIdGenerator::default();
+
+    let otel_layer_result = build_otel_layer_from_config(&config.telemetry, id_generator).unwrap();
+
+    let tracer_provider = if let Some((layer, provider)) = otel_layer_result {
+        set_tracing_enabled(true);
+        set_tracer_provider(provider.clone());
+        // Layer already includes filter for dropping non-span events
+        let _registry = tracing_subscriber::registry().with(layer);
+
+        Some(provider)
+    } else {
+        set_tracing_enabled(false);
+        None
+    };
+
+    init_logging(config, tracing_subscriber::registry());
 
     OpenTelemetryProviders {
         tracer: tracer_provider,
     }
-}
-
-fn init_propagators(config: &TracingPropagationConfig) {
-    let mut propagators: Vec<Box<dyn TextMapPropagator + Send + Sync>> = Vec::new();
-
-    if config.trace_context {
-        propagators.push(Box::new(TraceContextPropagator::new()));
-    }
-
-    if config.baggage {
-        propagators.push(Box::new(BaggagePropagator::new()))
-    }
-
-    if config.b3 {
-        propagators.push(Box::new(B3Propagator::new()));
-    }
-
-    if config.jaeger {
-        propagators.push(Box::new(JaegerPropagator::new()));
-    }
-
-    if propagators.is_empty() {
-        return;
-    }
-
-    set_text_map_propagator(TextMapCompositePropagator::new(propagators));
 }

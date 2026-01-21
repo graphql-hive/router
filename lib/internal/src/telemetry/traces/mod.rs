@@ -38,6 +38,8 @@ pub mod hive_console_exporter;
 pub mod spans;
 pub mod stdout_exporter;
 
+pub type TracerLayer<Subscriber> = OpenTelemetryLayer<Subscriber, trace::Tracer>;
+
 pub struct Tracer<Subscriber> {
     pub layer: OpenTelemetryLayer<Subscriber, trace::Tracer>,
     pub provider: SdkTracerProvider,

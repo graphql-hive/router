@@ -31,8 +31,8 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use hive_router_config::{load_config, HiveRouterConfig};
 use hive_router_internal::telemetry::{
-    otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
-    traces::spans::http_request::HttpServerRequestSpan,
+    otel::tracing_opentelemetry::OpenTelemetrySpanExt,
+    traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
 };
 use http::header::RETRY_AFTER;
 use http::{header::CONTENT_TYPE, Method};
@@ -60,9 +60,9 @@ async fn graphql_endpoint_handler(
         }
     }
 
-    let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
-        propagator.extract(&HeaderExtractor(request.headers()))
-    });
+    let parent_ctx = app_state
+        .telemetry_context
+        .extract_context(&HeaderExtractor(request.headers()));
     let root_http_request_span = HttpServerRequestSpan::from_request(&request, &body_bytes);
     let _ = root_http_request_span.set_parent(parent_ctx);
     let span = root_http_request_span.span.clone();
@@ -110,12 +110,16 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     let otel_telemetry = telemetry::init(&router_config);
+
+    let telemetry_context =
+        TelemetryContext::from_propagation_config(&router_config.telemetry.tracing.propagation);
+
     info!("hive-router@{} starting...", ROUTER_VERSION);
     let http_config = router_config.http.clone();
     let addr = router_config.http.address();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let (shared_state, schema_state) =
-        configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
+        configure_app_from_config(router_config, telemetry_context, &mut bg_tasks_manager).await?;
 
     let maybe_error = web::HttpServer::new(move || {
         let lp_gql_path = http_config.graphql_endpoint().to_string();
@@ -139,6 +143,7 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
+    telemetry_context: TelemetryContext,
     bg_tasks_manager: &mut BackgroundTasksManager,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), Box<dyn std::error::Error>> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
@@ -154,13 +159,19 @@ pub async fn configure_app_from_config(
     };
 
     let router_config_arc = Arc::new(router_config);
-    let schema_state =
-        SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
+    let telemetry_context_arc = Arc::new(telemetry_context);
+    let schema_state = SchemaState::new_from_config(
+        bg_tasks_manager,
+        telemetry_context_arc.clone(),
+        router_config_arc.clone(),
+    )
+    .await?;
     let schema_state_arc = Arc::new(schema_state);
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc,
         jwt_runtime,
         hive_usage_agent,
+        telemetry_context_arc,
     )?);
 
     Ok((shared_state, schema_state_arc))

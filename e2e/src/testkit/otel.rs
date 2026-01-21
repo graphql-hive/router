@@ -2,7 +2,7 @@ use opentelemetry_proto::tonic::resource::v1::Resource;
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::{
     TraceService, TraceServiceServer,
@@ -66,13 +66,15 @@ impl<'a> TraceParent<'a> {
 /// Represents a single OTLP request captured by the collector
 #[derive(Debug, Clone)]
 pub struct OtlpRequest {
+    #[allow(dead_code)]
     pub method: String,
+    #[allow(dead_code)]
     pub path: String,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CollectedSpan {
     pub id: String,
     pub parent_span_id: String,
@@ -84,13 +86,13 @@ pub struct CollectedSpan {
     pub events: Vec<CollectedEvent>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CollectedResource {
     pub attributes: BTreeMap<String, String>,
 }
 
 /// A simplified event representation
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CollectedEvent {
     pub name: String,
     pub attributes: BTreeMap<String, String>,
@@ -150,6 +152,7 @@ pub struct OtlpCollector {
     requests: Arc<Mutex<Vec<OtlpRequest>>>,
     _http_handle: Option<std::thread::JoinHandle<()>>,
     _grpc_handle: Option<tokio::task::JoinHandle<()>>,
+    grpc_shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
 impl OtlpCollector {
@@ -157,7 +160,8 @@ impl OtlpCollector {
         let requests = Arc::new(Mutex::new(Vec::new()));
 
         let (http_address, http_handle) = Self::start_http_server(requests.clone()).await?;
-        let (grpc_address, grpc_handle) = Self::start_grpc_server(requests.clone()).await?;
+        let (grpc_address, grpc_handle, grpc_shutdown_tx) =
+            Self::start_grpc_server(requests.clone()).await?;
 
         println!("OTLP HTTP collector server started on {}", http_address);
         println!("OTLP gRPC collector server started on {}", grpc_address);
@@ -168,6 +172,7 @@ impl OtlpCollector {
             requests,
             _http_handle: Some(http_handle),
             _grpc_handle: Some(grpc_handle),
+            grpc_shutdown_tx: Some(grpc_shutdown_tx),
         })
     }
 
@@ -229,7 +234,10 @@ impl OtlpCollector {
 
     async fn start_grpc_server(
         requests: Arc<Mutex<Vec<OtlpRequest>>>,
-    ) -> Result<(String, tokio::task::JoinHandle<()>), Box<dyn std::error::Error>> {
+    ) -> Result<
+        (String, tokio::task::JoinHandle<()>, oneshot::Sender<()>),
+        Box<dyn std::error::Error>,
+    > {
         // Binding to port 0 tell the OS to assign a random available port.
         let (listener, addr) = loop {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -246,11 +254,18 @@ impl OtlpCollector {
             requests: requests_clone,
         };
 
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
         // Spawn gRPC server
         let handle = tokio::spawn(async move {
             let result = tonic::transport::Server::builder()
                 .add_service(TraceServiceServer::new(trace_service))
-                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+                .serve_with_incoming_shutdown(
+                    tokio_stream::wrappers::TcpListenerStream::new(listener),
+                    async {
+                        shutdown_rx.await.ok();
+                    },
+                )
                 .await;
 
             if let Err(e) = result {
@@ -258,7 +273,7 @@ impl OtlpCollector {
             }
         });
 
-        Ok((grpc_address, handle))
+        Ok((grpc_address, handle, shutdown_tx))
     }
 
     pub fn http_endpoint(&self) -> String {
@@ -289,6 +304,15 @@ impl OtlpCollector {
     pub async fn is_empty(&self) -> bool {
         let requests = self.requests.lock().await;
         requests.iter().all(|f| f.body.is_empty())
+    }
+}
+
+impl Drop for OtlpCollector {
+    fn drop(&mut self) {
+        // Trigger graceful shutdown of the gRPC server
+        if let Some(shutdown_tx) = self.grpc_shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
     }
 }
 
@@ -443,17 +467,6 @@ impl SpanCollector {
             }
         }
         merged_attributes
-    }
-
-    pub fn by_hive_kind(&self, hive_kind: &str) -> Vec<&CollectedSpan> {
-        self.spans
-            .iter()
-            .filter(|s| {
-                s.attributes
-                    .get("hive.kind")
-                    .map_or(false, |v| v == hive_kind)
-            })
-            .collect()
     }
 
     pub fn by_hive_kind_one(&self, hive_kind: &str) -> &CollectedSpan {

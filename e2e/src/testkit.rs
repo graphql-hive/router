@@ -1,10 +1,13 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    telemetry, RouterSharedState, SchemaState,
+    telemetry::init_logging, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
+use hive_router_internal::telemetry::{
+    build_otel_layer_from_config, traces::set_tracing_enabled, RandomIdGenerator, TelemetryContext,
+};
 use ntex::{
     http::Request,
     web::{
@@ -153,10 +156,11 @@ pub async fn init_router_from_config_inline(
 
 pub struct TestRouterApp<T> {
     pub app: Pipeline<T>,
-    #[allow(dead_code)]
-    pub shared_state: Arc<RouterSharedState>,
+    pub _shared_state: Arc<RouterSharedState>,
     pub schema_state: Arc<SchemaState>,
     pub bg_tasks_manager: BackgroundTasksManager,
+    // List of dependencies to hold until shutdown of the router
+    pub _dependencies: Vec<Box<dyn Any>>,
 }
 
 impl<S> TestRouterApp<S> {
@@ -172,6 +176,10 @@ impl<S> TestRouterApp<S> {
         self.schema_state.plan_cache.run_pending_tasks().await;
         self.schema_state.validate_cache.run_pending_tasks().await;
     }
+
+    pub fn hold_until_shutdown(&mut self, dependency: Box<dyn Any>) {
+        self._dependencies.push(dependency);
+    }
 }
 
 pub async fn init_router_from_config(
@@ -182,35 +190,53 @@ pub async fn init_router_from_config(
     >,
     Box<dyn std::error::Error>,
 > {
-    let subscriber = Registry::default().with(fmt::layer().with_test_writer());
-    Ok(tracing::subscriber::with_default(subscriber, async || {
-        let mut bg_tasks_manager = BackgroundTasksManager::new();
-        let http_config = router_config.http.clone();
-        let graphql_path = http_config.graphql_endpoint();
-
-        let _otel_telemetry = telemetry::init(&router_config);
-
-        let (shared_state, schema_state) =
-            configure_app_from_config(router_config, &mut bg_tasks_manager)
-                .await
-                .unwrap();
-
-        let ntex_app = test::init_service(
-            web::App::new()
-                .state(shared_state.clone())
-                .state(schema_state.clone())
-                .configure(|m| configure_ntex_app(m, &graphql_path)),
-        )
-        .await;
-
-        TestRouterApp {
-            app: ntex_app,
-            shared_state,
-            schema_state,
-            bg_tasks_manager,
+    let otel_layer_result =
+        build_otel_layer_from_config(&router_config.telemetry, RandomIdGenerator::default())?;
+    let otel_layer = match otel_layer_result {
+        Some((layer, _provider)) => {
+            set_tracing_enabled(true);
+            Some(layer)
         }
+        None => {
+            set_tracing_enabled(false);
+            None
+        }
+    };
+
+    let telemetry_context =
+        TelemetryContext::from_propagation_config(&router_config.telemetry.tracing.propagation);
+
+    init_logging(&router_config, Registry::default());
+    let subscriber = Registry::default()
+        .with(otel_layer)
+        .with(fmt::layer().with_test_writer());
+
+    let subscription_guard = tracing::subscriber::set_default(subscriber);
+
+    let mut bg_tasks_manager = BackgroundTasksManager::new();
+    let http_config = router_config.http.clone();
+    let graphql_path = http_config.graphql_endpoint();
+
+    let (shared_state, schema_state) =
+        configure_app_from_config(router_config, telemetry_context, &mut bg_tasks_manager)
+            .await
+            .unwrap();
+
+    let ntex_app = test::init_service(
+        web::App::new()
+            .state(shared_state.clone())
+            .state(schema_state.clone())
+            .configure(|m| configure_ntex_app(m, &graphql_path)),
+    )
+    .await;
+
+    Ok(TestRouterApp {
+        app: ntex_app,
+        _shared_state: shared_state,
+        schema_state,
+        bg_tasks_manager,
+        _dependencies: vec![Box::new(subscription_guard)],
     })
-    .await)
 }
 
 /// A guard that sets an environment variable to a specified value upon creation
