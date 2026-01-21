@@ -700,6 +700,64 @@ async fn test_otlp_parent_based_sampler() {
     );
 }
 
+/// Verify 0.0 sample rate
+#[ntex::test]
+async fn test_otlp_zero_sample_rate() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              collect:
+                sampling: 0.0
+              exporters:
+                - kind: stdout
+                  enabled: true
+                - kind: otlp
+                  enabled: true
+                  endpoint: {}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(
+        otlp_collector.is_empty().await,
+        true,
+        "No spans should be exported when when sampling rate is 0.0, even if parent is sampled"
+    );
+}
+
 /// Verify only deprecated attributes are emitted for deprecated mode
 #[ntex::test]
 async fn test_deprecated_span_attributes() {

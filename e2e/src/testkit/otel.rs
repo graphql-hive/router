@@ -288,7 +288,7 @@ impl OtlpCollector {
 
     pub async fn is_empty(&self) -> bool {
         let requests = self.requests.lock().await;
-        requests.iter().any(|f| !f.body.is_empty())
+        requests.iter().all(|f| f.body.is_empty())
     }
 }
 
