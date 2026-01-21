@@ -14,7 +14,7 @@ use opentelemetry_otlp::{
 use opentelemetry_sdk::{
     trace::{
         self, BatchConfigBuilder, BatchSpanProcessor, IdGenerator, Sampler, SdkTracerProvider,
-        SpanExporter as SpanExporterExt, SpanProcessor, TracerProviderBuilder,
+        SpanProcessor, TracerProviderBuilder,
     },
     Resource,
 };
