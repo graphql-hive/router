@@ -110,7 +110,9 @@ struct Config {
 
 ## Releasing
 
-We are using `knope` with changesets for declaring changes. If you detect a new file in a PR under `.changeset/` directory, please confirm the following rules:
+We are using `knope` with changesets for declaring changes. 
+
+If you detect a new file in a PR under `.changeset/` directory, please confirm the following rules:
 
 - If a PR touches `config` crate and adds/changes to the `HiveRouterConfig` struct, it must have a `router` changeset that contains a YAML example on how the configuration needs to be used.
 
@@ -163,3 +165,5 @@ hive-router
 ```
 
 > For example, a change in `graphql-tools` requires updating `hive-router-query-planner`, `hive-console-sdk`, `hive-router-internal`, `node-addon`, `hive-router-plan-executor`, `hive-router`, and `graphql-tools` in the `changeset` file.
+
+If you detect a deletion of files from `./changeset` directory, that means you are checking a Release PR created by Knope. In that case, please validate the dependency above with the rules mentioned, and ensure that all impacted crates are updated accordingly.
