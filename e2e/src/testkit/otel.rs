@@ -101,6 +101,19 @@ impl TraceService for GrpcTraceCollector {
         &self,
         request: Request<ExportTraceServiceRequest>,
     ) -> Result<Response<ExportTraceServiceResponse>, TonicStatus> {
+        let headers: Vec<(String, String)> = request
+            .metadata()
+            .iter()
+            .filter_map(|item| match item {
+                tonic::metadata::KeyAndValueRef::Ascii(key, value) => {
+                    let key = key.as_str().to_string();
+                    let value = value.to_str().ok()?.to_string();
+                    Some((key, value))
+                }
+                tonic::metadata::KeyAndValueRef::Binary(_key, _value) => None,
+            })
+            .collect();
+
         let req = request.into_inner();
 
         // Encode the request back to bytes for storage
@@ -112,7 +125,7 @@ impl TraceService for GrpcTraceCollector {
         let otlp_req = OtlpRequest {
             method: "POST".to_string(),
             path: "/opentelemetry.proto.collector.trace.v1.TraceService/Export".to_string(),
-            headers: vec![],
+            headers,
             body,
         };
 
@@ -260,6 +273,11 @@ impl OtlpCollector {
         } else {
             Err("Request index out of bounds".into())
         }
+    }
+
+    pub async fn request_at(&self, request_idx: usize) -> Option<OtlpRequest> {
+        let requests = self.requests.lock().await;
+        requests.get(request_idx).map(|r| r.clone())
     }
 
     pub async fn is_empty(&self) -> bool {

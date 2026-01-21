@@ -1019,7 +1019,7 @@ async fn test_otlp_introspection_disabled_by_default() {
     );
 }
 
-/// Verify introspection queries ARE instrumented when explicitly enabled
+/// Verify introspection queries are instrumented when explicitly enabled
 #[ntex::test]
 async fn test_otlp_introspection_enabled() {
     let supergraph_path =
@@ -1075,5 +1075,131 @@ async fn test_otlp_introspection_enabled() {
     assert_eq!(
         http_server_span.name, "http.server",
         "Should have an http.server span for introspection when enabled"
+    );
+}
+
+/// Verify custom headers are sent with HTTP OTLP requests
+#[ntex::test]
+async fn test_otlp_http_headers() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  enabled: true
+                  endpoint: {}
+                  protocol: http
+                  http:
+                    headers:
+                      custom-header: custom-value
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let first_request = otlp_collector
+        .request_at(0)
+        .await
+        .expect("Failed to get first request");
+    let custom_header = first_request
+        .headers
+        .iter()
+        .find(|(name, _value)| name == "custom-header");
+    assert_eq!(
+        custom_header,
+        Some(&("custom-header".to_string(), "custom-value".to_string())),
+        "Custom header not found in request headers"
+    );
+}
+
+/// Verify custom metadata is sent with gRPC OTLP requests
+#[ntex::test]
+async fn test_otlp_grpc_metadata() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.grpc_endpoint();
+
+    let app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  enabled: true
+                  endpoint: {}
+                  protocol: grpc
+                  grpc:
+                    metadata:
+                      custom-header: custom-value
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let first_request = otlp_collector
+        .request_at(0)
+        .await
+        .expect("Failed to get first request");
+    let custom_header = first_request
+        .headers
+        .iter()
+        .find(|(name, _value)| name == "custom-header");
+    assert_eq!(
+        custom_header,
+        Some(&("custom-header".to_string(), "custom-value".to_string())),
+        "Custom header not found in request headers"
     );
 }
