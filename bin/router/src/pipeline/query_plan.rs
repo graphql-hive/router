@@ -28,7 +28,7 @@ pub async fn plan_operation_with_cache(
     let contains_introspection = normalized_operation.operation_for_introspection.is_some();
     let is_pure_introspection = is_plan_operation_empty && contains_introspection;
 
-    let plan_result = schema_state
+    let plan = schema_state
         .plan_cache
         .try_get_with(plan_cache_key, async move {
             if is_pure_introspection {
@@ -66,12 +66,9 @@ pub async fn plan_operation_with_cache(
                 )
                 .map(Arc::new)
         })
-        .await;
+        .await?;
 
-    match plan_result {
-        Ok(plan) => Ok(plan),
-        Err(e) => Err(PipelineError::PlannerError(e.clone())),
-    }
+    Ok(plan)
 }
 
 #[inline]
