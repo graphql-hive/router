@@ -1,3 +1,4 @@
+use opentelemetry_proto::tonic::resource::v1::Resource;
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -81,6 +82,11 @@ pub struct CollectedSpan {
     pub status: Option<Status>,
     pub attributes: BTreeMap<String, String>,
     pub events: Vec<CollectedEvent>,
+}
+
+#[derive(Clone)]
+pub struct CollectedResource {
+    pub attributes: BTreeMap<String, String>,
 }
 
 /// A simplified event representation
@@ -307,6 +313,18 @@ fn extract_spans(request: &ExportTraceServiceRequest) -> Vec<Span> {
     spans
 }
 
+fn extract_resource(request: &ExportTraceServiceRequest) -> Vec<Resource> {
+    let mut resources = Vec::new();
+
+    for resource_span in &request.resource_spans {
+        if let Some(resource) = &resource_span.resource {
+            resources.push(resource.clone());
+        }
+    }
+
+    resources
+}
+
 impl From<&Span> for CollectedSpan {
     fn from(span: &Span) -> Self {
         let mut attributes = BTreeMap::new();
@@ -349,6 +367,20 @@ impl From<&Span> for CollectedSpan {
     }
 }
 
+impl From<&Resource> for CollectedResource {
+    fn from(resource: &Resource) -> Self {
+        let mut attributes = BTreeMap::new();
+        for kv in &resource.attributes {
+            let key = &kv.key;
+            if let Some(value) = &kv.value {
+                attributes.insert(key.clone(), format_attribute_value(value));
+            }
+        }
+
+        Self { attributes }
+    }
+}
+
 fn format_span_kind(kind: i32) -> Option<SpanKind> {
     SpanKind::try_from(kind).ok()
 }
@@ -388,6 +420,7 @@ fn format_attribute_value(value: &opentelemetry_proto::tonic::common::v1::AnyVal
 
 pub struct SpanCollector {
     spans: Vec<CollectedSpan>,
+    resources: Vec<CollectedResource>,
 }
 
 impl SpanCollector {
@@ -396,7 +429,20 @@ impl SpanCollector {
         let request = decode_trace_export_request(body)?;
         let spans = extract_spans(&request);
         let spans = spans.iter().map(|span| span.into()).collect();
-        Ok(SpanCollector { spans })
+        let resources = extract_resource(&request);
+        let resources = resources.iter().map(|resource| resource.into()).collect();
+
+        Ok(SpanCollector { spans, resources })
+    }
+
+    pub fn merged_resource_attributes(&self) -> BTreeMap<String, String> {
+        let mut merged_attributes = BTreeMap::new();
+        for resource in &self.resources {
+            for (key, value) in resource.attributes.iter() {
+                merged_attributes.insert(key.clone(), value.clone());
+            }
+        }
+        merged_attributes
     }
 
     pub fn by_hive_kind(&self, hive_kind: &str) -> Vec<&CollectedSpan> {

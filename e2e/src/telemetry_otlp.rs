@@ -1362,3 +1362,140 @@ async fn test_custom_client_identification() {
     "
     );
 }
+
+/// Verify default resource attributes
+#[ntex::test]
+async fn test_default_resource_attributes() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  enabled: true
+                  endpoint: {}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let first_request_spans = otlp_collector
+        .spans_from_request(0)
+        .await
+        .expect("Failed to get first request");
+
+    let resource_attributes = first_request_spans.merged_resource_attributes();
+
+    assert_eq!(
+        resource_attributes.get("service.name"),
+        Some(&"hive-router".to_string()),
+        "Expected 'service.name' resource attribute to be 'hive-router'"
+    );
+
+    assert_eq!(
+        resource_attributes.get("telemetry.sdk.language"),
+        Some(&"rust".to_string()),
+        "Expected 'telemetry.sdk.language' resource attribute to be 'rust'"
+    );
+
+    assert_eq!(
+        resource_attributes.get("telemetry.sdk.name"),
+        Some(&"opentelemetry".to_string()),
+        "Expected 'telemetry.sdk.name' resource attribute to be 'opentelemetry'"
+    );
+}
+
+/// Verify custom resource attributes
+#[ntex::test]
+async fn test_custom_resource_attributes() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            resource:
+              attributes:
+                custom.foo: bar
+            tracing:
+              exporters:
+                - kind: otlp
+                  enabled: true
+                  endpoint: {}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let first_request_spans = otlp_collector
+        .spans_from_request(0)
+        .await
+        .expect("Failed to get first request");
+
+    assert_eq!(
+        first_request_spans
+            .merged_resource_attributes()
+            .get("custom.foo"),
+        Some(&"bar".to_string()),
+        "Expected 'custom.foo' resource attribute to be 'bar'"
+    );
+}
