@@ -85,7 +85,7 @@ impl Telemetry {
             TelemetryContext::from_propagation_config(&config.telemetry.tracing.propagation);
 
         let filter = EnvFilter::from_str(config.log.env_filter_str())
-            .unwrap_or_else(|_| EnvFilter::new("info"));
+            .unwrap_or_else(|e| panic!("failed to initialize env-filter logger: {}", e));
 
         let subscriber = Registry::default()
             .with(filter)
@@ -143,13 +143,13 @@ where
                         .with_targets(false),
                 )
                 .with(filter)
-                .try_init();
+                .init();
         }
         LogFormat::Json => {
             let _ = registry
                 .with(fmt::layer().json().with_timer(timer))
                 .with(filter)
-                .try_init();
+                .init();
         }
         LogFormat::PrettyCompact => {
             let _ = registry
@@ -160,7 +160,7 @@ where
                         .with_timer(timer),
                 )
                 .with(filter)
-                .try_init();
+                .init();
         }
     };
 }
