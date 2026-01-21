@@ -2,8 +2,8 @@ use headers_accept::Accept;
 use http::header::ACCEPT;
 use mediatype::{MediaType, Name, ReadParams};
 use ntex::web::HttpRequest;
-use once_cell::sync::Lazy;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use strum::{AsRefStr, EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 use tracing::error;
 
@@ -54,7 +54,7 @@ impl TryFrom<&MediaType<'_>> for SingleContentType {
     }
 }
 
-static SINGLE_CONTENT_TYPE_MEDIA_TYPES: Lazy<Vec<MediaType<'static>>> = Lazy::new(|| {
+static SINGLE_CONTENT_TYPE_MEDIA_TYPES: LazyLock<Vec<MediaType<'static>>> = LazyLock::new(|| {
     // first collect the string representations to keep them alive
     // in order to parse them into MediaType instances that _borrow_
     // the items from the vec
@@ -128,7 +128,7 @@ impl TryFrom<&MediaType<'_>> for StreamContentType {
     }
 }
 
-static STREAM_CONTENT_TYPE_MEDIA_TYPES: Lazy<Vec<MediaType<'static>>> = Lazy::new(|| {
+static STREAM_CONTENT_TYPE_MEDIA_TYPES: LazyLock<Vec<MediaType<'static>>> = Lazy::new(|| {
     // first collect the string representations to keep them alive
     // in order to parse them into MediaType instances that _borrow_
     // the items from the vec
