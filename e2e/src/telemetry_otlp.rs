@@ -699,3 +699,127 @@ async fn test_otlp_parent_based_sampler() {
         "http.server span should have correct trace_id"
     );
 }
+
+/// Verify only deprecated attributes are emitted
+#[ntex::test]
+async fn test_deprecated_span_attributes() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.grpc_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              instrumentation:
+                spans:
+                  mode: deprecated
+              propagation:
+                trace_context: true
+              exporters:
+                - kind: otlp
+                  enabled: true
+                  endpoint: {}
+                  protocol: grpc
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    let first_request_spans: SpanCollector = otlp_collector
+        .spans_from_request(0)
+        .await
+        .expect("Failed to get spans from first request");
+
+    let http_server_span = first_request_spans.by_hive_kind_one("http.server");
+    let http_inflight_span = first_request_spans.by_hive_kind_one("http.inflight");
+    let http_client_span = first_request_spans.by_hive_kind_one("http.client");
+
+    insta::assert_snapshot!(
+      http_server_span,
+      @r"
+    Span: http.server
+      Kind: Server
+      Status: message='' code='0'
+      Attributes:
+        hive.kind: http.server
+        http.flavor: 1.1
+        http.method: POST
+        http.request_content_length: 45
+        http.route: /graphql
+        http.target: /graphql
+        http.url: /graphql
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      http_inflight_span,
+      @r"
+    Span: http.inflight
+      Kind: Internal
+      Status: message='' code='1'
+      Attributes:
+        hive.inflight.key: 15555024578502296811
+        hive.inflight.role: leader
+        hive.kind: http.inflight
+        http.flavor: 1.1
+        http.method: POST
+        http.request_content_length: 23
+        http.response_content_length: 86
+        http.status_code: 200
+        http.url: http://0.0.0.0:4200/accounts
+        target: hive-router
+        url.path: /accounts
+        url.scheme: http
+    "
+    );
+
+    insta::assert_snapshot!(
+      http_client_span,
+      @r"
+    Span: http.client
+      Kind: Client
+      Status: message='' code='1'
+      Attributes:
+        hive.kind: http.client
+        http.flavor: 1.1
+        http.method: POST
+        http.request_content_length: 23
+        http.response_content_length: 86
+        http.status_code: 200
+        http.url: http://0.0.0.0:4200/accounts
+        net.peer.name: 0.0.0.0
+        net.peer.port: 4200
+        target: hive-router
+        url.path: /accounts
+        url.scheme: http
+    "
+    );
+}
