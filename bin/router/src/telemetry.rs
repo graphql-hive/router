@@ -8,6 +8,7 @@ use hive_router_internal::telemetry::{
         opentelemetry_sdk::trace::{RandomIdGenerator, SdkTracerProvider},
     },
     traces::set_tracing_enabled,
+    TelemetryContext,
 };
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, Registry};
@@ -31,16 +32,79 @@ impl Extractor for HeaderExtractor<'_> {
     }
 }
 
-#[derive(Default, Clone)]
-pub struct OpenTelemetryProviders {
-    pub tracer: Option<SdkTracerProvider>,
+pub struct Telemetry {
+    pub provider: Option<SdkTracerProvider>,
+    pub context: TelemetryContext,
 }
 
-impl OpenTelemetryProviders {
-    pub(crate) async fn graceful_shutdown(&self) {
+impl Telemetry {
+    /// Sets up the global tracing subscriber including logging and OpenTelemetry.
+    pub fn init_global(config: &HiveRouterConfig) -> Self {
+        let id_generator = RandomIdGenerator::default();
+        let otel_layer_result =
+            build_otel_layer_from_config(&config.telemetry, id_generator).unwrap();
+
+        let (otel_layer, tracer_provider) = if let Some((layer, provider)) = otel_layer_result {
+            set_tracing_enabled(true);
+            set_tracer_provider(provider.clone());
+            (Some(layer), Some(provider))
+        } else {
+            set_tracing_enabled(false);
+            (None, None)
+        };
+
+        let registry = tracing_subscriber::registry().with(otel_layer);
+        init_logging(config, registry);
+
+        let context =
+            TelemetryContext::from_propagation_config(&config.telemetry.tracing.propagation);
+
+        Self {
+            provider: tracer_provider,
+            context,
+        }
+    }
+
+    /// Initializes telemetry for cases where the subscriber should not be set globally
+    pub fn init_subscriber(config: &HiveRouterConfig) -> (Self, impl tracing::Subscriber) {
+        let otel_layer_result =
+            build_otel_layer_from_config(&config.telemetry, RandomIdGenerator::default()).unwrap();
+
+        let (otel_layer, tracer_provider) = match otel_layer_result {
+            Some((layer, provider)) => {
+                set_tracing_enabled(true);
+                (Some(layer), Some(provider))
+            }
+            None => {
+                set_tracing_enabled(false);
+                (None, None)
+            }
+        };
+
+        let context =
+            TelemetryContext::from_propagation_config(&config.telemetry.tracing.propagation);
+
+        let filter = EnvFilter::from_str(config.log.env_filter_str())
+            .unwrap_or_else(|_| EnvFilter::new("info"));
+
+        let subscriber = Registry::default()
+            .with(filter)
+            .with(otel_layer)
+            .with(fmt::layer().with_test_writer());
+
+        (
+            Self {
+                provider: tracer_provider,
+                context,
+            },
+            subscriber,
+        )
+    }
+
+    pub async fn graceful_shutdown(&self) {
         use tokio::task::spawn_blocking;
 
-        let tracer = self.tracer.clone();
+        let tracer = self.provider.clone();
         let shutdown_tracer = spawn_blocking(|| {
             if let Some(provider) = tracer {
                 let _ = provider.shutdown();
@@ -51,11 +115,18 @@ impl OpenTelemetryProviders {
     }
 }
 
-pub fn init_logging(config: &HiveRouterConfig, registry: Registry) {
+pub fn init_logging<S>(config: &HiveRouterConfig, registry: S)
+where
+    S: tracing::Subscriber
+        + for<'span> tracing_subscriber::registry::LookupSpan<'span>
+        + Send
+        + Sync,
+{
     let timer = UtcTime::rfc_3339();
     let filter = EnvFilter::from_str(config.log.env_filter_str())
         .unwrap_or_else(|e| panic!("failed to initialize env-filter logger: {}", e));
     let is_terminal = std::io::stdout().is_terminal();
+
     match config.log.format {
         LogFormat::PrettyTree => {
             let _ = registry
@@ -92,28 +163,4 @@ pub fn init_logging(config: &HiveRouterConfig, registry: Registry) {
                 .try_init();
         }
     };
-}
-
-pub fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
-    let id_generator = RandomIdGenerator::default();
-
-    let otel_layer_result = build_otel_layer_from_config(&config.telemetry, id_generator).unwrap();
-
-    let tracer_provider = if let Some((layer, provider)) = otel_layer_result {
-        set_tracing_enabled(true);
-        set_tracer_provider(provider.clone());
-        // Layer already includes filter for dropping non-span events
-        let _registry = tracing_subscriber::registry().with(layer);
-
-        Some(provider)
-    } else {
-        set_tracing_enabled(false);
-        None
-    };
-
-    init_logging(config, tracing_subscriber::registry());
-
-    OpenTelemetryProviders {
-        tracer: tracer_provider,
-    }
 }

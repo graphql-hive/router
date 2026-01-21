@@ -2,12 +2,10 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    telemetry::init_logging, RouterSharedState, SchemaState,
+    telemetry::Telemetry, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
-use hive_router_internal::telemetry::{
-    build_otel_layer_from_config, traces::set_tracing_enabled, RandomIdGenerator, TelemetryContext,
-};
+
 use ntex::{
     http::Request,
     web::{
@@ -20,7 +18,6 @@ use ntex::{
 use sonic_rs::json;
 use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState};
 use tracing::{info, warn};
-use tracing_subscriber::{fmt, layer::SubscriberExt, Registry};
 
 pub mod otel;
 
@@ -190,37 +187,20 @@ pub async fn init_router_from_config(
     >,
     Box<dyn std::error::Error>,
 > {
-    let otel_layer_result =
-        build_otel_layer_from_config(&router_config.telemetry, RandomIdGenerator::default())?;
-    let otel_layer = match otel_layer_result {
-        Some((layer, _provider)) => {
-            set_tracing_enabled(true);
-            Some(layer)
-        }
-        None => {
-            set_tracing_enabled(false);
-            None
-        }
-    };
-
-    let telemetry_context =
-        TelemetryContext::from_propagation_config(&router_config.telemetry.tracing.propagation);
-
-    init_logging(&router_config, Registry::default());
-    let subscriber = Registry::default()
-        .with(otel_layer)
-        .with(fmt::layer().with_test_writer());
-
+    let (telemetry, subscriber) = Telemetry::init_subscriber(&router_config);
     let subscription_guard = tracing::subscriber::set_default(subscriber);
 
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let http_config = router_config.http.clone();
     let graphql_path = http_config.graphql_endpoint();
 
-    let (shared_state, schema_state) =
-        configure_app_from_config(router_config, telemetry_context, &mut bg_tasks_manager)
-            .await
-            .unwrap();
+    let (shared_state, schema_state) = configure_app_from_config(
+        router_config,
+        telemetry.context.clone(),
+        &mut bg_tasks_manager,
+    )
+    .await
+    .unwrap();
 
     let ntex_app = test::init_service(
         web::App::new()

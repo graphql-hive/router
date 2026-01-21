@@ -109,17 +109,18 @@ async fn graphql_endpoint_handler(
 pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
-    let otel_telemetry = telemetry::init(&router_config);
-
-    let telemetry_context =
-        TelemetryContext::from_propagation_config(&router_config.telemetry.tracing.propagation);
+    let telemetry = telemetry::Telemetry::init_global(&router_config);
 
     info!("hive-router@{} starting...", ROUTER_VERSION);
     let http_config = router_config.http.clone();
     let addr = router_config.http.address();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
-    let (shared_state, schema_state) =
-        configure_app_from_config(router_config, telemetry_context, &mut bg_tasks_manager).await?;
+    let (shared_state, schema_state) = configure_app_from_config(
+        router_config,
+        telemetry.context.clone(),
+        &mut bg_tasks_manager,
+    )
+    .await?;
 
     let maybe_error = web::HttpServer::new(move || {
         let lp_gql_path = http_config.graphql_endpoint().to_string();
@@ -136,7 +137,7 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("server stopped, clearning background tasks");
     bg_tasks_manager.shutdown();
-    otel_telemetry.graceful_shutdown().await;
+    telemetry.graceful_shutdown().await;
 
     maybe_error
 }
