@@ -261,6 +261,11 @@ impl OtlpCollector {
             Err("Request index out of bounds".into())
         }
     }
+
+    pub async fn is_empty(&self) -> bool {
+        let requests = self.requests.lock().await;
+        requests.iter().any(|f| !f.body.is_empty())
+    }
 }
 
 /// Decode OTLP trace export request from raw protobuf bytes
