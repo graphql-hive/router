@@ -52,4 +52,8 @@ impl<E: SpanExporter> SpanExporter for FilteringSpanExporter<E> {
     fn force_flush(&mut self) -> OTelSdkResult {
         self.inner.force_flush()
     }
+
+    fn set_resource(&mut self, res: &opentelemetry_sdk::Resource) {
+        self.inner.set_resource(res);
+    }
 }

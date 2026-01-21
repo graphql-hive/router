@@ -14,7 +14,7 @@ use opentelemetry_otlp::{
 use opentelemetry_sdk::{
     trace::{
         self, BatchConfigBuilder, BatchSpanProcessor, IdGenerator, Sampler, SdkTracerProvider,
-        TracerProviderBuilder,
+        SpanExporter as SpanExporterExt, SpanProcessor, TracerProviderBuilder,
     },
     Resource,
 };
@@ -52,7 +52,9 @@ where
     I: IdGenerator + 'static,
 {
     let base_sampler = Sampler::TraceIdRatioBased(config.tracing.collect.sampling);
-    let mut builder = TracerProviderBuilder::default().with_id_generator(id_generator);
+    let mut builder = TracerProviderBuilder::default()
+        .with_id_generator(id_generator)
+        .with_resource(resource.clone());
 
     if config.tracing.collect.parent_based_sampler {
         builder = builder.with_sampler(Sampler::ParentBased(Box::new(base_sampler)));
@@ -64,14 +66,14 @@ where
         .with_max_events_per_span(config.tracing.collect.max_events_per_span)
         .with_max_attributes_per_span(config.tracing.collect.max_attributes_per_span)
         .with_max_attributes_per_event(config.tracing.collect.max_attributes_per_event)
-        .with_max_attributes_per_link(config.tracing.collect.max_attributes_per_link)
-        .with_resource(resource);
+        .with_max_attributes_per_link(config.tracing.collect.max_attributes_per_link);
 
-    Ok(setup_exporters(config, builder)?.build())
+    Ok(setup_exporters(config, resource, builder)?.build())
 }
 
 fn setup_exporters(
     config: &TelemetryConfig,
+    resource: Resource,
     mut tracer_provider_builder: TracerProviderBuilder,
 ) -> Result<TracerProviderBuilder, TelemetryError> {
     let sem_conv_mode = &config.tracing.instrumentation.spans.mode;
@@ -135,6 +137,7 @@ fn setup_exporters(
                 tracer_provider_builder =
                     tracer_provider_builder.with_span_processor(build_batched_span_processor(
                         &otlp_config.batch_processor,
+                        &resource,
                         HttpCompatibilityExporter::new(exporter, sem_conv_mode),
                     ));
             }
@@ -146,7 +149,11 @@ fn setup_exporters(
                 tracer_provider_builder =
                     tracer_provider_builder.with_span_processor(build_batched_span_processor(
                         &stdout_config.batch_processor,
-                        stdout_exporter::StdoutExporter::new(),
+                        &resource,
+                        HttpCompatibilityExporter::new(
+                            stdout_exporter::StdoutExporter::new(),
+                            sem_conv_mode,
+                        ),
                     ));
             }
         }
@@ -154,7 +161,8 @@ fn setup_exporters(
 
     if let Some(hive_config) = &config.hive {
         if hive_config.tracing.enabled {
-            tracer_provider_builder = setup_hive_exporter(hive_config, tracer_provider_builder)?;
+            tracer_provider_builder =
+                setup_hive_exporter(hive_config, &resource, tracer_provider_builder)?;
         }
     }
 
@@ -163,9 +171,10 @@ fn setup_exporters(
 
 fn build_batched_span_processor(
     config: &BatchProcessorConfig,
+    resource: &Resource,
     exporter: impl trace::SpanExporter + 'static,
 ) -> BatchSpanProcessor {
-    BatchSpanProcessor::builder(FilteringSpanExporter::new(exporter))
+    let mut processor = BatchSpanProcessor::builder(FilteringSpanExporter::new(exporter))
         .with_batch_config(
             BatchConfigBuilder::default()
                 .with_max_concurrent_exports(config.max_concurrent_exports as usize)
@@ -175,11 +184,16 @@ fn build_batched_span_processor(
                 .with_scheduled_delay(config.scheduled_delay)
                 .build(),
         )
-        .build()
+        .build();
+
+    processor.set_resource(resource);
+
+    processor
 }
 
 fn setup_hive_exporter(
     config: &HiveTelemetryConfig,
+    resource: &Resource,
     tracer_provider_builder: TracerProviderBuilder,
 ) -> Result<TracerProviderBuilder, TelemetryError> {
     let endpoint = resolve_value_or_expression(&config.endpoint, "Hive Tracing endpoint")?;
@@ -267,6 +281,7 @@ fn setup_hive_exporter(
     Ok(
         tracer_provider_builder.with_span_processor(build_batched_span_processor(
             &config.tracing.batch_processor,
+            &resource,
             HiveConsoleExporter::new(exporter),
         )),
     )
