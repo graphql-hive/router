@@ -1,11 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
 use async_dropper_simple::AsyncDropper;
-use once_cell::sync::Lazy;
 use recloser::AsyncRecloser;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::ClientBuilder;
 use reqwest_retry::RetryTransientMiddleware;
+use std::sync::LazyLock;
 
 use crate::agent::buffer::Buffer;
 use crate::agent::usage_agent::{non_empty_string, AgentError, UsageAgent, UsageAgentInner};
@@ -199,11 +199,11 @@ impl UsageAgentBuilder {
 }
 
 // Target ID regexp for validation: slug format
-static SLUG_REGEX: Lazy<regex_automata::meta::Regex> = Lazy::new(|| {
+static SLUG_REGEX: LazyLock<regex_automata::meta::Regex> = LazyLock::new(|| {
     regex_automata::meta::Regex::new(r"^[a-zA-Z0-9-_]+\/[a-zA-Z0-9-_]+\/[a-zA-Z0-9-_]+$").unwrap()
 });
 // Target ID regexp for validation: UUID format
-static UUID_REGEX: Lazy<regex_automata::meta::Regex> = Lazy::new(|| {
+static UUID_REGEX: LazyLock<regex_automata::meta::Regex> = LazyLock::new(|| {
     regex_automata::meta::Regex::new(
         r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
     )
