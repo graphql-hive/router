@@ -355,7 +355,7 @@ impl GraphQLOperationSpan {
             "hive.graphql.operation.hash" = Empty,
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
-            OTEL_DROP = Empty,
+            "otel.drop" = Empty,
         );
         GraphQLOperationSpan { span }
     }
