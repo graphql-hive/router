@@ -112,7 +112,54 @@ struct Config {
 
 We are using `knope` with changesets for declaring changes. If you detect a new file in a PR under `.changeset/` directory, please confirm the following rules:
 
-- Every new `changesets` file that touches `query-planner` must have a `router` changeset - either in the same changeset or a separate changeset.
-- Every new `changesets` file that touches `query-planner` must have a `node-addon` changeset - either in the same changeset or a separate changeset.
-- Every new `changesets` file that touches `executor` must have a `query-planner` changeset - either in the same changeset or a separate changeset.
 - If a PR touches `config` crate and adds/changes to the `HiveRouterConfig` struct, it must have a `router` changeset that contains a YAML example on how the configuration needs to be used.
+
+- When a change is done in one of the Crates, it needs to be explicitly declared in the `changeset` file, so it includes the impacted libs/bins as well. Use this dependency tree to propagate and enforce changes in `changeset` files:
+
+```
+graphql-tools 
+└── [standalone library - no workspace dependencies]
+
+hive-router-config
+└── [standalone library - no workspace dependencies]
+
+hive-router-query-planner 
+└── graphql-tools
+
+hive-console-sdk 
+└── graphql-tools
+
+hive-router-internal 
+└── hive-router-config
+
+node-addon 
+└── hive-router-query-planner
+    └── graphql-tools
+
+hive-router-plan-executor 
+├── hive-router-query-planner
+│   └── graphql-tools
+├── hive-router-config
+├── hive-router-internal
+│   └── hive-router-config
+└── graphql-tools
+
+hive-router 
+├── hive-router-query-planner
+│   └── graphql-tools
+├── hive-router-plan-executor
+│   ├── hive-router-query-planner
+│   │   └── graphql-tools
+│   ├── hive-router-config
+│   ├── hive-router-internal
+│   │   └── hive-router-config
+│   └── graphql-tools
+├── hive-router-config
+├── hive-router-internal
+│   └── hive-router-config
+├── hive-console-sdk
+│   └── graphql-tools
+└── graphql-tools
+```
+
+> For example, a change in `graphql-tools` requires updating `hive-router-query-planner`, `hive-console-sdk`, `hive-router-internal`, `node-addon`, `hive-router-plan-executor`, `hive-router`, and `graphql-tools` in the `changeset` file.

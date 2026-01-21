@@ -1,5 +1,6 @@
 ---
 graphql-tools: minor
+hive-console-sdk: patch
 ---
 
 Breaking;
