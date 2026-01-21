@@ -50,15 +50,7 @@ async fn test_otlp_http_export_with_graphql_request() {
 
     wait_for_readiness(&app.app).await;
 
-    let upstream_trace_id = TraceParent::random_trace_id();
-    let upstream_span_id = TraceParent::random_span_id();
-    let upstream_traceparent = TraceParent {
-        trace_id: &upstream_trace_id,
-        span_id: &upstream_span_id,
-    };
-
-    let req = init_graphql_request("{ users { id } }", None)
-        .header("traceparent", upstream_traceparent.to_string());
+    let req = init_graphql_request("{ users { id } }", None);
     test::call_service(&app.app, req.to_request()).await;
 
     // Wait for exports to be sent
@@ -253,36 +245,6 @@ async fn test_otlp_http_export_with_graphql_request() {
         url.scheme: http
     "
     );
-
-    // let account_requests = subgraphs
-    //     .get_subgraph_requests_log("accounts")
-    //     .await
-    //     .expect("Expected at least one request to account subgraph");
-
-    // assert!(
-    //     !account_requests.is_empty(),
-    //     "Subgraph should receive requests"
-    // );
-
-    // let first_account_request = &account_requests[0];
-    // let subgraph_traceparent = first_account_request
-    //     .headers
-    //     .get("traceparent")
-    //     .and_then(|v| v.to_str().ok())
-    //     .expect("Subgraph request should have traceparent header");
-    // let downstream_traceparent = TraceParent::parse(subgraph_traceparent);
-
-    // assert_eq!(
-    //     downstream_traceparent.trace_id, upstream_traceparent.trace_id,
-    //     "Expected trace_id to match"
-    // );
-
-    // // We expect the subgraph to receive the span id of the http.client,
-    // // which is the actual span that triggers the http request.
-    // assert_eq!(
-    //     downstream_traceparent.span_id, http_client_span.id,
-    //     "Expected span_id to match"
-    // );
 }
 
 /// Verify OTLP exporter works with gRPC protocol
@@ -328,15 +290,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
 
     wait_for_readiness(&app.app).await;
 
-    let upstream_trace_id = TraceParent::random_trace_id();
-    let upstream_span_id = TraceParent::random_span_id();
-    let upstream_traceparent = TraceParent {
-        trace_id: &upstream_trace_id,
-        span_id: &upstream_span_id,
-    };
-
-    let req = init_graphql_request("{ users { id } }", None)
-        .header("traceparent", upstream_traceparent.to_string());
+    let req = init_graphql_request("{ users { id } }", None);
     test::call_service(&app.app, req.to_request()).await;
 
     // Wait for exports to be sent
@@ -534,6 +488,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
 }
 
 /// Verify Trace Context Propagation (traceparent)
+/// From upstream to router to subgraph
 #[ntex::test]
 async fn test_otlp_http_trace_context_propagation() {
     let supergraph_path =
