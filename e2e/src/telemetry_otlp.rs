@@ -1203,3 +1203,162 @@ async fn test_otlp_grpc_metadata() {
         "Custom header not found in request headers"
     );
 }
+
+/// Verify default client identification
+#[ntex::test]
+async fn test_default_client_identification() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  enabled: true
+                  endpoint: {}
+                  protocol: http
+                  http:
+                    headers:
+                      custom-header: custom-value
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None)
+        .header("graphql-client-name", "e2e")
+        .header("graphql-client-version", "tests");
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let first_request_spans = otlp_collector
+        .spans_from_request(0)
+        .await
+        .expect("Failed to get first request");
+
+    let operation_span = first_request_spans.by_hive_kind_one("graphql.operation");
+
+    insta::assert_snapshot!(
+      operation_span,
+      @r"
+    Span: GraphQL Operation
+      Kind: Server
+      Status: message='' code='0'
+      Attributes:
+        graphql.document.hash: 1237612228098794304
+        graphql.document.text: {users{id}}
+        graphql.operation.type: query
+        hive.client.name: e2e
+        hive.client.version: tests
+        hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
+        hive.kind: graphql.operation
+        target: hive-router
+    "
+    );
+}
+
+/// Verify custom client identification
+#[ntex::test]
+async fn test_custom_client_identification() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            client_identification:
+              name_header: "x-client-name"
+              version_header: "x-client-version"
+            tracing:
+              exporters:
+                - kind: otlp
+                  enabled: true
+                  endpoint: {}
+                  protocol: http
+                  http:
+                    headers:
+                      custom-header: custom-value
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None)
+        .header("x-client-name", "e2e")
+        .header("x-client-version", "tests");
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let first_request_spans = otlp_collector
+        .spans_from_request(0)
+        .await
+        .expect("Failed to get first request");
+
+    let operation_span = first_request_spans.by_hive_kind_one("graphql.operation");
+
+    insta::assert_snapshot!(
+      operation_span,
+      @r"
+    Span: GraphQL Operation
+      Kind: Server
+      Status: message='' code='0'
+      Attributes:
+        graphql.document.hash: 1237612228098794304
+        graphql.document.text: {users{id}}
+        graphql.operation.type: query
+        hive.client.name: e2e
+        hive.client.version: tests
+        hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
+        hive.kind: graphql.operation
+        target: hive-router
+    "
+    );
+}
