@@ -89,7 +89,12 @@ async fn graphql_endpoint_handler(
         .await
         {
             Ok(response) => response,
-            Err(err) => return err.into_response(Some(response_mode)),
+            Err(err) => {
+                return {
+                    tracing::error!("{}", err);
+                    err.into_response(Some(response_mode))
+                }
+            }
         };
 
         // Apply CORS headers to the final response if CORS is configured.
