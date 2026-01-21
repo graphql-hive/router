@@ -71,6 +71,8 @@ pub struct OtlpRequest {
 #[derive(Clone)]
 pub struct CollectedSpan {
     pub id: String,
+    pub parent_span_id: String,
+    pub trace_id: String,
     pub name: String,
     pub kind: Option<SpanKind>,
     pub status: Option<Status>,
@@ -307,6 +309,8 @@ impl From<&Span> for CollectedSpan {
 
         CollectedSpan {
             id: hex::encode(&span.span_id),
+            parent_span_id: hex::encode(&span.parent_span_id),
+            trace_id: hex::encode(&span.trace_id),
             name: span.name.clone(),
             kind: format_span_kind(span.kind),
             status: span.status.clone(),
