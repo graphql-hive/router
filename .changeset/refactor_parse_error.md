@@ -1,5 +1,5 @@
 ---
-graphql-tools: minor
+graphql-tools: major
 hive-console-sdk: patch
 router: patch
 query-planner: patch
@@ -7,7 +7,7 @@ executor: patch
 node-addon: patch
 ---
 
-# Refactor Parse Error Handling
+# Refactor Parse Error Handling in `graphql-tools`
 
 Breaking;
 - `ParseError(String)` is now `ParseError(InternalError<'static>)`.
