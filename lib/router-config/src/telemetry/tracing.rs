@@ -211,9 +211,9 @@ impl TryFrom<&OtlpGrpcTlsConfig> for tonic::transport::ClientTlsConfig {
 #[serde(deny_unknown_fields, tag = "kind")]
 pub enum TracingExporterConfig {
     #[serde(rename = "otlp")]
-    Otlp(TracingOtlpConfig),
+    Otlp(Box<TracingOtlpConfig>),
     #[serde(rename = "stdout")]
-    Stdout(StdoutExporterConfig),
+    Stdout(Box<StdoutExporterConfig>),
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

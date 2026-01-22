@@ -492,10 +492,7 @@ impl GraphQLSubgraphOperationSpan {
 }
 
 fn record_error_codes_to_span(span: &Span, errors: &[ObservedError]) {
-    let mut codes: Vec<&str> = errors
-        .iter()
-        .filter_map(|e| e.code.as_ref().map(|s| s.as_str()))
-        .collect();
+    let mut codes: Vec<&str> = errors.iter().filter_map(|e| e.code.as_deref()).collect();
 
     if codes.is_empty() {
         return;

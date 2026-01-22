@@ -283,7 +283,7 @@ fn setup_hive_exporter(
     Ok(
         tracer_provider_builder.with_span_processor(build_batched_span_processor(
             &config.tracing.batch_processor,
-            &resource,
+            resource,
             HiveConsoleExporter::new(exporter),
         )),
     )

@@ -129,7 +129,7 @@ where
 
     match config.log.format {
         LogFormat::PrettyTree => {
-            let _ = registry
+            registry
                 .with(
                     tracing_tree::HierarchicalLayer::new(2)
                         .with_ansi(is_terminal)
@@ -146,13 +146,13 @@ where
                 .init();
         }
         LogFormat::Json => {
-            let _ = registry
+            registry
                 .with(fmt::layer().json().with_timer(timer))
                 .with(filter)
                 .init();
         }
         LogFormat::PrettyCompact => {
-            let _ = registry
+            registry
                 .with(
                     fmt::layer()
                         .compact()

@@ -20,7 +20,6 @@ use crate::expressions::{CompileExpression, ExecutableProgram};
 use crate::telemetry::error::TelemetryError;
 use vrl::core::Value;
 
-// Re-export types needed for layer building and context injection
 pub use otel::opentelemetry::propagation::{
     Injector, TextMapCompositePropagator, TextMapPropagator,
 };
@@ -29,25 +28,12 @@ pub use otel::opentelemetry_sdk::trace::{RandomIdGenerator, SdkTracerProvider};
 pub use traces::TracerLayer;
 
 /// Context for telemetry operations that doesn't rely on global state.
-/// This can be cloned and passed around to executors and other components.
 #[derive(Clone, Debug)]
 pub struct TelemetryContext {
     propagator: Option<Arc<TextMapCompositePropagator>>,
 }
 
 impl TelemetryContext {
-    /// Creates a new noop telemetry context (no propagation)
-    pub fn noop() -> Self {
-        Self { propagator: None }
-    }
-
-    /// Creates a telemetry context from a propagator
-    pub fn with_propagator(propagator: TextMapCompositePropagator) -> Self {
-        Self {
-            propagator: Some(Arc::new(propagator)),
-        }
-    }
-
     /// Creates a telemetry context from tracing propagation config
     pub fn from_propagation_config(
         config: &hive_router_config::telemetry::tracing::TracingPropagationConfig,
@@ -75,14 +61,14 @@ impl TelemetryContext {
         }
 
         if propagators.is_empty() {
-            return Self::noop();
+            return Self { propagator: None };
         }
 
-        Self::with_propagator(TextMapCompositePropagator::new(propagators))
+        Self {
+            propagator: Some(Arc::new(TextMapCompositePropagator::new(propagators))),
+        }
     }
 
-    /// Injects the current tracing context into an injector (e.g., HTTP headers)
-    /// Returns true if injection was performed, false if no propagator is configured
     pub fn inject_context<I>(&self, injector: &mut I)
     where
         I: Injector,
@@ -95,7 +81,6 @@ impl TelemetryContext {
         }
     }
 
-    /// Extracts tracing context from an extractor (e.g., HTTP headers)
     pub fn extract_context<E>(&self, extractor: &E) -> otel::opentelemetry::Context
     where
         E: otel::opentelemetry::propagation::Extractor,
@@ -110,12 +95,6 @@ impl TelemetryContext {
     /// Returns true if this context has a propagator configured
     pub fn is_enabled(&self) -> bool {
         self.propagator.is_some()
-    }
-}
-
-impl Default for TelemetryContext {
-    fn default() -> Self {
-        Self::noop()
     }
 }
 
@@ -185,11 +164,6 @@ impl<S> OpenTelemetry<S> {
     }
 }
 
-/// Builds an OpenTelemetry layer configured with OTLP exporters from config.
-/// This doesn't set any global state - useful for testing.
-/// The returned layer is filtered to drop events from tracing macros (info!, error!, etc.),
-/// but accepts those from span.add_event().
-/// Returns (layer, tracer_provider) tuple. Keep the provider alive to ensure spans are exported.
 pub fn build_otel_layer_from_config<S, I>(
     config: &TelemetryConfig,
     id_generator: I,
