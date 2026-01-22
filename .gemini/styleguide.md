@@ -165,7 +165,7 @@ hive-router
 └── graphql-tools
 ```
 
-> For example, a change in `graphql-tools` requires updating `hive-router-query-planner`, `hive-console-sdk`, `node-addon`, `hive-router-plan-executor`, `hive-router`, and `graphql-tools` in the `changeset` file. But, if `graphql-tools` change is breaking, then all dependent crates do not necessarily need to be breaking changes.
+> For example, a change in `graphql-tools` requires updating `hive-router-query-planner`, `hive-console-sdk`, `node-addon`, `hive-router-plan-executor`, `hive-router`, and `graphql-tools` in the `changeset` file. But if the `graphql-tools` change is breaking, then all dependent crates do not necessarily need to be breaking changes.
 
 If you detect a deletion of files from `./changeset` directory, that means you are checking a Release PR created by Knope. In that case, please validate the dependency above with the rules mentioned, and ensure that all impacted crates are updated accordingly.
 
