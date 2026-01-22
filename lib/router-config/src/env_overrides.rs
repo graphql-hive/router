@@ -104,7 +104,7 @@ impl EnvVarOverrides {
         }
 
         if self.hive_access_token.is_some() && self.hive_target.is_some() {
-            config = config.set_override("telemetry.hive.usage.enabled", true)?;
+            config = config.set_override("telemetry.hive.usage_reporting.enabled", true)?;
             config = config.set_override("telemetry.hive.tracing.enabled", true)?;
         }
 

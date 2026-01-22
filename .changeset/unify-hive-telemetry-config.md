@@ -8,7 +8,7 @@ internal: minor
 
 Refactored the configuration structure to unify Hive-specific telemetry (tracing and usage reporting) and centralize client identification.
 
-- **Unified Hive Config**: Moved `usage_reporting` under `telemetry.hive.usage`. Usage reporting now shares the `token` and `target` configuration with Hive tracing, eliminating redundant settings.
+- **Unified Hive Config**: Moved `usage_reporting` under `telemetry.hive.usage_reporting`. Usage reporting now shares the `token` and `target` configuration with Hive tracing, eliminating redundant settings.
 - **Centralized Client Identification**: Introduced `telemetry.client_identification` to define client name and version headers once. These are now propagated to both OpenTelemetry spans and Hive usage reports.
 - **Enhanced Expression Support**: Both Hive token and target ID now support VRL expressions for usage reporting, matching the existing behavior of tracing.
 
@@ -35,6 +35,6 @@ telemetry:
   hive:
     token: "..."
     target: "..."
-    usage:
+    usage_reporting:
       enabled: true
 ```
