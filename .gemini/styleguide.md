@@ -165,8 +165,18 @@ hive-router
 └── graphql-tools
 ```
 
-> For example, a change in `graphql-tools` requires updating `hive-router-query-planner`, `hive-console-sdk`, `node-addon`, `hive-router-plan-executor`, `hive-router`, and `graphql-tools` in the `changeset` file.
-
-> For example, if there is a `major` change in `graphql-tools`, but no breaking changes in `hive-router-query-planner`, `hive-console-sdk`, `node-addon`, `hive-router-plan-executor`, or `hive-router`, only `graphql-tools` needs to be bumped `major`, while the others can be `patch` or `minor` as appropriate.
+> For example, a change in `graphql-tools` requires updating `hive-router-query-planner`, `hive-console-sdk`, `node-addon`, `hive-router-plan-executor`, `hive-router`, and `graphql-tools` in the `changeset` file. But if the `graphql-tools` change is breaking, then all dependent crates do not necessarily need to be breaking changes.
 
 If you detect a deletion of files from `./changeset` directory, that means you are checking a Release PR created by Knope. In that case, please validate the dependency above with the rules mentioned, and ensure that all impacted crates are updated accordingly.
+
+Knope uses the following rules for semantic versioning based on the changes declared in the changeset files.
+
+If the version is `0.x.y`, then:
+- A `major` change bumps `x` by 1 and resets `y` to 0.
+- A `minor` change bumps `y` by 1.
+- A `patch` change bumps `y` by 1.
+
+If the major version is `1` or higher (i.e., the version is at least `1.0.0`), then:
+- A `major` change bumps `x` by 1 and resets `y` and `z` to 0.
+- A `minor` change bumps `y` by 1 and resets `z` to 0.
+- A `patch` change bumps `z` by 1.
