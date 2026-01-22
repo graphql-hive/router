@@ -1,6 +1,9 @@
 use headers_accept::Accept;
-use http::header::ACCEPT;
-use mediatype::{MediaType, Name, ReadParams};
+use http::{header::ACCEPT, Method};
+use mediatype::{
+    names::{HTML, TEXT},
+    MediaType, Name, ReadParams,
+};
 use ntex::web::HttpRequest;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -149,6 +152,19 @@ impl StreamContentType {
     }
 }
 
+const HTML_MEDIA_TYPE: MediaType<'static> = MediaType::new(TEXT, HTML);
+
+static ALL_RESPONSE_MODES_CONTENT_TYPE_MEDIA_TYPES: LazyLock<Vec<MediaType<'static>>> =
+    LazyLock::new(|| {
+        let mut all_media_types = Vec::with_capacity(
+            1 + SINGLE_CONTENT_TYPE_MEDIA_TYPES.len() + STREAM_CONTENT_TYPE_MEDIA_TYPES.len(),
+        );
+        all_media_types.extend(SINGLE_CONTENT_TYPE_MEDIA_TYPES.iter().cloned());
+        all_media_types.extend(STREAM_CONTENT_TYPE_MEDIA_TYPES.iter().cloned());
+        all_media_types.push(HTML_MEDIA_TYPE); // must be last for negotiation priority
+        all_media_types
+    });
+
 /// The agreed content types after negotiation. Client may accept only single, only stream, or both,
 /// it's important we convey this message because it affects how we process the response.
 #[derive(PartialEq, Debug)]
@@ -159,6 +175,9 @@ pub enum ResponseMode {
     StreamOnly(StreamContentType),
     /// Will always respond, queries are single responses, subscriptions are streams. errors are single responses.
     Dual(SingleContentType, StreamContentType),
+    /// Render the GraphiQL IDE for the client. Used when the client prefers accepting HTML responses.
+    /// It is different from the other modes because it does not represent a GraphQL response mode.
+    GraphiQL,
 }
 
 // `#[default]` attribute may only be used on unit enum variants, so we have to implement it
@@ -176,7 +195,7 @@ impl ResponseMode {
         match self {
             ResponseMode::SingleOnly(single) => Some(single),
             ResponseMode::Dual(single, _) => Some(single),
-            ResponseMode::StreamOnly(_) => None,
+            _ => None,
         }
     }
     pub fn can_stream(&self) -> bool {
@@ -186,7 +205,7 @@ impl ResponseMode {
         match self {
             ResponseMode::StreamOnly(stream) => Some(stream),
             ResponseMode::Dual(_, stream) => Some(stream),
-            ResponseMode::SingleOnly(_) => None,
+            _ => None,
         }
     }
 }
@@ -194,6 +213,7 @@ impl ResponseMode {
 /// Reads the `Accept` header contents and returns a tuple of accepted/parsed content types.
 /// It perform negotiation and respects q-weights.
 fn negotiate_content_type(
+    method: &Method,
     accept_header: Option<&str>,
 ) -> Result<Option<ResponseMode>, <Accept as FromStr>::Err> {
     let accept_header = accept_header.unwrap_or_default();
@@ -204,6 +224,15 @@ fn negotiate_content_type(
     };
 
     let accept = Accept::from_str(accept_header)?;
+
+    if method == Method::GET {
+        let has_agreed_graphiql = accept
+            .negotiate(ALL_RESPONSE_MODES_CONTENT_TYPE_MEDIA_TYPES.iter())
+            .is_some_and(|t| *t == HTML_MEDIA_TYPE);
+        if has_agreed_graphiql {
+            return Ok(Some(ResponseMode::GraphiQL));
+        }
+    }
 
     let agreed_single: Option<SingleContentType> = accept
         .negotiate(SingleContentType::media_types().iter())
@@ -222,12 +251,6 @@ fn negotiate_content_type(
 }
 
 pub trait RequestAccepts {
-    /// Whether the request can accept HTML responses. Used to determine if GraphiQL
-    /// should be served.
-    ///
-    /// This function will never return `true` if the `Accept` header is empty or if
-    /// it contains `*/*`. This is because this is not a HTML server, it's a GraphQL server.
-    fn can_accept_http(&self) -> bool;
     /// Reads the request's `Accept` header and returns the agreed response mode.
     ///
     /// Returns an error if no valid content types are found in the Accept header.
@@ -236,22 +259,13 @@ pub trait RequestAccepts {
 
 impl RequestAccepts for HttpRequest {
     #[inline]
-    fn can_accept_http(&self) -> bool {
-        self.headers()
-            .get(ACCEPT)
-            .and_then(|value| value.to_str().ok())
-            .map(|s| s.contains(TEXT_HTML_MIME))
-            .unwrap_or(false)
-    }
-
-    #[inline]
     fn negotiate(&self) -> Result<Option<ResponseMode>, PipelineError> {
         let content_types = self
             .headers()
             .get(ACCEPT)
             .and_then(|value| value.to_str().ok());
 
-        let agreed = negotiate_content_type(content_types).map_err(|err| {
+        let agreed = negotiate_content_type(self.method(), content_types).map_err(|err| {
             error!("Failed to parse Accept header: {}", err);
             PipelineError::InvalidHeaderValue(ACCEPT)
         })?;
@@ -272,9 +286,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn negotiate_single_and_stream_content_types() {
+    fn negotiate_content_types() {
         let cases = vec![
             (
+                Method::GET,
                 "",
                 ResponseMode::Dual(
                     SingleContentType::JSON,
@@ -282,6 +297,7 @@ mod tests {
                 ),
             ),
             (
+                Method::GET,
                 "*/*",
                 ResponseMode::Dual(
                     SingleContentType::JSON,
@@ -289,6 +305,7 @@ mod tests {
                 ),
             ),
             (
+                Method::GET,
                 r#"application/json, text/event-stream, multipart/mixed;subscriptionSpec="1.0""#,
                 ResponseMode::Dual(
                     SingleContentType::JSON,
@@ -296,6 +313,7 @@ mod tests {
                 ),
             ),
             (
+                Method::GET,
                 r#"application/graphql-response+json, multipart/mixed;q=0.5, text/event-stream;q=1"#,
                 ResponseMode::Dual(
                     SingleContentType::GraphQLResponseJSON,
@@ -303,27 +321,45 @@ mod tests {
                 ),
             ),
             (
+                Method::GET,
                 r#"application/json;q=0.5, application/graphql-response+json;q=1"#,
                 ResponseMode::SingleOnly(SingleContentType::GraphQLResponseJSON),
             ),
             (
+                Method::GET,
                 r#"text/event-stream;q=0.5, multipart/mixed;q=1;subscriptionSpec="1.0""#,
                 ResponseMode::StreamOnly(StreamContentType::ApolloMultipartHTTP),
             ),
             (
+                Method::GET,
                 r#"text/event-stream, application/json"#,
                 ResponseMode::Dual(SingleContentType::JSON, StreamContentType::SSE),
             ),
+            (
+                // actual browser request loading a page
+                Method::GET,
+                r#"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"#,
+                ResponseMode::GraphiQL,
+            ),
+            (
+                // browser accept header snippet but for a POST request
+                Method::POST,
+                r#"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"#,
+                ResponseMode::Dual(
+                    SingleContentType::JSON,
+                    StreamContentType::IncrementalDelivery,
+                ),
+            ),
         ];
 
-        for (accept_header, excepted_agreed) in cases {
-            let agreed = negotiate_content_type(Some(accept_header))
+        for (method, accept_header, excepted_agreed) in cases {
+            let agreed = negotiate_content_type(&method, Some(accept_header))
                 .expect("unable to parse accept header")
                 .expect("no agreed response mode");
             assert_eq!(
                 agreed, excepted_agreed,
-                "wrong agreed response mode when negotiating: {}",
-                accept_header
+                "wrong agreed response mode when negotiating method {} with accept: {}",
+                method, accept_header
             );
         }
     }
