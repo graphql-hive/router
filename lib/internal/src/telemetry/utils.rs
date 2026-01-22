@@ -37,6 +37,6 @@ pub(super) fn build_tls_config(
     match tls {
         Some(tls_config) => ClientTlsConfig::try_from(tls_config)
             .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string())),
-        None => Ok(ClientTlsConfig::default().with_native_roots()),
+        None => Ok(ClientTlsConfig::default()),
     }
 }
