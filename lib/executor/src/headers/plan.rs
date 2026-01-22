@@ -130,13 +130,3 @@ type AggregatedHeader = (HeaderAggregationStrategy, Vec<HeaderValue>);
 pub struct ResponseHeaderAggregator {
     pub entries: HashMap<HeaderName, AggregatedHeader>,
 }
-
-impl ResponseHeaderAggregator {
-    pub fn none_if_empty(self) -> Option<Self> {
-        if self.entries.is_empty() {
-            None
-        } else {
-            Some(self)
-        }
-    }
-}
