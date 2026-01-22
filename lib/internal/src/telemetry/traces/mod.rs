@@ -216,7 +216,7 @@ fn setup_hive_exporter(
         }
     };
 
-    if !is_uuid_target_ref(&token) && !is_slug_target_ref(&token) {
+    if !is_uuid_target_ref(&target) && !is_slug_target_ref(&target) {
         return Err(TelemetryError::TracesExporterSetup(format!(
             "Invalid Hive Tracing target format: '{}'. It must be either in slug format '$organizationSlug/$projectSlug/$targetSlug' or UUID format 'a0f4c605-6541-4350-8cfe-b31f21a4bf80'",
             target
@@ -242,7 +242,7 @@ fn setup_hive_exporter(
                 .transpose()?
                 .unwrap_or_default();
 
-            metadata.insert("authorization".to_string(), token);
+            metadata.insert("authorization".to_string(), format!("Bearer {}", token));
             metadata.insert("x-hive-target-ref".to_string(), target);
 
             SpanExporter::builder()

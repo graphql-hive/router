@@ -469,6 +469,17 @@ impl SpanCollector {
         merged_attributes
     }
 
+    pub fn by_hive_kind(&self, hive_kind: &str) -> Vec<&CollectedSpan> {
+        self.spans
+            .iter()
+            .filter(|s| {
+                s.attributes
+                    .get("hive.kind")
+                    .map_or(false, |v| v == hive_kind)
+            })
+            .collect()
+    }
+
     pub fn by_hive_kind_one(&self, hive_kind: &str) -> &CollectedSpan {
         let spans: Vec<&CollectedSpan> = self
             .spans
