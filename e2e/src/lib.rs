@@ -21,7 +21,7 @@ mod probes;
 #[cfg(test)]
 mod supergraph;
 #[cfg(test)]
-mod telemetry_otlp;
+mod telemetry;
 #[cfg(test)]
 mod testkit;
 #[cfg(test)]
