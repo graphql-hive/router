@@ -1,11 +1,11 @@
 ---
-router: patch
-config: patch
+router: minor
+config: minor
 internal: patch
 executor: patch
 ---
 
-# New Query Complexity Configuration
+# New Query Complexity Configuration in `hive-router` and `hive-router-config`
 
 We have introduced a new configuration module for query complexity in the Hive Router. 
 
