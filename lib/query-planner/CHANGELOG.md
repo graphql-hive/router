@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.1.7 (2026-01-22)
+
+### Fixes
+
+#### Refactor Parse Error Handling in `graphql-tools`
+
+Breaking;
+- `ParseError(String)` is now `ParseError(InternalError<'static>)`.
+- - So that the internals of the error can be better structured and more informative, such as including line and column information.
+- `ParseError`s are no longer prefixed with "query parse error: " in their Display implementation.
+
 ## 2.1.6 (2026-01-14)
 
 ### Fixes
