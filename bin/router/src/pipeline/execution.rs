@@ -53,9 +53,11 @@ pub async fn execute_plan(
         expose_query_plan,
         ExposeQueryPlanMode::Yes | ExposeQueryPlanMode::DryRun
     ) {
+        let query_plan_value = sonic_rs::to_value(&planned_request.query_plan_payload)
+            .map_err(PipelineError::QueryPlanSerializationError)?;
         Some(HashMap::from_iter([(
             "queryPlan".to_string(),
-            sonic_rs::to_value(&planned_request.query_plan_payload).unwrap(),
+            query_plan_value,
         )]))
     } else {
         None
@@ -66,7 +68,8 @@ pub async fn execute_plan(
             "extensions": extensions,
         });
 
-        let body = sonic_rs::to_vec(&body_json).unwrap();
+        let body =
+            sonic_rs::to_vec(&body_json).map_err(PipelineError::QueryPlanSerializationError)?;
 
         return Ok(PlanExecutionOutput {
             body,

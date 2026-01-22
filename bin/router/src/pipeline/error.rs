@@ -123,6 +123,10 @@ pub enum PipelineError {
     #[error(transparent)]
     #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
     HeaderPropagation(#[from] HeaderRuleRuntimeError),
+
+    #[error("Failed to serialize the query plan: {0}")]
+    #[strum(serialize = "QUERY_PLAN_SERIALIZATION_ERROR")]
+    QueryPlanSerializationError(sonic_rs::Error),
 }
 
 impl PipelineError {
@@ -175,6 +179,7 @@ impl PipelineError {
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::QueryPlanSerializationError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
