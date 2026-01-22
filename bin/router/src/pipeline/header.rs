@@ -258,12 +258,12 @@ pub trait RequestAccepts {
     /// Reads the request's `Accept` header and returns the agreed response mode.
     ///
     /// Returns an error if no valid content types are found in the Accept header.
-    fn negotiate(&self) -> Result<Option<ResponseMode>, PipelineError>;
+    fn negotiate(&self) -> Result<ResponseMode, PipelineError>;
 }
 
 impl RequestAccepts for HttpRequest {
     #[inline]
-    fn negotiate(&self) -> Result<Option<ResponseMode>, PipelineError> {
+    fn negotiate(&self) -> Result<ResponseMode, PipelineError> {
         let content_types = self
             .headers()
             .get(ACCEPT)
@@ -277,10 +277,9 @@ impl RequestAccepts for HttpRequest {
         // at this point we treat no content type as "user explicitly does not support any known types"
         // this is because only empty accept header or */* is treated as "accept everything" and we check
         // that above
-        if agreed.is_none() {
-            Err(PipelineError::UnsupportedContentType)
-        } else {
-            Ok(agreed)
+        match agreed {
+            Some(response_mode) => Ok(response_mode),
+            None => Err(PipelineError::UnsupportedContentType),
         }
     }
 }

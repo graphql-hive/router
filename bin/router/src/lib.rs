@@ -23,7 +23,6 @@ use crate::{
     jwt::JwtAuthRuntime,
     logger::configure_logging,
     pipeline::{
-        error::PipelineError,
         graphql_request_handler,
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         usage_reporting::init_hive_user_agent,
@@ -65,8 +64,7 @@ async fn graphql_endpoint_handler(
         // agree on the response content type so that errors can be handled
         // properly outside the request handler.
         let response_mode = match request.negotiate() {
-            Ok(Some(response_mode)) => response_mode,
-            Ok(None) => return PipelineError::UnsupportedContentType.into_response(None),
+            Ok(response_mode) => response_mode,
             Err(err) => return err.into_response(None),
         };
 
