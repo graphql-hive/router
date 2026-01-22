@@ -167,6 +167,6 @@ hive-router
 
 > For example, a change in `graphql-tools` requires updating `hive-router-query-planner`, `hive-console-sdk`, `node-addon`, `hive-router-plan-executor`, `hive-router`, and `graphql-tools` in the `changeset` file.
 
-But dependant packages do not need to be bumped in version if there is no breaking change in them. For example, if there is a `major` change in `graphql-tools`, but no breaking changes in `hive-router-query-planner`, `hive-console-sdk`, `node-addon`, `hive-router-plan-executor`, or `hive-router`, only `graphql-tools` needs to be bumped `major`, while the others can be `patch` or `minor` as appropriate.
+> For example, if there is a `major` change in `graphql-tools`, but no breaking changes in `hive-router-query-planner`, `hive-console-sdk`, `node-addon`, `hive-router-plan-executor`, or `hive-router`, only `graphql-tools` needs to be bumped `major`, while the others can be `patch` or `minor` as appropriate.
 
 If you detect a deletion of files from `./changeset` directory, that means you are checking a Release PR created by Knope. In that case, please validate the dependency above with the rules mentioned, and ensure that all impacted crates are updated accordingly.
