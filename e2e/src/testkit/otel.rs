@@ -1,5 +1,5 @@
 use opentelemetry_proto::tonic::resource::v1::Resource;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
@@ -20,6 +20,49 @@ pub use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 /// Forbidden ports for OTLP HTTP and gRPC servers.
 /// Those ports are reserved for other services used in e2e tests.
 static FORBIDDEN_PORTS: &[u16] = &[80, 443, 8080, 8443, 4000, 4200, 3000];
+
+#[derive(Debug)]
+pub struct Baggage {
+    pub map: HashMap<String, String>,
+}
+
+impl PartialEq for Baggage {
+    fn eq(&self, other: &Self) -> bool {
+        self.map == other.map
+    }
+}
+
+impl<const N: usize> From<[(String, String); N]> for Baggage {
+    fn from(arr: [(String, String); N]) -> Self {
+        Self {
+            map: HashMap::from(arr),
+        }
+    }
+}
+
+impl From<&str> for Baggage {
+    fn from(value: &str) -> Self {
+        Self {
+            map: value
+                .split(',')
+                .filter_map(|kv| kv.split_once('='))
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
+}
+
+impl Display for Baggage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut entries = self
+            .map
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<String>>();
+        entries.sort();
+        write!(f, "{}", entries.join(","))
+    }
+}
 
 pub struct TraceParent<'a> {
     pub trace_id: &'a str,

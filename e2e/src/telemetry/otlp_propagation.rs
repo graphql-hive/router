@@ -1,9 +1,9 @@
 use ntex::web::test;
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
 use crate::testkit::{
     init_graphql_request, init_router_from_config_inline,
-    otel::{OtlpCollector, TraceParent},
+    otel::{Baggage, OtlpCollector, TraceParent},
     wait_for_readiness, SubgraphsServer,
 };
 
@@ -170,20 +170,15 @@ async fn test_otlp_http_baggage_propagation() {
         span_id: &upstream_span_id,
         sampled: true,
     };
-    let upstream_baggage_map: HashMap<String, String> = HashMap::from([
+    let upstream_baggage = Baggage::from([
         ("debug".into(), "true".into()),
         ("tenant".into(), "acme".into()),
         ("user_id".into(), "123".into()),
     ]);
-    let baggage_upstream = upstream_baggage_map
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
-        .collect::<Vec<String>>()
-        .join(",");
 
     let req = init_graphql_request("{ users { id } }", None)
         .header("traceparent", upstream_traceparent.to_string())
-        .header("baggage", baggage_upstream);
+        .header("baggage", upstream_baggage.to_string());
     test::call_service(&app.app, req.to_request()).await;
 
     // Wait for exports to be sent
@@ -201,20 +196,16 @@ async fn test_otlp_http_baggage_propagation() {
 
     // Verify the router -> subgraph baggage propagation
     let first_account_request = &account_requests[0];
-    let subgraph_baggage = first_account_request
+    let subgraph_baggage_string = first_account_request
         .headers
         .get("baggage")
         .and_then(|v| v.to_str().ok())
         .expect("Subgraph request should have baggage header");
 
-    let subgraph_baggage_map: HashMap<String, String> = subgraph_baggage
-        .split(',')
-        .filter_map(|kv| kv.split_once('='))
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+    let subgraph_baggage = Baggage::from(subgraph_baggage_string);
 
     assert_eq!(
-        upstream_baggage_map, subgraph_baggage_map,
+        upstream_baggage, subgraph_baggage,
         "Expected baggage to match"
     );
 
