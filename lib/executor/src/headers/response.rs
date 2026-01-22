@@ -286,7 +286,7 @@ fn write_agg(
 /// Modify the outgoing client response headers based on the aggregated headers from subgraphs.
 pub fn modify_client_response_headers(
     agg: ResponseHeaderAggregator,
-    out: &mut HeaderMap,
+    response_builder: &mut ntex::http::ResponseBuilder,
 ) -> Result<(), HeaderRuleRuntimeError> {
     for (name, (agg_strategy, mut values)) in agg.entries {
         if values.is_empty() {
@@ -296,20 +296,22 @@ pub fn modify_client_response_headers(
         if is_never_join_header(&name) {
             // never-join headers must be emitted as multiple header fields
             for value in values {
-                out.append(name.clone(), value);
+                response_builder.header(&name, value);
             }
             continue;
         }
 
         if values.len() == 1 {
-            out.insert(name, values.pop().unwrap());
+            if let Some(value) = values.pop() {
+                response_builder.set_header(name, value);
+            }
             continue;
         }
 
         if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
             let joined = join_with_comma(&values)
                 .map_err(|_| HeaderRuleRuntimeError::BadHeaderValue(name.to_string()))?;
-            out.insert(name, joined);
+            response_builder.set_header(name, joined);
         }
     }
 

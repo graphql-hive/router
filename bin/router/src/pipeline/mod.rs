@@ -1,9 +1,12 @@
 use std::{sync::Arc, time::Instant};
 use tracing::error;
 
-use hive_router_plan_executor::execution::{
-    client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-    plan::PlanExecutionOutput,
+use hive_router_plan_executor::{
+    execution::{
+        client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
+        plan::PlanExecutionOutput,
+    },
+    headers::response::modify_client_response_headers,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -184,25 +187,21 @@ pub async fn graphql_request_handler(
                 &client_request_details,
                 hive_usage_agent,
                 &shared_state.router_config.usage_reporting,
-                &response,
+                response.error_count,
             )
             .await;
         }
     }
 
-    let response_bytes = Bytes::from(response.body);
-    let response_headers = response.headers;
+    let mut response_builder = ntex::http::Response::Ok();
 
-    let mut response_builder = web::HttpResponse::Ok();
-    for (header_name, header_value) in response_headers {
-        if let Some(header_name) = header_name {
-            response_builder.header(header_name, header_value);
-        }
+    if let Some(response_header_aggregator) = response.response_header_aggregator {
+        modify_client_response_headers(response_header_aggregator, &mut response_builder)?;
     }
 
     Ok(response_builder
-        .header(http::header::CONTENT_TYPE, single_content_type.as_ref())
-        .body(response_bytes))
+        .content_type(single_content_type.as_ref())
+        .body(response.body))
 }
 
 #[inline]
@@ -273,8 +272,5 @@ pub async fn execute_pipeline<'exec>(
         authorization_errors,
     };
 
-    let pipeline_result =
-        execute_plan(supergraph, shared_state, expose_query_plan, planned_request).await?;
-
-    Ok(pipeline_result)
+    execute_plan(supergraph, shared_state, expose_query_plan, planned_request).await
 }

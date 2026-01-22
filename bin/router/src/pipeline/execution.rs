@@ -9,14 +9,12 @@ use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
-use hive_router_plan_executor::execution::error::{IntoPlanExecutionError, LazyPlanContext};
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
-use hive_router_plan_executor::projection::response::project_by_operation;
-use hive_router_plan_executor::response::value::Value;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use http::{HeaderMap, HeaderName};
+use http::HeaderName;
+use serde_json::json;
 
 pub static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
@@ -64,24 +62,15 @@ pub async fn execute_plan(
     };
 
     if matches!(expose_query_plan, ExposeQueryPlanMode::DryRun) {
-        let body = project_by_operation(
-            &Value::Null,
-            vec![],
-            &extensions,
-            planned_request.normalized_payload.root_type_name,
-            &[],
-            &None,
-            0,
-            introspection_context.metadata,
-        )
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || None,
-            affected_path: || None,
-        })?;
+        let body_json = json!({
+            "extensions": extensions,
+        });
+
+        let body = sonic_rs::to_vec(&body_json).unwrap();
 
         return Ok(PlanExecutionOutput {
             body,
-            headers: HeaderMap::new(),
+            response_header_aggregator: None,
             error_count: 0,
         });
     }
