@@ -2,5 +2,7 @@
 router: minor
 ---
 
+# Refactor Router Initialization Error Handling
+
 - New `RouterInitError` enum to represent initialization errors in the Hive Router.
 - BREAKING: `router_entrypoint` now returns `Result<(), RouterInitError>` instead of a boxed dynamic error(`Box<dyn std::error::Error>`), providing more specific error handling during router initialization.
