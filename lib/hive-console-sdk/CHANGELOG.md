@@ -1,3 +1,14 @@
+## 0.3.4 (2026-01-22)
+
+### Fixes
+
+#### Refactor Parse Error Handling in `graphql-tools`
+
+Breaking;
+- `ParseError(String)` is now `ParseError(InternalError<'static>)`.
+- - So that the internals of the error can be better structured and more informative, such as including line and column information.
+- `ParseError`s are no longer prefixed with "query parse error: " in their Display implementation.
+
 ## 0.3.3 (2026-01-16)
 
 ### Fixes

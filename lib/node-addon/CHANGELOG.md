@@ -1,4 +1,15 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.11 (2026-01-22)
+
+### Fixes
+
+#### Refactor Parse Error Handling in `graphql-tools`
+
+Breaking;
+- `ParseError(String)` is now `ParseError(InternalError<'static>)`.
+- - So that the internals of the error can be better structured and more informative, such as including line and column information.
+- `ParseError`s are no longer prefixed with "query parse error: " in their Display implementation.
+
 ## 0.0.10 (2026-01-14)
 
 ### Fixes
