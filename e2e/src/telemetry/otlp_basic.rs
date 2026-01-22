@@ -549,6 +549,7 @@ async fn test_otlp_http_headers() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
 
+    let _subgraphs = SubgraphsServer::start().await;
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
@@ -611,6 +612,7 @@ async fn test_otlp_grpc_metadata() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
 
+    let _subgraphs = SubgraphsServer::start().await;
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
