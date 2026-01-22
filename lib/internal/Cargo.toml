@@ -26,6 +26,7 @@ ntex = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
+moka = { workspace = true }
 
 # telemetry
 opentelemetry = { workspace = true, features = ["trace"] }

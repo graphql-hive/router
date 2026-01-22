@@ -2220,6 +2220,7 @@ dependencies = [
  "humantime",
  "hyper",
  "insta",
+ "moka",
  "ntex",
  "opentelemetry",
  "opentelemetry-appender-tracing",
