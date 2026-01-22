@@ -1,5 +1,5 @@
 ---
-router: minor
+router: major
 ---
 
 # Refactor Router Initialization Error Handling in `hive-router`
