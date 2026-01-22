@@ -23,9 +23,8 @@ use crate::{
     jwt::JwtAuthRuntime,
     logger::configure_logging,
     pipeline::{
-        error::PipelineError,
         graphql_request_handler,
-        header::{RequestAccepts, TEXT_HTML_MIME},
+        header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         usage_reporting::init_hive_user_agent,
         validation::{max_depth_rule::MaxDepthRule, max_directives_rule::MaxDirectivesRule},
     },
@@ -35,10 +34,7 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
-use http::{
-    header::{CONTENT_TYPE, RETRY_AFTER},
-    Method,
-};
+use http::header::{CONTENT_TYPE, RETRY_AFTER};
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
@@ -72,7 +68,7 @@ async fn graphql_endpoint_handler(
             Err(err) => return err.into_response(None),
         };
 
-        if request.method() == Method::GET && response_mode.is_none() && request.can_accept_http() {
+        if response_mode == ResponseMode::GraphiQL {
             if app_state.router_config.graphiql.enabled {
                 return web::HttpResponse::Ok()
                     .header(CONTENT_TYPE, TEXT_HTML_MIME)
@@ -81,14 +77,6 @@ async fn graphql_endpoint_handler(
                 return web::HttpResponse::NotFound().into();
             }
         }
-
-        // not a graphiql request and no supported content types
-        let response_mode = match response_mode {
-            Some(mode) => mode,
-            None => {
-                return PipelineError::UnsupportedContentType.into_response(response_mode);
-            }
-        };
 
         let mut res = match graphql_request_handler(
             &request,
