@@ -2,7 +2,7 @@
 router: patch
 config: patch
 internal: patch
-plan-executor: patch
+executor: patch
 ---
 
 # New Query Complexity Configuration
