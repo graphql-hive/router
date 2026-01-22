@@ -19,9 +19,9 @@ use crate::{
     },
     executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     headers::{
-        plan::HeaderRulesPlan,
+        plan::{HeaderRulesPlan, ResponseHeaderAggregator},
         request::modify_subgraph_request_headers,
-        response::{apply_subgraph_response_headers, modify_client_response_headers},
+        response::apply_subgraph_response_headers,
     },
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
@@ -60,7 +60,7 @@ pub struct QueryPlanExecutionContext<'exec> {
 
 pub struct PlanExecutionOutput {
     pub body: Vec<u8>,
-    pub headers: HeaderMap,
+    pub response_header_aggregator: Option<ResponseHeaderAggregator>,
     pub error_count: usize,
 }
 
@@ -93,13 +93,6 @@ pub async fn execute_query_plan<'exec>(
             .await?;
     }
 
-    let mut response_headers = HeaderMap::new();
-    modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || None,
-            affected_path: || None,
-        })?;
-
     let final_response = &exec_ctx.final_response;
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
     let body = project_by_operation(
@@ -119,7 +112,7 @@ pub async fn execute_query_plan<'exec>(
 
     Ok(PlanExecutionOutput {
         body,
-        headers: response_headers,
+        response_header_aggregator: exec_ctx.response_headers_aggregator.none_if_empty(),
         error_count,
     })
 }
