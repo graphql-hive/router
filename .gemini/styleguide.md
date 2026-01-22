@@ -176,6 +176,7 @@ If the version is `0.x.y`, then:
 - A `minor` change bumps `y` by 1.
 - A `patch` change bumps `y` by 1.
 
+  > Note: For pre-1.0 versions (`0.x.y`), Knope intentionally treats `minor` and `patch` changes the same and only uses the `y` component. This differs from standard semantic versioning (where a patch would bump `z`): the `minor` vs `patch` distinction here is primarily for human-readable changelogs, not for choosing a different numeric component to bump.
 If the major version is `1` or higher (i.e., the version is at least `1.0.0`), then:
 - A `major` change bumps `x` by 1 and resets `y` and `z` to 0.
 - A `minor` change bumps `y` by 1 and resets `z` to 0.
