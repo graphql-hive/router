@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::testkit::{
     init_graphql_request, init_router_from_config_inline,
-    otel::{OtlpCollector, SpanCollector, TraceParent},
+    otel::{OtlpCollector, TraceParent},
     wait_for_readiness, SubgraphsServer,
 };
 
@@ -68,9 +68,10 @@ async fn test_otlp_parent_based_sampler() {
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let spans = otlp_collector.spans_from_request(0).await;
+    // Verify no traces were collected when parent is not sampled
+    let all_traces = otlp_collector.traces().await;
     assert!(
-        spans.is_err(),
+        all_traces.is_empty(),
         "No spans should be exported when parent is not sampled, even if sampling rate is 1.0"
     );
 
@@ -90,12 +91,27 @@ async fn test_otlp_parent_based_sampler() {
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from request with sampled parent");
+    // Verify trace was collected
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces
+        .first()
+        .expect("Failed to find trace with sampled parent");
 
-    let http_server_span = first_request_spans.by_hive_kind_one("http.server");
+    assert_eq!(
+        trace.id, upstream_trace_id,
+        "Trace should have correct trace_id"
+    );
+
+    // Verify we have spans in the trace
+    let spans = &trace.spans;
+    assert!(
+        !spans.is_empty(),
+        "Trace should contain spans when parent is sampled"
+    );
+
+    // Find http.server span by hive.kind attribute
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
+
     assert_eq!(
         http_server_span.trace_id, upstream_trace_id,
         "http.server span should have correct trace_id"
@@ -152,10 +168,11 @@ async fn test_otlp_zero_sample_rate() {
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    assert_eq!(
-        otlp_collector.is_empty().await,
-        true,
-        "No spans should be exported when when sampling rate is 0.0, even if parent is sampled"
+    // Verify no traces were collected when sampling rate is 0.0
+    let all_traces = otlp_collector.traces().await;
+    assert!(
+        all_traces.is_empty(),
+        "No spans should be exported when sampling rate is 0.0, even if parent is sampled"
     );
 
     app.hold_until_shutdown(Box::new(otlp_collector));

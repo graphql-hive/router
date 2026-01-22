@@ -2,9 +2,8 @@ use ntex::web::test;
 use std::time::Duration;
 
 use crate::testkit::{
-    init_graphql_request, init_router_from_config_inline,
-    otel::{OtlpCollector, SpanCollector},
-    wait_for_readiness, SubgraphsServer,
+    init_graphql_request, init_router_from_config_inline, otel::OtlpCollector, wait_for_readiness,
+    SubgraphsServer,
 };
 
 /// Verify only deprecated attributes are emitted for deprecated mode
@@ -58,14 +57,12 @@ async fn test_deprecated_span_attributes() {
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
-    let http_server_span = first_request_spans.by_hive_kind_one("http.server");
-    let http_inflight_span = first_request_spans.by_hive_kind_one("http.inflight");
-    let http_client_span = first_request_spans.by_hive_kind_one("http.client");
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
+    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
 
     insta::assert_snapshot!(
       http_server_span,
@@ -183,14 +180,12 @@ async fn test_spec_and_deprecated_span_attributes() {
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
-    let http_server_span = first_request_spans.by_hive_kind_one("http.server");
-    let http_inflight_span = first_request_spans.by_hive_kind_one("http.inflight");
-    let http_client_span = first_request_spans.by_hive_kind_one("http.client");
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
+    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
 
     insta::assert_snapshot!(
       http_server_span,
@@ -327,12 +322,10 @@ async fn test_default_client_identification() {
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let first_request_spans = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
-    let operation_span = first_request_spans.by_hive_kind_one("graphql.operation");
+    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
 
     insta::assert_snapshot!(
       operation_span,
@@ -409,12 +402,10 @@ async fn test_custom_client_identification() {
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let first_request_spans = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
-    let operation_span = first_request_spans.by_hive_kind_one("graphql.operation");
+    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
 
     insta::assert_snapshot!(
       operation_span,
@@ -483,12 +474,10 @@ async fn test_default_resource_attributes() {
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let first_request_spans = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
-    let resource_attributes = first_request_spans.merged_resource_attributes();
+    let resource_attributes = trace.merged_resource_attributes();
 
     assert_eq!(
         resource_attributes.get("service.name"),
@@ -560,15 +549,13 @@ async fn test_custom_resource_attributes() {
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let first_request_spans = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
+
+    let resource_attributes = trace.merged_resource_attributes();
 
     assert_eq!(
-        first_request_spans
-            .merged_resource_attributes()
-            .get("custom.foo"),
+        resource_attributes.get("custom.foo"),
         Some(&"bar".to_string()),
         "Expected 'custom.foo' resource attribute to be 'bar'"
     );

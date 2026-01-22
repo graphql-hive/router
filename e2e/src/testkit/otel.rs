@@ -75,6 +75,72 @@ pub struct OtlpRequest {
 }
 
 #[derive(Clone, Debug)]
+pub struct CollectedTrace {
+    pub id: String,
+    pub spans: Vec<CollectedSpan>,
+    pub resources: Vec<CollectedResource>,
+    pub events: Vec<CollectedEvent>,
+}
+
+impl CollectedTrace {
+    pub fn new(id: String) -> Self {
+        CollectedTrace {
+            id,
+            spans: Vec::new(),
+            resources: Vec::new(),
+            events: Vec::new(),
+        }
+    }
+
+    pub fn add_span(&mut self, span: CollectedSpan) {
+        self.spans.push(span);
+    }
+
+    pub fn add_resource(&mut self, resource: CollectedResource) {
+        self.resources.push(resource);
+    }
+
+    pub fn add_event(&mut self, event: CollectedEvent) {
+        self.events.push(event);
+    }
+
+    pub fn merged_resource_attributes(&self) -> BTreeMap<String, String> {
+        let mut merged_attributes = BTreeMap::new();
+        for resource in &self.resources {
+            for (key, value) in resource.attributes.iter() {
+                merged_attributes.insert(key.clone(), value.clone());
+            }
+        }
+        merged_attributes
+    }
+
+    /// Find a span by hive.kind attribute value.
+    /// Panics if not found!
+    pub fn span_by_hive_kind_one(&self, hive_kind: &str) -> &CollectedSpan {
+        let found = self.spans.iter().find(|span| {
+            span.attributes
+                .get("hive.kind")
+                .map(|v| v == hive_kind)
+                .unwrap_or(false)
+        });
+
+        found.unwrap_or_else(|| panic!("No span found with hive.kind = {}", hive_kind))
+    }
+
+    pub fn has_span_by_hive_kind(&self, hive_kind: &str) -> bool {
+        self.spans
+            .iter()
+            .find(|span| {
+                span.attributes
+                    .get("hive.kind")
+                    .map(|v| v == hive_kind)
+                    .unwrap_or(false)
+            })
+            .is_some()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct CollectedSpan {
     pub id: String,
     pub parent_span_id: String,
@@ -98,9 +164,84 @@ pub struct CollectedEvent {
     pub attributes: BTreeMap<String, String>,
 }
 
+/// Shared storage for traces and requests
+/// Handles merging spans from multiple requests with the same trace_id
+/// Preserves insertion order for both requests and traces
+struct TraceStorage {
+    requests: Arc<Mutex<Vec<OtlpRequest>>>,
+    traces: Arc<Mutex<Vec<CollectedTrace>>>,
+}
+
+impl TraceStorage {
+    fn new() -> Self {
+        TraceStorage {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            traces: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    async fn add_request(&self, request: OtlpRequest) {
+        self.requests.lock().await.push(request);
+    }
+
+    /// Merge spans and resources from an export request into traces
+    async fn merge_export_request(&self, export_req: &ExportTraceServiceRequest) {
+        let spans = extract_spans(export_req);
+        let resources = extract_resource(export_req);
+
+        let mut traces = self.traces.lock().await;
+
+        for span in &spans {
+            let trace_id = extract_trace_id(span);
+            let collected_span = CollectedSpan::from(span);
+            let events = collected_span.events.clone();
+
+            // Find or create trace with this ID, preserving insertion order
+            if let Some(trace) = traces.iter_mut().find(|t| t.id == trace_id) {
+                trace.add_span(collected_span);
+                // Add events from span to trace
+                for event in events {
+                    trace.add_event(event);
+                }
+            } else {
+                let mut new_trace = CollectedTrace::new(trace_id);
+                new_trace.add_span(collected_span);
+                // Add events from span to trace
+                for event in events {
+                    new_trace.add_event(event);
+                }
+                traces.push(new_trace);
+            }
+        }
+
+        // Add resources to all affected traces
+        for resource in resources {
+            let collected_resource = CollectedResource::from(&resource);
+            for span in &spans {
+                let trace_id = extract_trace_id(span);
+                if let Some(trace) = traces.iter_mut().find(|t| t.id == trace_id) {
+                    trace.add_resource(collected_resource.clone());
+                }
+            }
+        }
+    }
+
+    async fn traces(&self) -> Vec<CollectedTrace> {
+        self.traces.lock().await.clone()
+    }
+
+    async fn request_at(&self, idx: usize) -> Option<OtlpRequest> {
+        self.requests.lock().await.get(idx).cloned()
+    }
+
+    async fn is_empty(&self) -> bool {
+        self.requests.lock().await.iter().all(|f| f.body.is_empty())
+    }
+}
+
 /// gRPC service implementation for OTLP trace collection
 struct GrpcTraceCollector {
-    requests: Arc<Mutex<Vec<OtlpRequest>>>,
+    storage: Arc<TraceStorage>,
 }
 
 #[tonic::async_trait]
@@ -129,6 +270,8 @@ impl TraceService for GrpcTraceCollector {
 
         println!("Captured gRPC OTLP export request");
 
+        self.storage.merge_export_request(&req).await;
+
         // Store request
         let otlp_req = OtlpRequest {
             method: "POST".to_string(),
@@ -137,7 +280,7 @@ impl TraceService for GrpcTraceCollector {
             body,
         };
 
-        self.requests.lock().await.push(otlp_req);
+        self.storage.add_request(otlp_req).await;
 
         Ok(Response::new(ExportTraceServiceResponse {
             partial_success: None,
@@ -149,7 +292,7 @@ impl TraceService for GrpcTraceCollector {
 pub struct OtlpCollector {
     pub http_address: String,
     pub grpc_address: String,
-    requests: Arc<Mutex<Vec<OtlpRequest>>>,
+    storage: Arc<TraceStorage>,
     _http_handle: Option<std::thread::JoinHandle<()>>,
     _grpc_handle: Option<tokio::task::JoinHandle<()>>,
     grpc_shutdown_tx: Option<oneshot::Sender<()>>,
@@ -157,11 +300,11 @@ pub struct OtlpCollector {
 
 impl OtlpCollector {
     pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
-        let requests = Arc::new(Mutex::new(Vec::new()));
+        let storage = Arc::new(TraceStorage::new());
 
-        let (http_address, http_handle) = Self::start_http_server(requests.clone()).await?;
+        let (http_address, http_handle) = Self::start_http_server(storage.clone()).await?;
         let (grpc_address, grpc_handle, grpc_shutdown_tx) =
-            Self::start_grpc_server(requests.clone()).await?;
+            Self::start_grpc_server(storage.clone()).await?;
 
         println!("OTLP HTTP collector server started on {}", http_address);
         println!("OTLP gRPC collector server started on {}", grpc_address);
@@ -169,7 +312,7 @@ impl OtlpCollector {
         Ok(OtlpCollector {
             http_address,
             grpc_address,
-            requests,
+            storage,
             _http_handle: Some(http_handle),
             _grpc_handle: Some(grpc_handle),
             grpc_shutdown_tx: Some(grpc_shutdown_tx),
@@ -177,7 +320,7 @@ impl OtlpCollector {
     }
 
     async fn start_http_server(
-        requests: Arc<Mutex<Vec<OtlpRequest>>>,
+        storage: Arc<TraceStorage>,
     ) -> Result<(String, std::thread::JoinHandle<()>), Box<dyn std::error::Error>> {
         // Binding to port 0 tell the OS to assign a random available port.
         let server = loop {
@@ -197,7 +340,7 @@ impl OtlpCollector {
         };
         let address_str = format!("http://{}", server.server_addr());
 
-        let requests_clone = requests.clone();
+        let storage_clone = storage.clone();
         let handle = std::thread::spawn(move || {
             for mut request in server.incoming_requests() {
                 let method = request.method().to_string();
@@ -216,12 +359,19 @@ impl OtlpCollector {
 
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
-                    requests_clone.lock().await.push(OtlpRequest {
-                        method,
-                        path,
-                        headers,
-                        body,
-                    });
+                    // Try to decode and merge traces
+                    if let Ok(export_req) = ExportTraceServiceRequest::decode(body.as_slice()) {
+                        storage_clone.merge_export_request(&export_req).await;
+                    }
+
+                    storage_clone
+                        .add_request(OtlpRequest {
+                            method,
+                            path,
+                            headers,
+                            body,
+                        })
+                        .await;
                 });
 
                 // Without the response, the exporter will log an error saying the request failed to respond
@@ -233,7 +383,7 @@ impl OtlpCollector {
     }
 
     async fn start_grpc_server(
-        requests: Arc<Mutex<Vec<OtlpRequest>>>,
+        storage: Arc<TraceStorage>,
     ) -> Result<
         (String, tokio::task::JoinHandle<()>, oneshot::Sender<()>),
         Box<dyn std::error::Error>,
@@ -248,11 +398,7 @@ impl OtlpCollector {
         };
         let grpc_address = format!("http://{}", addr);
 
-        let requests_clone = requests.clone();
-
-        let trace_service = GrpcTraceCollector {
-            requests: requests_clone,
-        };
+        let trace_service = GrpcTraceCollector { storage };
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
@@ -277,33 +423,23 @@ impl OtlpCollector {
     }
 
     pub fn http_endpoint(&self) -> String {
-        format!("{}/v1/traces", self.http_address)
+        self.http_address.clone()
     }
 
     pub fn grpc_endpoint(&self) -> String {
         self.grpc_address.clone()
     }
 
-    pub async fn spans_from_request(
-        &self,
-        request_idx: usize,
-    ) -> Result<SpanCollector, Box<dyn std::error::Error>> {
-        let requests = self.requests.lock().await;
-        if let Some(request) = requests.get(request_idx) {
-            SpanCollector::from_bytes(&request.body)
-        } else {
-            Err("Request index out of bounds".into())
-        }
-    }
-
     pub async fn request_at(&self, request_idx: usize) -> Option<OtlpRequest> {
-        let requests = self.requests.lock().await;
-        requests.get(request_idx).map(|r| r.clone())
+        self.storage.request_at(request_idx).await
     }
 
     pub async fn is_empty(&self) -> bool {
-        let requests = self.requests.lock().await;
-        requests.iter().all(|f| f.body.is_empty())
+        self.storage.is_empty().await
+    }
+
+    pub async fn traces(&self) -> Vec<CollectedTrace> {
+        self.storage.traces().await
     }
 }
 
@@ -316,11 +452,9 @@ impl Drop for OtlpCollector {
     }
 }
 
-/// Decode OTLP trace export request from raw protobuf bytes
-fn decode_trace_export_request(
-    body: &[u8],
-) -> Result<ExportTraceServiceRequest, Box<dyn std::error::Error>> {
-    Ok(ExportTraceServiceRequest::decode(body)?)
+/// Extract trace_id from a span, converting bytes to hex string
+fn extract_trace_id(span: &Span) -> String {
+    hex::encode(&span.trace_id)
 }
 
 fn extract_spans(request: &ExportTraceServiceRequest) -> Vec<Span> {
@@ -439,68 +573,6 @@ fn format_attribute_value(value: &opentelemetry_proto::tonic::common::v1::AnyVal
         }
         Some(Value::BytesValue(b)) => hex::encode(b),
         None => "null".to_string(),
-    }
-}
-
-pub struct SpanCollector {
-    spans: Vec<CollectedSpan>,
-    resources: Vec<CollectedResource>,
-}
-
-impl SpanCollector {
-    /// Create a new span collector from raw OTLP request bytes
-    pub fn from_bytes(body: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        let request = decode_trace_export_request(body)?;
-        let spans = extract_spans(&request);
-        let spans = spans.iter().map(|span| span.into()).collect();
-        let resources = extract_resource(&request);
-        let resources = resources.iter().map(|resource| resource.into()).collect();
-
-        Ok(SpanCollector { spans, resources })
-    }
-
-    pub fn merged_resource_attributes(&self) -> BTreeMap<String, String> {
-        let mut merged_attributes = BTreeMap::new();
-        for resource in &self.resources {
-            for (key, value) in resource.attributes.iter() {
-                merged_attributes.insert(key.clone(), value.clone());
-            }
-        }
-        merged_attributes
-    }
-
-    pub fn by_hive_kind(&self, hive_kind: &str) -> Vec<&CollectedSpan> {
-        self.spans
-            .iter()
-            .filter(|s| {
-                s.attributes
-                    .get("hive.kind")
-                    .map_or(false, |v| v == hive_kind)
-            })
-            .collect()
-    }
-
-    pub fn by_hive_kind_one(&self, hive_kind: &str) -> &CollectedSpan {
-        let spans: Vec<&CollectedSpan> = self
-            .spans
-            .iter()
-            .filter(|s| {
-                s.attributes
-                    .get("hive.kind")
-                    .map_or(false, |v| v == hive_kind)
-            })
-            .collect();
-
-        assert_eq!(
-            spans.len(),
-            1,
-            "Expected exactly one span with hive.kind = {}",
-            hive_kind
-        );
-
-        spans
-            .first()
-            .expect("Expected exactly one span with hive.kind = {hive_kind}")
     }
 }
 

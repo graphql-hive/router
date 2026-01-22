@@ -2,9 +2,8 @@ use ntex::web::test;
 use std::time::Duration;
 
 use crate::testkit::{
-    init_graphql_request, init_router_from_config_inline,
-    otel::{OtlpCollector, SpanCollector},
-    wait_for_readiness, SubgraphsServer,
+    init_graphql_request, init_router_from_config_inline, otel::OtlpCollector, wait_for_readiness,
+    SubgraphsServer,
 };
 
 /// Verify OTLP exporter works with HTTP protocol
@@ -53,23 +52,20 @@ async fn test_otlp_http_export_with_graphql_request() {
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
-    let http_server_span = first_request_spans.by_hive_kind_one("http.server");
-    let operation_span = first_request_spans.by_hive_kind_one("graphql.operation");
-    let parse_span = first_request_spans.by_hive_kind_one("graphql.parse");
-    let validate_span = first_request_spans.by_hive_kind_one("graphql.validate");
-    let variable_coercion_span = first_request_spans.by_hive_kind_one("graphql.variable_coercion");
-    let normalization_span = first_request_spans.by_hive_kind_one("graphql.normalize");
-    let plan_span = first_request_spans.by_hive_kind_one("graphql.plan");
-    let execution_span = first_request_spans.by_hive_kind_one("graphql.execute");
-    let subgraph_operation_span =
-        first_request_spans.by_hive_kind_one("graphql.subgraph.operation");
-    let http_inflight_span = first_request_spans.by_hive_kind_one("http.inflight");
-    let http_client_span = first_request_spans.by_hive_kind_one("http.client");
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
+    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
+    let parse_span = trace.span_by_hive_kind_one("graphql.parse");
+    let validate_span = trace.span_by_hive_kind_one("graphql.validate");
+    let variable_coercion_span = trace.span_by_hive_kind_one("graphql.variable_coercion");
+    let normalization_span = trace.span_by_hive_kind_one("graphql.normalize");
+    let plan_span = trace.span_by_hive_kind_one("graphql.plan");
+    let execution_span = trace.span_by_hive_kind_one("graphql.execute");
+    let subgraph_operation_span = trace.span_by_hive_kind_one("graphql.subgraph.operation");
+    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
 
     insta::assert_snapshot!(
       http_server_span,
@@ -292,23 +288,20 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
-    let http_server_span = first_request_spans.by_hive_kind_one("http.server");
-    let operation_span = first_request_spans.by_hive_kind_one("graphql.operation");
-    let parse_span = first_request_spans.by_hive_kind_one("graphql.parse");
-    let validate_span = first_request_spans.by_hive_kind_one("graphql.validate");
-    let variable_coercion_span = first_request_spans.by_hive_kind_one("graphql.variable_coercion");
-    let normalization_span = first_request_spans.by_hive_kind_one("graphql.normalize");
-    let plan_span = first_request_spans.by_hive_kind_one("graphql.plan");
-    let execution_span = first_request_spans.by_hive_kind_one("graphql.execute");
-    let subgraph_operation_span =
-        first_request_spans.by_hive_kind_one("graphql.subgraph.operation");
-    let http_inflight_span = first_request_spans.by_hive_kind_one("http.inflight");
-    let http_client_span = first_request_spans.by_hive_kind_one("http.client");
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
+    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
+    let parse_span = trace.span_by_hive_kind_one("graphql.parse");
+    let validate_span = trace.span_by_hive_kind_one("graphql.validate");
+    let variable_coercion_span = trace.span_by_hive_kind_one("graphql.variable_coercion");
+    let normalization_span = trace.span_by_hive_kind_one("graphql.normalize");
+    let plan_span = trace.span_by_hive_kind_one("graphql.plan");
+    let execution_span = trace.span_by_hive_kind_one("graphql.execute");
+    let subgraph_operation_span = trace.span_by_hive_kind_one("graphql.subgraph.operation");
+    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
 
     insta::assert_snapshot!(
       http_server_span,

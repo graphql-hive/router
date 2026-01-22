@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Duration};
 
 use crate::testkit::{
     init_graphql_request, init_router_from_config_inline,
-    otel::{OtlpCollector, SpanCollector, TraceParent},
+    otel::{OtlpCollector, TraceParent},
     wait_for_readiness, SubgraphsServer,
 };
 
@@ -63,13 +63,11 @@ async fn test_otlp_http_trace_context_propagation() {
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
-    let http_server_span = first_request_spans.by_hive_kind_one("http.server");
-    let http_client_span = first_request_spans.by_hive_kind_one("http.client");
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
 
     // Verify that http.server has corrent parent span,
     // the one from upstream traceparent
@@ -275,13 +273,11 @@ async fn test_otlp_http_b3_propagation() {
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
-    let http_server_span = first_request_spans.by_hive_kind_one("http.server");
-    let http_client_span = first_request_spans.by_hive_kind_one("http.client");
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
 
     // Verify that http.server has corrent parent span,
     // the one from upstream traceparent
@@ -395,13 +391,11 @@ async fn test_otlp_http_jaeger_propagation() {
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
-    let http_server_span = first_request_spans.by_hive_kind_one("http.server");
-    let http_client_span = first_request_spans.by_hive_kind_one("http.client");
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
 
     // Verify that http.server has corrent parent span,
     // the one from upstream traceparent

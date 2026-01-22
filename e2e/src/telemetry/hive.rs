@@ -2,9 +2,8 @@ use ntex::web::test;
 use std::time::Duration;
 
 use crate::testkit::{
-    init_graphql_request, init_router_from_config_inline,
-    otel::{OtlpCollector, SpanCollector},
-    wait_for_readiness, SubgraphsServer,
+    init_graphql_request, init_router_from_config_inline, otel::OtlpCollector, wait_for_readiness,
+    SubgraphsServer,
 };
 
 /// Verify Hive Console exporter works with HTTP protocol
@@ -89,30 +88,27 @@ async fn test_hive_http_export() {
     assert_eq!(target_ref_header, Some(target));
     assert_eq!(custom_header, Some("bar"));
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
     // Hive Console requires to drop the http.server span
     // and make the graphql.operation the root span.
     assert_eq!(
-        first_request_spans.by_hive_kind("http.server").len(),
-        0,
+        trace.has_span_by_hive_kind("http.server"),
+        false,
         "Unexpected http.server spans"
     );
 
-    let operation_span = first_request_spans.by_hive_kind_one("graphql.operation");
-    let parse_span = first_request_spans.by_hive_kind_one("graphql.parse");
-    let validate_span = first_request_spans.by_hive_kind_one("graphql.validate");
-    let variable_coercion_span = first_request_spans.by_hive_kind_one("graphql.variable_coercion");
-    let normalization_span = first_request_spans.by_hive_kind_one("graphql.normalize");
-    let plan_span = first_request_spans.by_hive_kind_one("graphql.plan");
-    let execution_span = first_request_spans.by_hive_kind_one("graphql.execute");
-    let subgraph_operation_span =
-        first_request_spans.by_hive_kind_one("graphql.subgraph.operation");
-    let http_inflight_span = first_request_spans.by_hive_kind_one("http.inflight");
-    let http_client_span = first_request_spans.by_hive_kind_one("http.client");
+    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
+    let parse_span = trace.span_by_hive_kind_one("graphql.parse");
+    let validate_span = trace.span_by_hive_kind_one("graphql.validate");
+    let variable_coercion_span = trace.span_by_hive_kind_one("graphql.variable_coercion");
+    let normalization_span = trace.span_by_hive_kind_one("graphql.normalize");
+    let plan_span = trace.span_by_hive_kind_one("graphql.plan");
+    let execution_span = trace.span_by_hive_kind_one("graphql.execute");
+    let subgraph_operation_span = trace.span_by_hive_kind_one("graphql.subgraph.operation");
+    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
 
     insta::assert_snapshot!(
       operation_span,
@@ -367,30 +363,27 @@ async fn test_hive_grpc_export() {
     assert_eq!(target_ref_header, Some(target));
     assert_eq!(custom_header, Some("bar"));
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from first request");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
 
     // Hive Console requires to drop the http.server span
     // and make the graphql.operation the root span.
     assert_eq!(
-        first_request_spans.by_hive_kind("http.server").len(),
-        0,
+        trace.has_span_by_hive_kind("http.server"),
+        false,
         "Unexpected http.server spans"
     );
 
-    let operation_span = first_request_spans.by_hive_kind_one("graphql.operation");
-    let parse_span = first_request_spans.by_hive_kind_one("graphql.parse");
-    let validate_span = first_request_spans.by_hive_kind_one("graphql.validate");
-    let variable_coercion_span = first_request_spans.by_hive_kind_one("graphql.variable_coercion");
-    let normalization_span = first_request_spans.by_hive_kind_one("graphql.normalize");
-    let plan_span = first_request_spans.by_hive_kind_one("graphql.plan");
-    let execution_span = first_request_spans.by_hive_kind_one("graphql.execute");
-    let subgraph_operation_span =
-        first_request_spans.by_hive_kind_one("graphql.subgraph.operation");
-    let http_inflight_span = first_request_spans.by_hive_kind_one("http.inflight");
-    let http_client_span = first_request_spans.by_hive_kind_one("http.client");
+    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
+    let parse_span = trace.span_by_hive_kind_one("graphql.parse");
+    let validate_span = trace.span_by_hive_kind_one("graphql.validate");
+    let variable_coercion_span = trace.span_by_hive_kind_one("graphql.variable_coercion");
+    let normalization_span = trace.span_by_hive_kind_one("graphql.normalize");
+    let plan_span = trace.span_by_hive_kind_one("graphql.plan");
+    let execution_span = trace.span_by_hive_kind_one("graphql.execute");
+    let subgraph_operation_span = trace.span_by_hive_kind_one("graphql.subgraph.operation");
+    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
 
     insta::assert_snapshot!(
       operation_span,

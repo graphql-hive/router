@@ -2,9 +2,7 @@ use ntex::web::test;
 use std::time::Duration;
 
 use crate::testkit::{
-    init_graphql_request, init_router_from_config_inline,
-    otel::{OtlpCollector, SpanCollector},
-    wait_for_readiness,
+    init_graphql_request, init_router_from_config_inline, otel::OtlpCollector, wait_for_readiness,
 };
 
 /// Verify introspection queries are NOT instrumented by default
@@ -106,12 +104,12 @@ async fn test_otlp_introspection_enabled() {
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let first_request_spans: SpanCollector = otlp_collector
-        .spans_from_request(0)
-        .await
-        .expect("Failed to get spans from introspection request when enabled");
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces
+        .first()
+        .expect("Failed to get trace from introspection request when enabled");
 
-    let http_server_span = first_request_spans.by_hive_kind_one("http.server");
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
     assert_eq!(
         http_server_span.name, "http.server",
         "Should have an http.server span for introspection when enabled"
