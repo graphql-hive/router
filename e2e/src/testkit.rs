@@ -1,4 +1,11 @@
-use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    any::Any,
+    fmt::Display,
+    io::{Seek, Write},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
@@ -17,9 +24,87 @@ use ntex::{
 };
 use sonic_rs::json;
 use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState};
+use tempfile::NamedTempFile;
 use tracing::{info, warn};
 
 pub mod otel;
+
+/// A temporary supergraph file that can have its ports replaced dynamically.
+/// This struct wraps a NamedTempFile and provides convenient methods for
+/// manipulating the supergraph schema URLs.
+///
+/// # Examples
+///
+/// Replace all subgraph ports:
+/// ```ignore
+/// let mut supergraph = SupergraphFile::from_file("supergraph.graphql")?;
+/// supergraph.subgraph_port(5000)?;
+/// let config = load_config(Some(supergraph.path().to_str().unwrap().to_string()))?;
+/// ```
+///
+/// Replace port for a specific subgraph:
+/// ```ignore
+/// let mut supergraph = SupergraphFile::from_file("supergraph.graphql")?;
+/// supergraph.subgraph_port_for("accounts", 5000)?;
+/// supergraph.subgraph_port_for("products", 5001)?;
+/// let config = load_config(Some(supergraph.path().to_str().unwrap().to_string()))?;
+/// ```
+pub struct SupergraphFile {
+    temp_file: NamedTempFile,
+    original_content: String,
+}
+
+impl SupergraphFile {
+    /// Create a new SupergraphFile from an existing file path.
+    ///
+    /// Creates a temporary copy of the file with the original content preserved.
+    /// The temporary file will be automatically deleted when this struct is dropped.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the supergraph file to copy
+    ///
+    /// # Returns
+    /// Result containing the SupergraphFile or an IO error
+    ///
+    /// # Examples
+    /// ```ignore
+    /// let supergraph = SupergraphFile::from_file("e2e/supergraph.graphql")?;
+    /// ```
+    pub fn from_file(path: &str) -> std::io::Result<Self> {
+        let supergraph_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+        let original_content = std::fs::read_to_string(supergraph_path)?;
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(original_content.as_bytes())?;
+        temp_file.flush()?;
+
+        Ok(SupergraphFile {
+            temp_file,
+            original_content,
+        })
+    }
+
+    /// Replace the port in all subgraph URLs
+    pub fn subgraph_port(&mut self, port: u16) -> std::io::Result<()> {
+        // Replace port in URLs for subgraphs
+        let updated_content = self
+            .original_content
+            .replace("http://0.0.0.0:4200/", &format!("http://0.0.0.0:{}/", port));
+
+        // Clear the file
+        self.temp_file.seek(std::io::SeekFrom::Start(0))?;
+        self.temp_file.as_file().set_len(0)?;
+        // Write new content
+        self.temp_file.write_all(updated_content.as_bytes())?;
+        self.temp_file.flush()?;
+
+        Ok(())
+    }
+
+    /// Get the path to the temporary file
+    pub fn path(&self) -> &std::path::Path {
+        self.temp_file.path()
+    }
+}
 
 pub fn init_graphql_request(op: &str, variables: Option<sonic_rs::Value>) -> TestRequest {
     let body = json!({
@@ -78,6 +163,8 @@ where
 pub struct SubgraphsServer {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     subgraph_shared_state: Arc<SubgraphsServiceState>,
+    pub port: u16,
+    host: String,
 }
 
 impl Drop for SubgraphsServer {
@@ -94,12 +181,24 @@ impl SubgraphsServer {
         Self::start_with_port(4200).await
     }
 
+    pub async fn start_on_random_port() -> Self {
+        Self::start_with_port(0).await
+    }
+
     pub async fn start_with_port(port: u16) -> Self {
-        let (_server_handle, shutdown_tx, subgraph_shared_state) =
+        let (_server_handle, shutdown_tx, subgraph_shared_state, addr_rx) =
             start_subgraphs_server(Some(port));
 
+        // Wait for the server to bind and get the actual assigned address
+        let (host, port) = addr_rx.await.expect("Failed to receive address");
+
         loop {
-            match reqwest::get(&subgraph_shared_state.health_check_url).await {
+            match reqwest::get(&format!(
+                "http://{host}:{port}/{}",
+                subgraph_shared_state.health_check_endpoint
+            ))
+            .await
+            {
                 Ok(response) if response.status().is_success() => {
                     // Server is up and running.
                     break;
@@ -114,6 +213,8 @@ impl SubgraphsServer {
         Self {
             shutdown_tx: Some(shutdown_tx),
             subgraph_shared_state,
+            port,
+            host,
         }
     }
 
@@ -257,5 +358,11 @@ impl Drop for EnvVarGuard {
 impl<T> Drop for TestRouterApp<T> {
     fn drop(&mut self) {
         self.bg_tasks_manager.shutdown();
+    }
+}
+
+impl Display for SupergraphFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.path().display())
     }
 }

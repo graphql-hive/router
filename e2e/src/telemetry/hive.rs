@@ -3,22 +3,30 @@ use std::time::Duration;
 
 use crate::testkit::{
     init_graphql_request, init_router_from_config_inline, otel::OtlpCollector, wait_for_readiness,
-    SubgraphsServer,
+    SubgraphsServer, SupergraphFile,
 };
 
 /// Verify Hive Console exporter works with HTTP protocol
 #[ntex::test]
 async fn test_hive_http_export() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    // let supergraph_path =
+    //     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
 
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
+
+    // assert_eq!(subgraphs.port, 20);
     let token = "your_token_here";
     let target = "my-org/my-project/my-target";
 
@@ -45,10 +53,7 @@ async fn test_hive_http_export() {
               usage_reporting:
                 enabled: false
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint,
-            token,
-            target,
+            supergraph, otlp_endpoint, token, target,
         )
         .as_str(),
     )
@@ -231,7 +236,7 @@ async fn test_hive_http_export() {
         http.method: POST
         http.route: /accounts
         http.status_code: 200
-        http.url: http://0.0.0.0:4200/accounts
+        http.url: http://0.0.0.0:{port}/accounts
         target: hive-router
     "
     );
@@ -270,9 +275,9 @@ async fn test_hive_http_export() {
         http.response.status_code: 200
         network.protocol.version: 1.1
         server.address: 0.0.0.0
-        server.port: 4200
+        server.port: {port}
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://0.0.0.0:{port}/accounts
         url.path: /accounts
         url.scheme: http
     "
