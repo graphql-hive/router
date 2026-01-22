@@ -2,8 +2,9 @@ use ntex::web::test;
 use std::time::Duration;
 
 use crate::testkit::{
-    init_graphql_request, init_router_from_config_inline, otel::OtlpCollector, wait_for_readiness,
-    SubgraphsServer,
+    init_graphql_request, init_router_from_config_inline,
+    otel::{CollectedSpan, OtlpCollector},
+    wait_for_readiness, SubgraphsServer,
 };
 
 /// Verify OTLP exporter works with HTTP protocol
@@ -667,6 +668,94 @@ async fn test_otlp_grpc_metadata() {
         Some(&("custom-header".to_string(), "custom-value".to_string())),
         "Custom header not found in request headers"
     );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
+}
+
+/// Verify cache.hit attributes are reported correctly
+#[ntex::test]
+async fn test_otlp_cache_hits() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let mut app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    // Should hit the caches
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    let all_traces = otlp_collector.traces().await;
+    let first_trace = all_traces.first().expect("Failed to get first trace");
+    let second_trace = all_traces.get(1).expect("Failed to get second trace");
+
+    let first_parse_span = first_trace.span_by_hive_kind_one("graphql.parse");
+    let first_validate_span = first_trace.span_by_hive_kind_one("graphql.validate");
+    let first_normalization_span = first_trace.span_by_hive_kind_one("graphql.normalize");
+    let first_plan_span = first_trace.span_by_hive_kind_one("graphql.plan");
+
+    let second_parse_span = second_trace.span_by_hive_kind_one("graphql.parse");
+    let second_validate_span = second_trace.span_by_hive_kind_one("graphql.validate");
+    let second_normalization_span = second_trace.span_by_hive_kind_one("graphql.normalize");
+    let second_plan_span = second_trace.span_by_hive_kind_one("graphql.plan");
+
+    fn assert_cache_hit(span: &CollectedSpan) {
+        assert_eq!(span.attributes.get("cache.hit"), Some(&"true".to_string()));
+    }
+
+    fn assert_cache_miss(span: &CollectedSpan) {
+        assert_eq!(span.attributes.get("cache.hit"), Some(&"false".to_string()));
+    }
+
+    assert_cache_miss(first_parse_span);
+    assert_cache_miss(first_validate_span);
+    assert_cache_miss(first_normalization_span);
+    assert_cache_miss(first_plan_span);
+
+    assert_cache_hit(second_parse_span);
+    assert_cache_hit(second_validate_span);
+    assert_cache_hit(second_normalization_span);
+    assert_cache_hit(second_plan_span);
 
     app.hold_until_shutdown(Box::new(otlp_collector));
 }
