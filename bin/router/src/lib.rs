@@ -138,7 +138,7 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
             .configure(|m| configure_ntex_app(m, http_config.graphql_endpoint()))
             .default_service(web::to(move || landing_page_handler(lp_gql_path.clone())))
     })
-    .bind(addr.clone())
+    .bind(&addr)
     .map_err(|err| RouterInitError::HttpServerBindError(addr, err))?
     .run()
     .await
