@@ -1,6 +1,10 @@
 ---
 graphql-tools: minor
 hive-console-sdk: patch
+router: patch
+config: patch
+internal: patch
+query-planner: patch
 ---
 
 # Refactor Parse Error Handling

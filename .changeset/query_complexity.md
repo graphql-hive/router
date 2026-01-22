@@ -1,6 +1,7 @@
 ---
 router: patch
 config: patch
+internal: patch
 ---
 
 # New Query Complexity Configuration
