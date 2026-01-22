@@ -226,6 +226,10 @@ fn negotiate_content_type(
     let accept = Accept::from_str(accept_header)?;
 
     if method == Method::GET {
+        // if the client GETs we negotiate with the all supported media type, including HTML
+        // to see if the client wants GraphiQL. we negotiate with everything because browsers
+        // tend to send very broad accept headers that include text/html with highest q-weight,
+        // but would also accept */* which we would interpret as "I want normal GraphQL responses"
         let has_agreed_graphiql = accept
             .negotiate(ALL_RESPONSE_MODES_CONTENT_TYPE_MEDIA_TYPES.iter())
             .is_some_and(|t| *t == HTML_MEDIA_TYPE);
