@@ -31,7 +31,6 @@ async fn test_otlp_http_export_with_graphql_request() {
             tracing:
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
@@ -271,7 +270,6 @@ async fn test_otlp_grpc_export_with_graphql_request() {
             tracing:
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: grpc
                   batch_processor:
@@ -487,6 +485,71 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
+/// Verify OTLP exporters do not export telemetry when disabled
+#[ntex::test]
+async fn test_otlp_disabled() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_grpc_endpoint = otlp_collector.grpc_endpoint();
+    let otlp_http_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let mut app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: grpc
+                  enabled: false
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+                - kind: otlp
+                  endpoint: {}
+                  enabled: false
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_grpc_endpoint,
+            otlp_http_endpoint,
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    assert_eq!(
+        otlp_collector.is_empty().await,
+        true,
+        "Expected no traces to be exported"
+    );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
+}
+
 /// Verify Trace Context Propagation (traceparent)
 /// From upstream to router to subgraph
 #[ntex::test]
@@ -514,7 +577,6 @@ async fn test_otlp_http_trace_context_propagation() {
                 trace_context: true
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
@@ -632,7 +694,6 @@ async fn test_otlp_http_baggage_propagation() {
                 baggage: true
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
@@ -716,7 +777,6 @@ async fn test_otlp_http_b3_propagation() {
                 b3: true
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
@@ -837,7 +897,6 @@ async fn test_otlp_http_jaeger_propagation() {
                 jaeger: true
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
@@ -955,7 +1014,6 @@ async fn test_otlp_parent_based_sampler() {
                 sampling: 1.0
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
@@ -1050,10 +1108,7 @@ async fn test_otlp_zero_sample_rate() {
               collect:
                 sampling: 0.0
               exporters:
-                - kind: stdout
-                  enabled: true
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
@@ -1114,7 +1169,6 @@ async fn test_deprecated_span_attributes() {
                 trace_context: true
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: grpc
                   batch_processor:
@@ -1240,7 +1294,6 @@ async fn test_spec_and_deprecated_span_attributes() {
                 trace_context: true
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: grpc
                   batch_processor:
@@ -1378,7 +1431,6 @@ async fn test_otlp_introspection_disabled_by_default() {
             tracing:
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
@@ -1434,7 +1486,6 @@ async fn test_otlp_introspection_enabled() {
                 introspection: true
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
@@ -1492,7 +1543,6 @@ async fn test_otlp_http_headers() {
             tracing:
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   http:
@@ -1555,7 +1605,6 @@ async fn test_otlp_grpc_metadata() {
             tracing:
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: grpc
                   grpc:
@@ -1622,7 +1671,6 @@ async fn test_default_client_identification() {
             tracing:
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   http:
@@ -1705,7 +1753,6 @@ async fn test_custom_client_identification() {
             tracing:
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   http:
@@ -1785,7 +1832,6 @@ async fn test_default_resource_attributes() {
             tracing:
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
@@ -1863,7 +1909,6 @@ async fn test_custom_resource_attributes() {
             tracing:
               exporters:
                 - kind: otlp
-                  enabled: true
                   endpoint: {}
                   protocol: http
                   batch_processor:
