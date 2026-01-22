@@ -2,9 +2,15 @@ use std::collections::{BTreeSet, HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
-use hive_router_query_planner::planner::plan_nodes::{
-    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
-    QueryPlan, SequenceNode,
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
+};
+use hive_router_query_planner::{
+    planner::plan_nodes::{
+        ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode,
+        PlanNode, QueryPlan, SequenceNode,
+    },
+    state::supergraph_state::OperationKind,
 };
 use http::HeaderMap;
 use sonic_rs::ValueRef;
@@ -56,6 +62,7 @@ pub struct QueryPlanExecutionContext<'exec> {
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
+    pub span: &'exec GraphQLOperationSpan,
 }
 
 pub struct PlanExecutionOutput {
@@ -101,7 +108,13 @@ pub async fn execute_query_plan<'exec>(
         })?;
 
     let final_response = &exec_ctx.final_response;
-    let error_count = exec_ctx.errors.len(); // Added for usage reporting
+    let error_count = exec_ctx.errors.len();
+    if error_count > 0 {
+        ctx.span.record_error_count(error_count);
+        ctx.span
+            .record_errors(|| exec_ctx.errors.iter().map(|e| e.into()).collect());
+    }
+
     let body = project_by_operation(
         final_response,
         exec_ctx.errors,
@@ -228,6 +241,7 @@ impl<'exec> Executor<'exec> {
         ctx: &mut ExecutionContext<'exec>,
         node: &'exec FetchNode,
     ) -> Result<(), PlanExecutionError> {
+        // here
         match self.execute_fetch_node(node, None).await {
             Ok(result) => self.process_job_result(ctx, result),
             Err(err) => {
@@ -255,6 +269,7 @@ impl<'exec> Executor<'exec> {
         ctx: &mut ExecutionContext<'exec>,
         node: &'exec ParallelNode,
     ) -> Result<(), PlanExecutionError> {
+        // here
         let mut scope = ConcurrencyScope::new();
 
         for child in &node.nodes {
@@ -284,6 +299,7 @@ impl<'exec> Executor<'exec> {
         ctx: &mut ExecutionContext<'exec>,
         node: &'exec PlanNode,
     ) -> Result<(), PlanExecutionError> {
+        // here
         match node {
             PlanNode::Fetch(fetch_node) => match self.execute_fetch_node(fetch_node, None).await {
                 Ok(job) => {
@@ -615,6 +631,9 @@ impl<'exec> Executor<'exec> {
         node: &'exec FetchNode,
         representations: Option<Vec<u8>>,
     ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
+        let span = GraphQLSubgraphOperationSpan::new(node.service_name.as_str());
+        let _guard = span.enter();
+        span.record_document(&node.operation.document_str);
         // TODO: We could optimize header map creation by caching them per service name
         let mut headers_map = HeaderMap::new();
         modify_subgraph_request_headers(
@@ -640,6 +659,16 @@ impl<'exec> Executor<'exec> {
             extensions: None,
         };
 
+        span.record_operation_identity(GraphQLSpanOperationIdentity {
+            name: subgraph_request.operation_name,
+            operation_type: match node.operation_kind {
+                Some(OperationKind::Query) | None => "query",
+                Some(OperationKind::Mutation) => "mutation",
+                Some(OperationKind::Subscription) => "subscription",
+            },
+            client_document_hash: node.operation.hash.to_string().as_str(),
+        });
+
         if let Some(jwt_forwarding_plan) = &self.jwt_forwarding_plan {
             subgraph_request.add_request_extensions_field(
                 jwt_forwarding_plan.extension_field_name.clone(),
@@ -647,13 +676,22 @@ impl<'exec> Executor<'exec> {
             );
         }
 
+        let response = self
+            .executors
+            .execute(&node.service_name, subgraph_request, self.client_request)
+            .await;
+
+        if let Some(errors) = &response.errors {
+            if !errors.is_empty() {
+                span.record_error_count(errors.len());
+                span.record_errors(|| errors.iter().map(|e| e.into()).collect());
+            }
+        }
+
         Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
             subgraph_name: &node.service_name,
-            response: self
-                .executors
-                .execute(&node.service_name, subgraph_request, self.client_request)
-                .await,
+            response,
         }))
     }
 

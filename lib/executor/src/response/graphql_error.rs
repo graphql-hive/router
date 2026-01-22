@@ -1,6 +1,7 @@
 use core::fmt;
 use graphql_tools::parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
+use hive_router_internal::graphql::{ObservedError, PathSegment};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use sonic_rs::Value;
 use std::collections::HashMap;
@@ -198,6 +199,23 @@ impl GraphQLError {
     pub fn add_affected_path<TStr: Into<String>>(mut self, affected_path: TStr) -> Self {
         self.extensions.affected_path = Some(affected_path.into());
         self
+    }
+}
+
+impl From<&GraphQLError> for ObservedError {
+    fn from(value: &GraphQLError) -> Self {
+        Self {
+            code: value.extensions.code.clone(),
+            message: value.message.clone(),
+            path: value.path.as_ref().map(|p| {
+                ObservedError::format_path(p.segments.iter().map(|segment| match segment {
+                    GraphQLErrorPathSegment::String(s) => PathSegment::Field(s.as_str()),
+                    GraphQLErrorPathSegment::Index(i) => PathSegment::Index(*i),
+                }))
+            }),
+            service_name: value.extensions.service_name.clone(),
+            affected_path: value.extensions.affected_path.clone(),
+        }
     }
 }
 
