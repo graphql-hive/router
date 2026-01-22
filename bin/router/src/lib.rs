@@ -1,5 +1,6 @@
 pub mod background_tasks;
 mod consts;
+pub mod error;
 mod http_utils;
 mod jwt;
 mod logger;
@@ -14,6 +15,7 @@ use std::sync::Arc;
 use crate::{
     background_tasks::BackgroundTasksManager,
     consts::ROUTER_VERSION,
+    error::RouterInitError,
     http_utils::{
         landing_page::landing_page_handler,
         probes::{health_check_handler, readiness_check_handler},
@@ -117,7 +119,7 @@ async fn graphql_endpoint_handler(
     }
 }
 
-pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     configure_logging(&router_config.log);
@@ -136,10 +138,11 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
             .configure(|m| configure_ntex_app(m, http_config.graphql_endpoint()))
             .default_service(web::to(move || landing_page_handler(lp_gql_path.clone())))
     })
-    .bind(addr)?
+    .bind(addr.clone())
+    .map_err(|err| RouterInitError::HttpServerBindError(addr, err))?
     .run()
     .await
-    .map_err(|err| err.into());
+    .map_err(RouterInitError::HttpServerStartError);
 
     info!("server stopped, clearning background tasks");
     bg_tasks_manager.shutdown();
@@ -150,7 +153,7 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     bg_tasks_manager: &mut BackgroundTasksManager,
-) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), Box<dyn std::error::Error>> {
+) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), RouterInitError> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
         false => None,

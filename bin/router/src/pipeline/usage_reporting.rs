@@ -22,9 +22,9 @@ use crate::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum UsageReportingError {
-    #[error("Usage Reporting - Access token is missing. Please provide it via 'HIVE_ACCESS_TOKEN' environment variable or under 'usage_reporting.access_token' in the configuration.")]
+    #[error("Access token is missing. Please provide it via 'HIVE_ACCESS_TOKEN' environment variable or under 'usage_reporting.access_token' in the configuration.")]
     MissingAccessToken,
-    #[error("Usage Reporting - Failed to initialize usage agent: {0}")]
+    #[error("Failed to initialize usage agent: {0}")]
     AgentCreationError(#[from] AgentError),
 }
 
