@@ -511,7 +511,7 @@ fn record_error_events_to_span(span: &Span, errors: Vec<ObservedError>) {
 
     for error in errors {
         let message = &error.message;
-        let mut attributes: Vec<KeyValue> = Vec::with_capacity(5);
+        let mut attributes: Vec<KeyValue> = Vec::with_capacity(6);
         let kind: &'static str = HiveEventKind::GraphQLError.into();
 
         attributes.push(KeyValue::new(HIVE_KIND, kind));
