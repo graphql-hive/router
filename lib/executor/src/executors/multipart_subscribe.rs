@@ -3,6 +3,8 @@ use futures::stream::BoxStream;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 
+use crate::response::subgraph_response::SubgraphResponse;
+
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ParseError {
     #[error("Invalid UTF-8 sequence: {0}")]
@@ -13,7 +15,7 @@ pub enum ParseError {
     InvalidJson(String),
 }
 
-pub fn parse_to_stream<B>(body_stream: B) -> BoxStream<'static, Result<Bytes, ParseError>>
+pub fn parse_to_stream<B>(body_stream: B) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
     B: Body + Send + Unpin + 'static,
     B::Data: Buf + Send,
@@ -29,8 +31,8 @@ where
 
                 if !part_bytes.is_empty() {
                     match parse_part(&part_bytes) {
-                        Ok(Some(payload)) => {
-                            yield Ok(Bytes::from(payload));
+                        Ok(Some(response)) => {
+                            yield Ok(response);
                         }
                         Ok(None) => {}
                         Err(e) => {
@@ -100,7 +102,7 @@ fn extract_boundary_marker(text: &str, start: usize) -> Option<String> {
     Some(boundary.to_string())
 }
 
-fn parse_part(raw: &[u8]) -> Result<Option<String>, ParseError> {
+fn parse_part(raw: &[u8]) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     let text = std::str::from_utf8(raw).map_err(|e| ParseError::InvalidUtf8(e.to_string()))?;
 
     let content = skip_boundary_line(text);
@@ -133,7 +135,7 @@ fn extract_body_after_headers(content: &str) -> &str {
     }
 }
 
-fn extract_payload(body: &str) -> Result<Option<String>, ParseError> {
+fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     use sonic_rs::JsonValueTrait;
 
     let parsed: sonic_rs::Value =
@@ -144,19 +146,40 @@ fn extract_payload(body: &str) -> Result<Option<String>, ParseError> {
     }
 
     if let Some(transport_error) = extract_transport_error(&parsed) {
-        return Ok(Some(transport_error));
+        return deserialize_to_subgraph_response(Bytes::from(transport_error));
     }
 
     if let Some(payload) = parsed.get("payload") {
         if payload.is_null() {
             return Ok(None);
         }
-        return Ok(Some(
-            sonic_rs::to_string(payload).map_err(|e| ParseError::InvalidJson(e.to_string()))?,
-        ));
+        let payload_str =
+            sonic_rs::to_string(payload).map_err(|e| ParseError::InvalidJson(e.to_string()))?;
+        return deserialize_to_subgraph_response(Bytes::from(payload_str));
     }
 
-    Ok(Some(body.to_string()))
+    deserialize_to_subgraph_response(Bytes::from(body.to_owned()))
+}
+
+fn deserialize_to_subgraph_response(
+    bytes: Bytes,
+) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
+    let bytes_ref: &[u8] = &bytes;
+
+    // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'static`.
+    // This is safe because the returned `SubgraphResponse` contains a clone of `bytes`
+    // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
+    // underlying data remains alive as long as the `SubgraphResponse` does.
+    // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
+    // creating a self-referential struct, which is why `unsafe` is required.
+    let bytes_ref: &'static [u8] = unsafe { std::mem::transmute(bytes_ref) };
+
+    sonic_rs::from_slice(bytes_ref)
+        .map_err(|e| ParseError::InvalidJson(e.to_string()))
+        .map(|mut resp: SubgraphResponse<'static>| {
+            resp.bytes = Some(bytes);
+            Some(resp)
+        })
 }
 
 fn is_heartbeat(value: &sonic_rs::Value) -> bool {
@@ -182,54 +205,51 @@ fn extract_transport_error(value: &sonic_rs::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
 
     #[test]
     fn test_parse_part_with_headers() {
         let part_data =
             b"--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{\"reviewAdded\":{\"id\":\"1\"}}}}";
 
-        let payload = parse_part(part_data)
+        let response = parse_part(part_data)
             .expect("Should parse valid part")
-            .expect("Should have payload");
+            .expect("Should have response");
 
-        assert!(payload.contains("reviewAdded"));
-        assert!(payload.contains("id"));
+        assert!(!response.data.is_null());
     }
 
     #[test]
     fn test_parse_part_without_headers() {
         let part_data = b"--graphql\r\n\r\n{\"payload\":{\"data\":{\"value\":1}}}";
 
-        let payload = parse_part(part_data)
+        let response = parse_part(part_data)
             .expect("Should parse part without headers")
-            .expect("Should have payload");
+            .expect("Should have response");
 
-        assert!(payload.contains("value"));
+        assert!(!response.data.is_null());
     }
 
     #[test]
     fn test_extract_payload_with_payload_property() {
         let body = r#"{"payload":{"data":{"reviewAdded":{"id":"1"}}}}"#;
 
-        let payload = extract_payload(body)
+        let response = extract_payload(body)
             .expect("Should extract payload")
-            .expect("Should have payload");
+            .expect("Should have response");
 
-        assert!(payload.contains("reviewAdded"));
-        assert!(payload.contains("id"));
+        assert!(!response.data.is_null());
     }
 
     #[test]
     fn test_extract_payload_without_payload_property() {
         let body = r#"{"data":{"user":{"name":"Alice"}}}"#;
 
-        let payload = extract_payload(body)
+        let response = extract_payload(body)
             .expect("Should extract payload")
-            .expect("Should have payload");
+            .expect("Should have response");
 
-        assert!(payload.contains("user"));
-        assert!(payload.contains("Alice"));
-        assert_eq!(payload, body);
+        assert!(!response.data.is_null());
     }
 
     #[test]
@@ -245,12 +265,14 @@ mod tests {
     fn test_extract_payload_transport_error() {
         let body = r#"{"payload":null,"errors":[{"message":"Connection lost"}]}"#;
 
-        let payload = extract_payload(body)
+        let response = extract_payload(body)
             .expect("Should extract error")
             .expect("Should have error response");
 
-        assert!(payload.contains("errors"));
-        assert!(payload.contains("Connection lost"));
+        assert!(response.errors.is_some());
+        let errors = response.errors.unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, "Connection lost");
     }
 
     #[test]
@@ -332,8 +354,8 @@ mod tests {
         assert!(first.is_some());
         let first_result = first.unwrap();
         assert!(first_result.is_ok());
-        let payload = first_result.unwrap();
-        assert!(std::str::from_utf8(&payload).unwrap().contains("test"));
+        let response = first_result.unwrap();
+        assert!(!response.data.is_null());
 
         let second = stream.next().await;
         assert!(second.is_none());
@@ -364,17 +386,15 @@ mod tests {
         assert!(first.is_some());
         let first_result = first.unwrap();
         assert!(first_result.is_ok());
-        let payload = String::from_utf8(first_result.unwrap().to_vec()).unwrap();
-        assert!(payload.contains("value"));
-        assert!(payload.contains("1"));
+        let response = first_result.unwrap();
+        assert!(!response.data.is_null());
 
         let second = stream.next().await;
         assert!(second.is_some());
         let second_result = second.unwrap();
         assert!(second_result.is_ok());
-        let payload = String::from_utf8(second_result.unwrap().to_vec()).unwrap();
-        assert!(payload.contains("value"));
-        assert!(payload.contains("2"));
+        let response = second_result.unwrap();
+        assert!(!response.data.is_null());
 
         let third = stream.next().await;
         assert!(third.is_none());
@@ -399,8 +419,8 @@ mod tests {
         assert!(first.is_some());
         let first_result = first.unwrap();
         assert!(first_result.is_ok());
-        let payload = String::from_utf8(first_result.unwrap().to_vec()).unwrap();
-        assert!(payload.contains("test"));
+        let response = first_result.unwrap();
+        assert!(!response.data.is_null());
 
         let second = stream.next().await;
         assert!(second.is_none());
@@ -425,9 +445,11 @@ mod tests {
         assert!(first.is_some());
         let first_result = first.unwrap();
         assert!(first_result.is_ok());
-        let payload = String::from_utf8(first_result.unwrap().to_vec()).unwrap();
-        assert!(payload.contains("errors"));
-        assert!(payload.contains("Connection lost"));
+        let response = first_result.unwrap();
+        assert!(response.errors.is_some());
+        let errors = response.errors.unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, "Connection lost");
 
         let second = stream.next().await;
         assert!(second.is_none());
@@ -452,9 +474,8 @@ mod tests {
         assert!(first.is_some());
         let first_result = first.unwrap();
         assert!(first_result.is_ok());
-        let payload = String::from_utf8(first_result.unwrap().to_vec()).unwrap();
-        assert!(payload.contains("test"));
-        assert!(payload.contains("data"));
+        let response = first_result.unwrap();
+        assert!(!response.data.is_null());
 
         let second = stream.next().await;
         assert!(second.is_none());
@@ -479,10 +500,8 @@ mod tests {
         assert!(first.is_some());
         let first_result = first.unwrap();
         assert!(first_result.is_ok());
-        let payload = String::from_utf8(first_result.unwrap().to_vec()).unwrap();
-        assert!(payload.contains("Alice"));
-        assert!(payload.contains("user"));
-        assert!(payload.contains("data"));
+        let response = first_result.unwrap();
+        assert!(!response.data.is_null());
 
         let second = stream.next().await;
         assert!(second.is_none());

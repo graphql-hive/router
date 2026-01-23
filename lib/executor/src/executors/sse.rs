@@ -3,15 +3,21 @@ use futures::stream::BoxStream;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 
+use crate::response::subgraph_response::SubgraphResponse;
+
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ParseError {
     #[error("Invalid UTF-8 sequence: {0}")]
     InvalidUtf8(String),
     #[error("Stream read error: {0}")]
     StreamReadError(String),
+    #[error("Invalid JSON: {0}")]
+    InvalidJson(String),
 }
 
-pub fn parse_to_stream<B>(body_stream: B) -> BoxStream<'static, Result<Bytes, ParseError>>
+pub fn parse_to_stream<B>(
+    body_stream: B,
+) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
     B: Body + Send + Unpin + 'static,
     B::Data: Buf + Send,
@@ -30,7 +36,15 @@ where
 
                         match sse_event.event.as_deref() {
                             Some("next") if !sse_event.data.is_empty() => {
-                                yield Ok(Bytes::from(sse_event.data.clone().into_bytes()));
+                                match deserialize_to_subgraph_response(Bytes::from(sse_event.data.clone())) {
+                                    Ok(response) => {
+                                        yield Ok(response);
+                                    }
+                                    Err(e) => {
+                                        yield Err(e);
+                                        return;
+                                    }
+                                }
                             }
                             Some("complete") => {
                                 return;
@@ -140,6 +154,25 @@ fn parse(raw: &[u8]) -> Result<Vec<SubgraphSseEvent>, ParseError> {
     }
 
     Ok(events)
+}
+
+fn deserialize_to_subgraph_response(bytes: Bytes) -> Result<SubgraphResponse<'static>, ParseError> {
+    let bytes_ref: &[u8] = &bytes;
+
+    // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'static`.
+    // This is safe because the returned `SubgraphResponse` contains a clone of `bytes`
+    // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
+    // underlying data remains alive as long as the `SubgraphResponse` does.
+    // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
+    // creating a self-referential struct, which is why `unsafe` is required.
+    let bytes_ref: &'static [u8] = unsafe { std::mem::transmute(bytes_ref) };
+
+    sonic_rs::from_slice(bytes_ref)
+        .map_err(|e| ParseError::InvalidJson(e.to_string()))
+        .map(|mut resp: SubgraphResponse<'static>| {
+            resp.bytes = Some(bytes);
+            resp
+        })
 }
 
 #[cfg(test)]
@@ -254,14 +287,17 @@ event: complete
 
     #[tokio::test]
     async fn test_parse_to_stream_chunked_events() {
+        use bytes::Bytes;
         use futures::StreamExt;
         use http_body_util::StreamBody;
         use hyper::body::Frame;
 
         // chunked delivery where events are split across multiple chunks
         let chunks: Vec<Result<Frame<Bytes>, std::convert::Infallible>> = vec![
-            Ok(Frame::data(Bytes::from("event: next\ndata: hel"))),
-            Ok(Frame::data(Bytes::from("lo world\n\neve"))),
+            Ok(Frame::data(Bytes::from(
+                "event: next\ndata: {\"data\":{\"hello\":\"wor",
+            ))),
+            Ok(Frame::data(Bytes::from("ld\"}}\n\neve"))),
             Ok(Frame::data(Bytes::from("nt: complete\n\n"))),
         ];
 
@@ -272,7 +308,8 @@ event: complete
         assert!(first.is_some());
         let first_result = first.unwrap();
         assert!(first_result.is_ok());
-        assert_eq!(first_result.unwrap(), Bytes::from("hello world"));
+        let response = first_result.unwrap();
+        assert!(!response.data.is_null());
 
         let second = stream.next().await;
         assert!(second.is_none());
