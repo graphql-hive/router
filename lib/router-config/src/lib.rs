@@ -9,6 +9,7 @@ pub mod introspection_policy;
 pub mod jwt_auth;
 pub mod limits;
 pub mod log;
+pub mod non_empty_string;
 pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
@@ -16,7 +17,6 @@ pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
 pub mod usage_reporting;
-pub mod non_empty_string;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
