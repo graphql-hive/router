@@ -94,6 +94,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.3.5 (2026-01-22)
+
+### Fixes
+
+#### New Query Complexity Configuration in `hive-router` and `hive-router-config`
+
+We have introduced a new configuration module for query complexity in the Hive Router. 
+
+This includes new validation rules to enforce maximum query depth, maximum number of directives in the incoming GraphQL operation, helping to prevent overly complex queries that could impact performance.
+
+### Max Depth
+
+By default, it is disabled, but you can enable and configure it in your router configuration as follows:
+
+```yaml
+limits:
+  max_depth:
+    n: 10  # Set the maximum allowed depth for queries
+```
+
+This configuration allows you to set a maximum depth for incoming GraphQL queries, enhancing the robustness of your API by mitigating the risk of deep-nested queries.
+
+### Max Directives
+
+You can also limit the number of directives in incoming GraphQL operations. This is also disabled by default. You can enable and configure it as follows:
+
+```yaml
+limits:
+  max_directives:
+    n: 5  # Set the maximum allowed number of directives
+```
+
+This configuration helps to prevent excessive use of directives in queries, which can lead to performance issues.
+
+### Max Tokens
+
+Additionally, we have introduced a new configuration option to limit the maximum number of tokens in incoming GraphQL operations. This feature is designed to prevent excessively large queries that could impact server performance.
+
+By default, this limit is disabled. You can enable and configure it in your router configuration as follows:
+
+```yaml
+limits:
+  max_tokens:
+    n: 1000  # Set the maximum allowed number of tokens
+```
+
+This configuration allows you to set a maximum token count for incoming GraphQL queries, helping to ensure that queries remain manageable and do not overwhelm the server.
+
+With these new configurations, you can better manage the complexity of incoming GraphQL queries and ensure the stability and performance of your API.
+
+#### Refactor Parse Error Handling in `graphql-tools`
+
+Breaking;
+- `ParseError(String)` is now `ParseError(InternalError<'static>)`.
+- - So that the internals of the error can be better structured and more informative, such as including line and column information.
+- `ParseError`s are no longer prefixed with "query parse error: " in their Display implementation.
+
+## 6.3.4 (2026-01-16)
+
+### Fixes
+
+#### Add `minify_query_document` for optimized query minification
+
+Implements `minify_query_document` to minify parsed GraphQL operations directly, avoiding the need for an intermediate `Display` step. This new approach uses `itoa` and `ryu` for efficient integer and float formatting.
+
+By minifying the query document representation instead of the query string, we achieve performance improvements: query minification time is reduced from 4μs to 500ns, and unnecessary allocations are eliminated.
+
+Includes benchmarks and tests to validate the performance gains and correctness of the new implementation.
+
+#### Use native TLS instead of vendored
+
+In this release, we've changed the TLS settings to use `native` TLS certificates provided by the OS, instead of using certificates that are bundled (`vendored`) into the router binary. 
+
+This change provides more flexibiliy to `router` users, as you can extend and have full control over the certificates used to make subgraph requests, by extending or changing the certificates installed on your machine, or Docker container.
+
+The `router` is using [AWS-LC](https://aws.amazon.com/security/opensource/cryptography/) as the certificate library.
+
+### If you are using `hive-router` Crate
+
+If you're using the `hive-router` crate as a library, the router provides the `init_rustls_crypto_provider()` function that automatically configures AWS-LC as the default cryptographic provider. You can call this function early in your application startup before initializing the router. Alternatively, you can configure your own `rustls` provider before calling router initialization. See the [`rustls` documentation](https://github.com/rustls/rustls#cryptography-providers) for instructions on setting up a custom provider.
+
+## 6.3.3 (2026-01-14)
+
+### Fixes
+
+#### Improved Performance for Expressions
+
+This change introduces "lazy evaluation" for contextual information used in expressions (like dynamic timeouts).
+
+Previously, the Router would prepare and clone data (such as request details or subgraph names) every time it performed an operation, even if that data wasn't actually needed.
+Now, this work is only performed "on-demand" - for example, only if an expression is actually being executed.
+This reduces unnecessary CPU usage and memory allocations during the hot path of request execution.
+
+#### Moves `graphql-tools` to router repository
+
+This change moves the `graphql-tools` package to the Hive Router repository.
+
+## Own GraphQL Parser
+
+This change also introduces our own GraphQL parser (copy of `graphql_parser`), which is now used across all packages in the Hive Router monorepo. This allows us to have better control over parsing and potentially optimize it for our specific use cases.
+
+## 6.3.2 (2026-01-12)
+
+### Fixes
+
+#### Bump hive-router-config version
+
+Somehow the `hive-router-internal` crate was published with an older version of the `hive-router-config` dependency.
+
+## 6.3.1 (2026-01-12)
+
+### Fixes
+
+#### Improve JSON response serialization
+
+This PR significantly improves JSON response serialization (response projection) performance (50% faster) by replacing the existing character-by-character string escaping logic with a SIMD-accelerated implementation adapted from [sonic-rs](https://github.com/cloudwego/sonic-rs).
+
+#### Fixed response projection for fields on different concrete types of interfaces and unions.
+
+When a query included fragments on an abstract type (interface or union) that selected fields with the same name but different return types, the projection would incorrectly use a single, merged plan for all types. This caused projection to fail when processing responses where different concrete types had different field implementations.
+
+For example, with `... on A { children { id } }` and `... on B { children { id } }` where `A.children` returns `[AChild]` and `B.children` returns `[BChild]`, the projection would fail to correctly distinguish between the types and return incomplete or incorrect data.
+
+The fix introduces type-aware plan merging, which preserves the context of which concrete types a field came from. During response projection, the type is now determined dynamically for each object, ensuring the correct field type is used.
+
+In addition, a refactor of the response projection logic was performed to improve performance.
+
 ## 6.3.0 (2025-12-12)
 
 ### Features

@@ -1,10 +1,11 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use futures::stream::BoxStream;
 use http::HeaderMap;
 use sonic_rs::Value;
+
+use crate::response::subgraph_response::SubgraphResponse;
 
 #[async_trait]
 pub trait SubgraphExecutor {
@@ -12,20 +13,13 @@ pub trait SubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> HttpExecutionResponse;
+    ) -> SubgraphResponse<'a>;
 
     async fn subscribe<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> BoxStream<
-        'static,
-        // the stream technically yields execution responses
-        // we use the same one because I think it's ok to have
-        // every event also include the headers for easier
-        // plugin lifecycle design?
-        HttpExecutionResponse,
-    >;
+    ) -> BoxStream<'static, SubgraphResponse<'static>>;
 
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
     where
@@ -58,9 +52,4 @@ impl SubgraphExecutionRequest<'_> {
             .get_or_insert_with(HashMap::new)
             .insert(key, value);
     }
-}
-
-pub struct HttpExecutionResponse {
-    pub body: Bytes,
-    pub headers: HeaderMap,
 }

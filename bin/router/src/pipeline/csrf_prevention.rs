@@ -1,7 +1,7 @@
 use hive_router_config::csrf::CSRFPreventionConfig;
 use ntex::web::HttpRequest;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineError;
 
 // NON_PREFLIGHTED_CONTENT_TYPES are content types that do not require a preflight
 // OPTIONS request. These are content types that are considered "simple" by the CORS
@@ -15,7 +15,7 @@ const NON_PREFLIGHTED_CONTENT_TYPES: [&str; 3] = [
 
 #[inline]
 pub fn perform_csrf_prevention(
-    req: &mut HttpRequest,
+    req: &HttpRequest,
     csrf_config: &CSRFPreventionConfig,
 ) -> Result<(), PipelineError> {
     // If CSRF prevention is not configured or disabled, skip the checks.
@@ -39,7 +39,7 @@ pub fn perform_csrf_prevention(
     if has_required_header {
         Ok(())
     } else {
-        Err(req.new_pipeline_error(PipelineErrorVariant::CsrfPreventionFailed))
+        Err(PipelineError::CsrfPreventionFailed)
     }
 }
 

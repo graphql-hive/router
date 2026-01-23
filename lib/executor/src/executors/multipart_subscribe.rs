@@ -95,7 +95,7 @@ fn extract_boundary_marker(text: &str, start: usize) -> Option<String> {
     let boundary_end = after_dashes
         .find('\r')
         .or_else(|| after_dashes.find('\n'))?;
-    
+
     let boundary = &after_dashes[..boundary_end];
     Some(boundary.to_string())
 }
@@ -161,8 +161,8 @@ fn extract_payload(body: &str) -> Result<Option<String>, ParseError> {
 
 fn is_heartbeat(value: &sonic_rs::Value) -> bool {
     use sonic_rs::{JsonContainerTrait, JsonValueTrait};
-    
-    value.is_object() && value.as_object().map_or(false, |obj| obj.is_empty())
+
+    value.is_object() && value.as_object().is_some_and(|obj| obj.is_empty())
 }
 
 fn extract_transport_error(value: &sonic_rs::Value) -> Option<String> {

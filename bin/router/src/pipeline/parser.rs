@@ -1,12 +1,15 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use graphql_parser::query::Document;
-use hive_router_query_planner::utils::parsing::safe_parse_operation;
-use ntex::web::HttpRequest;
+use combine::easy::Info;
+use graphql_tools::parser::query::Document;
+use graphql_tools::validation::utils::ValidationError;
+use hive_router_query_planner::utils::parsing::{
+    safe_parse_operation, safe_parse_operation_with_token_limit,
+};
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::shared_state::RouterSharedState;
 use tracing::{error, trace};
@@ -19,8 +22,7 @@ pub struct GraphQLParserPayload {
 
 #[inline]
 pub async fn parse_operation_with_cache(
-    req: &HttpRequest,
-    app_state: &Arc<RouterSharedState>,
+    app_state: &RouterSharedState,
     execution_params: &ExecutionRequest,
 ) -> Result<GraphQLParserPayload, PipelineError> {
     let cache_key = {
@@ -33,11 +35,29 @@ pub async fn parse_operation_with_cache(
         trace!("Found cached parsed operation for query");
         cached
     } else {
-        let parsed = safe_parse_operation(&execution_params.query).map_err(|err| {
+        let parsed = match app_state.router_config.limits.max_tokens.as_ref() {
+            Some(cfg) => safe_parse_operation_with_token_limit(&execution_params.query, cfg.n),
+            _ => safe_parse_operation(&execution_params.query),
+        }
+        .map_err(|err| {
+            if let Some(combine::stream::easy::Error::Message(Info::Static(msg))) =
+                err.0.errors.first()
+            {
+                if *msg == "Token limit exceeded" {
+                    return PipelineError::ValidationErrors(
+                        vec![ValidationError {
+                            locations: vec![err.0.position],
+                            message: "Token limit exceeded.".to_string(),
+                            error_code: "TOKEN_LIMIT_EXCEEDED",
+                        }]
+                        .into(),
+                    );
+                }
+            }
             error!("Failed to parse GraphQL operation: {}", err);
-            req.new_pipeline_error(PipelineErrorVariant::FailedToParseOperation(err))
+            PipelineError::FailedToParseOperation(err)
         })?;
-        trace!("sucessfully parsed GraphQL operation");
+        trace!("successfully parsed GraphQL operation");
         let parsed_arc = Arc::new(parsed);
         app_state
             .parse_cache

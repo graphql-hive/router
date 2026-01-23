@@ -1,38 +1,35 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::executors::common::HttpExecutionResponse;
-use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
+use crate::executors::dedupe::request_fingerprint;
+use crate::executors::map::InflightRequestsMap;
 use crate::executors::multipart_subscribe;
 use crate::executors::sse;
-use dashmap::DashMap;
+use crate::response::subgraph_response::SubgraphResponse;
 use futures::stream::BoxStream;
-use futures_util::{stream, TryFutureExt};
-use tokio::sync::OnceCell;
+use futures_util::TryFutureExt;
 
 use async_trait::async_trait;
 
-use bytes::{BufMut, Bytes, BytesMut};
-use http::HeaderMap;
+use bytes::{BufMut, Bytes};
 use http::HeaderValue;
+use http::{HeaderMap, StatusCode};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
-use hyper_tls::HttpsConnector;
+use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 use tracing::debug;
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
-use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
 use crate::utils::consts::QUOTE;
 use crate::{executors::common::SubgraphExecutor, json_writer::write_and_escape_string};
 
-#[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
     pub subgraph_name: String,
     pub endpoint: http::Uri,
@@ -40,7 +37,7 @@ pub struct HTTPSubgraphExecutor {
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
     pub dedupe_enabled: bool,
-    pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub in_flight_requests: InflightRequestsMap,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -55,7 +52,7 @@ impl HTTPSubgraphExecutor {
         http_client: Arc<HttpClient>,
         semaphore: Arc<Semaphore>,
         dedupe_enabled: bool,
-        in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+        in_flight_requests: InflightRequestsMap,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -78,9 +75,9 @@ impl HTTPSubgraphExecutor {
         }
     }
 
-    fn build_request_body(
+    fn build_request_body<'a>(
         &self,
-        execution_request: &SubgraphExecutionRequest<'_>,
+        execution_request: &SubgraphExecutionRequest<'a>,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
         let mut body = Vec::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
@@ -142,7 +139,7 @@ impl HTTPSubgraphExecutor {
         body: Vec<u8>,
         headers: HeaderMap,
         timeout: Option<Duration>,
-    ) -> Result<SharedResponse, SubgraphExecutorError> {
+    ) -> Result<HttpResponse, SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
@@ -195,34 +192,19 @@ impl HTTPSubgraphExecutor {
             ));
         }
 
-        Ok(SharedResponse {
+        Ok(HttpResponse {
             status: parts.status,
             body,
-            headers: parts.headers,
+            headers: parts.headers.into(),
         })
     }
+}
 
-    fn error_to_graphql_bytes(&self, error: SubgraphExecutorError) -> Bytes {
-        let graphql_error: GraphQLError = error.into();
-        let mut graphql_error = graphql_error.add_subgraph_name(&self.subgraph_name);
-        graphql_error.message = "Failed to execute request to subgraph".to_string();
-
-        let errors = vec![graphql_error];
-        // This unwrap is safe as GraphQLError serialization shouldn't fail.
-        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-        let mut buffer = BytesMut::new();
-        buffer.put_slice(b"{\"errors\":");
-        buffer.put_slice(&errors_bytes);
-        buffer.put_slice(b"}");
-        buffer.freeze()
-    }
-
-    fn log_error(&self, error: &SubgraphExecutorError) {
-        tracing::error!(
-            error = error as &dyn std::error::Error,
-            "Subgraph executor error"
-        );
-    }
+fn log_error(error: &SubgraphExecutorError) {
+    tracing::error!(
+        error = error as &dyn std::error::Error,
+        "Subgraph executor error"
+    );
 }
 
 #[async_trait]
@@ -232,15 +214,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> HttpExecutionResponse {
+    ) -> SubgraphResponse<'a> {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
             Err(e) => {
-                self.log_error(&e);
-                return HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e),
-                    headers: Default::default(),
-                };
+                log_error(&e);
+                return e.to_subgraph_response(&self.subgraph_name);
             }
         };
 
@@ -254,16 +233,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
             return match self._send_request(body, headers, timeout).await {
-                Ok(shared_response) => HttpExecutionResponse {
-                    body: shared_response.body,
-                    headers: shared_response.headers,
-                },
+                Ok(shared_response) => shared_response
+                    .deserialize_http_response()
+                    .unwrap_or_else(|err| err.to_subgraph_response(&self.subgraph_name)),
                 Err(e) => {
-                    self.log_error(&e);
-                    HttpExecutionResponse {
-                        body: self.error_to_graphql_bytes(e),
-                        headers: Default::default(),
-                    }
+                    log_error(&e);
+                    e.to_subgraph_response(&self.subgraph_name)
                 }
             };
         }
@@ -296,16 +271,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .await;
 
         match response_result {
-            Ok(shared_response) => HttpExecutionResponse {
-                body: shared_response.body.clone(),
-                headers: shared_response.headers.clone(),
-            },
+            Ok(shared_response) => shared_response
+                .deserialize_http_response()
+                .unwrap_or_else(|err| err.to_subgraph_response(&self.subgraph_name)),
             Err(e) => {
-                self.log_error(&e);
-                HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e.clone()),
-                    headers: Default::default(),
-                }
+                log_error(&e);
+                e.to_subgraph_response(&self.subgraph_name)
             }
         }
     }
@@ -315,26 +286,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         connection_timeout: Option<Duration>,
-    ) -> BoxStream<'static, HttpExecutionResponse> {
-        // NOTE: we intentionally stream once errors. read mroe in https://github.com/enisdenjo/graphql-sse/blob/master/PROTOCOL.md#distinct-connections-mode
-
-        // is this heavy in rust? I dont see using closures elsewhere much
-        // TODO: convert to function
-        let stream_once_err = |err: SubgraphExecutorError| {
-            self.log_error(&err);
-            let error_bytes = self.error_to_graphql_bytes(err);
-            Box::pin(stream::once(async move {
-                HttpExecutionResponse {
-                    body: error_bytes,
-                    headers: Default::default(),
-                }
-            }))
-        };
+    ) -> BoxStream<'static, SubgraphResponse<'static>> {
+        // NOTE: we intentionally stream once errors. read more in https://github.com/enisdenjo/graphql-sse/blob/master/PROTOCOL.md#distinct-connections-mode
 
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
             Err(e) => {
-                return stream_once_err(e);
+                log_error(&e);
+                return e.stream_once_subgraph_response(&self.subgraph_name);
             }
         };
 
@@ -346,10 +305,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         {
             Ok(req) => req,
             Err(e) => {
-                return stream_once_err(SubgraphExecutorError::RequestBuildFailure(
+                let e = SubgraphExecutorError::RequestBuildFailure(
                     self.endpoint.to_string(),
                     e.to_string(),
-                ));
+                );
+                log_error(&e);
+                return e.stream_once_subgraph_response(&self.subgraph_name);
             }
         };
 
@@ -383,27 +344,33 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 }
                 Ok(Err(e)) => {
                     // request error
-                    return stream_once_err(SubgraphExecutorError::RequestFailure(
+                    let e = SubgraphExecutorError::RequestFailure(
                         self.endpoint.to_string(),
                         e.to_string(),
-                    ));
+                    );
+                    log_error(&e);
+                    return e.stream_once_subgraph_response(&self.subgraph_name);
                 }
                 Err(_) => {
                     // connection timeout
-                    return stream_once_err(SubgraphExecutorError::RequestTimeout(
+                    let e = SubgraphExecutorError::RequestTimeout(
                         self.endpoint.to_string(),
                         timeout_duration.as_millis(),
-                    ));
+                    );
+                    log_error(&e);
+                    return e.stream_once_subgraph_response(&self.subgraph_name);
                 }
             }
         } else {
             match req_fut.await {
                 Ok(response) => response,
                 Err(e) => {
-                    return stream_once_err(SubgraphExecutorError::RequestFailure(
+                    let e = SubgraphExecutorError::RequestFailure(
                         self.endpoint.to_string(),
                         e.to_string(),
-                    ));
+                    );
+                    log_error(&e);
+                    return e.stream_once_subgraph_response(&self.subgraph_name);
                 }
             }
         };
@@ -418,15 +385,16 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         if !res.status().is_success() {
             // TODO: how are non-success statuses handled in single-shot results?
             //       seems like the body is read regardless
-            return stream_once_err(SubgraphExecutorError::RequestFailure(
+            let e = SubgraphExecutorError::RequestFailure(
                 self.endpoint.to_string(),
                 format!("Subgraph returned non-success status: {}", res.status()),
-            ));
+            );
+            log_error(&e);
+            return e.stream_once_subgraph_response(&self.subgraph_name);
         }
 
         let (parts, body_stream) = res.into_parts();
-        let response_headers = parts.headers.clone();
-        let subgraph_name = self.subgraph_name.clone();
+        let _response_headers = parts.headers.clone();
 
         let content_type = parts
             .headers
@@ -438,13 +406,17 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         let is_sse = content_type == "text/event-stream";
 
         if !is_multipart && !is_sse {
-            return stream_once_err(SubgraphExecutorError::UnsupportedContentTypeError(
+            let e = SubgraphExecutorError::UnsupportedContentTypeError(
                 content_type.to_string(),
                 self.subgraph_name.clone(),
-            ));
+            );
+            log_error(&e);
+            return e.stream_once_subgraph_response(&self.subgraph_name);
         }
 
+        // clone to avoid borrowing self in stream closures
         let endpoint = self.endpoint.to_string();
+        let subgraph_name = self.subgraph_name.clone();
 
         // Create the appropriate stream based on content type
         if is_multipart {
@@ -454,37 +426,16 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Box::pin(async_stream::stream! {
                 for await result in stream {
                     match result {
-                        Ok(body) => {
-                            yield HttpExecutionResponse {
-                                body,
-                                headers: response_headers.clone(),
-                            };
+                        Ok(_body) => {
+                            todo!();
                         }
                         Err(e) => {
                             let error = SubgraphExecutorError::SubscriptionStreamError(
                                 endpoint.clone(),
                                 e.to_string(),
                             );
-
-                            tracing::error!(
-                                error = &error as &dyn std::error::Error,
-                                "Subgraph executor error"
-                            );
-
-                            let graphql_error: GraphQLError = error.into();
-                            let graphql_error = graphql_error.add_subgraph_name(&subgraph_name);
-                            let errors = vec![graphql_error];
-                            let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-                            let mut buffer = BytesMut::new();
-                            buffer.put_slice(b"{\"errors\":");
-                            buffer.put_slice(&errors_bytes);
-                            buffer.put_slice(b"}");
-                            let error_bytes = buffer.freeze();
-
-                            yield HttpExecutionResponse {
-                                body: error_bytes,
-                                headers: response_headers.clone(),
-                            };
+                            log_error(&error);
+                            yield error.to_subgraph_response(subgraph_name.as_str());
                             return;
                         }
                     }
@@ -497,42 +448,52 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Box::pin(async_stream::stream! {
                 for await result in stream {
                     match result {
-                        Ok(body) => {
-                            yield HttpExecutionResponse {
-                                body,
-                                headers: response_headers.clone(),
-                            };
+                        Ok(_body) => {
+                            todo!();
                         }
                         Err(e) => {
                             let error = SubgraphExecutorError::SubscriptionStreamError(
                                 endpoint.clone(),
                                 e.to_string(),
                             );
-
-                            tracing::error!(
-                                error = &error as &dyn std::error::Error,
-                                "Subgraph executor error"
-                            );
-
-                            let graphql_error: GraphQLError = error.into();
-                            let graphql_error = graphql_error.add_subgraph_name(&subgraph_name);
-                            let errors = vec![graphql_error];
-                            let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-                            let mut buffer = BytesMut::new();
-                            buffer.put_slice(b"{\"errors\":");
-                            buffer.put_slice(&errors_bytes);
-                            buffer.put_slice(b"}");
-                            let error_bytes = buffer.freeze();
-
-                            yield HttpExecutionResponse {
-                                body: error_bytes,
-                                headers: response_headers.clone(),
-                            };
+                            log_error(&error);
+                            yield error.to_subgraph_response(subgraph_name.as_str());
                             return;
                         }
                     }
                 }
             })
         }
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct HttpResponse {
+    pub status: StatusCode,
+    pub headers: Arc<HeaderMap>,
+    pub body: Bytes,
+}
+
+impl HttpResponse {
+    fn deserialize_http_response<'a>(&self) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+        let bytes_ref: &[u8] = &self.body;
+
+        // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'a`.
+        // This is safe because the returned `SubgraphResponse` contains a clone of `self.body`
+        // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
+        // underlying data remains alive as long as the `SubgraphResponse` does.
+        // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
+        // creating a self-referential struct, which is why `unsafe` is required.
+        let bytes_ref: &'a [u8] = unsafe { std::mem::transmute(bytes_ref) };
+
+        sonic_rs::from_slice(bytes_ref)
+            .map_err(|err| SubgraphExecutorError::ResponseDeserializationFailure(err.to_string()))
+            .map(|mut resp: SubgraphResponse<'a>| {
+                // This is Arc
+                resp.headers = Some(self.headers.clone());
+                // Zero cost of cloning Bytes
+                resp.bytes = Some(self.body.clone());
+                resp
+            })
     }
 }

@@ -45,6 +45,7 @@ Gemini must **request changes (block the PR)** when any of the following appear:
 - **H. Naming that hides intent:** cryptic abbreviations, misleading words, type-hiding via wild generics without good reason.
 - **I. Unbounded growth patterns:** maps/vectors with unbounded cardinality in hot paths without explicit caps/eviction.
 - **J. Unsafe without proof:** `unsafe` blocks without precise safety comments, tests, or measurable wins.
+- **K. Panic-inducing functions without explanatory messages:** Any use of `unwrap()`, `unwrap_or_else()`, or similar functions that can panic must include a descriptive error message via `expect()` or `panic!()` explaining why the condition should never occur. This aids debugging and makes invariants explicit. Example: `.expect("we control the strings being parsed here; this should never fail")` or `.unwrap_or_else(|| panic!("invariant violation: expected valid content type, but parsing failed"))`.
 
 ---
 
@@ -110,9 +111,72 @@ struct Config {
 
 ## Releasing
 
-We are using `knope` with changesets for declaring changes. If you detect a new file in a PR under `.changeset/` directory, please confirm the following rules:
+We are using `knope` with changesets for declaring changes. 
 
-- Every new `changesets` file that touches `query-planner` must have a `router` changeset - either in the same changeset or a separate changeset.
-- Every new `changesets` file that touches `query-planner` must have a `node-addon` changeset - either in the same changeset or a separate changeset.
-- Every new `changesets` file that touches `executor` must have a `query-planner` changeset - either in the same changeset or a separate changeset.
+If you detect a new file in a PR under `.changeset/` directory, please confirm the following rules:
+
 - If a PR touches `config` crate and adds/changes to the `HiveRouterConfig` struct, it must have a `router` changeset that contains a YAML example on how the configuration needs to be used.
+
+- When a change is done in one of the Crates, it needs to be explicitly declared in the `changeset` file, so it includes the impacted libs/bins as well. Use this dependency tree to propagate and enforce changes in `changeset` files:
+
+```
+graphql-tools 
+└── [standalone library - no workspace dependencies]
+
+hive-router-config
+└── [standalone library - no workspace dependencies]
+
+hive-router-query-planner 
+└── graphql-tools
+
+hive-console-sdk 
+└── graphql-tools
+
+hive-router-internal 
+└── hive-router-config
+
+node-addon 
+└── hive-router-query-planner
+    └── graphql-tools
+
+hive-router-plan-executor 
+├── hive-router-query-planner
+│   └── graphql-tools
+├── hive-router-config
+├── hive-router-internal
+│   └── hive-router-config
+└── graphql-tools
+
+hive-router 
+├── hive-router-query-planner
+│   └── graphql-tools
+├── hive-router-plan-executor
+│   ├── hive-router-query-planner
+│   │   └── graphql-tools
+│   ├── hive-router-config
+│   ├── hive-router-internal
+│   │   └── hive-router-config
+│   └── graphql-tools
+├── hive-router-config
+├── hive-router-internal
+│   └── hive-router-config
+├── hive-console-sdk
+│   └── graphql-tools
+└── graphql-tools
+```
+
+> For example, a change in `graphql-tools` requires updating `hive-router-query-planner`, `hive-console-sdk`, `node-addon`, `hive-router-plan-executor`, `hive-router`, and `graphql-tools` in the `changeset` file. But if the `graphql-tools` change is breaking, then all dependent crates do not necessarily need to be breaking changes.
+
+If you detect a deletion of files from `./changeset` directory, that means you are checking a Release PR created by Knope. In that case, please validate the dependency above with the rules mentioned, and ensure that all impacted crates are updated accordingly.
+
+Knope uses the following rules for semantic versioning based on the changes declared in the changeset files.
+
+If the version is `0.x.y`, then:
+- A `major` change bumps `x` by 1 and resets `y` to 0.
+- A `minor` change bumps `y` by 1.
+- A `patch` change bumps `y` by 1.
+
+If the major version is `1` or higher (i.e., the version is at least `1.0.0`), then:
+- A `major` change bumps `x` by 1 and resets `y` and `z` to 0.
+- A `minor` change bumps `y` by 1 and resets `z` to 0.
+- A `patch` change bumps `z` by 1.

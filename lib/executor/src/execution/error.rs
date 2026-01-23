@@ -1,14 +1,13 @@
 use strum::IntoStaticStr;
 
 use crate::{
-    headers::errors::HeaderRuleRuntimeError,
-    projection::error::ProjectionError,
-    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
+    headers::errors::HeaderRuleRuntimeError, projection::error::ProjectionError,
+    response::graphql_error::GraphQLError,
 };
 
 #[derive(thiserror::Error, Debug, Clone, IntoStaticStr)]
 pub enum PlanExecutionErrorKind {
-    #[error("Projection faiure: {0}")]
+    #[error("Projection failure: {0}")]
     #[strum(serialize = "PROJECTION_FAILURE")]
     ProjectionFailure(#[from] ProjectionError),
 
@@ -88,18 +87,19 @@ impl PlanExecutionError {
 
 impl From<PlanExecutionError> for GraphQLError {
     fn from(val: PlanExecutionError) -> Self {
-        let message = val.to_string();
-        GraphQLError {
-            extensions: GraphQLErrorExtensions {
-                code: Some(val.error_code().into()),
-                service_name: val.context.subgraph_name,
-                affected_path: val.context.affected_path,
-                extensions: Default::default(),
-            },
-            message,
-            locations: None,
-            path: None,
+        let mut error = GraphQLError::from_message_and_code(val.to_string(), val.error_code());
+
+        // We destructure the context to take ownership of the Option<String> values.
+        // Then we move owned Strings directly into builder methods.
+        // This way we avoid cloning through Into<String> in those methods.
+
+        if let Some(subgraph_name) = val.context.subgraph_name {
+            error = error.add_subgraph_name(subgraph_name);
         }
+        if let Some(affected_path) = val.context.affected_path {
+            error = error.add_affected_path(affected_path);
+        }
+        error
     }
 }
 

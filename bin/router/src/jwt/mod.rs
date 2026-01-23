@@ -12,7 +12,7 @@ use jsonwebtoken::{
     jwk::{Jwk, JwkSet},
     Algorithm, DecodingKey, Header, Validation,
 };
-use ntex::{http::header::HeaderValue, web::HttpRequest};
+use ntex::{http::header::HeaderValue, http::HeaderMap};
 use tracing::warn;
 
 use crate::{
@@ -52,11 +52,11 @@ impl JwtAuthRuntime {
         Ok(instance)
     }
 
-    fn lookup(&self, req: &HttpRequest) -> Result<(Option<String>, String), LookupError> {
+    fn lookup(&self, headers: &HeaderMap) -> Result<(Option<String>, String), LookupError> {
         for lookup_config in &self.config.lookup_locations {
             match lookup_config {
                 JwtAuthPluginLookupLocation::Header { name, prefix } => {
-                    if let Some(header_value) = req.headers().get(name.get_header_ref()) {
+                    if let Some(header_value) = headers.get(name.get_header_ref()) {
                         let header_str = match header_value.to_str() {
                             Ok(s) => s,
                             Err(e) => return Err(LookupError::FailedToStringifyHeader(e)),
@@ -90,7 +90,7 @@ impl JwtAuthRuntime {
                     }
                 }
                 JwtAuthPluginLookupLocation::Cookie { name } => {
-                    if let Some(cookie_raw) = req.headers().get(COOKIE) {
+                    if let Some(cookie_raw) = headers.get(COOKIE) {
                         let raw_cookies = match cookie_raw.to_str() {
                             Ok(cookies) => cookies.split(';'),
                             Err(e) => {
@@ -161,15 +161,15 @@ impl JwtAuthRuntime {
     fn authenticate(
         &self,
         jwks: &Vec<Arc<JwkSet>>,
-        req: &HttpRequest,
+        headers: &HeaderMap,
     ) -> Result<(JwtTokenPayload, Option<String>, String), JwtError> {
-        match self.lookup(req) {
+        match self.lookup(headers) {
             Ok((maybe_prefix, token)) => {
                 // First, we need to decode the header to determine which provider to use.
                 let header = decode_header(&token).map_err(JwtError::InvalidJwtHeader)?;
                 let jwk = self.find_matching_jwks(&header, jwks)?;
 
-                self.decode_and_validate_token(&token, &jwk.keys)
+                self.decode_and_validate_token(&header, &token, &jwk.keys)
                     .map(|token_data| (token_data, maybe_prefix, token))
             }
             Err(e) => {
@@ -182,10 +182,13 @@ impl JwtAuthRuntime {
 
     fn decode_and_validate_token(
         &self,
+        header: &Header,
         token: &str,
         jwks: &[Jwk],
     ) -> Result<JwtTokenPayload, JwtError> {
-        let decode_attempts = jwks.iter().map(|jwk| self.try_decode_from_jwk(token, jwk));
+        let decode_attempts = jwks
+            .iter()
+            .map(|jwk| self.try_decode_from_jwk(header, token, jwk));
 
         if let Some(success) = decode_attempts.clone().find(|result| result.is_ok()) {
             return success;
@@ -199,15 +202,28 @@ impl JwtAuthRuntime {
         ))
     }
 
-    fn try_decode_from_jwk(&self, token: &str, jwk: &Jwk) -> Result<JwtTokenPayload, JwtError> {
+    fn try_decode_from_jwk(
+        &self,
+        header: &Header,
+        token: &str,
+        jwk: &Jwk,
+    ) -> Result<JwtTokenPayload, JwtError> {
         let decoding_key = DecodingKey::from_jwk(jwk).map_err(JwtError::InvalidDecodingKey)?;
-        let key_alg = jwk
-            .common
-            .key_algorithm
-            .ok_or(JwtError::JwkMissingAlgorithm)?;
 
-        let alg = Algorithm::from_str(&key_alg.to_string())
-            .map_err(JwtError::JwkAlgorithmNotSupported)?;
+        let alg = match jwk.common.key_algorithm {
+            Some(key_alg) => Algorithm::from_str(&key_alg.to_string())
+                .map_err(JwtError::JwkAlgorithmNotSupported)?,
+            None => header.alg,
+        };
+
+        // Make sure the algorithm is in the allowed algorithms before proceeding
+        if let Some(allowed) = &self.config.allowed_algorithms {
+            if !allowed.contains(&alg) {
+                return Err(JwtError::JwkAlgorithmNotSupported(
+                    jsonwebtoken::errors::ErrorKind::InvalidAlgorithm.into(),
+                ));
+            }
+        }
 
         let mut validation = Validation::new(alg);
 
@@ -266,45 +282,42 @@ impl JwtAuthRuntime {
         Ok(token_data)
     }
 
-    pub async fn validate_request(
+    pub async fn validate_headers(
         &self,
-        request: &mut HttpRequest,
+        headers: &HeaderMap,
         cache: &JwtClaimsCache,
-    ) -> Result<(), JwtError> {
-        let (maybe_prefix, token) = match self.lookup(request) {
+    ) -> Result<Option<JwtRequestContext>, JwtError> {
+        let (maybe_prefix, token) = match self.lookup(headers) {
             Ok((p, t)) => (p, t),
             Err(e) => {
                 // No token found, but this is only an error if auth is required.
                 if self.config.require_authentication.is_some_and(|v| v) {
                     return Err(JwtError::LookupFailed(e));
                 }
-                return Ok(());
+                return Ok(None);
             }
         };
 
         let validation_result = cache
             .try_get_with(token.clone(), async {
                 let valid_jwks = self.jwks.all();
-                self.authenticate(&valid_jwks, request)
+                self.authenticate(&valid_jwks, headers)
                     .map(|(payload, _, _)| Arc::new(payload))
             })
             .await;
 
         match validation_result {
-            Ok(token_payload) => {
-                request.extensions_mut().insert(JwtRequestContext {
-                    token_payload,
-                    token_raw: token,
-                    token_prefix: maybe_prefix,
-                });
-                Ok(())
-            }
+            Ok(token_payload) => Ok(Some(JwtRequestContext {
+                token_payload,
+                token_raw: token,
+                token_prefix: maybe_prefix,
+            })),
             Err(err) => {
                 warn!("jwt token error: {:?}", err);
                 if self.config.require_authentication.is_some_and(|v| v) {
                     Err((*err).clone())
                 } else {
-                    Ok(())
+                    Ok(None)
                 }
             }
         }

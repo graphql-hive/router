@@ -111,7 +111,7 @@ jobs:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
 
       # Only if using Zigbuild
-      - uses: mlugg/setup-zig@fa65c4058643678a4e4a9a60513944a7d8d35440 # v2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         name: setup zig
         if: ${{ matrix.zigbuild }}
         with:

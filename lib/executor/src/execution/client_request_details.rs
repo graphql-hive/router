@@ -11,25 +11,25 @@ pub struct OperationDetails<'exec> {
     pub kind: &'static str,
 }
 
-pub struct ClientRequestDetails<'exec, 'req> {
-    pub method: &'req Method,
-    pub url: &'req http::Uri,
-    pub headers: &'req NtexHeaderMap,
+pub struct ClientRequestDetails<'exec> {
+    pub method: &'exec Method,
+    pub url: &'exec http::Uri,
+    pub headers: &'exec NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
-    pub jwt: &'exec JwtRequestDetails<'req>,
+    pub jwt: &'exec JwtRequestDetails,
 }
 
-pub enum JwtRequestDetails<'exec> {
+pub enum JwtRequestDetails {
     Authenticated {
-        token: &'exec str,
-        prefix: Option<&'exec str>,
-        claims: &'exec sonic_rs::Value,
+        token: String,
+        prefix: Option<String>,
+        claims: sonic_rs::Value,
         scopes: Option<Vec<String>>,
     },
     Unauthenticated,
 }
 
-impl From<&ClientRequestDetails<'_, '_>> for Value {
+impl From<&ClientRequestDetails<'_>> for Value {
     fn from(details: &ClientRequestDetails) -> Self {
         // .request.headers
         let headers_value = client_header_map_to_vrl_value(details.headers);
@@ -76,7 +76,7 @@ impl From<&ClientRequestDetails<'_, '_>> for Value {
                 ("token".into(), token.to_string().into()),
                 (
                     "prefix".into(),
-                    prefix.unwrap_or_default().to_string().into(),
+                    prefix.as_deref().unwrap_or_default().into(),
                 ),
                 ("claims".into(), claims.to_vrl_value()),
                 (

@@ -1,5 +1,5 @@
-use once_cell::sync::Lazy;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use hive_router_config::traffic_shaping::DurationOrExpression;
@@ -18,13 +18,13 @@ use crate::expressions::{
     ProgramResolutionError,
 };
 
-static VRL_FUNCTIONS: Lazy<Vec<Box<dyn Function>>> = Lazy::new(|| {
+static VRL_FUNCTIONS: LazyLock<Vec<Box<dyn Function>>> = LazyLock::new(|| {
     let mut funcs = vrl::stdlib::all();
     // Our custom functions:
     funcs.push(Box::new(Env));
     funcs
 });
-static VRL_TIMEZONE: Lazy<VrlTimeZone> = Lazy::new(VrlTimeZone::default);
+static VRL_TIMEZONE: LazyLock<VrlTimeZone> = LazyLock::new(VrlTimeZone::default);
 
 /// This trait provides a unified way to convert VRL values to specific Rust types.
 pub trait FromVrlValue: Sized {
@@ -123,12 +123,16 @@ where
     /// If this is a static value, returns it immediately.
     /// If this is a program, executes it against the provided context and converts the result.
     ///
-    /// - `vrl_context` - The VRL value context for expression execution
+    /// - `vrl_context_fn` - A function that returns the VRL value context for expression execution
     #[inline]
-    pub fn resolve(&self, vrl_context: VrlValue) -> Result<T, ProgramResolutionError<T::Error>> {
+    pub fn resolve<F>(&self, vrl_context_fn: F) -> Result<T, ProgramResolutionError<T::Error>>
+    where
+        F: FnOnce() -> VrlValue,
+    {
         match self {
             ValueOrProgram::Value(v) => Ok(v.clone()),
             ValueOrProgram::Program(vrl_program) => {
+                let vrl_context = vrl_context_fn();
                 let result_value = vrl_program
                     .execute(vrl_context)
                     .map_err(ProgramResolutionError::ExecutionFailed)?;

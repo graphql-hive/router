@@ -88,7 +88,7 @@ mod env_vars_e2e_tests {
     /// Test that the `x-router-env` header value depends on the `ROUTER_ENV_HEADER` env var,
     /// with a fallback to "default".
     async fn should_insert_response_header_based_on_env_var() {
-        let _subgraphs_server = SubgraphsServer::start_with_port(4100).await;
+        let _subgraphs_server = SubgraphsServer::start().await;
 
         // Makes the expression to evaluate to "default" (default value provided)
         {

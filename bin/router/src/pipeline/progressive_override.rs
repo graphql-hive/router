@@ -52,9 +52,9 @@ pub struct RequestOverrideContext {
 }
 
 #[inline]
-pub fn request_override_context<'exec, 'req>(
+pub fn request_override_context<'exec>(
     override_labels_evaluator: &OverrideLabelsEvaluator,
-    client_request_details: &ClientRequestDetails<'exec, 'req>,
+    client_request_details: &ClientRequestDetails<'exec>,
 ) -> Result<RequestOverrideContext, LabelEvaluationError> {
     let active_flags = override_labels_evaluator.evaluate(client_request_details)?;
 
@@ -152,9 +152,9 @@ impl OverrideLabelsEvaluator {
         })
     }
 
-    pub(crate) fn evaluate<'exec, 'req>(
+    pub(crate) fn evaluate<'exec>(
         &self,
-        client_request: &ClientRequestDetails<'exec, 'req>,
+        client_request: &ClientRequestDetails<'exec>,
     ) -> Result<HashSet<String>, LabelEvaluationError> {
         let mut active_flags = self.static_enabled_labels.clone();
 

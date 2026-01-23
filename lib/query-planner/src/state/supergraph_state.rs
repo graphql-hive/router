@@ -3,9 +3,9 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use graphql_parser::query::Directive;
-use graphql_parser::schema as input;
 use graphql_tools::ast::SchemaDocumentExtension;
+use graphql_tools::parser::query::Directive;
+use graphql_tools::parser::schema as input;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
@@ -90,7 +90,7 @@ impl LinkedSpecifications {
 
             let url = directive.arguments.iter().find_map(|(name, value)| {
                 if name == "url" {
-                    if let graphql_parser::query::Value::String(s) = value {
+                    if let graphql_tools::parser::query::Value::String(s) = value {
                         return Some(s);
                     }
                 }
@@ -908,15 +908,12 @@ impl SupergraphField {
         self.join_field
             .iter()
             .filter_map(|jf| {
-                if jf.graph_id.is_some()
-                    && !jf.external
-                    && !jf.used_overridden
-                    && jf.override_label.is_none()
-                {
-                    Some(jf.graph_id.as_ref().unwrap().to_string())
-                } else {
-                    None
+                if let Some(graph_id) = &jf.graph_id {
+                    if !jf.external && !jf.used_overridden && jf.override_label.is_none() {
+                        return Some(graph_id.to_string());
+                    }
                 }
+                None
             })
             .collect::<HashSet<_>>()
     }

@@ -1,6 +1,6 @@
 use std::{fmt::Display, sync::Arc};
 
-use graphql_parser::parse_query;
+use graphql_tools::parser::parse_query;
 use hive_router_plan_executor::{
     execution::client_request_details::JwtRequestDetails,
     introspection::{
@@ -78,9 +78,9 @@ impl SupergraphTestData {
 
         let jwt = if let Some(scopes) = scopes {
             JwtRequestDetails::Authenticated {
-                token: "asd",
+                token: "asd".into(),
                 prefix: None,
-                claims: &Default::default(),
+                claims: Default::default(),
                 scopes: Some(scopes.iter().map(|s| s.to_string()).collect()),
             }
         } else {

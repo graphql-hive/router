@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-config"
-version = "0.0.15"
+version = "0.0.18"
 edition = "2021"
 publish = true
 license = "MIT"
@@ -23,7 +23,6 @@ http = { workspace = true }
 jsonwebtoken = { workspace = true }
 retry-policies = { workspace = true}
 tracing = { workspace = true }
-regex-automata = { workspace = true }
 
 schemars = "1.0.4"
 humantime-serde = "1.1.1"

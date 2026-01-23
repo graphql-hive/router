@@ -84,7 +84,7 @@ mod file_supergraph_e2e_tests {
         assert!(resp.status().is_success(), "Expected 200 OK");
 
         let json_body: Value = from_slice(&test::read_body(resp).await).unwrap();
-        let types_arr = json_body
+        let types_arr: Vec<String> = json_body
             .get("data")
             .unwrap()
             .get("__schema")
@@ -92,15 +92,60 @@ mod file_supergraph_e2e_tests {
             .get("types")
             .unwrap()
             .as_array()
-            .unwrap();
-        assert_eq!(types_arr.len(), 14);
+            .unwrap()
+            .iter()
+            .map(|i| {
+                i.as_object()
+                    .unwrap()
+                    .get(&"name")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+
+        assert_eq!(
+            types_arr.contains(&"Query".to_string()),
+            true,
+            "Expected types to contain 'Query'"
+        );
+        assert_eq!(
+            types_arr.contains(&"NewType".to_string()),
+            false,
+            "Expected types to not contain 'NewType'"
+        );
 
         fs::write(
             &supergraph_file_path,
             "type Query { dummyNew: NewType } type NewType { id: ID! }",
         )
         .expect("failed to write supergraph");
-        time::sleep(Duration::from_millis(150)).await;
+
+        // Poll for the supergraph to be reloaded
+        let interval_ms = 50;
+        let mut attempts = 0;
+        let max_attempts = 10; // 10 * 50ms = 500 ms max wait
+        loop {
+            let resp = test::call_service(
+                &app.app,
+                init_graphql_request("{ __schema { types { name } } }", None).to_request(),
+            )
+            .await;
+
+            if resp.status().is_success() {
+                if String::from_utf8_lossy(&test::read_body(resp).await).contains("NewType") {
+                    break;
+                }
+            }
+
+            attempts += 1;
+            if attempts >= max_attempts {
+                panic!("Supergraph did not reload within timeout");
+            }
+
+            time::sleep(Duration::from_millis(interval_ms)).await;
+        }
 
         let resp = test::call_service(
             &app.app,
@@ -111,7 +156,7 @@ mod file_supergraph_e2e_tests {
         assert!(resp.status().is_success(), "Expected 200 OK");
 
         let json_body: Value = from_slice(&test::read_body(resp).await).unwrap();
-        let types_arr = json_body
+        let types_arr: Vec<String> = json_body
             .get("data")
             .unwrap()
             .get("__schema")
@@ -119,8 +164,27 @@ mod file_supergraph_e2e_tests {
             .get("types")
             .unwrap()
             .as_array()
-            .unwrap();
-        // one more type added
-        assert_eq!(types_arr.len(), 15);
+            .unwrap()
+            .iter()
+            .map(|i| {
+                i.as_object()
+                    .unwrap()
+                    .get(&"name")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            types_arr.contains(&"Query".to_string()),
+            true,
+            "Expected types to contain 'Query'"
+        );
+        assert_eq!(
+            types_arr.contains(&"NewType".to_string()),
+            true,
+            "Expected types to contain 'NewType'"
+        );
     }
 }

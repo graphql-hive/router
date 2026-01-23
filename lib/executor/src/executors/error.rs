@@ -1,6 +1,6 @@
 use hive_router_internal::expressions::vrl::prelude::ExpressionError;
 
-use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
+use crate::response::graphql_error::GraphQLError;
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum SubgraphExecutorError {
@@ -26,6 +26,10 @@ pub enum SubgraphExecutorError {
     TimeoutExpressionResolution(String, String),
     #[error("Request to subgraph \"{0}\" timed out after {1} milliseconds")]
     RequestTimeout(String, u128),
+    #[error("Failed to deserialize subgraph response: {0}")]
+    ResponseDeserializationFailure(String),
+    #[error("Failed to initialize or load native TLS root certificates: {0}")]
+    NativeTlsCertificatesError(String),
     #[error("Unsupported content-type {0} for subgraph '{1}'")]
     UnsupportedContentTypeError(String, String),
     #[error("Failed to handle subscription stream from '{0}': {1}")]
@@ -34,12 +38,7 @@ pub enum SubgraphExecutorError {
 
 impl From<SubgraphExecutorError> for GraphQLError {
     fn from(error: SubgraphExecutorError) -> Self {
-        GraphQLError {
-            message: "Internal server error".to_string(),
-            locations: None,
-            path: None,
-            extensions: GraphQLErrorExtensions::new_from_code(error.error_code()),
-        }
+        GraphQLError::from_message_and_code("Internal server error", error.error_code())
     }
 }
 
@@ -78,6 +77,10 @@ impl SubgraphExecutorError {
             SubgraphExecutorError::RequestTimeoutExpressionBuild(_, _) => {
                 "SUBGRAPH_TIMEOUT_EXPRESSION_BUILD_FAILURE"
             }
+            SubgraphExecutorError::ResponseDeserializationFailure(_) => {
+                "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE"
+            }
+            SubgraphExecutorError::NativeTlsCertificatesError(_) => "SUBGRAPH_HTTPS_CERTS_FAILURE",
             SubgraphExecutorError::UnsupportedContentTypeError(_, _) => {
                 "SUBGRAPH_UNSUPPORTED_CONTENT_TYPE"
             }

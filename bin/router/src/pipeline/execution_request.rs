@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use http::header::CONTENT_TYPE;
 use http::Method;
 use ntex::util::Bytes;
 use ntex::web::types::Query;
@@ -8,8 +9,8 @@ use serde::{Deserialize, Deserializer};
 use sonic_rs::Value;
 use tracing::{trace, warn};
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
-use crate::pipeline::header::AssertRequestJson;
+use crate::pipeline::error::PipelineError;
+use crate::pipeline::header::SingleContentType;
 
 #[derive(serde::Deserialize, Debug)]
 struct GETQueryParams {
@@ -42,19 +43,19 @@ where
 }
 
 impl TryInto<ExecutionRequest> for GETQueryParams {
-    type Error = PipelineErrorVariant;
+    type Error = PipelineError;
 
     fn try_into(self) -> Result<ExecutionRequest, Self::Error> {
         let query = match self.query {
             Some(q) => q,
-            None => return Err(PipelineErrorVariant::GetMissingQueryParam("query")),
+            None => return Err(PipelineError::GetMissingQueryParam("query")),
         };
 
         let variables = match self.variables.as_deref() {
             Some(v_str) if !v_str.is_empty() => match sonic_rs::from_str(v_str) {
                 Ok(vars) => vars,
                 Err(e) => {
-                    return Err(PipelineErrorVariant::FailedToParseVariables(e));
+                    return Err(PipelineError::FailedToParseVariables(e));
                 }
             },
             _ => HashMap::new(),
@@ -64,7 +65,7 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
             Some(e_str) if !e_str.is_empty() => match sonic_rs::from_str(e_str) {
                 Ok(exts) => Some(exts),
                 Err(e) => {
-                    return Err(PipelineErrorVariant::FailedToParseExtensions(e));
+                    return Err(PipelineError::FailedToParseExtensions(e));
                 }
             },
             _ => None,
@@ -82,38 +83,52 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
 }
 
 #[inline]
-pub async fn get_execution_request(
-    req: &mut HttpRequest,
+pub async fn get_execution_request_from_http_request(
+    req: &HttpRequest,
     body_bytes: Bytes,
 ) -> Result<ExecutionRequest, PipelineError> {
     let http_method = req.method();
     let execution_request: ExecutionRequest = match *http_method {
         Method::GET => {
-            trace!("Processing GET GraphQL operation");
-            let query_params_str = req.uri().query().ok_or_else(|| {
-                req.new_pipeline_error(PipelineErrorVariant::GetInvalidQueryParams)
-            })?;
+            trace!("processing GET GraphQL operation");
+            let query_params_str = req
+                .uri()
+                .query()
+                .ok_or_else(|| PipelineError::GetInvalidQueryParams)?;
             let query_params = Query::<GETQueryParams>::from_query(query_params_str)
-                .map_err(|e| {
-                    req.new_pipeline_error(PipelineErrorVariant::GetUnprocessableQueryParams(e))
-                })?
+                .map_err(PipelineError::GetUnprocessableQueryParams)?
                 .0;
 
             trace!("parsed GET query params: {:?}", query_params);
 
-            query_params
-                .try_into()
-                .map_err(|err| req.new_pipeline_error(err))?
+            query_params.try_into()?
         }
         Method::POST => {
             trace!("Processing POST GraphQL request");
 
-            req.assert_json_content_type()?;
+            match req.headers().get(CONTENT_TYPE) {
+                Some(value) => {
+                    let content_type_str = value
+                        .to_str()
+                        .map_err(|_| PipelineError::InvalidHeaderValue(CONTENT_TYPE))?;
+                    if !content_type_str.contains(SingleContentType::JSON.as_ref()) {
+                        warn!(
+                            "Invalid content type on a POST request: {}",
+                            content_type_str
+                        );
+                        return Err(PipelineError::UnsupportedContentType);
+                    }
+                }
+                None => {
+                    trace!("POST without content type detected");
+                    return Err(PipelineError::MissingContentTypeHeader);
+                }
+            }
 
             let execution_request = unsafe {
                 sonic_rs::from_slice_unchecked::<ExecutionRequest>(&body_bytes).map_err(|e| {
                     warn!("Failed to parse body: {}", e);
-                    req.new_pipeline_error(PipelineErrorVariant::FailedToParseBody(e))
+                    PipelineError::FailedToParseBody(e)
                 })?
             };
 
@@ -122,11 +137,7 @@ pub async fn get_execution_request(
         _ => {
             warn!("unsupported HTTP method: {}", http_method);
 
-            return Err(
-                req.new_pipeline_error(PipelineErrorVariant::UnsupportedHttpMethod(
-                    http_method.to_owned(),
-                )),
-            );
+            return Err(PipelineError::UnsupportedHttpMethod(http_method.to_owned()));
         }
     };
 

@@ -1,6 +1,8 @@
 use graphql_tools::validation::validate::ValidationPlan;
-use hive_console_sdk::agent::UsageAgent;
+use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::HiveRouterConfig;
+use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
+use hive_router_internal::expressions::ExpressionCompileError;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
@@ -12,6 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
+use crate::pipeline::introspection_policy::compile_introspection_policy;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
@@ -58,7 +61,7 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
 
 pub struct RouterSharedState {
     pub validation_plan: ValidationPlan,
-    pub parse_cache: Cache<u64, Arc<graphql_parser::query::Document<'static, String>>>,
+    pub parse_cache: Cache<u64, Arc<graphql_tools::parser::query::Document<'static, String>>>,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: HeaderRulesPlan,
     pub override_labels_evaluator: OverrideLabelsEvaluator,
@@ -69,17 +72,19 @@ pub struct RouterSharedState {
     /// but no longer than `exp` date.
     pub jwt_claims_cache: JwtClaimsCache,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
-    pub hive_usage_agent: Option<Arc<UsageAgent>>,
+    pub hive_usage_agent: Option<UsageAgent>,
+    pub introspection_policy: BooleanOrProgram,
 }
 
 impl RouterSharedState {
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
-        hive_usage_agent: Option<Arc<UsageAgent>>,
+        hive_usage_agent: Option<UsageAgent>,
+        validation_plan: ValidationPlan,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
-            validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
+            validation_plan,
             headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
             parse_cache: moka::future::Cache::new(1000),
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
@@ -96,6 +101,8 @@ impl RouterSharedState {
             .map_err(Box::new)?,
             jwt_auth_runtime,
             hive_usage_agent,
+            introspection_policy: compile_introspection_policy(&router_config.introspection)
+                .map_err(Box::new)?,
         })
     }
 }
@@ -109,5 +116,7 @@ pub enum SharedStateError {
     #[error("invalid override labels config: {0}")]
     OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
     #[error("error creating hive usage agent: {0}")]
-    UsageAgent(#[from] Box<hive_console_sdk::agent::AgentError>),
+    UsageAgent(#[from] Box<AgentError>),
+    #[error("invalid introspection config: {0}")]
+    IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
 }

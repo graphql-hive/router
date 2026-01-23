@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    RouterSharedState, SchemaState,
+    init_rustls_crypto_provider, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use ntex::{
@@ -77,7 +77,7 @@ where
 
 pub struct SubgraphsServer {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    subgraph_shared_state: SubgraphsServiceState,
+    subgraph_shared_state: Arc<SubgraphsServiceState>,
 }
 
 impl Drop for SubgraphsServer {
@@ -116,9 +116,8 @@ impl SubgraphsServer {
         let (_server_handle, shutdown_tx, subgraph_shared_state) =
             start_subgraphs_server(Some(port), subscriptions_protocol, request_interceptor);
 
-        let health_check_url = subgraph_shared_state.health_check_url.clone();
         loop {
-            match reqwest::get(&health_check_url).await {
+            match reqwest::get(&subgraph_shared_state.health_check_url).await {
                 Ok(response) if response.status().is_success() => {
                     // Server is up and running.
                     break;
@@ -137,9 +136,10 @@ impl SubgraphsServer {
     }
 
     pub async fn get_subgraph_requests_log(&self, subgraph_name: &str) -> Option<Vec<RequestLog>> {
-        let log = self.subgraph_shared_state.request_log.lock().await;
-
-        log.get(&format!("/{}", subgraph_name)).cloned()
+        self.subgraph_shared_state
+            .request_log
+            .get(&format!("/{}", subgraph_name))
+            .map(|entry| entry.value().clone())
     }
 }
 
@@ -200,7 +200,10 @@ pub async fn init_router_from_config(
     >,
     Box<dyn std::error::Error>,
 > {
+    init_rustls_crypto_provider();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
+    let http_config = router_config.http.clone();
+    let graphql_path = http_config.graphql_endpoint();
     let (shared_state, schema_state) =
         configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
 
@@ -208,7 +211,7 @@ pub async fn init_router_from_config(
         web::App::new()
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(configure_ntex_app),
+            .configure(|m| configure_ntex_app(m, &graphql_path)),
     )
     .await;
 

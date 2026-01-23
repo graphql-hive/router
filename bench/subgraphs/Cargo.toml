@@ -16,10 +16,14 @@ path = "lib.rs"
 lazy_static = { workspace = true }
 rand = { workspace = true }
 tokio = { workspace = true }
-futures = { workspace = true }
 sonic-rs = { workspace = true }
+dashmap = { workspace = true }
+futures = { workspace = true }
 http = { workspace = true }
 serde_json = { workspace = true }
+# TODO: can this be a workspace = true?
+hive-router = { path = "../../bin/router" }
+
 bytes = "1.10.1"
 async-graphql = "7.0.17"
 async-graphql-axum = "7.0.17"
@@ -28,4 +32,3 @@ futures-util = "0.3.31"
 tower-service = "0.3.3"
 async-stream = "0.3.6"
 futures-timer = "3.0.3"
-hive-router = { path = "../../bin/router" }

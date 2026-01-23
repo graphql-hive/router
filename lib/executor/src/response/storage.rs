@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use bytes::Bytes;
 
 pub struct ResponsesStorage {
-    responses: Vec<Arc<Bytes>>,
+    responses: Vec<Bytes>,
 }
 
 impl Default for ResponsesStorage {
@@ -19,18 +17,14 @@ impl ResponsesStorage {
         }
     }
 
-    pub fn add_response(&mut self, response: Bytes) -> usize {
-        let new_item_index = self.responses.len();
-        self.responses.push(Arc::new(response));
-        new_item_index
-    }
-
-    // This helper is what we need
-    pub fn get_bytes(&self, index: usize) -> &[u8] {
-        &self.responses[index]
+    pub fn add_response(&mut self, response: Bytes) {
+        self.responses.push(response);
     }
 
     pub fn estimate_final_response_size(&self) -> usize {
-        self.responses.iter().map(|r| r.len()).sum()
+        let total_size: usize = self.responses.iter().map(|r| r.len()).sum();
+        // Add a 20% buffer to account for JSON syntax, escaping, and other overhead.
+        // I tested a bunch of numbers and it was the best from the bunch.
+        (total_size as f64 * 1.2) as usize
     }
 }

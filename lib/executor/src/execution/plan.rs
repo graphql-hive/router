@@ -4,27 +4,27 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes};
-use futures::{future::BoxFuture, stream::BoxStream, stream::FuturesUnordered, StreamExt};
+use futures::{
+    future::BoxFuture,
+    stream::{BoxStream, FuturesUnordered},
+    StreamExt,
+};
 use hive_router_query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
 };
 use http::HeaderMap;
-use serde::Deserialize;
 use sonic_rs::ValueRef;
 
 use crate::{
     context::ExecutionContext,
     execution::{
-        client_request_details::{ClientRequestDetails, JwtRequestDetails},
+        client_request_details::ClientRequestDetails,
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
-    executors::{
-        common::{HttpExecutionResponse, SubgraphExecutionRequest},
-        map::SubgraphExecutorMap,
-    },
+    executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     headers::{
         plan::HeaderRulesPlan,
         request::modify_subgraph_request_headers,
@@ -40,7 +40,7 @@ use crate::{
         response::project_by_operation,
     },
     response::{
-        graphql_error::{GraphQLError, GraphQLErrorExtensions, GraphQLErrorPath},
+        graphql_error::{GraphQLError, GraphQLErrorPath},
         merge::deep_merge,
         subgraph_response::SubgraphResponse,
         value::Value,
@@ -51,23 +51,18 @@ use crate::{
     },
 };
 
-pub struct QueryPlanExecutionContext<'exec, 'req> {
+pub struct QueryPlanExecutionContext<'exec> {
     pub query_plan: &'exec QueryPlan,
-    /// Projection plan - Arc because subscriptions need to own it
-    pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
-    /// Headers plan - Arc because subscriptions need to own it
-    pub headers_plan: Arc<HeaderRulesPlan>,
-    pub variable_values: Option<HashMap<String, sonic_rs::Value>>,
+    pub projection_plan: &'exec [FieldProjectionPlan],
+    pub headers_plan: &'exec HeaderRulesPlan,
+    pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
-    pub client_request: &'exec ClientRequestDetails<'exec, 'req>,
+    pub client_request: &'exec ClientRequestDetails<'exec>,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
-    /// Executors - Arc because subscriptions need to own it
-    pub executors: Arc<SubgraphExecutorMap>,
+    pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
-    /// Schema metadata - Arc because subscriptions need to own it
-    pub schema_metadata: Arc<SchemaMetadata>,
 }
 
 pub struct PlanExecutionOutput {
@@ -76,31 +71,19 @@ pub struct PlanExecutionOutput {
     pub error_count: usize,
 }
 
-pub struct PlanSubscriptionOutput {
-    pub body: BoxStream<'static, Vec<u8>>,
-    pub headers: HeaderMap,
-    pub error_count: usize,
-}
-
-/// Result of executing a query plan - either a single response or a subscription stream
-pub enum QueryPlanExecutionResult {
-    Single(PlanExecutionOutput),
-    Stream(PlanSubscriptionOutput),
-}
-
 /// Owned context for subscription stream processing.
 /// Contains all data needed to execute entity resolution for each subscription event.
 /// Derived from QueryPlanExecutionContext by cloning Arc fields and owning String data.
 struct OwnedQueryPlanExecutionContext {
-    /// The query plan for entity resolution (remaining nodes after subscription)
+    /// This is specificially the query plan for entity resolution, used for
+    /// resolving the remaining nodes after subscription event emission.
     query_plan: Arc<QueryPlan>,
-    projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    projection_plan: Arc<[FieldProjectionPlan]>,
     headers_plan: Arc<HeaderRulesPlan>,
     variable_values: Option<HashMap<String, sonic_rs::Value>>,
     extensions: Option<HashMap<String, sonic_rs::Value>>,
     operation_type_name: String,
     executors: Arc<SubgraphExecutorMap>,
-    schema_metadata: Arc<SchemaMetadata>,
     initial_errors: Vec<GraphQLError>,
 }
 
@@ -108,7 +91,7 @@ impl OwnedQueryPlanExecutionContext {
     /// Create owned context from QueryPlanExecutionContext for subscription processing.
     /// The `remaining_plan_nodes` become the query plan for entity resolution.
     fn from_ctx(
-        ctx: &QueryPlanExecutionContext<'_, '_>,
+        ctx: &QueryPlanExecutionContext<'_>,
         remaining_plan_nodes: Option<Vec<PlanNode>>,
     ) -> Self {
         // Create a synthetic query plan for entity resolution from remaining nodes
@@ -125,22 +108,32 @@ impl OwnedQueryPlanExecutionContext {
 
         Self {
             query_plan,
-            projection_plan: ctx.projection_plan.clone(),
-            headers_plan: ctx.headers_plan.clone(),
+            projection_plan: ctx.projection_plan.into(),
+            headers_plan: ctx.headers_plan.clone().into(),
             variable_values: ctx.variable_values.clone(),
             extensions: ctx.extensions.clone(),
             operation_type_name: ctx.operation_type_name.to_string(),
-            executors: ctx.executors.clone(),
-            schema_metadata: ctx.schema_metadata.clone(),
+            executors: ctx.executors.clone().into(),
             initial_errors: ctx.initial_errors.clone(),
         }
     }
 }
 
-pub async fn execute_query_plan<'exec, 'req>(
-    ctx: QueryPlanExecutionContext<'exec, 'req>,
+pub struct PlanSubscriptionOutput {
+    pub body: BoxStream<'static, Vec<u8>>,
+    pub headers: HeaderMap,
+    pub error_count: usize,
+}
+
+pub enum QueryPlanExecutionResult {
+    Single(PlanExecutionOutput),
+    Stream(PlanSubscriptionOutput),
+}
+
+pub async fn execute_query_plan<'exec>(
+    ctx: QueryPlanExecutionContext<'exec>,
 ) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
-    let (subscription_node, remaining_nodes) = match &ctx.query_plan.node {
+    let (subscription_node, _remaining_nodes) = match &ctx.query_plan.node {
         // a subscription to a subgraph that contains all data and doesn't need entity resolution
         Some(PlanNode::Subscription(sub)) => (Some(sub), None),
         // a subscription that needs entity resolution. after emitting, it needs to execute the
@@ -148,6 +141,7 @@ pub async fn execute_query_plan<'exec, 'req>(
         Some(PlanNode::Sequence(seq)) => match seq.nodes.first() {
             Some(PlanNode::Subscription(sub)) => {
                 let remaining = if seq.nodes.len() > 1 {
+                    // TODO: why to_vec()? is it wasteful? it's actually a slice, we dont need it as Vec
                     Some(seq.nodes[1..].to_vec())
                 } else {
                     None
@@ -159,203 +153,10 @@ pub async fn execute_query_plan<'exec, 'req>(
         _ => (None, None),
     };
 
-    if let Some(sub) = subscription_node {
+    if let Some(_sub) = subscription_node {
         // subscription
 
-        let fetch_node = sub.primary.clone();
-
-        let variables = ctx.variable_values.as_ref().map(|vars| {
-            vars.iter()
-                .map(|(k, v)| (k.as_str(), v))
-                .collect::<HashMap<_, _>>()
-        });
-
-        let mut headers_map = HeaderMap::new();
-        modify_subgraph_request_headers(
-            &ctx.headers_plan,
-            &fetch_node.service_name,
-            ctx.client_request,
-            &mut headers_map,
-        )
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || Some(fetch_node.service_name.clone()),
-            affected_path: || None,
-        })?;
-
-        let request = SubgraphExecutionRequest {
-            query: fetch_node.operation.document_str.as_str(),
-            dedupe: false,
-            operation_name: fetch_node.operation_name.as_deref(),
-            variables,
-            representations: None,
-            headers: headers_map,
-            extensions: None,
-        };
-
-        let response_stream = ctx
-            .executors
-            .subscribe(&fetch_node.service_name, request, ctx.client_request)
-            .await;
-
-        // subscription needs owned context for the stream
-        let owned_ctx = Box::new(OwnedQueryPlanExecutionContext::from_ctx(
-            &ctx,
-            remaining_nodes,
-        ));
-
-        // clone client request data for use inside the stream
-        // TODO: is there a better way of doing this?
-        let owned_method = ctx.client_request.method.clone();
-        let owned_uri = ctx.client_request.url.clone();
-        let owned_headers = ctx.client_request.headers.clone();
-        let owned_operation_name: Option<String> =
-            ctx.client_request.operation.name.map(|s| s.to_string());
-        let owned_operation_kind = ctx.client_request.operation.kind;
-        let owned_operation_query = ctx.client_request.operation.query.to_string();
-        let (jwt_authenticated, jwt_token, jwt_prefix, jwt_claims, jwt_scopes): (
-            bool,
-            String,
-            Option<String>,
-            sonic_rs::Value,
-            Option<Vec<String>>,
-        ) = match ctx.client_request.jwt {
-            JwtRequestDetails::Authenticated {
-                token,
-                prefix,
-                claims,
-                scopes,
-            } => (
-                true,
-                token.to_string(),
-                prefix.map(|s| s.to_string()),
-                (*claims).clone(),
-                scopes.clone(),
-            ),
-            JwtRequestDetails::Unauthenticated => {
-                (false, String::new(), None, sonic_rs::Value::default(), None)
-            }
-        };
-        let owned_jwt_auth_forwarding: Option<JwtAuthForwardingPlan> =
-            ctx.jwt_auth_forwarding.clone();
-
-        // Create a stream of serialized subscription events
-        let body_stream = Box::pin(async_stream::stream! {
-            use crate::execution::client_request_details::{
-                ClientRequestDetails, JwtRequestDetails, OperationDetails,
-            };
-
-            let mut response_stream = response_stream;
-
-            while let Some(response) = response_stream.next().await {
-                let response_body = &response.body;
-
-                // Parse the subgraph response
-                let subgraph_response: Result<SubgraphResponse, _> = sonic_rs::from_slice(response_body);
-
-                let output = match subgraph_response {
-                    Ok(parsed_response) => {
-                        let initial_data = parsed_response.data;
-                        let mut initial_errors: Vec<GraphQLError> = owned_ctx.initial_errors.clone();
-                        if let Some(resp_errors) = parsed_response.errors {
-                            initial_errors.extend(resp_errors);
-                        }
-
-                        if owned_ctx.query_plan.node.is_some() {
-                            // entity resolution
-
-                            let jwt = if jwt_authenticated {
-                                JwtRequestDetails::Authenticated {
-                                    token: &jwt_token,
-                                    prefix: jwt_prefix.as_deref(),
-                                    claims: &jwt_claims,
-                                    scopes: jwt_scopes.clone(),
-                                }
-                            } else {
-                                JwtRequestDetails::Unauthenticated
-                            };
-                            let operation = OperationDetails {
-                                name: owned_operation_name.as_deref(),
-                                query: &owned_operation_query,
-                                kind: owned_operation_kind,
-                            };
-                            let client_request = ClientRequestDetails {
-                                method: &owned_method,
-                                url: &owned_uri,
-                                headers: &owned_headers,
-                                operation,
-                                jwt: &jwt,
-                            };
-
-                            match execute_plan_with_initial_data(
-                                &owned_ctx.query_plan,
-                                &owned_ctx.projection_plan,
-                                &owned_ctx.headers_plan,
-                                &owned_ctx.variable_values,
-                                &owned_ctx.extensions,
-                                &owned_ctx.operation_type_name,
-                                &owned_ctx.executors,
-                                &owned_ctx.schema_metadata,
-                                &client_request,
-                                &owned_jwt_auth_forwarding,
-                                initial_data,
-                                initial_errors,
-                                response_body.len() + 256,
-                            )
-                            .await
-                            {
-                                Ok(output) => output.body,
-                                Err(e) => {
-                                    // TODO: error details leaking? should this be masked?
-                                    let error = GraphQLError::from_message_and_extensions(
-                                        format!("Entity resolution error: {}", e),
-                                        Default::default(),
-                                    );
-                                    format_error_response(&[error])
-                                }
-                            }
-                        } else {
-                            // no entity resolution, just project the response
-                            match project_by_operation(
-                                &initial_data,
-                                initial_errors,
-                                &owned_ctx.extensions,
-                                &owned_ctx.operation_type_name,
-                                &owned_ctx.projection_plan,
-                                &owned_ctx.variable_values,
-                                response_body.len() + 256,
-                            ) {
-                                Ok(body) => body,
-                                Err(e) => {
-                                    let error = GraphQLError::from_message_and_extensions(
-                                        format!("Projection error: {}", e),
-                                        Default::default(),
-                                    );
-                                    format_error_response(&[error])
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let error = GraphQLError::from_message_and_extensions(
-                            format!("Failed to parse subgraph response: {}", e),
-                            Default::default(),
-                        );
-                        format_error_response(&[error])
-                    }
-                };
-
-                yield output;
-            }
-        });
-
-        // TODO: Extract headers from first response or aggregate them
-        let headers = HeaderMap::new();
-
-        return Ok(QueryPlanExecutionResult::Stream(PlanSubscriptionOutput {
-            body: body_stream,
-            headers,
-            error_count: 0, // TODO: Track errors across subscription events
-        }));
+        todo!();
     }
 
     // query/mutation
@@ -370,56 +171,50 @@ pub async fn execute_query_plan<'exec, 'req>(
 
     execute_plan_with_initial_data(
         ctx.query_plan,
-        &ctx.projection_plan,
-        &ctx.headers_plan,
-        &ctx.variable_values,
+        ctx.projection_plan,
+        ctx.headers_plan,
+        ctx.variable_values,
         &ctx.extensions,
-        ctx.operation_type_name,
-        &ctx.executors,
-        ctx.introspection_context.metadata,
         ctx.client_request,
+        ctx.introspection_context,
+        ctx.operation_type_name,
+        ctx.executors,
         ctx.jwt_auth_forwarding,
-        init_value,
         ctx.initial_errors,
-        0, // Size estimated from response storage
+        init_value,
     )
     .await
     .map(QueryPlanExecutionResult::Single)
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Core execution logic shared between regular plan execution and subscription event processing.
 /// Executes the plan nodes and projects the final response.
-async fn execute_plan_with_initial_data<'exec, 'req>(
+#[allow(clippy::too_many_arguments)]
+async fn execute_plan_with_initial_data<'exec>(
     query_plan: &'exec QueryPlan,
-    projection_plan: &Arc<Vec<FieldProjectionPlan>>,
+    projection_plan: &[FieldProjectionPlan],
     headers_plan: &'exec HeaderRulesPlan,
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     extensions: &Option<HashMap<String, sonic_rs::Value>>,
+    client_request: &'exec ClientRequestDetails<'exec>,
+    introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     operation_type_name: &str,
     executors: &'exec SubgraphExecutorMap,
-    schema_metadata: &'exec SchemaMetadata,
-    client_request: &'exec ClientRequestDetails<'exec, 'req>,
     jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
-    initial_data: Value<'_>,
     initial_errors: Vec<GraphQLError>,
-    estimated_response_size: usize,
+    // extra arguments compared to QueryPlanExecutionContext
+    initial_data: Value<'_>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
-    // Clone initial_data to make it 'static for ExecutionContext
-    // TODO: is this wasteful if initial data is null?
-    // SAFETY: We're creating a new owned value that will be used within this function
-    let owned_data: Value<'exec> = unsafe { std::mem::transmute(initial_data.clone()) };
-
-    let mut exec_ctx = ExecutionContext::new(query_plan, owned_data, initial_errors);
+    let mut exec_ctx = ExecutionContext::new(query_plan, initial_data, initial_errors);
 
     let executor = Executor::new(
         variable_values,
         executors,
-        schema_metadata,
+        introspection_context.metadata,
         client_request,
         headers_plan,
         jwt_auth_forwarding,
-        // Subscriptions never dedupe (operation_type_name != "Query")
+        // Deduplicate subgraph requests only if the operation type is a query
         operation_type_name == "Query",
     );
 
@@ -437,7 +232,7 @@ async fn execute_plan_with_initial_data<'exec, 'req>(
         })?;
 
     let final_response = &exec_ctx.final_response;
-    let error_count = exec_ctx.errors.len();
+    let error_count = exec_ctx.errors.len(); // Added for usage reporting
     let body = project_by_operation(
         final_response,
         exec_ctx.errors,
@@ -445,7 +240,8 @@ async fn execute_plan_with_initial_data<'exec, 'req>(
         operation_type_name,
         projection_plan,
         variable_values,
-        estimated_response_size.max(exec_ctx.response_storage.estimate_final_response_size()),
+        exec_ctx.response_storage.estimate_final_response_size(),
+        introspection_context.metadata,
     )
     .with_plan_context(LazyPlanContext {
         subgraph_name: || None,
@@ -458,22 +254,11 @@ async fn execute_plan_with_initial_data<'exec, 'req>(
         error_count,
     })
 }
-
-/// Format an error response as JSON bytes
-fn format_error_response(errors: &[GraphQLError]) -> Vec<u8> {
-    let errors_json: Vec<String> = errors
-        .iter()
-        .map(|e| format!(r#"{{"message":"{}"}}"#, e.message.replace('"', "\\\"")))
-        .collect();
-
-    format!(r#"{{"data":null,"errors":[{}]}}"#, errors_json.join(",")).into_bytes()
-}
-
-pub struct Executor<'exec, 'req> {
+pub struct Executor<'exec> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
     executors: &'exec SubgraphExecutorMap,
-    client_request: &'exec ClientRequestDetails<'exec, 'req>,
+    client_request: &'exec ClientRequestDetails<'exec>,
     headers_plan: &'exec HeaderRulesPlan,
     jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
     dedupe_subgraph_requests: bool,
@@ -503,58 +288,25 @@ impl<'exec, T> ConcurrencyScope<'exec, T> {
     }
 }
 
-struct SubgraphOutput {
-    body: Bytes,
-    headers: HeaderMap,
+struct FetchJob<'exec> {
+    fetch_node_id: i64,
+    subgraph_name: &'exec str,
+    response: SubgraphResponse<'exec>,
 }
 
-struct FetchJob {
+struct FlattenFetchJob<'exec> {
+    flatten_node_path: &'exec FlattenNodePath,
+    response: SubgraphResponse<'exec>,
     fetch_node_id: i64,
-    subgraph_name: String,
-    response: SubgraphOutput,
-}
-
-struct FlattenFetchJob {
-    flatten_node_path: FlattenNodePath,
-    response: SubgraphOutput,
-    fetch_node_id: i64,
-    subgraph_name: String,
+    subgraph_name: &'exec str,
     representation_hashes: Vec<u64>,
     representation_hash_to_index: HashMap<u64, usize>,
 }
 
-enum ExecutionJob {
-    Fetch(FetchJob),
-    FlattenFetch(FlattenFetchJob),
+enum ExecutionJob<'exec> {
+    Fetch(FetchJob<'exec>),
+    FlattenFetch(FlattenFetchJob<'exec>),
     None,
-}
-
-impl From<ExecutionJob> for SubgraphOutput {
-    fn from(value: ExecutionJob) -> Self {
-        match value {
-            ExecutionJob::Fetch(j) => Self {
-                body: j.response.body,
-                headers: j.response.headers,
-            },
-            ExecutionJob::FlattenFetch(j) => Self {
-                body: j.response.body,
-                headers: j.response.headers,
-            },
-            ExecutionJob::None => Self {
-                body: Bytes::new(),
-                headers: HeaderMap::new(),
-            },
-        }
-    }
-}
-
-impl From<HttpExecutionResponse> for SubgraphOutput {
-    fn from(res: HttpExecutionResponse) -> Self {
-        Self {
-            body: res.body,
-            headers: res.headers,
-        }
-    }
 }
 
 struct PreparedFlattenData {
@@ -563,12 +315,12 @@ struct PreparedFlattenData {
     representation_hash_to_index: HashMap<u64, usize>,
 }
 
-impl<'exec, 'req> Executor<'exec, 'req> {
+impl<'exec> Executor<'exec> {
     pub fn new(
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
-        client_request: &'exec ClientRequestDetails<'exec, 'req>,
+        client_request: &'exec ClientRequestDetails<'exec>,
         headers_plan: &'exec HeaderRulesPlan,
         jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
         dedupe_subgraph_requests: bool,
@@ -585,9 +337,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     }
 
     pub async fn execute(
-        &self,
+        &'exec self,
         ctx: &mut ExecutionContext<'exec>,
-        plan: Option<&PlanNode>,
+        plan: Option<&'exec PlanNode>,
     ) -> Result<(), PlanExecutionError> {
         match plan {
             Some(PlanNode::Fetch(node)) => self.execute_fetch_wave(ctx, node).await,
@@ -596,8 +348,8 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             // When doing subscription entity resolution, we execute a query plan with the
             // remainder of the nodes after the SubscriptionNode. In that case, the root
             // can be a Flatten node and we need to start executing from there.
-            // NOTE: this wont work `Some(PlanNode::Flatten(node)) => self.execute_plan_node(ctx, &node.node).await`
             // TODO: is there a nicer way to do this?
+            // NOTE: this wont work `Some(PlanNode::Flatten(node)) => self.execute_plan_node(ctx, &node.node).await`
             Some(PlanNode::Flatten(_)) => self.execute_plan_node(ctx, plan.unwrap()).await,
             // Plans produced by our Query Planner can only start with: Fetch, Sequence or Parallel.
             // Any other node type at the root is not supported, do nothing
@@ -608,9 +360,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     }
 
     async fn execute_fetch_wave(
-        &self,
+        &'exec self,
         ctx: &mut ExecutionContext<'exec>,
-        node: &FetchNode,
+        node: &'exec FetchNode,
     ) -> Result<(), PlanExecutionError> {
         match self.execute_fetch_node(node, None).await {
             Ok(result) => self.process_job_result(ctx, result),
@@ -623,9 +375,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     }
 
     async fn execute_sequence_wave(
-        &self,
+        &'exec self,
         ctx: &mut ExecutionContext<'exec>,
-        node: &SequenceNode,
+        node: &'exec SequenceNode,
     ) -> Result<(), PlanExecutionError> {
         for child in &node.nodes {
             Box::pin(self.execute_plan_node(ctx, child)).await?;
@@ -635,9 +387,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     }
 
     async fn execute_parallel_wave(
-        &self,
+        &'exec self,
         ctx: &mut ExecutionContext<'exec>,
-        node: &ParallelNode,
+        node: &'exec ParallelNode,
     ) -> Result<(), PlanExecutionError> {
         let mut scope = ConcurrencyScope::new();
 
@@ -664,9 +416,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     }
 
     async fn execute_plan_node(
-        &self,
+        &'exec self,
         ctx: &mut ExecutionContext<'exec>,
-        node: &PlanNode,
+        node: &'exec PlanNode,
     ) -> Result<(), PlanExecutionError> {
         match node {
             PlanNode::Fetch(fetch_node) => match self.execute_fetch_node(fetch_node, None).await {
@@ -726,11 +478,11 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         Ok(())
     }
 
-    fn prepare_job_future<'wave>(
-        &'wave self,
-        node: &'wave PlanNode,
+    fn prepare_job_future(
+        &'exec self,
+        node: &'exec PlanNode,
         final_response: &Value<'exec>,
-    ) -> BoxFuture<'wave, Result<ExecutionJob, PlanExecutionError>> {
+    ) -> BoxFuture<'exec, Result<ExecutionJob<'exec>, PlanExecutionError>> {
         match node {
             PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
             PlanNode::Flatten(flatten_node) => {
@@ -758,180 +510,138 @@ impl<'exec, 'req> Executor<'exec, 'req> {
 
     fn process_subgraph_response(
         &self,
-        subgraph_name: &str,
         ctx: &mut ExecutionContext<'exec>,
-        response_bytes: Bytes,
+        response_bytes: Option<Bytes>,
         fetch_node_id: i64,
-    ) -> Option<(SubgraphResponse<'exec>, Option<&'exec Vec<FetchRewrite>>)> {
-        let idx = ctx.response_storage.add_response(response_bytes);
-        // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
-        // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
-        // and will live as long as `'a`. The `Bytes` are stored in an `Arc`, so they won't be
-        // dropped until all references are gone. The `Value`s deserialized from this byte
-        // slice will borrow from it, and they are stored in `ctx.final_response`, which also
-        // lives for `'a`.
-        let bytes: &'exec [u8] =
-            unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
+    ) -> Option<&'exec [FetchRewrite]> {
+        if let Some(response_bytes) = response_bytes {
+            ctx.response_storage.add_response(response_bytes);
+        }
 
-        // SAFETY: The `output_rewrites` are transmuted to the lifetime `'a`. This is safe
-        // because `output_rewrites` is part of `OutputRewritesStorage` which is owned by
-        // `ExecutionContext` and lives for `'a`.
-        let output_rewrites: Option<&'exec Vec<FetchRewrite>> =
-            unsafe { std::mem::transmute(ctx.output_rewrites.get(fetch_node_id)) };
-
-        let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-        let response = match SubgraphResponse::deserialize(&mut deserializer) {
-            Ok(response) => response,
-            Err(e) => {
-                let message = format!("Failed to deserialize subgraph response: {}", e);
-                let extensions = GraphQLErrorExtensions::new_from_code_and_service_name(
-                    "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILED",
-                    subgraph_name,
-                );
-                let error = GraphQLError::from_message_and_extensions(message, extensions);
-
-                ctx.errors.push(error);
-                return None;
-            }
-        };
-
-        Some((response, output_rewrites))
+        ctx.output_rewrites.get(fetch_node_id)
     }
 
     fn process_job_result(
         &self,
         ctx: &mut ExecutionContext<'exec>,
-        job: ExecutionJob,
+        job: ExecutionJob<'exec>,
     ) -> Result<(), PlanExecutionError> {
-        let _: () = match job {
-            ExecutionJob::Fetch(job) => {
-                apply_subgraph_response_headers(
-                    self.headers_plan,
-                    &job.subgraph_name,
-                    &job.response.headers,
-                    self.client_request,
-                    &mut ctx.response_headers_aggregator,
-                )
-                .with_plan_context(LazyPlanContext {
-                    subgraph_name: || Some(job.subgraph_name.clone()),
-                    affected_path: || None,
-                })?;
+        match job {
+            ExecutionJob::Fetch(mut job) => {
+                if let Some(response_headers) = &job.response.headers {
+                    apply_subgraph_response_headers(
+                        self.headers_plan,
+                        job.subgraph_name,
+                        response_headers,
+                        self.client_request,
+                        &mut ctx.response_headers_aggregator,
+                    )
+                    .with_plan_context(LazyPlanContext {
+                        subgraph_name: || Some(job.subgraph_name.into()),
+                        affected_path: || None,
+                    })?;
+                }
 
-                if let Some((mut response, output_rewrites)) = self.process_subgraph_response(
-                    job.subgraph_name.as_ref(),
-                    ctx,
-                    job.response.body,
-                    job.fetch_node_id,
-                ) {
-                    ctx.handle_errors(&job.subgraph_name, None, response.errors, None);
+                if let Some(output_rewrites) =
+                    self.process_subgraph_response(ctx, job.response.bytes, job.fetch_node_id)
+                {
+                    for output_rewrite in output_rewrites {
+                        output_rewrite
+                            .rewrite(&self.schema_metadata.possible_types, &mut job.response.data);
+                    }
+                }
+
+                ctx.handle_errors(job.subgraph_name, None, job.response.errors, None);
+
+                deep_merge(&mut ctx.final_response, job.response.data);
+            }
+            ExecutionJob::FlattenFetch(mut job) => {
+                if let Some(response_headers) = &job.response.headers {
+                    apply_subgraph_response_headers(
+                        self.headers_plan,
+                        job.subgraph_name,
+                        response_headers,
+                        self.client_request,
+                        &mut ctx.response_headers_aggregator,
+                    )
+                    .with_plan_context(LazyPlanContext {
+                        subgraph_name: || Some(job.subgraph_name.into()),
+                        affected_path: || None,
+                    })?;
+                }
+
+                let output_rewrites =
+                    self.process_subgraph_response(ctx, job.response.bytes, job.fetch_node_id);
+
+                let mut entity_index_error_map: Option<HashMap<&usize, Vec<GraphQLErrorPath>>> =
+                    None;
+
+                if let Some(mut entities) = job.response.data.take_entities() {
                     if let Some(output_rewrites) = output_rewrites {
                         for output_rewrite in output_rewrites {
-                            output_rewrite
-                                .rewrite(&self.schema_metadata.possible_types, &mut response.data);
-                        }
-                    }
-
-                    deep_merge(&mut ctx.final_response, response.data);
-                }
-            }
-            ExecutionJob::FlattenFetch(job) => {
-                apply_subgraph_response_headers(
-                    self.headers_plan,
-                    &job.subgraph_name,
-                    &job.response.headers,
-                    self.client_request,
-                    &mut ctx.response_headers_aggregator,
-                )
-                .with_plan_context(LazyPlanContext {
-                    subgraph_name: || Some(job.subgraph_name.clone()),
-                    affected_path: || Some(job.flatten_node_path.to_string()),
-                })?;
-
-                if let Some((mut response, output_rewrites)) = self.process_subgraph_response(
-                    &job.subgraph_name,
-                    ctx,
-                    job.response.body,
-                    job.fetch_node_id,
-                ) {
-                    if let Some(mut entities) = response.data.take_entities() {
-                        if let Some(output_rewrites) = output_rewrites {
-                            for output_rewrite in output_rewrites {
-                                for entity in &mut entities {
-                                    output_rewrite
-                                        .rewrite(&self.schema_metadata.possible_types, entity);
-                                }
+                            for entity in &mut entities {
+                                output_rewrite
+                                    .rewrite(&self.schema_metadata.possible_types, entity);
                             }
                         }
-
-                        let mut index = 0;
-                        let normalized_path = job.flatten_node_path.as_slice();
-                        // If there is an error in the response, then collect the paths for normalizing the error
-                        let initial_error_path = response
-                            .errors
-                            .as_ref()
-                            .map(|_| GraphQLErrorPath::with_capacity(normalized_path.len() + 2));
-                        let mut entity_index_error_map = response
-                            .errors
-                            .as_ref()
-                            .map(|_| HashMap::with_capacity(entities.len()));
-                        traverse_and_callback_mut(
-                            &mut ctx.final_response,
-                            normalized_path,
-                            self.schema_metadata,
-                            initial_error_path,
-                            &mut |target, error_path| {
-                                let hash = job.representation_hashes[index];
-                                if let Some(entity_index) =
-                                    job.representation_hash_to_index.get(&hash)
-                                {
-                                    if let (Some(error_path), Some(entity_index_error_map)) =
-                                        (error_path, entity_index_error_map.as_mut())
-                                    {
-                                        let error_paths = entity_index_error_map
-                                            .entry(entity_index)
-                                            .or_insert_with(Vec::new);
-                                        error_paths.push(error_path);
-                                    }
-                                    if let Some(entity) = entities.get(*entity_index) {
-                                        // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
-                                        // The transmute is to satisfy the compiler, but the lifetime
-                                        // is valid.
-                                        let new_val: Value<'_> =
-                                            unsafe { std::mem::transmute(entity.clone()) };
-                                        deep_merge(target, new_val);
-                                    }
-                                }
-                                index += 1;
-                            },
-                        );
-                        ctx.handle_errors(
-                            &job.subgraph_name,
-                            Some(job.flatten_node_path.to_string()),
-                            response.errors,
-                            entity_index_error_map,
-                        );
-                    } else if let Some(errors) = response.errors {
-                        // No entities were returned, but there are errors to handle.
-                        // We associate them with the flattened path and subgraph.
-                        let affected_path = job.flatten_node_path.to_string();
-                        ctx.errors.extend(errors.into_iter().map(|e| {
-                            e.add_subgraph_name(&job.subgraph_name)
-                                .add_affected_path(affected_path.clone())
-                        }));
                     }
+
+                    let mut index = 0;
+                    let normalized_path = job.flatten_node_path.as_slice();
+                    // If there is an error in the response, then collect the paths for normalizing the error
+                    let initial_error_path = job
+                        .response
+                        .errors
+                        .as_ref()
+                        .map(|_| GraphQLErrorPath::with_capacity(normalized_path.len() + 2));
+                    entity_index_error_map = job
+                        .response
+                        .errors
+                        .as_ref()
+                        .map(|_| HashMap::with_capacity(entities.len()));
+                    traverse_and_callback_mut(
+                        &mut ctx.final_response,
+                        normalized_path,
+                        self.schema_metadata,
+                        initial_error_path,
+                        &mut |target, error_path| {
+                            let hash = job.representation_hashes[index];
+                            if let Some(entity_index) = job.representation_hash_to_index.get(&hash)
+                            {
+                                if let (Some(error_path), Some(entity_index_error_map)) =
+                                    (error_path, entity_index_error_map.as_mut())
+                                {
+                                    let error_paths = entity_index_error_map
+                                        .entry(entity_index)
+                                        .or_insert_with(Vec::new);
+                                    error_paths.push(error_path);
+                                }
+                                if let Some(entity) = entities.get(*entity_index) {
+                                    deep_merge(target, entity.clone());
+                                }
+                            }
+                            index += 1;
+                        },
+                    );
                 }
+                ctx.handle_errors(
+                    job.subgraph_name,
+                    Some(job.flatten_node_path),
+                    job.response.errors,
+                    entity_index_error_map,
+                );
             }
             ExecutionJob::None => {
                 // nothing to do
             }
-        };
+        }
         Ok(())
     }
 
     fn prepare_flatten_data(
         &self,
         final_response: &Value<'exec>,
-        flatten_node: &FlattenNode,
+        flatten_node: &'exec FlattenNode,
     ) -> Result<Option<PreparedFlattenData>, PlanExecutionError> {
         let fetch_node = match flatten_node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
@@ -1012,33 +722,35 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     }
 
     async fn execute_flatten_fetch_node(
-        &self,
-        node: &FlattenNode,
+        &'exec self,
+        node: &'exec FlattenNode,
         representations: Option<Vec<u8>>,
         representation_hashes: Option<Vec<u64>>,
         filtered_representations_hashes: Option<HashMap<u64, usize>>,
-    ) -> Result<ExecutionJob, PlanExecutionError> {
-        Ok(match node.node.as_ref() {
-            PlanNode::Fetch(fetch_node) => ExecutionJob::FlattenFetch(FlattenFetchJob {
-                flatten_node_path: node.path.clone(),
-                response: self
-                    .execute_fetch_node(fetch_node, representations)
-                    .await?
-                    .into(),
-                fetch_node_id: fetch_node.id,
-                subgraph_name: fetch_node.service_name.clone(),
+    ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
+        let fetch_node = match node.node.as_ref() {
+            PlanNode::Fetch(fetch_node) => fetch_node,
+            _ => return Ok(ExecutionJob::None),
+        };
+
+        match self.execute_fetch_node(fetch_node, representations).await? {
+            ExecutionJob::Fetch(job) => Ok(ExecutionJob::FlattenFetch(FlattenFetchJob {
+                flatten_node_path: &node.path,
+                response: job.response,
+                fetch_node_id: job.fetch_node_id,
+                subgraph_name: job.subgraph_name,
                 representation_hashes: representation_hashes.unwrap_or_default(),
                 representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
-            }),
-            _ => ExecutionJob::None,
-        })
+            })),
+            _ => Ok(ExecutionJob::None),
+        }
     }
 
     async fn execute_fetch_node(
-        &self,
-        node: &FetchNode,
+        &'exec self,
+        node: &'exec FetchNode,
         representations: Option<Vec<u8>>,
-    ) -> Result<ExecutionJob, PlanExecutionError> {
+    ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
         // TODO: We could optimize header map creation by caching them per service name
         let mut headers_map = HeaderMap::new();
         modify_subgraph_request_headers(
@@ -1073,12 +785,11 @@ impl<'exec, 'req> Executor<'exec, 'req> {
 
         Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
-            subgraph_name: node.service_name.clone(),
+            subgraph_name: &node.service_name,
             response: self
                 .executors
                 .execute(&node.service_name, subgraph_request, self.client_request)
-                .await
-                .into(),
+                .await,
         }))
     }
 
@@ -1131,7 +842,7 @@ mod tests {
         response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
     };
 
-    use super::{format_error_response, select_fetch_variables, GraphQLError};
+    use super::select_fetch_variables;
     use sonic_rs::Value;
     use std::collections::{BTreeSet, HashMap};
 
@@ -1250,19 +961,5 @@ mod tests {
                 GraphQLErrorPathSegment::String("field1".to_string())
             ]
         );
-    }
-
-    #[test]
-    fn format_error_response_correctly() {
-        let error1 = GraphQLError::from_message_and_extensions(
-            format!("Entity resolution error: {}", "Oops!"),
-            Default::default(),
-        );
-        let error2 = GraphQLError::from_message_and_extensions(
-            "Hello World".to_string(),
-            Default::default(),
-        );
-
-        insta::assert_snapshot!(String::from_utf8(format_error_response(&[error1, error2])).unwrap(), @r#"{"data":null,"errors":[{"message":"Entity resolution error: Oops!"},{"message":"Hello World"}]}"#);
     }
 }

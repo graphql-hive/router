@@ -1,12 +1,23 @@
 use core::fmt;
+use std::sync::Arc;
 
-use crate::response::{graphql_error::GraphQLError, value::Value};
+use crate::{
+    executors::error::SubgraphExecutorError,
+    response::{graphql_error::GraphQLError, value::Value},
+};
+use bytes::Bytes;
+use futures::stream::BoxStream;
+use futures_util::stream;
+use http::HeaderMap;
 use serde::de::{self, Deserializer, MapAccess, Visitor};
 
+#[derive(Debug, Default)]
 pub struct SubgraphResponse<'a> {
     pub data: Value<'a>,
     pub errors: Option<Vec<GraphQLError>>,
     pub extensions: Option<Value<'a>>,
+    pub headers: Option<Arc<HeaderMap>>,
+    pub bytes: Option<Bytes>,
 }
 
 impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
@@ -71,6 +82,8 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
                     data,
                     errors,
                     extensions,
+                    headers: None,
+                    bytes: None,
                 })
             }
         }
@@ -78,6 +91,34 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
         deserializer.deserialize_map(SubgraphResponseVisitor {
             _marker: std::marker::PhantomData,
         })
+    }
+}
+
+impl GraphQLError {
+    pub fn to_subgraph_response(self, subgraph_name: &str) -> SubgraphResponse<'static> {
+        // error.add_subgraph_name converts the str it to an owned String. So the resulting GraphQLError doesn't
+        // actually borrow subgraph_name - it owns a copy, the rest of the default data is also owned. so
+        // technically it is a SubgraphResponse<'static> because nothing inside it actually borrows from outside
+        let error_with_subgraph_name = self.add_subgraph_name(subgraph_name);
+        SubgraphResponse {
+            errors: Some(vec![error_with_subgraph_name]),
+            ..Default::default()
+        }
+    }
+}
+
+impl SubgraphExecutorError {
+    pub fn to_subgraph_response(self, subgraph_name: &str) -> SubgraphResponse<'static> {
+        let mut graphql_error: GraphQLError = self.into();
+        graphql_error.message = "Failed to execute request to subgraph".to_string();
+        graphql_error.to_subgraph_response(subgraph_name)
+    }
+    pub fn stream_once_subgraph_response(
+        self,
+        subgraph_name: &str,
+    ) -> BoxStream<'static, SubgraphResponse<'static>> {
+        let subgraph_response = self.to_subgraph_response(subgraph_name);
+        Box::pin(stream::once(async move { subgraph_response }))
     }
 }
 

@@ -1,4 +1,4 @@
-use graphql_parser::query::Definition;
+use graphql_tools::parser::query::Definition;
 
 use crate::ast::normalization::{context::NormalizationContext, error::NormalizationError};
 

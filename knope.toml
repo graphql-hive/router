@@ -17,7 +17,7 @@ scopes = ["hive-router-plan-executor", "executor"]
 changelog = "lib/executor/CHANGELOG.md"
 
 [packages.config]
-versioned_files = ["lib/router-config/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-config" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-config" }, "Cargo.lock"]
+versioned_files = ["lib/router-config/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-config" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-config" }, { path = "lib/internal/Cargo.toml", dependency = "hive-router-config" }, "Cargo.lock"]
 scopes = ["config"]
 changelog = "lib/router-config/CHANGELOG.md"
 
@@ -26,13 +26,23 @@ versioned_files = ["lib/internal/Cargo.toml", { path = "lib/executor/Cargo.toml"
 scopes = ["internal"]
 changelog = "lib/internal/CHANGELOG.md"
 
+[packages.graphql-tools]
+versioned_files = ["lib/graphql-tools/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "graphql-tools" }, { path = "lib/query-planner/Cargo.toml", dependency = "graphql-tools" }, { path = "lib/hive-console-sdk/Cargo.toml", dependency = "graphql-tools" }, { path = "bin/router/Cargo.toml", dependency = "graphql-tools" }, "Cargo.lock"]
+scopes = ["graphql-tools"]
+changelog = "lib/graphql-tools/CHANGELOG.md"
+
+[packages.hive-console-sdk]
+versioned_files = ["lib/hive-console-sdk/Cargo.toml", { path = "bin/router/Cargo.toml", dependency = "hive-console-sdk" }, "Cargo.lock"]
+scopes = ["hive-console-sdk"]
+changelog = "lib/hive-console-sdk/CHANGELOG.md"
+
 [packages.router]
 versioned_files = ["bin/router/Cargo.toml", "Cargo.lock"]
-scopes = ["hive-router", "router", "config", "qp", "executor"]
+scopes = ["hive-router", "router", "config", "qp", "executor", "internal", "graphql-tools"]
 changelog = "bin/router/CHANGELOG.md"
 
 [packages.node-addon]
-versioned_files = ["lib/node-addon/package.json", "lib/node-addon/package-lock.json", "lib/node-addon/Cargo.toml", "Cargo.lock"]
+versioned_files = ["lib/node-addon/package.json", "lib/node-addon/Cargo.toml", "Cargo.lock"]
 scopes = ["node-addon"]
 changelog = "lib/node-addon/CHANGELOG.md"
 

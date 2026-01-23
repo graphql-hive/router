@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use graphql_parser::query::Value as QueryValue;
-use graphql_parser::schema::{
+use graphql_tools::parser::query::Value as QueryValue;
+use graphql_tools::parser::schema::{
     Definition, Directive, DirectiveDefinition, Document, EnumValue, Field, InputValue, Type,
     TypeDefinition,
 };

@@ -13,7 +13,7 @@ pub fn traverse_and_callback_mut<'a, Callback>(
     current_error_path: Option<GraphQLErrorPath>,
     callback: &mut Callback,
 ) where
-    Callback: FnMut(&mut Value, Option<GraphQLErrorPath>),
+    Callback: FnMut(&mut Value<'a>, Option<GraphQLErrorPath>),
 {
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {
