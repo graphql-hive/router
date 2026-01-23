@@ -1,6 +1,8 @@
 ---
 router: patch
 config: patch
+internal: patch
+executor: patch
 ---
 
 # Treat empty strings as None for environment variables
