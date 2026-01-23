@@ -1,8 +1,35 @@
+use const_str::concat;
 use futures_timer::Delay;
 use futures_util::{FutureExt, Stream, StreamExt};
 use ntex::util::Bytes;
 use std::time::Duration;
 use tokio_util::bytes::BufMut;
+
+// we use macros to retain constness
+macro_rules! make_content_type {
+    ($boundary:expr) => {
+        concat!("multipart/mixed;boundary=", $boundary)
+    };
+}
+macro_rules! make_boundaries {
+    ($boundary:expr) => {
+        (
+            // start
+            concat!(
+                "--",
+                $boundary,
+                "\r\nContent-Type: application/json\r\n\r\n"
+            ),
+            // end
+            concat!("--", $boundary, "--"),
+        )
+    };
+}
+
+const INCREMENTAL_DELIVERY_BOUNDARY: &str = "-";
+
+pub const INCREMENTAL_DELIVERY_CONTENT_TYPE: &str =
+    make_content_type!(INCREMENTAL_DELIVERY_BOUNDARY);
 
 /// Create a multipart subscription stream following the Official GraphQL over HTTP Incremental Delivery RFC.
 ///
@@ -15,8 +42,7 @@ pub fn create_incremental_delivery_stream(
     input: impl Stream<Item = Vec<u8>> + Send + Unpin + 'static,
 ) -> impl Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Unpin {
     let mut input = input.fuse();
-    let (start_boundary, end_boundary) =
-        ("---\r\nContent-Type: application/json\r\n\r\n", "---\r\n");
+    let (start_boundary, end_boundary) = make_boundaries!(INCREMENTAL_DELIVERY_BOUNDARY);
     async_stream::stream! {
         loop {
             match input.next().await {
@@ -43,6 +69,11 @@ pub fn create_incremental_delivery_stream(
     .boxed()
 }
 
+const APOLLO_MULTIPART_HTTP_BOUNDARY: &str = "graphql";
+
+pub const APOLLO_MULTIPART_HTTP_CONTENT_TYPE: &str =
+    make_content_type!(INCREMENTAL_DELIVERY_BOUNDARY);
+
 /// Create a multipart subscription stream following Apollo's Multipart HTTP spec.
 ///
 /// Will use `graphql` as boundary.
@@ -54,11 +85,8 @@ pub fn create_apollo_multipart_http_stream(
 ) -> impl Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Unpin {
     let mut input = input.fuse();
     let mut heartbeat_timer = Delay::new(heartbeat_interval).fuse();
-    let (start_boundary, end_boundary, ping) = (
-        "--graphql\r\nContent-Type: application/json\r\n\r\n",
-        "--graphql--\r\n",
-        "{}\r\n",
-    );
+    let (start_boundary, end_boundary) = make_boundaries!(APOLLO_MULTIPART_HTTP_BOUNDARY);
+    let ping = "{}\r\n";
     async_stream::stream! {
         loop {
             futures_util::select! {

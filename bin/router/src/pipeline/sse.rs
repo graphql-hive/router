@@ -4,6 +4,8 @@ use ntex::util::Bytes;
 use std::time::Duration;
 use tokio_util::bytes::BufMut;
 
+pub const SSE_HEADER: &str = "text/event-stream";
+
 // TODO: test this bad boy
 // TODO: not be a quick implementation
 pub fn create_stream(

@@ -1,3 +1,4 @@
+use futures_util::Stream;
 use std::{sync::Arc, time::Instant};
 use tracing::error;
 
@@ -22,8 +23,11 @@ use crate::{
         error::PipelineError,
         execution::{execute_plan, ExposeQueryPlanMode, PlannedRequest, EXPOSE_QUERY_PLAN_HEADER},
         execution_request::get_execution_request_from_http_request,
-        header::ResponseMode,
+        header::{ResponseMode, StreamContentType},
         introspection_policy::handle_introspection_policy,
+        multipart_subscribe::{
+            APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
+        },
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::parse_operation_with_cache,
         progressive_override::request_override_context,
@@ -169,15 +173,53 @@ pub async fn graphql_request_handler(
     )
     .await?
     {
-        QueryPlanExecutionResult::Stream(_stream) => {
-            let _stream_content_type = match response_mode.stream_content_type() {
+        QueryPlanExecutionResult::Stream(result) => {
+            let stream_content_type = match response_mode.stream_content_type() {
                 Some(content_type) => content_type,
                 None => {
                     return Err(PipelineError::SubscriptionsTransportNotSupported);
                 }
             };
 
-            todo!();
+            let content_type_header = match stream_content_type {
+                StreamContentType::IncrementalDelivery => {
+                    http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE)
+                }
+                StreamContentType::SSE => http::HeaderValue::from_static("text/event-stream"),
+                StreamContentType::ApolloMultipartHTTP => {
+                    http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE)
+                }
+            };
+
+            // TODO: why exactly do we need a type cast here?
+            let body: std::pin::Pin<
+                Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
+            > = match stream_content_type {
+                StreamContentType::IncrementalDelivery => Box::pin(
+                    multipart_subscribe::create_incremental_delivery_stream(result.body),
+                ),
+                StreamContentType::SSE => Box::pin(sse::create_stream(
+                    result.body,
+                    std::time::Duration::from_secs(10),
+                )),
+                StreamContentType::ApolloMultipartHTTP => {
+                    Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
+                        result.body,
+                        std::time::Duration::from_secs(10),
+                    ))
+                }
+            };
+
+            let mut response_builder = web::HttpResponse::Ok();
+            for (header_name, header_value) in result.headers {
+                if let Some(header_name) = header_name {
+                    response_builder.header(header_name, header_value);
+                }
+            }
+
+            Ok(response_builder
+                .header(http::header::CONTENT_TYPE, content_type_header)
+                .streaming(body))
         }
         QueryPlanExecutionResult::Single(result) => {
             let single_content_type = match response_mode.single_content_type() {

@@ -857,6 +857,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-str"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93e19f68b180ebff43d6d42005c4b5f046c65fcac28369ba8b3beaad633f9ec0"
+
+[[package]]
 name = "convert_case"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2109,6 +2115,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "combine",
+ "const-str",
  "cookie",
  "criterion",
  "futures",

@@ -17,6 +17,8 @@ use axum::{
 };
 use bytes::Bytes;
 use futures_util::{future::BoxFuture, stream::BoxStream, Stream, StreamExt};
+use hive_router::pipeline::multipart_subscribe::APOLLO_MULTIPART_HTTP_CONTENT_TYPE;
+use hive_router::pipeline::sse::SSE_HEADER;
 use hive_router::pipeline::{multipart_subscribe, sse};
 use tower_service::Service;
 
@@ -67,7 +69,7 @@ where
             .headers()
             .get("accept")
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|accept| accept.contains("text/event-stream"));
+            .is_some_and(|accept| accept.contains(SSE_HEADER));
 
         // for testing purposes. abruptly terminate the stream after N messages
         let break_after_count = req
@@ -115,7 +117,7 @@ where
                     Body::from_stream(byte_stream)
                 };
                 Ok(HttpResponse::builder()
-                    .header(http::header::CONTENT_TYPE, "text/event-stream")
+                    .header(http::header::CONTENT_TYPE, SSE_HEADER)
                     .header(http::header::CACHE_CONTROL, "no-cache")
                     .header(http::header::CONNECTION, "keep-alive")
                     .body(body)
@@ -132,7 +134,7 @@ where
                 Ok(HttpResponse::builder()
                     .header(
                         http::header::CONTENT_TYPE,
-                        "multipart/mixed; boundary=graphql",
+                        APOLLO_MULTIPART_HTTP_CONTENT_TYPE,
                     )
                     .header(http::header::CACHE_CONTROL, "no-cache")
                     .header(http::header::CONNECTION, "keep-alive")
