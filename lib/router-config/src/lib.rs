@@ -16,6 +16,7 @@ pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
 pub mod usage_reporting;
+pub mod non_empty_string;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
