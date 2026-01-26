@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use async_graphql::{http::is_accept_multipart_mixed, Executor, Response as GraphQLResponse};
+use async_graphql::{Executor, Response as GraphQLResponse};
 use async_graphql_axum::GraphQLBatchRequest;
 use async_graphql_axum::{rejection::GraphQLRejection, GraphQLRequest};
 use axum::{
@@ -62,8 +62,12 @@ where
             .headers()
             .get("accept")
             .and_then(|value| value.to_str().ok())
-            .map(is_accept_multipart_mixed)
-            .unwrap_or_default();
+            .is_some_and(|accept|
+                // we dont use is_accept_multipart_mixed here because it requires the boundary
+                // to also be set in the accept header, which is not necessary according to
+                // the spec. hive router obeys the spec, and will set exactly the necessary accept
+                // as per https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol
+                accept.contains(r#"multipart/mixed;subscriptionSpec="1.0""#));
 
         let does_accept_event_stream = req
             .headers()
