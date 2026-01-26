@@ -21,8 +21,8 @@ use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, convert::Infallible};
 use std::path::PathBuf;
+use std::{collections::HashMap, convert::Infallible};
 
 use crate::{
     env_overrides::{EnvVarOverrides, EnvVarOverridesError},
