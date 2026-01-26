@@ -182,6 +182,8 @@ impl PipelineError {
 
         let status = self.default_status_code(prefer_ok);
 
+        // TODO: stream once when response mode is streaming
+
         if let PipelineError::ValidationErrors(validation_errors) = self {
             let validation_error_result = FailedExecutionResult {
                 errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
