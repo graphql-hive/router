@@ -7,6 +7,18 @@ use crate::{
     non_empty_string::NonEmptyStringValue,
 };
 
+/**
+ * Note about `NonEmptyStringValue` usage:
+ * It is used as an alternative to `Option<String>` for environment variables that are optional,
+ * but when provided, must not be empty. This ensures that if the environment variable is set,
+ * it contains a valid non-empty string, preventing potential misconfigurations due to empty values.
+ *
+ * We don't use `Option<NonEmptyStringValue>` because we can't control how `envconfig` handles the absence of environment variables.
+ * So instead we use `NonEmptyStringValue` directly and handle the absence case in the logic where we apply the overrides.
+ * It internally uses `Option<String>` to represent the value.
+ * In order to prevent `envconfig` from throwing an error when the env var is not set, we add `default = ""` to the `envconfig` attribute.
+ */
+
 #[derive(Envconfig)]
 pub struct EnvVarOverrides {
     // Logger overrides
@@ -14,7 +26,7 @@ pub struct EnvVarOverrides {
     pub log_level: Option<LogLevel>,
     #[envconfig(from = "LOG_FORMAT")]
     pub log_format: Option<LogFormat>,
-    #[envconfig(from = "LOG_FILTER")]
+    #[envconfig(from = "LOG_FILTER", default = "")]
     pub log_filter: NonEmptyStringValue,
 
     // GraphiQL overrides
@@ -24,21 +36,21 @@ pub struct EnvVarOverrides {
     // HTTP overrides
     #[envconfig(from = "PORT")]
     pub http_port: Option<u64>,
-    #[envconfig(from = "HOST")]
+    #[envconfig(from = "HOST", default = "")]
     pub http_host: NonEmptyStringValue,
 
     // Supergraph overrides
-    #[envconfig(from = "SUPERGRAPH_FILE_PATH")]
+    #[envconfig(from = "SUPERGRAPH_FILE_PATH", default = "")]
     pub supergraph_file_path: NonEmptyStringValue,
-    #[envconfig(from = "HIVE_CDN_ENDPOINT")]
+    #[envconfig(from = "HIVE_CDN_ENDPOINT", default = "")]
     pub hive_console_cdn_endpoint: NonEmptyStringValue,
-    #[envconfig(from = "HIVE_CDN_KEY")]
+    #[envconfig(from = "HIVE_CDN_KEY", default = "")]
     pub hive_console_cdn_key: NonEmptyStringValue,
-    #[envconfig(from = "HIVE_CDN_POLL_INTERVAL")]
+    #[envconfig(from = "HIVE_CDN_POLL_INTERVAL", default = "")]
     pub hive_console_cdn_poll_interval: NonEmptyStringValue,
-    #[envconfig(from = "HIVE_ACCESS_TOKEN")]
+    #[envconfig(from = "HIVE_ACCESS_TOKEN", default = "")]
     pub hive_access_token: NonEmptyStringValue,
-    #[envconfig(from = "HIVE_TARGET")]
+    #[envconfig(from = "HIVE_TARGET", default = "")]
     pub hive_target: NonEmptyStringValue,
 }
 
