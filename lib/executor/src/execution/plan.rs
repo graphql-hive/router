@@ -297,7 +297,7 @@ impl<'exec> Executor<'exec> {
             }
             PlanNode::Flatten(flatten_node) => {
                 match self.prepare_flatten_data(&ctx.final_response, flatten_node) {
-                    Ok(Some(p)) => {
+                    Some(p) => {
                         match self
                             .execute_flatten_fetch_node(
                                 flatten_node,
@@ -316,11 +316,7 @@ impl<'exec> Executor<'exec> {
                             }
                         }
                     }
-                    Ok(None) => { /* do nothing */ }
-                    Err(err) => {
-                        self.log_error(&err);
-                        ctx.errors.push(err.into());
-                    }
+                    None => { /* do nothing */ }
                 }
             }
             PlanNode::Sequence(sequence_node) => {
@@ -349,14 +345,13 @@ impl<'exec> Executor<'exec> {
             PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
             PlanNode::Flatten(flatten_node) => {
                 match self.prepare_flatten_data(final_response, flatten_node) {
-                    Ok(Some(p)) => Box::pin(self.execute_flatten_fetch_node(
+                    Some(p) => Box::pin(self.execute_flatten_fetch_node(
                         flatten_node,
                         Some(p.representations),
                         Some(p.representation_hashes),
                         Some(p.representation_hash_to_index),
                     )),
-                    Ok(None) => Box::pin(async { Ok(ExecutionJob::None) }),
-                    Err(e) => Box::pin(async move { Err(e) }),
+                    None => Box::pin(async { Ok(ExecutionJob::None) }),
                 }
             }
             PlanNode::Condition(node) => {
@@ -504,15 +499,12 @@ impl<'exec> Executor<'exec> {
         &self,
         final_response: &Value<'exec>,
         flatten_node: &'exec FlattenNode,
-    ) -> Result<Option<PreparedFlattenData>, PlanExecutionError> {
+    ) -> Option<PreparedFlattenData> {
         let fetch_node = match flatten_node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
-            _ => return Ok(None),
+            _ => return None,
         };
-        let requires_nodes = match fetch_node.requires.as_ref() {
-            Some(nodes) => nodes,
-            None => return Ok(None),
-        };
+        let requires_nodes = fetch_node.requires.as_ref()?;
 
         let mut index = 0;
         let normalized_path = flatten_node.path.as_slice();
@@ -535,7 +527,7 @@ impl<'exec> Executor<'exec> {
                 }
 
                 if filtered_representations_hashes.contains_key(&hash) {
-                    return Ok::<(), PlanExecutionError>(());
+                    return;
                 }
 
                 let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
@@ -555,32 +547,26 @@ impl<'exec> Executor<'exec> {
                     &mut filtered_representations,
                     filtered_representations_hashes.is_empty(),
                     None,
-                )
-                .with_plan_context(LazyPlanContext {
-                    subgraph_name: || Some(fetch_node.service_name.clone()),
-                    affected_path: || Some(flatten_node.path.to_string()),
-                })?;
+                );
 
                 if is_projected {
                     filtered_representations_hashes.insert(hash, index);
                 }
 
                 index += 1;
-
-                Ok(())
             },
-        )?;
+        );
         filtered_representations.put(CLOSE_BRACKET);
 
         if filtered_representations_hashes.is_empty() {
-            return Ok(None);
+            return None;
         }
 
-        Ok(Some(PreparedFlattenData {
+        Some(PreparedFlattenData {
             representations: filtered_representations,
             representation_hashes,
             representation_hash_to_index: filtered_representations_hashes,
-        }))
+        })
     }
 
     async fn execute_flatten_fetch_node(

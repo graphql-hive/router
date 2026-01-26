@@ -4,8 +4,6 @@ pub enum ProjectionError {
     ErrorsSerializationFailure(String),
     #[error("Failed to serialize GraphQL Extensions: {0}")]
     ExtensionsSerializationFailure(String),
-    #[error("Failed to serialize a custom scalar: {0}")]
-    CustomScalarSerializationFailure(String),
     #[error("Type '{0}' not found in schema")]
     MissingType(String),
     #[error("Field '{field_name}' not found on type '{type_name}' in schema")]

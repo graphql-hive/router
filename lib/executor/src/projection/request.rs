@@ -4,7 +4,7 @@ use hive_router_query_planner::ast::selection_item::SelectionItem;
 use crate::{
     introspection::schema::PossibleTypes,
     json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
-    projection::{error::ProjectionError, response::serialize_value_to_buffer},
+    projection::response::serialize_value_to_buffer,
     response::value::Value,
     utils::consts::{
         CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, OPEN_BRACE, OPEN_BRACKET, QUOTE, TRUE,
@@ -19,7 +19,7 @@ pub fn project_requires(
     buffer: &mut Vec<u8>,
     first: bool,
     response_key: Option<&str>,
-) -> Result<bool, ProjectionError> {
+) -> bool {
     project_requires_internal(
         possible_types,
         requires_selections,
@@ -49,10 +49,10 @@ fn project_requires_internal(
     buffer: &mut Vec<u8>,
     first: bool,
     response_key: Option<&str>,
-) -> Result<bool, ProjectionError> {
+) -> bool {
     match entity {
         Value::Null => {
-            return Ok(false);
+            return false;
         }
         Value::Bool(b) => {
             write_response_key(first, response_key, buffer);
@@ -87,7 +87,7 @@ fn project_requires_internal(
                     buffer,
                     first,
                     None,
-                )?;
+                );
                 if projected {
                     // Only update `first` if we actually write something
                     first = false;
@@ -99,10 +99,10 @@ fn project_requires_internal(
             if requires_selections.is_empty() {
                 // It is probably a scalar with an object value, so we write it directly
                 serialize_value_to_buffer(entity, buffer);
-                return Ok(true);
+                return true;
             }
             if entity_obj.is_empty() {
-                return Ok(false);
+                return false;
             }
 
             let parent_first = first;
@@ -115,17 +115,17 @@ fn project_requires_internal(
                 &mut first,
                 response_key,
                 parent_first,
-            )?;
+            );
             if first {
                 // If no fields were projected, "first" is still true,
                 // so we skip writing the closing brace
-                return Ok(false);
+                return false;
             } else {
                 buffer.put(CLOSE_BRACE);
             }
         }
     };
-    Ok(true)
+    true
 }
 
 fn project_requires_map_mut(
@@ -136,7 +136,7 @@ fn project_requires_map_mut(
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,
-) -> Result<(), ProjectionError> {
+) {
     for requires_selection in requires_selections {
         match &requires_selection {
             SelectionItem::Field(requires_selection) => {
@@ -193,7 +193,7 @@ fn project_requires_map_mut(
                     buffer,
                     *first,
                     Some(response_key),
-                )?;
+                );
                 if projected {
                     *first = false;
                 }
@@ -221,7 +221,7 @@ fn project_requires_map_mut(
                         first,
                         parent_response_key,
                         parent_first,
-                    )?;
+                    );
                 }
             }
             SelectionItem::FragmentSpread(_name_ref) => {
@@ -229,5 +229,4 @@ fn project_requires_map_mut(
             }
         }
     }
-    Ok(())
 }
