@@ -74,7 +74,7 @@ pub fn create_incremental_delivery_stream(
 const APOLLO_MULTIPART_HTTP_BOUNDARY: &str = "graphql";
 
 pub const APOLLO_MULTIPART_HTTP_CONTENT_TYPE: &str =
-    make_content_type!(INCREMENTAL_DELIVERY_BOUNDARY);
+    make_content_type!(APOLLO_MULTIPART_HTTP_BOUNDARY);
 
 /// Create a multipart subscription stream following Apollo's Multipart HTTP spec.
 ///
