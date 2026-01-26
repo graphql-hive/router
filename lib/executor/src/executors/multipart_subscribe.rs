@@ -18,6 +18,7 @@ pub enum ParseError {
 }
 
 pub fn parse_to_stream<B>(
+    boundary: &str,
     body_stream: B,
 ) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
@@ -25,13 +26,24 @@ where
     B::Data: Buf + Send,
     B::Error: std::fmt::Display + Send,
 {
+    let delimiter = format!("--{}", boundary);
+    let end_marker = format!("--{}--", boundary);
+
     let stream = async_stream::stream! {
         let mut body = body_stream;
         let mut buffer = Vec::<u8>::new();
+        let mut started = false;
 
         loop {
-            while let Some((boundary_end, is_end)) = find_multipart_boundary(&buffer) {
-                let part_bytes: Vec<u8> = buffer.drain(..boundary_end).collect();
+            while let Some((part_end, skip_len, is_end)) = find_next_part(&buffer, &delimiter, &end_marker, started) {
+                if !started {
+                    buffer.drain(..skip_len);
+                    started = true;
+                    continue;
+                }
+
+                let part_bytes: Vec<u8> = buffer.drain(..part_end).collect();
+                buffer.drain(..skip_len);
 
                 if !part_bytes.is_empty() {
                     match parse_part(&part_bytes) {
@@ -71,62 +83,53 @@ where
     Box::pin(stream)
 }
 
-fn find_multipart_boundary(buffer: &[u8]) -> Option<(usize, bool)> {
+fn find_next_part(
+    buffer: &[u8],
+    delimiter: &str,
+    end_marker: &str,
+    started: bool,
+) -> Option<(usize, usize, bool)> {
     let buffer_str = std::str::from_utf8(buffer).ok()?;
 
-    let first_boundary_pos = find_first_boundary(buffer_str)?;
-    let boundary_marker = extract_boundary_marker(buffer_str, first_boundary_pos)?;
-
-    let after_first = first_boundary_pos + boundary_marker.len();
-    if after_first >= buffer_str.len() {
-        return None;
+    if !started {
+        let pos = buffer_str.find(delimiter)?;
+        let after_delimiter = pos + delimiter.len();
+        let newline_pos = buffer_str[after_delimiter..].find('\n')?;
+        let skip_len = after_delimiter + newline_pos + 1;
+        return Some((0, skip_len, false));
     }
 
-    if let Some(next_pos) = buffer_str[after_first..].find(&boundary_marker) {
-        let absolute_next_pos = after_first + next_pos;
-        let end_marker = format!("{}--", boundary_marker);
-        let is_end = buffer_str[absolute_next_pos..].starts_with(&end_marker);
-        return Some((absolute_next_pos, is_end));
-    }
+    let next_delimiter_pos = buffer_str.find(delimiter)?;
+    let is_end = buffer_str[next_delimiter_pos..].starts_with(end_marker);
 
-    None
-}
+    let skip_len = if is_end {
+        let after_end = next_delimiter_pos + end_marker.len();
+        if let Some(newline) = buffer_str[after_end..].find('\n') {
+            end_marker.len() + newline + 1
+        } else {
+            end_marker.len()
+        }
+    } else {
+        let after_delimiter = next_delimiter_pos + delimiter.len();
+        if let Some(newline) = buffer_str[after_delimiter..].find('\n') {
+            delimiter.len() + newline + 1
+        } else {
+            delimiter.len()
+        }
+    };
 
-fn find_first_boundary(text: &str) -> Option<usize> {
-    text.find("--")
-}
-
-fn extract_boundary_marker(text: &str, start: usize) -> Option<String> {
-    let after_dashes = &text[start..];
-    let boundary_end = after_dashes
-        .find('\r')
-        .or_else(|| after_dashes.find('\n'))?;
-
-    let boundary = &after_dashes[..boundary_end];
-    Some(boundary.to_string())
+    Some((next_delimiter_pos, skip_len, is_end))
 }
 
 fn parse_part(raw: &[u8]) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     let text = std::str::from_utf8(raw).map_err(|e| ParseError::InvalidUtf8(e.to_string()))?;
-
-    let content = skip_boundary_line(text);
-    let body = extract_body_after_headers(content);
+    let body = extract_body_after_headers(text);
 
     if body.is_empty() {
         return Ok(None);
     }
 
     extract_payload(body)
-}
-
-fn skip_boundary_line(text: &str) -> &str {
-    if let Some(pos) = text.find("--") {
-        let after_boundary = &text[pos..];
-        if let Some(newline_pos) = after_boundary.find('\n') {
-            return &after_boundary[newline_pos + 1..];
-        }
-    }
-    text
 }
 
 fn extract_body_after_headers(content: &str) -> &str {
@@ -205,7 +208,7 @@ mod tests {
     #[test]
     fn test_parse_part_with_headers() {
         let part_data =
-            b"--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{\"reviewAdded\":{\"id\":\"1\"}}}}";
+            b"Content-Type: application/json\r\n\r\n{\"payload\":{\"data\":{\"reviewAdded\":{\"id\":\"1\"}}}}";
 
         let response = parse_part(part_data)
             .expect("Should parse valid part")
@@ -216,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_parse_part_without_headers() {
-        let part_data = b"--graphql\r\n\r\n{\"payload\":{\"data\":{\"value\":1}}}";
+        let part_data = b"\r\n{\"payload\":{\"data\":{\"value\":1}}}";
 
         let response = parse_part(part_data)
             .expect("Should parse part without headers")
@@ -270,66 +273,6 @@ mod tests {
         assert_eq!(errors[0].message, "Connection lost");
     }
 
-    #[test]
-    fn test_find_multipart_boundary_graphql() {
-        let buffer =
-            b"--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{}}}\r\n--graphql\r\n";
-
-        let result = find_multipart_boundary(buffer);
-
-        assert!(result.is_some());
-        let (pos, is_end) = result.unwrap();
-        assert!(!is_end);
-        assert!(pos > 0);
-    }
-
-    #[test]
-    fn test_find_multipart_boundary_custom() {
-        let buffer =
-            b"--myboundary\r\nContent-Type: application/json\r\n\r\n{\"data\":{}}\r\n--myboundary\r\n";
-
-        let result = find_multipart_boundary(buffer);
-
-        assert!(result.is_some());
-        let (pos, is_end) = result.unwrap();
-        assert!(!is_end);
-        assert!(pos > 0);
-    }
-
-    #[test]
-    fn test_find_multipart_boundary_end_marker() {
-        let buffer =
-            b"--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{}}}\r\n--graphql--\r\n";
-
-        let result = find_multipart_boundary(buffer);
-
-        assert!(result.is_some());
-        let (_, is_end) = result.unwrap();
-        assert!(is_end);
-    }
-
-    #[test]
-    fn test_find_multipart_boundary_custom_end_marker() {
-        let buffer =
-            b"--xyz123\r\nContent-Type: application/json\r\n\r\n{\"data\":{}}\r\n--xyz123--\r\n";
-
-        let result = find_multipart_boundary(buffer);
-
-        assert!(result.is_some());
-        let (_, is_end) = result.unwrap();
-        assert!(is_end);
-    }
-
-    #[test]
-    fn test_find_multipart_boundary_incomplete() {
-        let buffer =
-            b"--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{}}}";
-
-        let result = find_multipart_boundary(buffer);
-
-        assert!(result.is_none());
-    }
-
     #[tokio::test]
     async fn test_parse_to_stream_single_event() {
         use futures::StreamExt;
@@ -343,7 +286,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream(body);
+        let mut stream = parse_to_stream("graphql", body);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -375,7 +318,7 @@ mod tests {
         ];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream(body);
+        let mut stream = parse_to_stream("graphql", body);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -408,7 +351,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream(body);
+        let mut stream = parse_to_stream("graphql", body);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -434,7 +377,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream(body);
+        let mut stream = parse_to_stream("graphql", body);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -463,7 +406,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream(body);
+        let mut stream = parse_to_stream("myboundary", body);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -489,7 +432,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream(body);
+        let mut stream = parse_to_stream("boundary", body);
 
         let first = stream.next().await;
         assert!(first.is_some());
