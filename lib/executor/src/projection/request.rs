@@ -97,6 +97,7 @@ fn project_requires_internal(
         }
         Value::Object(entity_obj) => {
             if requires_selections.is_empty() {
+                write_response_key(first, response_key, buffer);
                 // It is probably a scalar with an object value, so we write it directly
                 serialize_value_to_buffer(entity, buffer);
                 return true;
