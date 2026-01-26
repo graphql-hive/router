@@ -154,7 +154,7 @@ pub fn load_config(
         let as_file: File<FileSourceFile, _> = path_buf.into();
 
         config = config.add_source(as_file.required(true));
-        config_root_path = config_root_path.clone().join(parent_dir);
+        config_root_path = config_root_path.join(parent_dir);
     } else {
         for name in DEFAULT_FILE_NAMES {
             config = config.add_source(File::with_name(name).required(false));
