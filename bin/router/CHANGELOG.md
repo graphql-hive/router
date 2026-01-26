@@ -116,6 +116,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.34 (2026-01-26)
+
+### Fixes
+
+- Render GraphiQL when accepting text/html with highest q-weight (#705)
+- avoid `expect` and handle configuration errors better (#715)
+- Render GraphiQL when accepting text/html with highest q-weight
+
+#### Better pipeline error handling
+
+- Now there is only one place that logs the pipeline errors instead of many
+- Pipeline errors are now mapped automatically from the internal error types using `#[from]` from `thiserror` crate instead of `map_err` everywhere
+
+#### Better error handling for configuration loading
+
+- In case of an invalid environment variables, do not crash with `panic` but provide a clear error message with a proper error type.
+- In case of failing to get the current working directory, provide a clear error message instead of crashing with `panic`.
+- In case of failing to parse the configuration file path, provide a clear error message instead of crashing with `panic`.
+
 ## 0.0.33 (2026-01-22)
 
 ### Features
