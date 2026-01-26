@@ -11,7 +11,7 @@ use crate::pipeline::error::PipelineError;
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::{SchemaState, SupergraphData};
-use tracing::{error, trace};
+use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct GraphQLNormalizationPayload {
@@ -49,45 +49,39 @@ pub async fn normalize_request_with_cache(
 
             Ok(payload)
         }
-        None => match normalize_operation(
-            &supergraph.planner.supergraph,
-            &parser_payload.parsed_operation,
-            execution_params.operation_name.as_deref(),
-        ) {
-            Ok(doc) => {
-                trace!(
-                    "Successfully normalized GraphQL operation (operation name={:?}): {}",
-                    doc.operation_name,
-                    doc.operation
-                );
+        None => {
+            let doc = normalize_operation(
+                &supergraph.planner.supergraph,
+                &parser_payload.parsed_operation,
+                execution_params.operation_name.as_deref(),
+            )?;
 
-                let operation = doc.operation;
-                let (root_type_name, projection_plan) =
-                    FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
-                let partitioned_operation = partition_operation(operation);
+            trace!(
+                "Successfully normalized GraphQL operation (operation name={:?}): {}",
+                doc.operation_name,
+                doc.operation
+            );
 
-                let payload = GraphQLNormalizationPayload {
-                    root_type_name,
-                    projection_plan: Arc::new(projection_plan),
-                    operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
-                    operation_for_introspection: partitioned_operation
-                        .introspection_operation
-                        .map(Arc::new),
-                };
-                let payload_arc = Arc::new(payload);
-                schema_state
-                    .normalize_cache
-                    .insert(cache_key, payload_arc.clone())
-                    .await;
+            let operation = doc.operation;
+            let (root_type_name, projection_plan) =
+                FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
+            let partitioned_operation = partition_operation(operation);
 
-                Ok(payload_arc)
-            }
-            Err(err) => {
-                error!("Failed to normalize GraphQL operation: {}", err);
-                trace!("{:?}", err);
+            let payload = GraphQLNormalizationPayload {
+                root_type_name,
+                projection_plan: Arc::new(projection_plan),
+                operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
+                operation_for_introspection: partitioned_operation
+                    .introspection_operation
+                    .map(Arc::new),
+            };
+            let payload_arc = Arc::new(payload);
+            schema_state
+                .normalize_cache
+                .insert(cache_key, payload_arc.clone())
+                .await;
 
-                Err(PipelineError::NormalizationError(err))
-            }
-        },
+            Ok(payload_arc)
+        }
     }
 }
