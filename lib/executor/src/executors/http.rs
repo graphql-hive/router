@@ -420,8 +420,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         // Create the appropriate stream based on content type
         if is_multipart {
-            // Boundary is always "graphql" per the multipart subscription spec
-            let stream = multipart_subscribe::parse_to_stream(body_stream);
+            // TODO: actually parse the boundary from content-type header, but not really necessary
+            // because boundary is always "graphql" per the multipart subscription spec
+            // https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol
+            let stream = multipart_subscribe::parse_to_stream("graphql", body_stream);
 
             Box::pin(async_stream::stream! {
                 for await result in stream {
