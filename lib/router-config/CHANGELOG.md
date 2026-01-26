@@ -66,6 +66,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.19 (2026-01-26)
+
+### Fixes
+
+#### Better error handling for configuration loading
+
+- In case of an invalid environment variables, do not crash with `panic` but provide a clear error message with a proper error type.
+- In case of failing to get the current working directory, provide a clear error message instead of crashing with `panic`.
+- In case of failing to parse the configuration file path, provide a clear error message instead of crashing with `panic`.
+
 ## 0.0.18 (2026-01-22)
 
 ### Features
