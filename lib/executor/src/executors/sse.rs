@@ -3,7 +3,9 @@ use futures::stream::BoxStream;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 
-use crate::response::subgraph_response::SubgraphResponse;
+use crate::{
+    executors::error::SubgraphExecutorError, response::subgraph_response::SubgraphResponse,
+};
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ParseError {
@@ -11,8 +13,8 @@ pub enum ParseError {
     InvalidUtf8(String),
     #[error("Stream read error: {0}")]
     StreamReadError(String),
-    #[error("Invalid JSON: {0}")]
-    InvalidJson(String),
+    #[error("Invalid subgraph response: {0}")]
+    InvalidSubgraphResponse(SubgraphExecutorError),
 }
 
 pub fn parse_to_stream<B>(
@@ -36,12 +38,12 @@ where
 
                         match sse_event.event.as_deref() {
                             Some("next") if !sse_event.data.is_empty() => {
-                                match deserialize_to_subgraph_response(Bytes::from(sse_event.data.clone())) {
+                                match SubgraphResponse::deserialize_from_bytes(Bytes::from(sse_event.data.clone())) {
                                     Ok(response) => {
                                         yield Ok(response);
                                     }
                                     Err(e) => {
-                                        yield Err(e);
+                                        yield Err(ParseError::InvalidSubgraphResponse(e));
                                         return;
                                     }
                                 }
@@ -154,25 +156,6 @@ fn parse(raw: &[u8]) -> Result<Vec<SubgraphSseEvent>, ParseError> {
     }
 
     Ok(events)
-}
-
-fn deserialize_to_subgraph_response(bytes: Bytes) -> Result<SubgraphResponse<'static>, ParseError> {
-    let bytes_ref: &[u8] = &bytes;
-
-    // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'static`.
-    // This is safe because the returned `SubgraphResponse` contains a clone of `bytes`
-    // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
-    // underlying data remains alive as long as the `SubgraphResponse` does.
-    // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
-    // creating a self-referential struct, which is why `unsafe` is required.
-    let bytes_ref: &'static [u8] = unsafe { std::mem::transmute(bytes_ref) };
-
-    sonic_rs::from_slice(bytes_ref)
-        .map_err(|e| ParseError::InvalidJson(e.to_string()))
-        .map(|mut resp: SubgraphResponse<'static>| {
-            resp.bytes = Some(bytes);
-            resp
-        })
 }
 
 #[cfg(test)]

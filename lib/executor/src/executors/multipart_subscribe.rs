@@ -3,7 +3,9 @@ use futures::stream::BoxStream;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 
-use crate::response::subgraph_response::SubgraphResponse;
+use crate::{
+    executors::error::SubgraphExecutorError, response::subgraph_response::SubgraphResponse,
+};
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ParseError {
@@ -11,11 +13,13 @@ pub enum ParseError {
     InvalidUtf8(String),
     #[error("Stream read error: {0}")]
     StreamReadError(String),
-    #[error("Invalid JSON: {0}")]
-    InvalidJson(String),
+    #[error("Invalid subgraph response: {0}")]
+    InvalidSubgraphResponse(SubgraphExecutorError),
 }
 
-pub fn parse_to_stream<B>(body_stream: B) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
+pub fn parse_to_stream<B>(
+    body_stream: B,
+) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
     B: Body + Send + Unpin + 'static,
     B::Data: Buf + Send,
@@ -138,48 +142,39 @@ fn extract_body_after_headers(content: &str) -> &str {
 fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     use sonic_rs::JsonValueTrait;
 
-    let parsed: sonic_rs::Value =
-        sonic_rs::from_str(body).map_err(|e| ParseError::InvalidJson(e.to_string()))?;
+    let parsed: sonic_rs::Value = sonic_rs::from_str(body).map_err(|e| {
+        ParseError::InvalidSubgraphResponse(SubgraphExecutorError::ResponseDeserializationFailure(
+            e.to_string(),
+        ))
+    })?;
 
     if is_heartbeat(&parsed) {
         return Ok(None);
     }
 
     if let Some(transport_error) = extract_transport_error(&parsed) {
-        return deserialize_to_subgraph_response(Bytes::from(transport_error));
+        return SubgraphResponse::deserialize_from_bytes(Bytes::from(transport_error))
+            .map_err(ParseError::InvalidSubgraphResponse)
+            .map(Some);
     }
 
     if let Some(payload) = parsed.get("payload") {
         if payload.is_null() {
             return Ok(None);
         }
-        let payload_str =
-            sonic_rs::to_string(payload).map_err(|e| ParseError::InvalidJson(e.to_string()))?;
-        return deserialize_to_subgraph_response(Bytes::from(payload_str));
+        let payload_str = sonic_rs::to_string(payload).map_err(|e| {
+            ParseError::InvalidSubgraphResponse(
+                SubgraphExecutorError::ResponseDeserializationFailure(e.to_string()),
+            )
+        })?;
+        return SubgraphResponse::deserialize_from_bytes(Bytes::from(payload_str))
+            .map_err(ParseError::InvalidSubgraphResponse)
+            .map(Some);
     }
 
-    deserialize_to_subgraph_response(Bytes::from(body.to_owned()))
-}
-
-fn deserialize_to_subgraph_response(
-    bytes: Bytes,
-) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
-    let bytes_ref: &[u8] = &bytes;
-
-    // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'static`.
-    // This is safe because the returned `SubgraphResponse` contains a clone of `bytes`
-    // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
-    // underlying data remains alive as long as the `SubgraphResponse` does.
-    // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
-    // creating a self-referential struct, which is why `unsafe` is required.
-    let bytes_ref: &'static [u8] = unsafe { std::mem::transmute(bytes_ref) };
-
-    sonic_rs::from_slice(bytes_ref)
-        .map_err(|e| ParseError::InvalidJson(e.to_string()))
-        .map(|mut resp: SubgraphResponse<'static>| {
-            resp.bytes = Some(bytes);
-            Some(resp)
-        })
+    SubgraphResponse::deserialize_from_bytes(Bytes::from(body.to_owned()))
+        .map_err(ParseError::InvalidSubgraphResponse)
+        .map(Some)
 }
 
 fn is_heartbeat(value: &sonic_rs::Value) -> bool {

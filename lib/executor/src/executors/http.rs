@@ -476,24 +476,12 @@ pub struct HttpResponse {
 
 impl HttpResponse {
     fn deserialize_http_response<'a>(&self) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
-        let bytes_ref: &[u8] = &self.body;
-
-        // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'a`.
-        // This is safe because the returned `SubgraphResponse` contains a clone of `self.body`
-        // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
-        // underlying data remains alive as long as the `SubgraphResponse` does.
-        // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
-        // creating a self-referential struct, which is why `unsafe` is required.
-        let bytes_ref: &'a [u8] = unsafe { std::mem::transmute(bytes_ref) };
-
-        sonic_rs::from_slice(bytes_ref)
-            .map_err(|err| SubgraphExecutorError::ResponseDeserializationFailure(err.to_string()))
-            .map(|mut resp: SubgraphResponse<'a>| {
-                // This is Arc
+        SubgraphResponse::deserialize_from_bytes(self.body.clone()).map(
+            |mut resp: SubgraphResponse<'a>| {
+                // headers are under arc, zero cost clone
                 resp.headers = Some(self.headers.clone());
-                // Zero cost of cloning Bytes
-                resp.bytes = Some(self.body.clone());
                 resp
-            })
+            },
+        )
     }
 }

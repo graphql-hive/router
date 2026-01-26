@@ -107,6 +107,29 @@ impl GraphQLError {
     }
 }
 
+impl<'a> SubgraphResponse<'a> {
+    pub fn deserialize_from_bytes(
+        bytes: Bytes,
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        let bytes_ref: &[u8] = &bytes;
+
+        // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'static`.
+        // This is safe because the returned `SubgraphResponse` contains a clone of `bytes`
+        // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
+        // underlying data remains alive as long as the `SubgraphResponse` does.
+        // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
+        // creating a self-referential struct, which is why `unsafe` is required.
+        let bytes_ref: &'static [u8] = unsafe { std::mem::transmute(bytes_ref) };
+
+        sonic_rs::from_slice(bytes_ref)
+            .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e.to_string()))
+            .map(|mut resp: SubgraphResponse<'static>| {
+                resp.bytes = Some(bytes);
+                resp
+            })
+    }
+}
+
 impl SubgraphExecutorError {
     pub fn to_subgraph_response(self, subgraph_name: &str) -> SubgraphResponse<'static> {
         let mut graphql_error: GraphQLError = self.into();
