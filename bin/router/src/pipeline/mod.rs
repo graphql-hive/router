@@ -95,7 +95,9 @@ pub async fn graphql_request_handler(
         Some(OperationKind::Subscription)
     );
 
-    if is_subscription && !response_mode.can_stream() {
+    if is_subscription
+        && (!shared_state.router_config.subscriptions.enabled || !response_mode.can_stream())
+    {
         // check early, even though we check again after pipeline execution below
         return Err(PipelineError::SubscriptionsNotSupported);
     }

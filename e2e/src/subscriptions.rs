@@ -59,21 +59,22 @@ mod subscriptions_e2e_tests {
 
         let res = test::call_service(&router.app, req).await;
 
-        assert!(
-            res.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        assert_eq!(
+            res.status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "Expected 415 Unsupported Media Type"
         );
 
         let content_type_header = get_content_type_header(&res);
-        assert!(
-            content_type_header == "application/json",
+        assert_eq!(
+            content_type_header, "application/json",
             "Expected Content-Type to be application/json"
         );
 
         let body = test::read_body(res).await;
         let body_str = std::str::from_utf8(&body).unwrap();
 
-        assert_snapshot!(body_str, @r#"{"errors":[{"message":"Subscriptions are not supported","extensions":{"code":"SUBSCRIPTIONS_NOT_SUPPORT"}}]}"#);
+        assert_snapshot!(body_str, @r#"{"errors":[{"message":"Subscriptions are not supported","extensions":{"code":"SUBSCRIPTIONS_NOT_SUPPORTED"}}]}"#);
     }
 
     #[ntex::test]
@@ -1003,7 +1004,7 @@ mod subscriptions_e2e_tests {
         data: {"data":{"reviewAdded":{"id":"3"}}}
 
         event: next
-        data: {"data":null,"errors":[{"message":"Internal server error","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_STREAM_ERROR","serviceName":"reviews"}}]}
+        data: {"data":null,"errors":[{"message":"Failed to execute request to subgraph","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_STREAM_ERROR","serviceName":"reviews"}}]}
 
         event: complete
         "#);
