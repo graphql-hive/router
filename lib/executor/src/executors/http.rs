@@ -20,7 +20,7 @@ use hyper::Version;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -418,8 +418,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         let endpoint = self.endpoint.to_string();
         let subgraph_name = self.subgraph_name.clone();
 
-        // Create the appropriate stream based on content type
         if is_multipart {
+            debug!(
+                subgraph_name = self.subgraph_name,
+                "using multipart HTTP for subscription",
+            );
+
             let boundary = match multipart_subscribe::parse_boundary_from_header(content_type) {
                 Ok(boundary) => boundary,
                 Err(e) => {
@@ -434,9 +438,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             let stream = multipart_subscribe::parse_to_stream(boundary, body_stream);
 
             Box::pin(async_stream::stream! {
+                trace!("multipart subscription stream started");
                 for await result in stream {
                     match result {
                         Ok(response) => {
+                            trace!(response = ?response, "multipart subscription event received");
                             yield response;
                         }
                         Err(e) => {
@@ -452,13 +458,20 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 }
             })
         } else {
-            // SSE stream
+            debug!(
+                "using SSE for subscription connection to subgraph {} at {}",
+                self.subgraph_name,
+                self.endpoint.to_string(),
+            );
+
             let stream = sse::parse_to_stream(body_stream);
 
             Box::pin(async_stream::stream! {
+                trace!("SSE subscription stream started");
                 for await result in stream {
                     match result {
                         Ok(response) => {
+                            trace!(response = ?response, "SSE subscription event received");
                             yield response;
                         }
                         Err(e) => {
