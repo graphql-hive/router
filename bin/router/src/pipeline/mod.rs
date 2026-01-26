@@ -93,10 +93,17 @@ pub async fn graphql_request_handler(
             get_execution_request_from_http_request(req, body_bytes.clone()).await?;
 
         let parser_payload = parse_operation_with_cache(shared_state, &execution_request).await?;
-        operation_span.record_document(&parser_payload.minified_document);
-        operation_span.record_operation_identity((&parser_payload).into());
-        operation_span.record_client_identity(client_name, client_version);
-        operation_span.record_hive_operation_hash(&parser_payload.hive_operation_hash);
+        operation_span.record_details(
+          &parser_payload.minified_document,
+          (&parser_payload).into(),
+          client_name,
+          client_version,
+          &parser_payload.hive_operation_hash
+        );
+        // operation_span.record_document(&parser_payload.minified_document);
+        // operation_span.record_operation_identity((&parser_payload).into());
+        // operation_span.record_client_identity(client_name, client_version);
+        // operation_span.record_hive_operation_hash(&parser_payload.hive_operation_hash);
 
         validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload)
             .await?;
@@ -108,29 +115,6 @@ pub async fn graphql_request_handler(
             &parser_payload,
         )
         .await?;
-
-        // This is where we decide if to drop a trace,
-        // when the introspection queries are configured to be ignored by Telemetry
-        if normalize_payload.is_introspection_only
-            && !shared_state
-                .router_config
-                .telemetry
-                .tracing
-                .instrumentation
-                .introspection
-        {
-            // We could move this check to the parsing phase (right after parsing),
-            // but that would make it vulnerable to DoS attacks.
-            // An attacker could craft deeply nested inline fragments (which bypass the tokenizer's recursion limit - 50)
-            // to cause a giant slowdown of the router.
-            //
-            // By checking here (post-normalization), we benefit from GraphQL validation that has already run,
-            // enforcing max depth/complexity, so queries with excessive complexity have already been rejected.
-            //
-            // Trade-off: When a query is rejected during the validation phase (before we reach here),
-            // we cannot identify if it was introspection-only, so traces will still be sent to OTel Collectors.
-            operation_span.mark_trace_for_drop();
-        }
 
         if req.method() == Method::GET {
             if let Some(OperationKind::Mutation) =

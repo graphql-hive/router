@@ -24,10 +24,6 @@ pub struct GraphQLNormalizationPayload {
     pub root_type_name: &'static str,
     pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
     pub operation_indentity: OperationIdentity,
-    /// Whether the operation is a pure introspection query,
-    /// meaning it does not require a query plan
-    /// or communication with subgraphs.
-    pub is_introspection_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -97,16 +93,6 @@ pub async fn normalize_request_with_cache(
                             FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
                         let partitioned_operation = partition_operation(operation);
 
-                        // A query is introspection only when:
-                        // - it contains an empty operations for the QP,
-                        // - and the introspection part is present.
-                        let is_introspection_only =
-                            partitioned_operation.introspection_operation.is_some()
-                                && partitioned_operation
-                                    .downstream_operation
-                                    .selection_set
-                                    .is_empty();
-
                         let payload = GraphQLNormalizationPayload {
                             root_type_name,
                             projection_plan: Arc::new(projection_plan),
@@ -121,7 +107,6 @@ pub async fn normalize_request_with_cache(
                                 operation_type: parser_payload.operation_type.clone(),
                                 client_document_hash: parser_payload.cache_key_string.clone(),
                             },
-                            is_introspection_only,
                         };
                         let payload_arc = Arc::new(payload);
                         schema_state

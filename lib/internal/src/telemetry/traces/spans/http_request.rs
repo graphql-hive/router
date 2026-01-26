@@ -7,7 +7,7 @@ use http_body_util::Full;
 use hyper::body::Body;
 use ntex::http::body::MessageBody;
 use std::borrow::{Borrow, Cow};
-use tracing::{field::Empty, info_span, Level, Span};
+use tracing::{field::Empty, info_span, record_all, Level, Span};
 
 use crate::telemetry::traces::{
     disabled_span, is_level_enabled,
@@ -59,7 +59,6 @@ impl HttpServerRequestSpan {
         let request_method = Cow::Borrowed(request.method());
         let header_user_agent = request.headers().get(USER_AGENT);
         let url = Cow::Borrowed(request.uri());
-        let url_full = url.to_string();
         let protocol_version = version_to_protocol_version_attr(request.version());
 
         // We follow the HTTP server span conventions:
@@ -76,7 +75,7 @@ impl HttpServerRequestSpan {
             // Stable Attributes
             "server.address" = server_address,
             "server.port" = server_port,
-            "url.full" = url_full.as_str(),
+            "url.full" = %url,
             "url.path" = url.path(),
             "url.scheme" = url.scheme_str(),
             "http.request.body.size" = request_body_size,
@@ -92,32 +91,39 @@ impl HttpServerRequestSpan {
     }
 
     pub fn record_response(&self, response: &ntex::web::HttpResponse) {
+        if self.span.is_disabled() {
+            return;
+        }
+
         let body_size: Option<u64> = response.body().as_ref().and_then(|b| match b.size() {
             ntex::http::body::BodySize::Sized(size) => Some(size),
             _ => None,
         });
 
-        // Record stable attributes
-        self.record(
-            attributes::HTTP_RESPONSE_STATUS_CODE,
-            response.status().as_str(),
+        record_all!(
+            self.span,
+            "http.response.status_code" = response.status().as_str(),
+            "http.response.body.size" = body_size,
+            "otel.status_code" = if response.status().is_server_error() {
+                "Error"
+            } else {
+                "Ok"
+            },
+            "error.type" = if response.status().is_server_error() {
+                Some(response.status().to_string())
+            } else {
+                None
+            },
         );
-        if let Some(size) = body_size {
-            self.record(attributes::HTTP_RESPONSE_BODY_SIZE, size as i64);
-        }
-
-        if response.status().is_server_error() {
-            self.record(attributes::OTEL_STATUS_CODE, "Error");
-            self.record(attributes::ERROR_TYPE, response.status().as_str());
-        } else {
-            self.record(attributes::OTEL_STATUS_CODE, "Ok");
-        }
     }
 
     pub fn record_internal_server_error(&self) {
-        self.record(attributes::OTEL_STATUS_CODE, "Error");
-        self.record(attributes::ERROR_TYPE, "500");
-        self.record(attributes::HTTP_RESPONSE_STATUS_CODE, "500");
+        record_all!(
+            self.span,
+            "http.response.status_code" = 500,
+            "otel.status_code" = "Error",
+            "error.type" = 500,
+        );
     }
 }
 
@@ -153,7 +159,6 @@ impl HttpClientRequestSpan {
         let protocol_version = version_to_protocol_version_attr(request.version());
         let server_address = request.uri().host();
         let server_port = request.uri().port_u16();
-        let url_full = url.to_string();
 
         // We follow the HTTP client span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client
@@ -169,7 +174,7 @@ impl HttpClientRequestSpan {
             // Stable Attributes
             "server.address" = server_address,
             "server.port" = server_port,
-            "url.full" = url_full.as_str(),
+            "url.full" = %url,
             "url.path" = url.path(),
             "url.scheme" = url.scheme_str(),
             "http.request.body.size" = request_body_size,
@@ -187,29 +192,36 @@ impl HttpClientRequestSpan {
     where
         B: Body<Data = Bytes>,
     {
+        if self.span.is_disabled() {
+            return;
+        }
+
         let body_size = response.body().size_hint().exact().map(|s| s as usize);
 
-        // Record stable attributes
-        self.record(
-            attributes::HTTP_RESPONSE_STATUS_CODE,
-            response.status().as_str(),
+        record_all!(
+            self.span,
+            "http.response.status_code" = response.status().as_str(),
+            "http.response.body.size" = body_size,
+            "otel.status_code" = if response.status().is_server_error() {
+                "Error"
+            } else {
+                "Ok"
+            },
+            "error.type" = if response.status().is_server_error() {
+                Some(response.status().to_string())
+            } else {
+                None
+            },
         );
-        if let Some(size) = body_size {
-            self.record(attributes::HTTP_RESPONSE_BODY_SIZE, size as i64);
-        }
-
-        if response.status().is_server_error() {
-            self.record(attributes::OTEL_STATUS_CODE, "Error");
-            self.record(attributes::ERROR_TYPE, response.status().as_str());
-        } else {
-            self.record(attributes::OTEL_STATUS_CODE, "Ok");
-        }
     }
 
     pub fn record_internal_server_error(&self) {
-        self.record(attributes::OTEL_STATUS_CODE, "Error");
-        self.record(attributes::ERROR_TYPE, "500");
-        self.record(attributes::HTTP_RESPONSE_STATUS_CODE, "500");
+        record_all!(
+            self.span,
+            "http.response.status_code" = 500,
+            "otel.status_code" = "Error",
+            "error.type" = 500,
+        );
     }
 }
 
@@ -243,23 +255,14 @@ impl HttpInflightRequestSpan {
             };
         }
 
-        let (server_address, server_port) = match headers.get(HOST).and_then(|h| h.to_str().ok()) {
-            Some(host) => {
-                if let Some((host, port_str)) = host.rsplit_once(':') {
-                    (Some(host), port_str.parse::<u16>().ok())
-                } else {
-                    (Some(host), None)
-                }
-            }
-            None => (None, None),
-        };
+        let server_address = url.host();
+        let server_port = url.port_u16();
 
         let request_body_size = Some(body_bytes.len());
         let request_method = Cow::Borrowed(method);
         let header_user_agent = headers.get(USER_AGENT).map(Cow::Borrowed);
         let url = Cow::Borrowed(url);
         let protocol_version = version_to_protocol_version_attr(http::Version::HTTP_11);
-        let url_full = url.to_string();
 
         // We follow the HTTP client span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client
@@ -279,7 +282,7 @@ impl HttpInflightRequestSpan {
             // Stable Attributes
             "server.address" = server_address,
             "server.port" = server_port,
-            "url.full" = url_full.as_str(),
+            "url.full" = %url,
             "url.path" = url.path(),
             "url.scheme" = url.scheme_str(),
             "http.request.body.size" = request_body_size,
@@ -302,24 +305,36 @@ impl HttpInflightRequestSpan {
     }
 
     pub fn record_response(&self, body: &Bytes, status: &StatusCode) {
+        if self.span.is_disabled() {
+            return;
+        }
+
         let body_size = body.len();
 
-        // Record stable attributes
-        self.record(attributes::HTTP_RESPONSE_STATUS_CODE, status.as_str());
-        self.record(attributes::HTTP_RESPONSE_BODY_SIZE, body_size as i64);
-
-        if status.is_server_error() {
-            self.record(attributes::OTEL_STATUS_CODE, "Error");
-            self.record(attributes::ERROR_TYPE, status.as_str());
-        } else {
-            self.record(attributes::OTEL_STATUS_CODE, "Ok");
-        }
+        record_all!(
+            self.span,
+            "http.response.status_code" = status.as_str(),
+            "http.response.body.size" = body_size as i64,
+            "otel.status_code" = if status.is_server_error() {
+                "Error"
+            } else {
+                "Ok"
+            },
+            "error.type" = if status.is_server_error() {
+                Some(status.as_str())
+            } else {
+                None
+            },
+        );
     }
 
     pub fn record_internal_server_error(&self) {
-        self.record(attributes::OTEL_STATUS_CODE, "Error");
-        self.record(attributes::ERROR_TYPE, "500");
-        self.record(attributes::HTTP_RESPONSE_STATUS_CODE, "500");
+        record_all!(
+            self.span,
+            "http.response.status_code" = 500,
+            "otel.status_code" = "Error",
+            "error.type" = 500,
+        );
     }
 }
 

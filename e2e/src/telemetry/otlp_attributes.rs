@@ -98,6 +98,8 @@ async fn test_deprecated_span_attributes() {
         http.response_content_length: 86
         http.status_code: 200
         http.url: http://0.0.0.0:4200/accounts
+        net.peer.name: 0.0.0.0
+        net.peer.port: 4200
         target: hive-router
         url.path: /accounts
         url.scheme: http
@@ -230,7 +232,11 @@ async fn test_spec_and_deprecated_span_attributes() {
         http.response_content_length: 86
         http.status_code: 200
         http.url: http://0.0.0.0:4200/accounts
+        net.peer.name: 0.0.0.0
+        net.peer.port: 4200
         network.protocol.version: 1.1
+        server.address: 0.0.0.0
+        server.port: 4200
         target: hive-router
         url.full: http://0.0.0.0:4200/accounts
         url.path: /accounts
@@ -330,7 +336,7 @@ async fn test_default_client_identification() {
     insta::assert_snapshot!(
       operation_span,
       @r"
-    Span: GraphQL Operation
+    Span: graphql.operation
       Kind: Server
       Status: message='' code='0'
       Attributes:
@@ -410,7 +416,7 @@ async fn test_custom_client_identification() {
     insta::assert_snapshot!(
       operation_span,
       @r"
-    Span: GraphQL Operation
+    Span: graphql.operation
       Kind: Server
       Status: message='' code='0'
       Attributes:

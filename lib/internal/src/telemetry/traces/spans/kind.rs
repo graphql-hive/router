@@ -1,5 +1,11 @@
 #[derive(
-    Debug, strum::Display, strum::AsRefStr, strum::IntoStaticStr, strum::EnumString, PartialEq,
+    Debug,
+    strum::Display,
+    strum::AsRefStr,
+    strum::IntoStaticStr,
+    strum::EnumString,
+    PartialEq,
+    Clone,
 )]
 #[non_exhaustive]
 pub enum HiveSpanKind {
@@ -27,6 +33,12 @@ pub enum HiveSpanKind {
     GraphqlOperation,
     #[strum(serialize = "graphql.subgraph.operation")]
     GraphQLSubgraphOperation,
+}
+
+impl HiveSpanKind {
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
 }
 
 #[derive(
