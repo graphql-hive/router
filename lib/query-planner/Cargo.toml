@@ -12,7 +12,7 @@ authors = ["The Guild"]
 [lib]
 
 [dependencies]
-graphql-tools =  { path = "../graphql-tools", version = "0.5.0" }
+graphql-tools =  { path = "../graphql-tools", version = "=0.5.0" }
 serde = { workspace = true }
 sonic-rs = { workspace = true }
 tracing = { workspace = true }
