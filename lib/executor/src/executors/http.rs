@@ -436,8 +436,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Box::pin(async_stream::stream! {
                 for await result in stream {
                     match result {
-                        Ok(_body) => {
-                            todo!();
+                        Ok(response) => {
+                            yield response;
                         }
                         Err(e) => {
                             let error = SubgraphExecutorError::SubscriptionStreamError(
@@ -458,8 +458,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Box::pin(async_stream::stream! {
                 for await result in stream {
                     match result {
-                        Ok(_body) => {
-                            todo!();
+                        Ok(response) => {
+                            yield response;
                         }
                         Err(e) => {
                             let error = SubgraphExecutorError::SubscriptionStreamError(
