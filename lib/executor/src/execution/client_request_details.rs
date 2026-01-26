@@ -19,6 +19,7 @@ pub struct ClientRequestDetails<'exec> {
     pub jwt: &'exec JwtRequestDetails,
 }
 
+#[derive(Clone)]
 pub enum JwtRequestDetails {
     Authenticated {
         token: String,
