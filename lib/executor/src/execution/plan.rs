@@ -19,7 +19,7 @@ use sonic_rs::ValueRef;
 use crate::{
     context::ExecutionContext,
     execution::{
-        client_request_details::ClientRequestDetails,
+        client_request_details::{ClientRequestDetails, JwtRequestDetails},
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
@@ -82,6 +82,7 @@ struct OwnedQueryPlanExecutionContext {
     headers_plan: Arc<HeaderRulesPlan>,
     variable_values: Option<HashMap<String, sonic_rs::Value>>,
     extensions: Option<HashMap<String, sonic_rs::Value>>,
+    introspection_context: IntrospectionContext<'static, 'static>,
     operation_type_name: String,
     executors: Arc<SubgraphExecutorMap>,
     initial_errors: Vec<GraphQLError>,
@@ -112,6 +113,7 @@ impl OwnedQueryPlanExecutionContext {
             headers_plan: ctx.headers_plan.clone().into(),
             variable_values: ctx.variable_values.clone(),
             extensions: ctx.extensions.clone(),
+            introspection_context: ctx.introspection_context.clone(),
             operation_type_name: ctx.operation_type_name.to_string(),
             executors: ctx.executors.clone().into(),
             initial_errors: ctx.initial_errors.clone(),
@@ -133,7 +135,7 @@ pub enum QueryPlanExecutionResult {
 pub async fn execute_query_plan<'exec>(
     ctx: QueryPlanExecutionContext<'exec>,
 ) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
-    let (subscription_node, _remaining_nodes) = match &ctx.query_plan.node {
+    let (subscription_node, remaining_nodes) = match &ctx.query_plan.node {
         // a subscription to a subgraph that contains all data and doesn't need entity resolution
         Some(PlanNode::Subscription(sub)) => (Some(sub), None),
         // a subscription that needs entity resolution. after emitting, it needs to execute the
@@ -153,10 +155,185 @@ pub async fn execute_query_plan<'exec>(
         _ => (None, None),
     };
 
-    if let Some(_sub) = subscription_node {
+    if let Some(sub) = subscription_node {
         // subscription
 
-        todo!();
+        let fetch_node = sub.primary.clone();
+
+        let variables = ctx.variable_values.as_ref().map(|vars| {
+            vars.iter()
+                .map(|(k, v)| (k.as_str(), v))
+                .collect::<HashMap<_, _>>()
+        });
+
+        let mut headers_map = HeaderMap::new();
+        modify_subgraph_request_headers(
+            &ctx.headers_plan,
+            &fetch_node.service_name,
+            ctx.client_request,
+            &mut headers_map,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || Some(fetch_node.service_name.clone()),
+            affected_path: || None,
+        })?;
+
+        let request = SubgraphExecutionRequest {
+            query: fetch_node.operation.document_str.as_str(),
+            dedupe: false,
+            operation_name: fetch_node.operation_name.as_deref(),
+            variables,
+            representations: None,
+            headers: headers_map,
+            extensions: None,
+        };
+
+        let response_stream = ctx
+            .executors
+            .subscribe(&fetch_node.service_name, request, ctx.client_request)
+            .await;
+
+        // subscription needs owned context for the stream
+        let owned_ctx = Box::new(OwnedQueryPlanExecutionContext::from_ctx(
+            &ctx,
+            remaining_nodes,
+        ));
+
+        // clone client request data for use inside the stream
+        // TODO: is there a better way of doing this?
+        let owned_method = ctx.client_request.method.clone();
+        let owned_uri = ctx.client_request.url.clone();
+        let owned_headers = ctx.client_request.headers.clone();
+        let owned_operation_name: Option<String> =
+            ctx.client_request.operation.name.map(|s| s.to_string());
+        let owned_operation_kind = ctx.client_request.operation.kind;
+        let owned_operation_query = ctx.client_request.operation.query.to_string();
+        let (jwt_authenticated, jwt_token, jwt_prefix, jwt_claims, jwt_scopes): (
+            bool,
+            String,
+            Option<String>,
+            sonic_rs::Value,
+            Option<Vec<String>>,
+        ) = match ctx.client_request.jwt {
+            JwtRequestDetails::Authenticated {
+                token,
+                prefix,
+                claims,
+                scopes,
+            } => (
+                true,
+                token.to_string(),
+                prefix.clone().map(|s| s.to_string()),
+                (*claims).clone(),
+                scopes.clone(),
+            ),
+            JwtRequestDetails::Unauthenticated => {
+                (false, String::new(), None, sonic_rs::Value::default(), None)
+            }
+        };
+        let owned_jwt_auth_forwarding: Option<JwtAuthForwardingPlan> =
+            ctx.jwt_auth_forwarding.clone();
+
+        // Create a stream of serialized subscription events
+        let body_stream = Box::pin(async_stream::stream! {
+            use crate::execution::client_request_details::{
+                ClientRequestDetails, JwtRequestDetails, OperationDetails,
+            };
+
+            let mut response_stream = response_stream;
+
+            while let Some(response) = response_stream.next().await {
+
+                let initial_data = response.data;
+                let mut initial_errors: Vec<GraphQLError> = owned_ctx.initial_errors.clone();
+                if let Some(resp_errors) = response.errors {
+                    initial_errors.extend(resp_errors);
+                }
+
+                let output = if owned_ctx.query_plan.node.is_some() {
+                    // entity resolution
+
+                    let jwt = if jwt_authenticated {
+                        JwtRequestDetails::Authenticated {
+                            token: jwt_token.clone(),
+                            prefix: jwt_prefix.clone(),
+                            claims: jwt_claims.clone(),
+                            scopes: jwt_scopes.clone(),
+                        }
+                    } else {
+                        JwtRequestDetails::Unauthenticated
+                    };
+                    let operation = OperationDetails {
+                        name: owned_operation_name.as_deref(),
+                        query: &owned_operation_query,
+                        kind: owned_operation_kind,
+                    };
+                    let client_request = ClientRequestDetails {
+                        method: &owned_method,
+                        url: &owned_uri,
+                        headers: &owned_headers,
+                        operation,
+                        jwt: &jwt,
+                    };
+
+                    match execute_plan_with_initial_data(
+                        &owned_ctx.query_plan,
+                        &owned_ctx.projection_plan,
+                        &owned_ctx.headers_plan,
+                        &owned_ctx.variable_values,
+                        &owned_ctx.extensions,
+                        &client_request,
+                        &owned_ctx.introspection_context,
+                        &owned_ctx.operation_type_name,
+                        &owned_ctx.executors,
+                        &owned_jwt_auth_forwarding,
+                        initial_errors,
+                        initial_data,
+                    )
+                    .await
+                    {
+                        Ok(output) => output.body,
+                        Err(e) => {
+                            todo!();
+                            // return Err(e);
+                        },
+                    }
+                } else {
+                    // no entity resolution, just project the response
+                    match project_by_operation(
+                        &initial_data,
+                        initial_errors,
+                        &owned_ctx.extensions,
+                        &owned_ctx.operation_type_name,
+                        &owned_ctx.projection_plan,
+                        &owned_ctx.variable_values,
+                        response.bytes.unwrap().len() + 256, // TODO: fix this estimate
+                        &owned_ctx.introspection_context.metadata,
+                    ) {
+                        Ok(body) => body,
+                        Err(e) => {
+                            todo!();
+                            // let error = GraphQLError::from_message_and_extensions(
+                            //     format!("Projection error: {}", e),
+                            //     Default::default(),
+                            // );
+                            // format_error_response(&[error])
+                        }
+                    }
+                };
+
+                yield output;
+            }
+        });
+
+        // TODO: Extract headers from first response or aggregate them
+        let headers = HeaderMap::new();
+
+        return Ok(QueryPlanExecutionResult::Stream(PlanSubscriptionOutput {
+            body: body_stream,
+            headers,
+            error_count: 0, // TODO: Track errors across subscription events
+        }));
     }
 
     // query/mutation
