@@ -4,7 +4,7 @@ use tracing::debug;
 
 use crate::{
     log::{LogFormat, LogLevel},
-    non_empty_string::NoneIfEmpty,
+    non_empty_string::NonEmptyStringValue,
 };
 
 #[derive(Envconfig)]
@@ -15,7 +15,7 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "LOG_FORMAT")]
     pub log_format: Option<LogFormat>,
     #[envconfig(from = "LOG_FILTER")]
-    pub log_filter: Option<String>,
+    pub log_filter: NonEmptyStringValue,
 
     // GraphiQL overrides
     #[envconfig(from = "GRAPHIQL_ENABLED")]
@@ -25,21 +25,21 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "PORT")]
     pub http_port: Option<u64>,
     #[envconfig(from = "HOST")]
-    pub http_host: Option<String>,
+    pub http_host: NonEmptyStringValue,
 
     // Supergraph overrides
     #[envconfig(from = "SUPERGRAPH_FILE_PATH")]
-    pub supergraph_file_path: Option<String>,
+    pub supergraph_file_path: NonEmptyStringValue,
     #[envconfig(from = "HIVE_CDN_ENDPOINT")]
-    pub hive_console_cdn_endpoint: Option<String>,
+    pub hive_console_cdn_endpoint: NonEmptyStringValue,
     #[envconfig(from = "HIVE_CDN_KEY")]
-    pub hive_console_cdn_key: Option<String>,
+    pub hive_console_cdn_key: NonEmptyStringValue,
     #[envconfig(from = "HIVE_CDN_POLL_INTERVAL")]
-    pub hive_console_cdn_poll_interval: Option<String>,
+    pub hive_console_cdn_poll_interval: NonEmptyStringValue,
     #[envconfig(from = "HIVE_ACCESS_TOKEN")]
-    pub hive_access_token: Option<String>,
+    pub hive_access_token: NonEmptyStringValue,
     #[envconfig(from = "HIVE_TARGET")]
-    pub hive_target: Option<String>,
+    pub hive_target: NonEmptyStringValue,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -65,7 +65,7 @@ impl EnvVarOverrides {
             debug!("[config-override] 'log.format' = {:?}", log_format);
             config = config.set_override("log.format", log_format.as_str())?;
         }
-        if let Some(log_filter) = self.log_filter.take().none_if_empty() {
+        if let Some(log_filter) = self.log_filter.take() {
             debug!("[config-override] 'log.filter' = {:?}", log_filter);
             config = config.set_override("log.filter", log_filter)?;
         }
@@ -75,13 +75,13 @@ impl EnvVarOverrides {
             config = config.set_override("http.port", http_port)?;
         }
 
-        if let Some(http_host) = self.http_host.take().none_if_empty() {
+        if let Some(http_host) = self.http_host.take() {
             debug!("[config-override] 'http.host' = {}", http_host);
             config = config.set_override("http.host", http_host)?;
         }
 
-        let supergraph_file_path = self.supergraph_file_path.take().none_if_empty();
-        let hive_console_cdn_endpoint = self.hive_console_cdn_endpoint.take().none_if_empty();
+        let supergraph_file_path = self.supergraph_file_path.take();
+        let hive_console_cdn_endpoint = self.hive_console_cdn_endpoint.take();
 
         if supergraph_file_path.is_some() && hive_console_cdn_endpoint.is_some() {
             return Err(EnvVarOverridesError::ConflictingSupergraphSource);
@@ -96,23 +96,22 @@ impl EnvVarOverrides {
             config = config.set_override("supergraph.source", "hive")?;
             config = config.set_override("supergraph.endpoint", hive_console_cdn_endpoint)?;
 
-            if let Some(hive_console_cdn_key) = self.hive_console_cdn_key.take().none_if_empty() {
+            if let Some(hive_console_cdn_key) = self.hive_console_cdn_key.take() {
                 config = config.set_override("supergraph.key", hive_console_cdn_key)?;
             } else {
                 return Err(EnvVarOverridesError::MissingRequiredEnvVar("HIVE_CDN_KEY"));
             }
 
-            if let Some(hive_console_cdn_poll_interval) =
-                self.hive_console_cdn_poll_interval.take().none_if_empty()
+            if let Some(hive_console_cdn_poll_interval) = self.hive_console_cdn_poll_interval.take()
             {
                 config = config
                     .set_override("supergraph.poll_interval", hive_console_cdn_poll_interval)?;
             }
         }
 
-        if let Some(hive_access_token) = self.hive_access_token.take().none_if_empty() {
+        if let Some(hive_access_token) = self.hive_access_token.take() {
             config = config.set_override("usage_reporting.access_token", hive_access_token)?;
-            if let Some(hive_target) = self.hive_target.take().none_if_empty() {
+            if let Some(hive_target) = self.hive_target.take() {
                 config = config.set_override("usage_reporting.target_id", hive_target)?;
             }
             config = config.set_override("usage_reporting.enabled", true)?;
