@@ -15,6 +15,52 @@ pub enum ParseError {
     StreamReadError(String),
     #[error("Invalid subgraph response: {0}")]
     InvalidSubgraphResponse(SubgraphExecutorError),
+    #[error("Missing boundary parameter in Content-Type header")]
+    MissingBoundary,
+    #[error("Invalid boundary parameter: {0}")]
+    InvalidBoundary(String),
+}
+
+/// Parse the boundary parameter from a Content-Type header value.
+///
+/// Example: `multipart/mixed; boundary=graphql` returns `Ok("graphql")`
+///
+/// Returns an error if:
+/// - The boundary parameter is missing (boundary is required by the spec)
+/// - The boundary value is empty (boundary is required by the spec)
+/// - The quoted boundary is not properly closed
+pub fn parse_boundary_from_header(content_type: &str) -> Result<&str, ParseError> {
+    let content_type = content_type.trim();
+
+    let boundary_param_start = content_type
+        .find("boundary=")
+        .ok_or(ParseError::MissingBoundary)?;
+    let value_start = boundary_param_start + "boundary=".len();
+
+    let remaining = &content_type[value_start..];
+
+    let boundary = if let Some(inside) = remaining.strip_prefix('"') {
+        // quoted boundary: find the closing quote
+        let quote_end = inside
+            .find('"')
+            .ok_or_else(|| ParseError::InvalidBoundary("Unclosed quoted boundary".to_string()))?;
+        &remaining[1..quote_end + 1]
+    } else {
+        // unquoted boundary: value extends until semicolon, whitespace, or end of string
+        let end = remaining
+            .find(|c: char| c == ';' || c.is_whitespace())
+            .unwrap_or(remaining.len());
+        &remaining[..end]
+    };
+
+    // boundary most not empty
+    if boundary.is_empty() {
+        return Err(ParseError::InvalidBoundary(
+            "Empty boundary value".to_string(),
+        ));
+    }
+
+    Ok(boundary)
 }
 
 pub fn parse_to_stream<B>(
@@ -204,6 +250,133 @@ fn extract_transport_error(value: &sonic_rs::Value) -> Option<String> {
 mod tests {
     use super::*;
     use bytes::Bytes;
+
+    #[test]
+    fn test_parse_boundary_from_header_simple() {
+        let content_type = "multipart/mixed; boundary=graphql";
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "graphql");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_quoted() {
+        let content_type = r#"multipart/mixed; boundary="my-boundary""#;
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "my-boundary");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_with_spaces() {
+        let content_type = "multipart/mixed;   boundary=graphql";
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "graphql");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_with_additional_params() {
+        let content_type = r#"multipart/mixed; boundary=graphql; charset=utf-8"#;
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "graphql");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_quoted_with_additional_params() {
+        let content_type = r#"multipart/mixed; boundary="my-boundary"; charset=utf-8"#;
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "my-boundary");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_complex_boundary() {
+        let content_type = "multipart/mixed; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW";
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "----WebKitFormBoundary7MA4YWxkTrZu0gW");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_with_subscription_spec() {
+        let content_type = r#"multipart/mixed; boundary=graphql; subscriptionSpec="1.0""#;
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "graphql");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_quoted_special_chars() {
+        let content_type =
+            r#"multipart/mixed; boundary="boundary-with-dashes_and_underscores.123""#;
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "boundary-with-dashes_and_underscores.123");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_no_boundary() {
+        let content_type = "multipart/mixed";
+        let boundary = parse_boundary_from_header(content_type);
+        assert!(matches!(boundary, Err(ParseError::MissingBoundary)));
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_empty_string() {
+        let content_type = "";
+        let boundary = parse_boundary_from_header(content_type);
+        assert!(matches!(boundary, Err(ParseError::MissingBoundary)));
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_case_sensitive() {
+        let content_type = "multipart/mixed; Boundary=graphql";
+        let boundary = parse_boundary_from_header(content_type);
+        assert!(matches!(boundary, Err(ParseError::MissingBoundary)));
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_whitespace_in_boundary() {
+        let content_type = "multipart/mixed; boundary=my boundary";
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "my");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_quoted_with_whitespace() {
+        let content_type = r#"multipart/mixed; boundary="my boundary""#;
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "my boundary");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_dash_boundary() {
+        let content_type = "multipart/mixed; boundary=-";
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "-");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_trailing_whitespace() {
+        let content_type = "multipart/mixed; boundary=graphql   ";
+        let boundary = parse_boundary_from_header(content_type).unwrap();
+        assert_eq!(boundary, "graphql");
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_empty_value() {
+        let content_type = "multipart/mixed; boundary=";
+        let boundary = parse_boundary_from_header(content_type);
+        assert!(matches!(boundary, Err(ParseError::InvalidBoundary(_))));
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_empty_quoted_value() {
+        let content_type = r#"multipart/mixed; boundary="""#;
+        let boundary = parse_boundary_from_header(content_type);
+        assert!(matches!(boundary, Err(ParseError::InvalidBoundary(_))));
+    }
+
+    #[test]
+    fn test_parse_boundary_from_header_unclosed_quote() {
+        let content_type = r#"multipart/mixed; boundary="graphql"#;
+        let boundary = parse_boundary_from_header(content_type);
+        assert!(matches!(boundary, Err(ParseError::InvalidBoundary(_))));
+    }
 
     #[test]
     fn test_parse_part_with_headers() {
