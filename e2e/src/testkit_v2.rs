@@ -7,7 +7,9 @@ use hive_router::{
 use hive_router_config::{parse_yaml_config, HiveRouterConfig};
 use ntex::{
     http::client::ClientResponse,
+    io::Sealed,
     web::{self, test},
+    ws::WsConnection,
 };
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
@@ -212,6 +214,16 @@ impl TestRouter<Started> {
         }))
         .await
         .expect("Failed to send graphql request")
+    }
+
+    pub async fn ws(&self) -> WsConnection<Sealed> {
+        self.handle
+            .as_ref()
+            .unwrap()
+            .serv
+            .ws_at("/ws") // TODO: respect router config
+            .await
+            .expect("Failed to establish websocket connection")
     }
 
     #[allow(dead_code)]
