@@ -373,7 +373,6 @@ async fn handle_text_frame(
                 Some(jwt_auth_runtime) => match jwt_auth_runtime
                     .validate_headers(&headers, &shared_state.jwt_claims_cache)
                     .await
-                    .map_err(PipelineError::JwtError)
                 {
                     Ok(Some(jwt_context)) => JwtRequestDetails::Authenticated {
                         scopes: jwt_context.extract_scopes(),
@@ -388,7 +387,16 @@ async fn handle_text_frame(
                         prefix: jwt_context.token_prefix,
                     },
                     Ok(None) => JwtRequestDetails::Unauthenticated,
-                    Err(e) => return Some(e.into_server_message(&id)),
+                    // jwt_auth_runtime.validate_headers() will error out only if
+                    // authentication is required and has failed. we therefore use
+                    // the JwtError conversion here to respond with proper error message
+                    // close with Forbidden.
+                    Err(e) => {
+                        let _ = sink.send(e.into_server_message(&id)).await;
+                        // we report error as graphql error, but we also close the
+                        // connection since we're dealing with auth so let's be safe
+                        return Some(e.into_close_message());
+                    }
                 },
                 None => JwtRequestDetails::Unauthenticated,
             };
@@ -745,9 +753,6 @@ impl PipelineError {
         );
 
         ServerMessage::error(id, &vec![graphql_error])
-    }
-    fn into_close_message(&self) -> ws::Message {
-        CloseCode::InternalServerError(Some(self.graphql_error_code().to_string())).into()
     }
 }
 
