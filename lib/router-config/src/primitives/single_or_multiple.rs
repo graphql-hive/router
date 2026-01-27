@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

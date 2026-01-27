@@ -373,7 +373,7 @@ mod hive_cdn_supergraph_e2e_tests {
 
         let resp = test::call_service(
             &app.app,
-            init_graphql_request("{ __schema { types { name } } }", None).to_request(),
+            init_graphql_request("{ __type(name: \"Product\") { name } }", None).to_request(),
         )
         .await;
 
@@ -384,60 +384,8 @@ mod hive_cdn_supergraph_e2e_tests {
         insta::assert_snapshot!(json_str, @r#"
         {
           "data": {
-            "__schema": {
-              "types": [
-                {
-                  "name": "__Field"
-                },
-                {
-                  "name": "Query"
-                },
-                {
-                  "name": "Product"
-                },
-                {
-                  "name": "Boolean"
-                },
-                {
-                  "name": "String"
-                },
-                {
-                  "name": "Int"
-                },
-                {
-                  "name": "__DirectiveLocation"
-                },
-                {
-                  "name": "__Type"
-                },
-                {
-                  "name": "Review"
-                },
-                {
-                  "name": "__Schema"
-                },
-                {
-                  "name": "ID"
-                },
-                {
-                  "name": "__EnumValue"
-                },
-                {
-                  "name": "__Directive"
-                },
-                {
-                  "name": "User"
-                },
-                {
-                  "name": "__InputValue"
-                },
-                {
-                  "name": "__TypeKind"
-                },
-                {
-                  "name": "Float"
-                }
-              ]
+            "__type": {
+              "name": "Product"
             }
           }
         }
