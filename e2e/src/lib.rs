@@ -34,3 +34,5 @@ mod supergraph;
 mod testkit;
 #[cfg(test)]
 mod timeout_per_subgraph;
+#[cfg(test)]
+mod websocket;
