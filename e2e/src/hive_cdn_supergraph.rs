@@ -378,18 +378,70 @@ mod hive_cdn_supergraph_e2e_tests {
         .await;
 
         assert!(resp.status().is_success(), "Expected 200 OK");
-        let json_body: Value = from_slice(&test::read_body(resp).await).unwrap();
-        let types_arr = json_body
-            .get("data")
-            .unwrap()
-            .get("__schema")
-            .unwrap()
-            .get("types")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        let types_str = sonic_rs::to_string(types_arr).expect("bad response");
-        assert!(types_str.contains("Product"));
+        let json_body: Value =
+            from_slice(&test::read_body(resp).await).expect("failed to read body");
+        let json_str = sonic_rs::to_string_pretty(&json_body).expect("bad response");
+        insta::assert_snapshot!(json_str, @r#"
+        {
+          "data": {
+            "__schema": {
+              "types": [
+                {
+                  "name": "__Field"
+                },
+                {
+                  "name": "Query"
+                },
+                {
+                  "name": "Product"
+                },
+                {
+                  "name": "Boolean"
+                },
+                {
+                  "name": "String"
+                },
+                {
+                  "name": "Int"
+                },
+                {
+                  "name": "__DirectiveLocation"
+                },
+                {
+                  "name": "__Type"
+                },
+                {
+                  "name": "Review"
+                },
+                {
+                  "name": "__Schema"
+                },
+                {
+                  "name": "ID"
+                },
+                {
+                  "name": "__EnumValue"
+                },
+                {
+                  "name": "__Directive"
+                },
+                {
+                  "name": "User"
+                },
+                {
+                  "name": "__InputValue"
+                },
+                {
+                  "name": "__TypeKind"
+                },
+                {
+                  "name": "Float"
+                }
+              ]
+            }
+          }
+        }
+        "#);
 
         mock1.assert();
         mock2.assert();

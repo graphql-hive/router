@@ -74,7 +74,6 @@ pub enum SupergraphSource {
     },
 }
 
-
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum HiveConsoleCdnEndpoint {

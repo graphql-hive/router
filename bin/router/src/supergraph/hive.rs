@@ -110,8 +110,7 @@ impl SupergraphHiveConsoleLoader {
             }
         }
 
-        let fetcher = fetcher_builder
-            .build_async()?;
+        let fetcher = fetcher_builder.build_async()?;
 
         Ok(Box::new(SupergraphHiveConsoleLoader {
             fetcher,
