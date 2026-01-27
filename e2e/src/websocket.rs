@@ -1,41 +1,27 @@
 #[cfg(test)]
 mod websocket_e2e_tests {
-    use futures::{future, Stream};
-    use std::sync::Arc;
-
     use insta::assert_snapshot;
-    use ntex::{http, util::Bytes, web::test};
+
     use reqwest::StatusCode;
-    use sonic_rs::json;
-    use subgraphs::InterceptedResponse;
+    use sonic_rs::{from_slice, json};
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_file, init_router_from_config_inline,
-        test_router, wait_for_readiness, SubgraphsServer, TestRouterConf,
-    };
-
-    fn get_content_type_header(res: &ntex::web::WebResponse) -> String {
-        res.headers()
-            .get(ntex::http::header::CONTENT_TYPE)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string()
-    }
+    use crate::testkit_v2::TestServerBuilder;
 
     #[ntex::test]
     async fn query_over_websocket() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-
-        let router = test_router(TestRouterConf::inline(&format!(
-            r#"
-            supergraph:
-                source: file
-                path: supergraph.graphql
-            "#
-        )))
-        .await
-        .unwrap();
+        let router = TestServerBuilder::new()
+            .with_subgraphs()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                "#
+            ))
+            .build()
+            .start()
+            .await
+            .expect("Failed to start test router");
 
         let mut res = router
             .graphql_request()
@@ -45,13 +31,12 @@ mod websocket_e2e_tests {
             .await
             .unwrap();
 
-        assert!(
-            res.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "Expected 415 Unsupported Media Type"
-        );
+        assert_eq!(res.status(), StatusCode::OK, "Expected 200 OK");
 
-        let body = res.json::<sonic_rs::Value>();
+        let body_bytes = res.body().await.expect("Failed to read response body");
+        let body: sonic_rs::Value =
+            from_slice(&body_bytes).expect("Response body is not valid JSON");
 
-        assert_snapshot!(body, @"");
+        assert_snapshot!(body, @r#"{"data":{"topProducts":[{"name":"Table"},{"name":"Couch"},{"name":"Glass"},{"name":"Chair"},{"name":"TV"}]}}"#);
     }
 }
