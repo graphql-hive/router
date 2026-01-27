@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use hive_console_sdk::supergraph_fetcher::{
     async_fetcher::SupergraphFetcherAsyncState, SupergraphFetcher, SupergraphFetcherError,
 };
-use hive_router_config::supergraph::HiveConsoleCdnEndpoint;
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -77,7 +76,7 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
 
 impl SupergraphHiveConsoleLoader {
     pub fn try_new(
-        endpoint: HiveConsoleCdnEndpoint,
+        endpoints: Vec<String>,
         key: &str,
         poll_interval: Duration,
         connect_timeout: Duration,
@@ -87,7 +86,7 @@ impl SupergraphHiveConsoleLoader {
     ) -> Result<Box<Self>, LoadSupergraphError> {
         debug!(
             "Creating supergraph source from Hive Console CDN: '{:#?}' (poll interval: {}ms, request_timeout: {}ms)",
-            endpoint,
+            endpoints,
             poll_interval.as_millis(),
             request_timeout.as_millis()
         );
@@ -99,15 +98,8 @@ impl SupergraphHiveConsoleLoader {
             .request_timeout(request_timeout)
             .max_retries(retry_count);
 
-        match endpoint {
-            HiveConsoleCdnEndpoint::Single(url) => {
-                fetcher_builder = fetcher_builder.add_endpoint(url);
-            }
-            HiveConsoleCdnEndpoint::Multiple(urls) => {
-                for url in urls {
-                    fetcher_builder = fetcher_builder.add_endpoint(url);
-                }
-            }
+        for url in endpoints {
+            fetcher_builder = fetcher_builder.add_endpoint(url);
         }
 
         let fetcher = fetcher_builder.build_async()?;
