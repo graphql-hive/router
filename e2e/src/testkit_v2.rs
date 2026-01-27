@@ -18,12 +18,12 @@ use tracing::{info, warn};
 pub struct Built;
 pub struct Started;
 
-pub struct TestServerBuilder {
+pub struct TestRouterBuilder {
     config: Option<HiveRouterConfig>,
     start_subgraphs: bool,
 }
 
-impl TestServerBuilder {
+impl TestRouterBuilder {
     pub fn new() -> Self {
         Self {
             config: None,
@@ -42,8 +42,8 @@ impl TestServerBuilder {
         self
     }
 
-    pub fn build(self) -> TestServer<Built> {
-        TestServer {
+    pub fn build(self) -> TestRouter<Built> {
+        TestRouter {
             config: Some(self.config.expect("config is required")),
             start_subgraphs: self.start_subgraphs,
             handle: None,
@@ -52,7 +52,7 @@ impl TestServerBuilder {
     }
 }
 
-impl Default for TestServerBuilder {
+impl Default for TestRouterBuilder {
     fn default() -> Self {
         Self::new()
     }
@@ -101,28 +101,28 @@ impl Drop for SubgraphsHandle {
     }
 }
 
-struct TestServerHandle {
+struct TestRouterHandle {
     serv: test::TestServer,
     bg_tasks_manager: BackgroundTasksManager,
     #[allow(dead_code)]
     subgraphs: Option<SubgraphsHandle>,
 }
 
-impl Drop for TestServerHandle {
+impl Drop for TestRouterHandle {
     fn drop(&mut self) {
         self.bg_tasks_manager.shutdown();
     }
 }
 
-pub struct TestServer<State> {
+pub struct TestRouter<State> {
     config: Option<HiveRouterConfig>,
     start_subgraphs: bool,
-    handle: Option<TestServerHandle>,
+    handle: Option<TestRouterHandle>,
     _state: PhantomData<State>,
 }
 
-impl TestServer<Built> {
-    pub async fn start(mut self) -> Result<TestServer<Started>, Box<dyn std::error::Error>> {
+impl TestRouter<Built> {
+    pub async fn start(mut self) -> Result<TestRouter<Started>, Box<dyn std::error::Error>> {
         init_rustls_crypto_provider();
 
         let subgraphs = if self.start_subgraphs {
@@ -178,8 +178,8 @@ impl TestServer<Built> {
             }
         }
 
-        Ok(TestServer {
-            handle: Some(TestServerHandle {
+        Ok(TestRouter {
+            handle: Some(TestRouterHandle {
                 serv,
                 bg_tasks_manager,
                 subgraphs,
@@ -191,7 +191,7 @@ impl TestServer<Built> {
     }
 }
 
-impl TestServer<Started> {
+impl TestRouter<Started> {
     pub async fn send_graphql_request(
         &self,
         query: &str,

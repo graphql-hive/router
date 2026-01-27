@@ -5,11 +5,11 @@ mod websocket_e2e_tests {
     use reqwest::StatusCode;
     use sonic_rs::from_slice;
 
-    use crate::testkit_v2::TestServerBuilder;
+    use crate::testkit_v2::TestRouterBuilder;
 
     #[ntex::test]
     async fn query_over_websocket() {
-        let router = TestServerBuilder::new()
+        let router = TestRouterBuilder::new()
             .with_subgraphs()
             .inline_config(&format!(
                 r#"
