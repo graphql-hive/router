@@ -273,7 +273,7 @@ async fn handle_text_frame(
         Ok(msg) => msg,
         Err(e) => {
             error!("Failed to parse client message to JSON: {}", e);
-            return Some(CloseCode::BadRequest("Invalid message received").into());
+            return Some(CloseCode::BadRequest("Invalid message received from client").into());
         }
     };
 
