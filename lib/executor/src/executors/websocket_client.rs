@@ -15,7 +15,7 @@ use ntex::{
 use tracing::{error, trace, warn};
 
 use crate::{
-    executors::graphql_transport_ws::{ClientMessage, ExecutionRequest, ServerMessage},
+    executors::graphql_transport_ws::{ClientMessage, CloseCode, ExecutionRequest, ServerMessage},
     response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
 };
 
@@ -297,27 +297,61 @@ impl GraphQLTransportWSClient {
     }
 }
 
+struct MessageDispatcherGuard {
+    subscriptions: SubscriptionsMap,
+}
+
+impl Drop for MessageDispatcherGuard {
+    fn drop(&mut self) {
+        let err_msg = "Message dispatcher closed";
+        for (_, tx) in self.subscriptions.borrow_mut().drain() {
+            let _ = tx.send(error_response(err_msg.to_string()));
+            tx.close();
+        }
+    }
+}
+
 async fn dispatch_messages(
     mut receiver: mpsc::Receiver<Result<ws::Frame, WsError<()>>>,
     sink: WsSink,
     subscriptions: SubscriptionsMap,
 ) {
+    let _guard = MessageDispatcherGuard {
+        subscriptions: subscriptions.clone(),
+    };
+
     loop {
         match receiver.next().await {
             Some(Ok(ws::Frame::Text(text))) => {
-                let text_str = match String::from_utf8(text.to_vec()) {
+                let text = match String::from_utf8(text.to_vec()) {
                     Ok(s) => s,
                     Err(e) => {
-                        warn!("Invalid UTF-8 in message: {}", e);
-                        continue;
+                        error!("Invalid UTF-8 in message: {}", e);
+                        let _ = sink
+                            .send(ws::Message::Close(Some(
+                                // this one is not in the CloseCode enum because it's an internal WebSocket
+                                // transport error that has nothing to do with GraphQL over WebSockets
+                                ws::CloseReason {
+                                    code: ws::CloseCode::Unsupported,
+                                    description: Some("Invalid UTF-8 in message".into()),
+                                },
+                            )))
+                            .await;
+                        return;
                     }
                 };
 
-                let server_msg: ServerMessage = match sonic_rs::from_str(&text_str) {
+                let server_msg: ServerMessage = match sonic_rs::from_str(&text) {
                     Ok(msg) => msg,
                     Err(e) => {
-                        warn!("Failed to parse server message: {}", e);
-                        continue;
+                        error!("Failed to parse server message to JSON: {}", e);
+                        let _ = sink
+                            .send(
+                                CloseCode::BadResponse("Invalid message received from server")
+                                    .into(),
+                            )
+                            .await;
+                        return;
                     }
                 };
 
@@ -357,6 +391,7 @@ async fn dispatch_messages(
                             tx.close();
                         }
                     }
+                    // TODO: handle ping
                     ServerMessage::Pong {} => {
                         trace!("Received pong");
                     }
@@ -368,34 +403,16 @@ async fn dispatch_messages(
             Some(Ok(ws::Frame::Ping(data))) => {
                 let _ = sink.send(ws::Message::Pong(data)).await;
             }
-            Some(Ok(ws::Frame::Close(reason))) => {
-                let (code, desc) = reason
-                    .map(|r| (r.code.into(), r.description.unwrap_or_default()))
-                    .unwrap_or((1000, String::new()));
-                let err_msg = format!("Connection closed: {} - {}", code, desc);
-                // Notify all active subscriptions
-                for (_, tx) in subscriptions.borrow_mut().drain() {
-                    let _ = tx.send(error_response(err_msg.clone()));
-                    tx.close();
-                }
-                break;
+            Some(Ok(ws::Frame::Close(_reason))) => {
+                // TODO: what to do?
+                return;
             }
             Some(Err(e)) => {
                 error!("WebSocket error: {:?}", e);
-                let err_msg = format!("WebSocket error: {:?}", e);
-                for (_, tx) in subscriptions.borrow_mut().drain() {
-                    let _ = tx.send(error_response(err_msg.clone()));
-                    tx.close();
-                }
-                break;
+                return;
             }
             None => {
-                let err_msg = "Connection closed".to_string();
-                for (_, tx) in subscriptions.borrow_mut().drain() {
-                    let _ = tx.send(error_response(err_msg.clone()));
-                    tx.close();
-                }
-                break;
+                return;
             }
             _ => {}
         }
