@@ -24,13 +24,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
-use crate::jwt::context::JwtRequestContext;
 use crate::jwt::errors::JwtError;
 use crate::pipeline::coerce_variables::coerce_request_variables;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_pipeline;
 use crate::pipeline::execution::{ExposeQueryPlanMode, EXPOSE_QUERY_PLAN_HEADER};
 use crate::pipeline::execution_request::ExecutionRequest;
+use crate::pipeline::introspection_policy::handle_introspection_policy;
 use crate::pipeline::normalize::normalize_request_with_cache;
 use crate::pipeline::parser::parse_operation_with_cache;
 use crate::pipeline::validation::validate_operation_with_cache;
@@ -332,6 +332,15 @@ async fn handle_text_frame(
                 }
             };
 
+            let mut headers = parse_headers_from_extensions(payload.extensions.as_ref());
+
+            // merge with current headers from state
+            for (key, value) in state.borrow().current_headers.iter() {
+                headers.insert(key.clone(), value.clone());
+            }
+
+            // TODO: we should also update the current headers in state, right?
+
             let parser_payload = match parse_operation_with_cache(shared_state, &payload).await {
                 Ok(payload) => payload,
                 Err(err) => return Some(err.into_server_message(&id)),
@@ -360,62 +369,31 @@ async fn handle_text_frame(
                 Err(err) => return Some(err.into_server_message(&id)),
             };
 
-            let variable_payload =
-                match coerce_request_variables(supergraph, &mut payload, &normalize_payload) {
-                    Ok(payload) => payload,
-                    Err(err) => return Some(err.into_server_message(&id)),
-                };
-
-            let query_plan_cancellation_token =
-                CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
-
-            let mut headers = parse_headers_from_extensions(payload.extensions.as_ref());
-
-            // merge with current headers from state
-            for (key, value) in state.borrow().current_headers.iter() {
-                headers.insert(key.clone(), value.clone());
-            }
-
-            // TODO: we should also update the current headers in state, right?
-
-            let mut jwt_context: Option<JwtRequestContext> = None;
-            if let Some(jwt) = &shared_state.jwt_auth_runtime {
-                match jwt
+            let jwt_request_details = match &shared_state.jwt_auth_runtime {
+                Some(jwt_auth_runtime) => match jwt_auth_runtime
                     .validate_headers(&headers, &shared_state.jwt_claims_cache)
                     .await
+                    .map_err(PipelineError::JwtError)
                 {
-                    Ok(maybe_jwt_context) => {
-                        if let Some(ctx) = maybe_jwt_context {
-                            jwt_context = Some(ctx);
-                        };
-                    }
-                    Err(err) => {
-                        let _ = sink.send(err.into_server_message(&id)).await;
-                        // we report error as graphql error, but we also close the
-                        // connection since we're dealing with auth so let's be safe
-                        return Some(err.into_close_message());
-                    }
-                }
-            }
-            let jwt_claims = match &jwt_context {
-                Some(jwt_context) => match jwt_context.get_claims_value() {
-                    Ok(claims) => Some(claims),
-                    Err(e) => {
-                        return Some(PipelineError::JwtForwardingError(e).into_close_message())
-                    }
+                    Ok(Some(jwt_context)) => JwtRequestDetails::Authenticated {
+                        scopes: jwt_context.extract_scopes(),
+                        claims: match jwt_context
+                            .get_claims_value()
+                            .map_err(PipelineError::JwtForwardingError)
+                        {
+                            Ok(claims) => claims,
+                            Err(e) => return Some(e.into_server_message(&id)),
+                        },
+                        token: jwt_context.token_raw,
+                        prefix: jwt_context.token_prefix,
+                    },
+                    Ok(None) => JwtRequestDetails::Unauthenticated,
+                    Err(e) => return Some(e.into_server_message(&id)),
                 },
-                None => None,
-            };
-            let jwt_request_details = match (&jwt_context, &jwt_claims) {
-                (Some(jwt_context), Some(claims)) => JwtRequestDetails::Authenticated {
-                    token: jwt_context.token_raw.as_str(),
-                    prefix: jwt_context.token_prefix.as_deref(),
-                    scopes: jwt_context.extract_scopes(),
-                    claims,
-                },
-                _ => JwtRequestDetails::Unauthenticated,
+                None => JwtRequestDetails::Unauthenticated,
             };
 
+            // synthetic client request details for plan executor
             let client_request_details = ClientRequestDetails {
                 method: &Method::POST,
                 url: &http::Uri::from_static("/graphql"),
@@ -432,6 +410,27 @@ async fn handle_text_frame(
                 },
                 jwt: &jwt_request_details,
             };
+
+            if normalize_payload.operation_for_introspection.is_some() {
+                if let Err(e) = handle_introspection_policy(
+                    &shared_state.introspection_policy,
+                    &client_request_details,
+                ) {
+                    return Some(e.into_server_message(&id));
+                }
+            }
+
+            let variable_payload = match coerce_request_variables(
+                supergraph,
+                &mut payload.variables,
+                &normalize_payload,
+            ) {
+                Ok(payload) => payload,
+                Err(err) => return Some(err.into_server_message(&id)),
+            };
+
+            let query_plan_cancellation_token =
+                CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
             let mut expose_query_plan = ExposeQueryPlanMode::No;
             if shared_state.router_config.query_planner.allow_expose {
@@ -755,7 +754,13 @@ impl PipelineError {
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl JwtError {
     fn into_server_message(&self, id: &str) -> ws::Message {
-        ServerMessage::error(id, &vec![self.into()])
+        ServerMessage::error(
+            id,
+            &vec![GraphQLError::from_message_and_code(
+                self.to_string(),
+                self.error_code(),
+            )],
+        )
     }
     fn into_close_message(&self) -> ws::Message {
         CloseCode::Forbidden(self.error_code().to_string()).into()
