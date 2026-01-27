@@ -32,7 +32,7 @@ pub enum SupergraphSource {
         /// The CDN endpoint from Hive Console target.
         ///
         /// Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.
-        endpoint: Option<String>,
+        endpoint: Option<HiveConsoleCdnEndpoint>,
         /// The CDN Access Token with from the Hive Console target.
         ///
         /// Can also be set using the `HIVE_CDN_KEY` environment variable.
@@ -72,6 +72,14 @@ pub enum SupergraphSource {
         #[serde(default = "default_hive_retry_policy")]
         retry_policy: RetryPolicyConfig,
     },
+}
+
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum HiveConsoleCdnEndpoint {
+    Single(String),
+    Multiple(Vec<String>),
 }
 
 fn default_accept_invalid_certs() -> bool {

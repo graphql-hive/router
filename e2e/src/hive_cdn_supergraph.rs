@@ -329,4 +329,69 @@ mod hive_cdn_supergraph_e2e_tests {
 
         mock.assert();
     }
+
+    #[ntex::test]
+    async fn should_support_multiple_endpoints() {
+        let mut server1 = mockito::Server::new_async().await;
+
+        // Failing server so it will try the next one
+        let host1 = server1.host_with_port();
+        let mock1 = server1
+            .mock("GET", "/supergraph")
+            // 1 first attempt, 1 retry
+            .expect(2)
+            .match_header("x-hive-cdn-key", "dummy_key")
+            .with_status(500)
+            .create();
+
+        let mut server2 = mockito::Server::new_async().await;
+        let host2 = server2.host_with_port();
+        let mock2 = server2
+            .mock("GET", "/supergraph")
+            .expect(1)
+            .match_header("x-hive-cdn-key", "dummy_key")
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body(include_str!("../supergraph.graphql"))
+            .create();
+
+        let app = init_router_from_config_inline(&format!(
+            r#"supergraph:
+              source: hive
+              endpoint:
+                - http://{host1}/supergraph
+                - http://{host2}/supergraph
+              key: dummy_key
+              retry_policy:
+                max_retries: 1
+        "#,
+        ))
+        .await
+        .expect("failed to start router");
+
+        wait_for_readiness(&app.app).await;
+
+        let resp = test::call_service(
+            &app.app,
+            init_graphql_request("{ __schema { types { name } } }", None).to_request(),
+        )
+        .await;
+
+        assert!(resp.status().is_success(), "Expected 200 OK");
+        let json_body: Value = from_slice(&test::read_body(resp).await).unwrap();
+        let types_arr = json_body
+            .get("data")
+            .unwrap()
+            .get("__schema")
+            .unwrap()
+            .get("types")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        let types_str = sonic_rs::to_string(types_arr).expect("bad response");
+        assert!(types_str.contains("Product"));
+
+        mock1.assert();
+        mock2.assert();
+    }
 }

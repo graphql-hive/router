@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use hive_console_sdk::supergraph_fetcher::{
     async_fetcher::SupergraphFetcherAsyncState, SupergraphFetcher, SupergraphFetcherError,
 };
+use hive_router_config::supergraph::HiveConsoleCdnEndpoint;
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -76,7 +77,7 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
 
 impl SupergraphHiveConsoleLoader {
     pub fn try_new(
-        endpoint: String,
+        endpoint: HiveConsoleCdnEndpoint,
         key: &str,
         poll_interval: Duration,
         connect_timeout: Duration,
@@ -85,19 +86,31 @@ impl SupergraphHiveConsoleLoader {
         retry_count: u32,
     ) -> Result<Box<Self>, LoadSupergraphError> {
         debug!(
-            "Creating supergraph source from Hive Console CDN: '{}' (poll interval: {}ms, request_timeout: {}ms)",
+            "Creating supergraph source from Hive Console CDN: '{:#?}' (poll interval: {}ms, request_timeout: {}ms)",
             endpoint,
             poll_interval.as_millis(),
             request_timeout.as_millis()
         );
-        let fetcher = SupergraphFetcher::builder()
+        let mut fetcher_builder = SupergraphFetcher::builder()
             .user_agent(format!("hive-router/{}", ROUTER_VERSION))
             .key(key.to_string())
-            .add_endpoint(endpoint)
             .accept_invalid_certs(accept_invalid_certs)
             .connect_timeout(connect_timeout)
             .request_timeout(request_timeout)
-            .max_retries(retry_count)
+            .max_retries(retry_count);
+
+        match endpoint {
+            HiveConsoleCdnEndpoint::Single(url) => {
+                fetcher_builder = fetcher_builder.add_endpoint(url);
+            }
+            HiveConsoleCdnEndpoint::Multiple(urls) => {
+                for url in urls {
+                    fetcher_builder = fetcher_builder.add_endpoint(url);
+                }
+            }
+        }
+
+        let fetcher = fetcher_builder
             .build_async()?;
 
         Ok(Box::new(SupergraphHiveConsoleLoader {
