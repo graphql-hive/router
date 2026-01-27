@@ -116,6 +116,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.35 (2026-01-27)
+
+### Features
+
+- support multiple Hive CDN endpoints (#718)
+
+### Fixes
+
+- Bump version to fix release and dependencies issues
+
+#### Support multiple endpoints in Hive CDN Supergraph config
+
+In order to support a Secondary CDN endpoint for better reliability, the Hive CDN Supergraph configuration has been updated to allow specifying either a single endpoint or multiple endpoints.
+This change enables users to provide a list of CDN endpoints, enhancing the robustness of their supergraph setup.
+
+[Learn more about it in the relevant Hive Console documentation here](https://the-guild.dev/graphql/hive/docs/schema-registry/high-availability-resilence).
+
+```diff
+supergraph:
+    source: hive
+-    endpoint: https://cdn-primary.example.com/supergraph
++    endpoint:
++       - https://cdn-primary.example.com/supergraph
++       - https://cdn-secondary.example.com/supergraph
+```
+
+#### Fix release issues and conflicts
+
+- Re-export `graphql-tools` from `hive-console-sdk` to make it easier to depend directly on the SDK instead of an external package.
+
+#### Fixed: 4xx client errors are now properly treated as errors and trigger endpoint failover, instead of being returned as successful responses.
+
+This ensures the CDN fallback mechanism works correctly when endpoints return client errors like 403 Forbidden or 404 Not Found.
+
 ## 0.0.34 (2026-01-26)
 
 ### Fixes

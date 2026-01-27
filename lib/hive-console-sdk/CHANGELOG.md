@@ -1,3 +1,15 @@
+## 0.3.5 (2026-01-27)
+
+### Fixes
+
+#### Fix release issues and conflicts
+
+- Re-export `graphql-tools` from `hive-console-sdk` to make it easier to depend directly on the SDK instead of an external package.
+
+#### Fixed: 4xx client errors are now properly treated as errors and trigger endpoint failover, instead of being returned as successful responses.
+
+This ensures the CDN fallback mechanism works correctly when endpoints return client errors like 403 Forbidden or 404 Not Found.
+
 ## 0.3.4 (2026-01-22)
 
 ### Fixes
