@@ -21,6 +21,7 @@ futures = { workspace = true }
 
 hive-router = { path = "../bin/router" }
 hive-router-config = { path = "../lib/router-config" }
+hive-router-plan-executor = { path = "../lib/executor" }
 subgraphs = { path = "../bench/subgraphs" }
 
 mockito = "1.7.0"
