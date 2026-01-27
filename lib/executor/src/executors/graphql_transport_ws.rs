@@ -13,6 +13,7 @@ pub enum CloseCode {
     Unauthorized,
     Forbidden(String),
     BadRequest(&'static str),
+    BadResponse(&'static str),
     SubscriberAlreadyExists(String),
     InternalServerError(Option<String>),
 }
@@ -38,6 +39,10 @@ impl From<CloseCode> for ws::Message {
             })),
             CloseCode::BadRequest(reason) => ws::Message::Close(Some(ws::CloseReason {
                 code: ntex::ws::CloseCode::from(4400),
+                description: Some(reason.into()),
+            })),
+            CloseCode::BadResponse(reason) => ws::Message::Close(Some(ws::CloseReason {
+                code: ntex::ws::CloseCode::from(4004),
                 description: Some(reason.into()),
             })),
             CloseCode::SubscriberAlreadyExists(id) => ws::Message::Close(Some(ws::CloseReason {
