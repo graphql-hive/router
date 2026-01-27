@@ -5,4 +5,4 @@ hive-router-plan-executor: patch
 hive-router: patch
 ---
 
-# Bump version to fix release and dependencies issues
+## Bump version to fix release and dependencies issues
