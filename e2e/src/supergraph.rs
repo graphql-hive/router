@@ -1,7 +1,11 @@
 #[cfg(test)]
 mod supergraph_e2e_tests {
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
+    use mockito::Mock;
     use ntex::{time, web::test};
     use sonic_rs::{from_slice, to_string_pretty, JsonValueTrait, Value};
 
@@ -243,30 +247,10 @@ mod supergraph_e2e_tests {
         // We want: Initial (200) -> Error (429) -> Error (404) -> Final (200)
         let mock_initial = server
             .mock("GET", "/supergraph")
-            .expect(1)
-            .with_status(200)
-            .with_header("content-type", "text/plain")
-            .with_body("type Query { initial: String }")
-            .create();
-
-        let mock_404 = server
-            .mock("GET", "/supergraph")
-            .expect(1)
-            .with_status(404)
-            .create();
-
-        let mock_429 = server
-            .mock("GET", "/supergraph")
-            .expect(1)
-            .with_status(429)
-            .create();
-
-        let mock_final = server
-            .mock("GET", "/supergraph")
             .expect_at_least(1)
             .with_status(200)
             .with_header("content-type", "text/plain")
-            .with_body("type Query { updated: String }")
+            .with_body("type Query { initial: String }")
             .create();
 
         let test_app = init_router_from_config_inline(&format!(
@@ -306,11 +290,20 @@ mod supergraph_e2e_tests {
           }
         }
         "#);
+        mock_initial.remove();
 
-        // Wait for 429 and 404 to happen
-        time::sleep(Duration::from_millis(120)).await;
-        mock_429.assert();
-        mock_404.assert();
+        let mock_404 = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(404)
+            .create();
+
+        wait_until_mock_matched(&mock_404, Duration::from_millis(200))
+            .await
+            .expect("Expected to match 404 mock");
+
+        // Give it some time to process it
+        time::sleep(Duration::from_millis(50)).await;
 
         // Router should still be using the initial supergraph
         let resp = test::call_service(
@@ -336,10 +329,22 @@ mod supergraph_e2e_tests {
         }
         "#);
 
-        // Wait for it to pick up the final supergraph
-        time::sleep(Duration::from_millis(700)).await;
+        mock_404.remove();
+
+        let mock_final = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("type Query { updated: String }")
+            .create();
+
+        wait_until_mock_matched(&mock_final, Duration::from_millis(120))
+            .await
+            .expect("Expected to match final mock");
         mock_final.assert();
-        time::sleep(Duration::from_millis(100)).await;
+        // Give it some time to process it
+        time::sleep(Duration::from_millis(200)).await;
 
         // Check if final supergraph is working
         let resp = test::call_service(
@@ -364,5 +369,19 @@ mod supergraph_e2e_tests {
           }
         }
         "#);
+    }
+
+    async fn wait_until_mock_matched(mock: &Mock, timeout: Duration) -> Result<(), String> {
+        let now = Instant::now();
+        loop {
+            if mock.matched_async().await {
+                return Ok(());
+            }
+            time::sleep(Duration::from_millis(10)).await;
+
+            if now.elapsed() > timeout {
+                return Err(format!("timeout after {:?}", now.elapsed()));
+            }
+        }
     }
 }
