@@ -1423,6 +1423,7 @@ dependencies = [
  "futures",
  "hive-router",
  "hive-router-config",
+ "hive-router-plan-executor",
  "insta",
  "jsonwebtoken",
  "lazy_static",

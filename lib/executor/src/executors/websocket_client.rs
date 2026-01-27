@@ -40,3 +40,15 @@ pub async fn connect(url: &str) -> Result<WsConnection<Sealed>, WsConnectError> 
         Ok(ws_client.connect().await?.seal())
     }
 }
+
+pub struct GraphQLTransportWSClient {
+    connection: WsConnection<Sealed>,
+}
+
+impl GraphQLTransportWSClient {
+    pub fn new(connection: WsConnection<Sealed>) -> Self {
+        Self { connection }
+    }
+
+    // TODO: implement sending and receiving messages over the websocket client
+}
