@@ -4,6 +4,9 @@ use hive_router_plan_executor::execution::client_request_details::{
     ClientRequestDetails, JwtRequestDetails, OperationDetails,
 };
 use hive_router_plan_executor::execution::plan::QueryPlanExecutionResult;
+use hive_router_plan_executor::executors::graphql_transport_ws::{
+    ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage,
+};
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use http::Method;
@@ -13,7 +16,6 @@ use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::util::Bytes;
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
-use serde::{Deserialize, Serialize};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -308,7 +310,7 @@ async fn handle_text_frame(
             // the client should be able to use subprotocol pings/pongs to check liveness
             Some(ServerMessage::pong())
         }
-        ClientMessage::Subscribe { id, mut payload } => {
+        ClientMessage::Subscribe { id, payload } => {
             state.borrow().check_acknowledged()?;
 
             if state.borrow().active_subscriptions.contains_key(&id) {
@@ -340,6 +342,15 @@ async fn handle_text_frame(
             }
 
             // TODO: we should also update the current headers in state, right?
+
+            // TODO: ExecutionRequest from pipeline is different from ExecutionRequest from
+            //       graphql_transport_ws. see comment there to understand why.
+            let mut payload = ExecutionRequest {
+                query: payload.query,
+                operation_name: payload.operation_name,
+                variables: payload.variables,
+                extensions: payload.extensions,
+            };
 
             let parser_payload = match parse_operation_with_cache(shared_state, &payload).await {
                 Ok(payload) => payload,
@@ -609,136 +620,6 @@ fn parse_headers_from_extensions(
         }
     }
     header_map
-}
-
-enum CloseCode {
-    ConnectionInitTimeout,
-    TooManyInitialisationRequests,
-    Unauthorized,
-    Forbidden(String),
-    BadRequest(&'static str),
-    SubscriberAlreadyExists(String),
-    InternalServerError(Option<String>),
-}
-
-impl From<CloseCode> for ws::Message {
-    fn from(msg: CloseCode) -> Self {
-        match msg {
-            CloseCode::ConnectionInitTimeout => ws::Message::Close(Some(ws::CloseReason {
-                code: ws::CloseCode::from(4408),
-                description: Some("Connection initialisation timeout".into()),
-            })),
-            CloseCode::TooManyInitialisationRequests => ws::Message::Close(Some(ws::CloseReason {
-                code: ws::CloseCode::from(4429),
-                description: Some("Too many initialisation requests".into()),
-            })),
-            CloseCode::Unauthorized => ws::Message::Close(Some(ws::CloseReason {
-                code: ntex::ws::CloseCode::from(4401),
-                description: Some("Unauthorized".into()),
-            })),
-            CloseCode::Forbidden(reason) => ws::Message::Close(Some(ws::CloseReason {
-                code: ntex::ws::CloseCode::from(4403),
-                description: Some(reason),
-            })),
-            CloseCode::BadRequest(reason) => ws::Message::Close(Some(ws::CloseReason {
-                code: ntex::ws::CloseCode::from(4400),
-                description: Some(reason.into()),
-            })),
-            CloseCode::SubscriberAlreadyExists(id) => ws::Message::Close(Some(ws::CloseReason {
-                code: ws::CloseCode::from(4409),
-                description: Some(format!("Subscriber for {id} already exists")),
-            })),
-            CloseCode::InternalServerError(reason) => ws::Message::Close(Some(ws::CloseReason {
-                code: ntex::ws::CloseCode::from(4500),
-                description: reason.or(Some("Internal Server Error".into())),
-            })),
-        }
-    }
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ClientMessage {
-    ConnectionInit {
-        payload: Option<ConnectionInitPayload>,
-    },
-    Ping {},
-    // TODO: implement digesting pongs from client using subprotocol ping/pong
-    Subscribe {
-        id: String,
-        payload: ExecutionRequest,
-    },
-    Complete {
-        id: String,
-    },
-}
-
-/// The connection init message payload MUST be a map of string to arbitrary JSON
-/// values as per the spec. We represent this as a HashMap<String, Value> and use
-/// serde(flatten) to capture all fields for easier parsing to headers later.
-#[derive(Deserialize, Debug)]
-struct ConnectionInitPayload {
-    #[serde(flatten)]
-    fields: HashMap<String, sonic_rs::Value>,
-}
-
-#[derive(Serialize, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ServerMessage<'a> {
-    ConnectionAck {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        payload: Option<sonic_rs::Value>,
-    },
-    Pong {},
-    // TODO: implement pinging from server using subprotocol ping/pong
-    Next {
-        id: &'a str,
-        payload: sonic_rs::Value,
-    },
-    Error {
-        id: &'a str,
-        payload: &'a [GraphQLError],
-    },
-    Complete {
-        id: &'a str,
-    },
-}
-
-impl ServerMessage<'_> {
-    pub fn ack(payload: Option<sonic_rs::Value>) -> ws::Message {
-        ServerMessage::ConnectionAck { payload }.into()
-    }
-    pub fn pong() -> ws::Message {
-        ServerMessage::Pong {}.into()
-    }
-    pub fn next(id: &str, body: &[u8]) -> ws::Message {
-        let payload = match sonic_rs::from_slice(body) {
-            Ok(value) => value,
-            Err(err) => {
-                error!("Failed to serialize plan execution output body: {}", err);
-                return CloseCode::InternalServerError(None).into();
-            }
-        };
-        ServerMessage::Next { id, payload }.into()
-    }
-    pub fn error(id: &str, payload: &[GraphQLError]) -> ws::Message {
-        ServerMessage::Error { id, payload }.into()
-    }
-    pub fn complete(id: &str) -> ws::Message {
-        ServerMessage::Complete { id }.into()
-    }
-}
-
-impl From<ServerMessage<'_>> for ws::Message {
-    fn from(msg: ServerMessage) -> Self {
-        match sonic_rs::to_string(&msg) {
-            Ok(text) => ws::Message::Text(text.into()),
-            Err(e) => {
-                error!("Failed to serialize server message to JSON: {}", e);
-                CloseCode::InternalServerError(None).into()
-            }
-        }
-    }
 }
 
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
