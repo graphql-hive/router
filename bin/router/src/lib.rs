@@ -27,6 +27,7 @@ use crate::{
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         usage_reporting::init_hive_user_agent,
         validation::{max_depth_rule::MaxDepthRule, max_directives_rule::MaxDirectivesRule},
+        websocket_server::ws_index,
     },
 };
 
@@ -187,6 +188,7 @@ pub async fn configure_app_from_config(
 
 pub fn configure_ntex_app(cfg: &mut web::ServiceConfig, graphql_path: &str) {
     cfg.route(graphql_path, web::to(graphql_endpoint_handler))
+        .route("/ws", web::get().to(ws_index))
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }
