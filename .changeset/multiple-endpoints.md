@@ -1,6 +1,6 @@
 ---
-router: patch
-config: patch
+hive-router-config: patch
+hive-router: patch
 ---
 
 # Support multiple endpoints in Hive CDN Supergraph config
