@@ -6,10 +6,11 @@ use hive_router::{
 };
 use hive_router_config::{parse_yaml_config, HiveRouterConfig};
 use ntex::{
-    http::client::ClientRequest,
+    http::client::ClientResponse,
     web::{self, test},
 };
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use sonic_rs::json;
 use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState, SubscriptionProtocol};
 use tokio::sync::oneshot::Sender;
 use tracing::{info, warn};
@@ -191,14 +192,26 @@ impl TestServer<Built> {
 }
 
 impl TestServer<Started> {
-    pub fn graphql_request(&self) -> ClientRequest {
-        self.handle
+    pub async fn send_graphql_request(
+        &self,
+        query: &str,
+        variables: Option<sonic_rs::Value>,
+    ) -> ClientResponse {
+        let req = self
+            .handle
             .as_ref()
             .unwrap()
             .serv
             .post("/graphql")
             .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/graphql-response+json")
+            .header(ACCEPT, "application/graphql-response+json");
+
+        req.send_json(&json!({
+          "query": query,
+          "variables": variables,
+        }))
+        .await
+        .expect("Failed to send graphql request")
     }
 
     #[allow(dead_code)]
