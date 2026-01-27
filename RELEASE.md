@@ -16,9 +16,8 @@ Then, commit the changeset and push it to the Pull Request. The changeset will b
 
 When a change is merged through a Pull Request, and a changeset file exists, Knope will create/update the release PR. 
 
-> Knope does not manage the dependencies explicitly, but it will update the `Cargo.toml` file with the new version. So in a change that require a chain of reaction, you'll need to explicitly mention all relevant packages.
-> For example, if you change anything in `config` or `internal` crate, and this change needs to affect other packages (like `executor` or `router`), then you'll need to mention them explicitly in the changeset.
-
+> Knope does not manage the dependencies explicitly, but it will update the `Cargo.toml` file with the new version.  Check `.changeset/release-sync.sh` for additional details on how to automatically bump transient dependencies. 
+ 
 ## Release pipeline
 
 Once the release PR is merged, the release process will be triggered (see `.github/workflows/release.yaml` and `.github/workflows/build-router.yaml`). The release pipeline is based on the following:
