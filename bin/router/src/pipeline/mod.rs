@@ -55,6 +55,7 @@ pub mod query_plan;
 pub mod sse;
 pub mod usage_reporting;
 pub mod validation;
+pub mod websocket_server;
 
 #[inline]
 pub async fn graphql_request_handler(
