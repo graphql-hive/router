@@ -3,7 +3,7 @@ mod websocket_e2e_tests {
     use insta::assert_snapshot;
 
     use reqwest::StatusCode;
-    use sonic_rs::{from_slice, json};
+    use sonic_rs::from_slice;
 
     use crate::testkit_v2::TestServerBuilder;
 
@@ -24,12 +24,8 @@ mod websocket_e2e_tests {
             .expect("Failed to start test router");
 
         let mut res = router
-            .graphql_request()
-            .send_json(&json!({
-              "query": "{ topProducts { name }}",
-            }))
-            .await
-            .unwrap();
+            .send_graphql_request("{ topProducts { name }}", None)
+            .await;
 
         assert_eq!(res.status(), StatusCode::OK, "Expected 200 OK");
 
