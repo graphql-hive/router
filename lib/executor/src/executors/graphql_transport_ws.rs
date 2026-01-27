@@ -52,7 +52,7 @@ impl From<CloseCode> for ws::Message {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     ConnectionInit {
@@ -71,41 +71,42 @@ pub enum ClientMessage {
 /// The connection init message payload MUST be a map of string to arbitrary JSON
 /// values as per the spec. We represent this as a HashMap<String, Value> and use
 /// serde(flatten) to capture all fields for easier parsing to headers later.
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ConnectionInitPayload {
     #[serde(flatten)]
     pub fields: HashMap<String, sonic_rs::Value>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum ServerMessage<'a> {
+pub enum ServerMessage {
     ConnectionAck {
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         payload: Option<sonic_rs::Value>,
     },
     Pong {},
-    // TODO: implement pinging from server using subprotocol ping/pong
     Next {
-        id: &'a str,
+        id: String,
         payload: sonic_rs::Value,
     },
     Error {
-        id: &'a str,
-        payload: &'a [GraphQLError],
+        id: String,
+        payload: Vec<GraphQLError>,
     },
     Complete {
-        id: &'a str,
+        id: String,
     },
 }
 
-impl ServerMessage<'_> {
+impl ServerMessage {
     pub fn ack(payload: Option<sonic_rs::Value>) -> ws::Message {
         ServerMessage::ConnectionAck { payload }.into()
     }
+
     pub fn pong() -> ws::Message {
         ServerMessage::Pong {}.into()
     }
+
     pub fn next(id: &str, body: &[u8]) -> ws::Message {
         let payload = match sonic_rs::from_slice(body) {
             Ok(value) => value,
@@ -114,17 +115,27 @@ impl ServerMessage<'_> {
                 return CloseCode::InternalServerError(None).into();
             }
         };
-        ServerMessage::Next { id, payload }.into()
+        ServerMessage::Next {
+            id: id.to_string(),
+            payload,
+        }
+        .into()
     }
-    pub fn error(id: &str, payload: &[GraphQLError]) -> ws::Message {
-        ServerMessage::Error { id, payload }.into()
+
+    pub fn error(id: &str, errors: &[GraphQLError]) -> ws::Message {
+        ServerMessage::Error {
+            id: id.to_string(),
+            payload: errors.to_vec(),
+        }
+        .into()
     }
+
     pub fn complete(id: &str) -> ws::Message {
-        ServerMessage::Complete { id }.into()
+        ServerMessage::Complete { id: id.to_string() }.into()
     }
 }
 
-impl From<ServerMessage<'_>> for ws::Message {
+impl From<ServerMessage> for ws::Message {
     fn from(msg: ServerMessage) -> Self {
         match sonic_rs::to_string(&msg) {
             Ok(text) => ws::Message::Text(text.into()),
@@ -141,15 +152,13 @@ impl From<ServerMessage<'_>> for ws::Message {
 // we cant import it directly due to cyclic dependency issues
 // TODO: refactor to share the execution request accordingly
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionRequest {
     pub query: String,
     pub operation_name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub variables: HashMap<String, sonic_rs::Value>,
-    // TODO: We don't use extensions yet, but we definitely will in the future.
-    #[allow(dead_code)]
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
 }
 
