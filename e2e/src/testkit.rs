@@ -310,7 +310,7 @@ pub async fn test_router(conf: TestRouterConf) -> Result<TestRouter, Box<dyn std
     init_rustls_crypto_provider();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let http_config = conf.config.http.clone();
-    let graphql_path = http_config.graphql_endpoint();
+    let graphql_path = http_config.graphql_endpoint().to_string();
 
     let (shared_state, schema_state) =
         configure_app_from_config(conf.config, &mut bg_tasks_manager).await?;
@@ -322,7 +322,7 @@ pub async fn test_router(conf: TestRouterConf) -> Result<TestRouter, Box<dyn std
             .configure(|m| configure_ntex_app(m, &graphql_path))
     });
 
-    info!("waiting for health check to pass...");
+    info!("Waiting for health check to pass...");
 
     loop {
         match serv.get("/health").send().await {
@@ -338,7 +338,7 @@ pub async fn test_router(conf: TestRouterConf) -> Result<TestRouter, Box<dyn std
         }
     }
 
-    info!("waiting for readiness check to pass...");
+    info!("Waiting for readiness check to pass...");
 
     loop {
         match serv.get("/readiness").send().await {
@@ -348,7 +348,7 @@ pub async fn test_router(conf: TestRouterConf) -> Result<TestRouter, Box<dyn std
                 }
             }
             Err(err) => {
-                warn!("Server not ready, retrying in 100ms: {:?}", err);
+                warn!("Server not ready yet, retrying in 100ms: {:?}", err);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
