@@ -27,7 +27,7 @@ use tracing::{debug, error, trace, warn};
 use crate::jwt::context::JwtRequestContext;
 use crate::jwt::errors::JwtError;
 use crate::pipeline::coerce_variables::coerce_request_variables;
-use crate::pipeline::error::PipelineErrorVariant;
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_pipeline;
 use crate::pipeline::execution::{ExposeQueryPlanMode, EXPOSE_QUERY_PLAN_HEADER};
 use crate::pipeline::execution_request::ExecutionRequest;
@@ -381,7 +381,7 @@ async fn handle_text_frame(
             let mut jwt_context: Option<JwtRequestContext> = None;
             if let Some(jwt) = &shared_state.jwt_auth_runtime {
                 match jwt
-                    .verify_headers(&headers, &shared_state.jwt_claims_cache)
+                    .validate_headers(&headers, &shared_state.jwt_claims_cache)
                     .await
                 {
                     Ok(maybe_jwt_context) => {
@@ -401,9 +401,7 @@ async fn handle_text_frame(
                 Some(jwt_context) => match jwt_context.get_claims_value() {
                     Ok(claims) => Some(claims),
                     Err(e) => {
-                        return Some(
-                            PipelineErrorVariant::JwtForwardingError(e).into_close_message(),
-                        )
+                        return Some(PipelineError::JwtForwardingError(e).into_close_message())
                     }
                 },
                 None => None,
@@ -737,7 +735,7 @@ impl From<ServerMessage<'_>> for ws::Message {
 }
 
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
-impl PipelineErrorVariant {
+impl PipelineError {
     fn into_server_message(&self, id: &str) -> ws::Message {
         let code = self.graphql_error_code();
         let message = self.graphql_error_message();
