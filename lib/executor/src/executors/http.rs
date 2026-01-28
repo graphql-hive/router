@@ -3,8 +3,14 @@ use std::time::Duration;
 
 use crate::executors::dedupe::request_fingerprint;
 use crate::executors::map::InflightRequestsMap;
+use crate::hooks::on_subgraph_http_request::{
+    OnSubgraphHttpRequestHookPayload, OnSubgraphHttpResponseHookPayload,
+};
+use crate::plugin_context::PluginRequestState;
+use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::response::subgraph_response::SubgraphResponse;
 use futures::TryFutureExt;
+use hive_router_config::HiveRouterConfig;
 
 use async_trait::async_trait;
 
@@ -21,7 +27,6 @@ use tracing::debug;
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
-use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
@@ -35,6 +40,7 @@ pub struct HTTPSubgraphExecutor {
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
     pub dedupe_enabled: bool,
+    pub config: Arc<HiveRouterConfig>,
     pub in_flight_requests: InflightRequestsMap,
 }
 
@@ -50,6 +56,7 @@ impl HTTPSubgraphExecutor {
         http_client: Arc<HttpClient>,
         semaphore: Arc<Semaphore>,
         dedupe_enabled: bool,
+        config: Arc<HiveRouterConfig>,
         in_flight_requests: InflightRequestsMap,
     ) -> Self {
         let mut header_map = HeaderMap::new();
@@ -70,6 +77,7 @@ impl HTTPSubgraphExecutor {
             semaphore,
             dedupe_enabled,
             in_flight_requests,
+            config,
         }
     }
 
@@ -131,128 +139,195 @@ impl HTTPSubgraphExecutor {
 
         Ok(body)
     }
+}
 
-    async fn _send_request(
-        &self,
-        body: Vec<u8>,
-        headers: HeaderMap,
-        timeout: Option<Duration>,
-    ) -> Result<HttpResponse, SubgraphExecutorError> {
-        let mut req = hyper::Request::builder()
-            .method(http::Method::POST)
-            .uri(&self.endpoint)
-            .version(Version::HTTP_11)
-            .body(Full::new(Bytes::from(body)))
-            .map_err(|e| {
-                SubgraphExecutorError::RequestBuildFailure(self.endpoint.to_string(), e.to_string())
-            })?;
+struct SendRequestOpts<'a> {
+    http_client: &'a Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
+    subgraph_name: &'a str,
+    endpoint: &'a http::Uri,
+    method: http::Method,
+    body: Vec<u8>,
+    execution_request: SubgraphExecutionRequest<'a>,
+    plugin_req_state: &'a Option<PluginRequestState<'a>>,
+    timeout: Option<Duration>,
+}
 
-        *req.headers_mut() = headers;
+async fn send_request<'a>(
+    opts: SendRequestOpts<'a>,
+) -> Result<HttpResponse, SubgraphExecutorError> {
+    let SendRequestOpts {
+        http_client,
+        subgraph_name,
+        endpoint,
+        mut method,
+        mut body,
+        mut execution_request,
+        plugin_req_state,
+        timeout,
+    } = opts;
+    let mut on_end_callbacks = vec![];
+    let mut response = None;
 
-        debug!("making http request to {}", self.endpoint.to_string());
-
-        let res_fut = self.http_client.request(req).map_err(|e| {
-            SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-        });
-
-        let res = if let Some(timeout_duration) = timeout {
-            tokio::time::timeout(timeout_duration, res_fut)
-                .await
-                .map_err(|_| {
-                    SubgraphExecutorError::RequestTimeout(
-                        self.endpoint.to_string(),
-                        timeout_duration.as_millis(),
-                    )
-                })?
-        } else {
-            res_fut.await
-        }?;
-
-        debug!(
-            "http request to {} completed, status: {}",
-            self.endpoint.to_string(),
-            res.status()
-        );
-
-        let (parts, body) = res.into_parts();
-        let body = body
-            .collect()
-            .await
-            .map_err(|e| {
-                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-            })?
-            .to_bytes();
-
-        if body.is_empty() {
-            return Err(SubgraphExecutorError::RequestFailure(
-                self.endpoint.to_string(),
-                "Empty response body".to_string(),
-            ));
-        }
-
-        Ok(HttpResponse {
-            status: parts.status,
+    if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+        let mut start_payload = OnSubgraphHttpRequestHookPayload {
+            subgraph_name,
+            endpoint,
+            method,
             body,
-            headers: parts.headers.into(),
-        })
+            execution_request,
+            context: &plugin_req_state.context,
+        };
+        for plugin in plugin_req_state.plugins.as_ref() {
+            let result = plugin.on_subgraph_http_request(start_payload).await;
+            start_payload = result.payload;
+            match result.control_flow {
+                StartControlFlow::Proceed => { /* continue to next plugin */ }
+                StartControlFlow::EndWithResponse(early_response) => {
+                    response = Some(early_response);
+                    break;
+                }
+                StartControlFlow::OnEnd(callback) => {
+                    on_end_callbacks.push(callback);
+                }
+            }
+        }
+        // Give the ownership back to variables
+        method = start_payload.method;
+        body = start_payload.body;
+        execution_request = start_payload.execution_request;
     }
 
-    fn error_to_response<'exec>(&self, error: SubgraphExecutorError) -> SubgraphResponse<'exec> {
-        let graphql_error: GraphQLError = error.into();
-        let mut graphql_error = graphql_error.add_subgraph_name(&self.subgraph_name);
-        graphql_error.message = "Failed to execute request to subgraph".to_string();
+    let mut response = match response {
+        Some(response) => response,
+        None => {
+            let mut req = hyper::Request::builder()
+                .method(method)
+                .uri(endpoint)
+                .version(Version::HTTP_11)
+                .body(Full::new(Bytes::from(body)))
+                .map_err(|e| {
+                    SubgraphExecutorError::RequestBuildFailure(
+                        subgraph_name.to_string(),
+                        e.to_string(),
+                    )
+                })?;
 
-        SubgraphResponse {
-            errors: Some(vec![graphql_error]),
-            ..Default::default()
+            *req.headers_mut() = execution_request.headers;
+
+            debug!("making http request to {}", endpoint.to_string());
+
+            let res_fut = http_client.request(req).map_err(|e| {
+                SubgraphExecutorError::RequestFailure(subgraph_name.to_string(), e.to_string())
+            });
+
+            let res = if let Some(timeout_duration) = timeout {
+                tokio::time::timeout(timeout_duration, res_fut)
+                    .await
+                    .map_err(|_| {
+                        SubgraphExecutorError::RequestTimeout(
+                            subgraph_name.to_string(),
+                            timeout_duration.as_millis(),
+                        )
+                    })?
+            } else {
+                res_fut.await
+            }?;
+
+            debug!(
+                "http request to {} completed, status: {}",
+                endpoint.to_string(),
+                res.status()
+            );
+
+            let (parts, body) = res.into_parts();
+            let body = body
+                .collect()
+                .await
+                .map_err(|e| SubgraphExecutorError::ResponseFailure(e.to_string()))?
+                .to_bytes();
+
+            if body.is_empty() {
+                return Err(SubgraphExecutorError::ResponseFailure(
+                    "Empty response body".to_string(),
+                ));
+            }
+
+            HttpResponse {
+                status: parts.status,
+                body,
+                headers: parts.headers.into(),
+            }
+        }
+    };
+
+    if !on_end_callbacks.is_empty() {
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut end_payload = OnSubgraphHttpResponseHookPayload {
+                response,
+                context: &plugin_req_state.context,
+            };
+
+            for callback in on_end_callbacks {
+                let result = callback(end_payload);
+                end_payload = result.payload;
+                match result.control_flow {
+                    EndControlFlow::Proceed => { /* continue to next callback */ }
+                    EndControlFlow::EndWithResponse(new_response) => {
+                        end_payload.response = new_response;
+                    }
+                }
+            }
+
+            // Give the ownership back to variables
+            response = end_payload.response;
         }
     }
 
-    fn log_error(&self, error: &SubgraphExecutorError) {
-        tracing::error!(
-            error = error as &dyn std::error::Error,
-            "Subgraph executor error"
-        );
-    }
+    Ok(response)
 }
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
+    fn endpoint(&self) -> &http::Uri {
+        &self.endpoint
+    }
     #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn execute<'a>(
         &self,
-        execution_request: SubgraphExecutionRequest<'a>,
+        mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> SubgraphResponse<'a> {
-        let body = match self.build_request_body(&execution_request) {
-            Ok(body) => body,
-            Err(e) => {
-                self.log_error(&e);
-                return self.error_to_response(e);
-            }
-        };
+        plugin_req_state: &'a Option<PluginRequestState<'a>>,
+    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+        let body = self.build_request_body(&execution_request)?;
 
-        let mut headers = execution_request.headers;
         self.header_map.iter().for_each(|(key, value)| {
-            headers.insert(key, value.clone());
+            execution_request.headers.insert(key, value.clone());
         });
+
+        let method = http::Method::POST;
 
         if !self.dedupe_enabled || !execution_request.dedupe {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            return match self._send_request(body, headers, timeout).await {
-                Ok(shared_response) => shared_response
-                    .deserialize_http_response()
-                    .unwrap_or_else(|err| self.error_to_response(err)),
-                Err(e) => {
-                    self.log_error(&e);
-                    self.error_to_response(e)
-                }
-            };
+
+            let http_response = send_request(SendRequestOpts {
+                http_client: &self.http_client,
+                subgraph_name: &self.subgraph_name,
+                endpoint: &self.endpoint,
+                method,
+                body,
+                execution_request,
+                plugin_req_state,
+                timeout,
+            })
+            .await?;
+
+            return http_response.deserialize_http_response();
         }
 
-        let fingerprint = request_fingerprint(&http::Method::POST, &self.endpoint, &headers, &body);
+        let fingerprint =
+            request_fingerprint(&method, &self.endpoint, &execution_request.headers, &body);
 
         // Clone the cell from the map, dropping the lock from the DashMap immediately.
         // Prevents any deadlocks.
@@ -260,7 +335,6 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .in_flight_requests
             .entry(fingerprint)
             .or_default()
-            .value()
             .clone();
 
         let response_result = cell
@@ -269,7 +343,17 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    self._send_request(body, headers, timeout).await
+                    send_request(SendRequestOpts {
+                        http_client: &self.http_client,
+                        subgraph_name: &self.subgraph_name,
+                        endpoint: &self.endpoint,
+                        method,
+                        body,
+                        execution_request,
+                        plugin_req_state,
+                        timeout,
+                    })
+                    .await
                 };
                 // It's important to remove the entry from the map before returning the result.
                 // This ensures that once the OnceCell is set, no future requests can join it.
@@ -277,17 +361,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 self.in_flight_requests.remove(&fingerprint);
                 res
             })
-            .await;
+            .await?;
 
-        match response_result {
-            Ok(shared_response) => shared_response
-                .deserialize_http_response()
-                .unwrap_or_else(|err| self.error_to_response(err)),
-            Err(e) => {
-                self.log_error(&e);
-                self.error_to_response(e)
-            }
-        }
+        response_result.deserialize_http_response()
     }
 }
 

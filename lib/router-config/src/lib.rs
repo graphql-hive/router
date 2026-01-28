@@ -111,6 +111,10 @@ pub struct HiveRouterConfig {
     /// Configuration to enable or disable introspection queries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub introspection: Option<IntrospectionPermissionConfig>,
+
+    /// Configuration for custom plugins
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub plugins: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, thiserror::Error)]

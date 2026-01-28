@@ -1,5 +1,10 @@
-use async_graphql::{EmptyMutation, EmptySubscription, Object, Schema, SimpleObject, ID};
+use std::io::Read;
+
+use async_graphql::{
+    Context, EmptySubscription, InputObject, Object, Schema, SimpleObject, Upload, ID,
+};
 use lazy_static::lazy_static;
+use tokio::io::AsyncWriteExt;
 
 lazy_static! {
     static ref PRODUCTS: Vec<Product> = vec![
@@ -89,6 +94,8 @@ pub struct Product {
 
 pub struct Query;
 
+pub struct Mutation;
+
 #[Object(extends = true)]
 impl Query {
     async fn top_products(
@@ -114,8 +121,53 @@ impl Query {
     }
 }
 
-pub fn get_subgraph() -> Schema<Query, EmptyMutation, EmptySubscription> {
-    Schema::build(Query, EmptyMutation, EmptySubscription)
+pub fn get_subgraph() -> Schema<Query, Mutation, EmptySubscription> {
+    Schema::build(Query, Mutation, EmptySubscription)
         .enable_federation()
         .finish()
+}
+
+// Added for Multipart Example Plugin's E2E
+#[Object(extends = true)]
+impl Mutation {
+    async fn upload(&self, ctx: &Context<'_>, file: Option<Upload>) -> String {
+        if file.is_none() {
+            return "No file uploaded".to_string();
+        }
+        // Write to a temp location, and return the path
+        let uploaded_file = file.unwrap().value(ctx).unwrap();
+        let path = format!("/tmp/{}", uploaded_file.filename);
+        let mut buf = vec![];
+        let _ = uploaded_file.into_read().read_to_end(&mut buf);
+        let mut tmp_file_on_disk = tokio::fs::File::create(&path).await.unwrap();
+        tmp_file_on_disk.write_all(&buf).await.unwrap();
+        path
+    }
+    async fn oneof_test(&self, input: OneOfTestInput) -> OneOfTestResult {
+        OneOfTestResult {
+            string: input.string,
+            int: input.int,
+            float: input.float,
+            boolean: input.boolean,
+            id: input.id,
+        }
+    }
+}
+
+#[derive(InputObject)]
+struct OneOfTestInput {
+    pub string: Option<String>,
+    pub int: Option<i32>,
+    pub float: Option<f64>,
+    pub boolean: Option<bool>,
+    pub id: Option<ID>,
+}
+
+#[derive(SimpleObject)]
+struct OneOfTestResult {
+    pub string: Option<String>,
+    pub int: Option<i32>,
+    pub float: Option<f64>,
+    pub boolean: Option<bool>,
+    pub id: Option<ID>,
 }

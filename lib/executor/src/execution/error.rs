@@ -1,8 +1,8 @@
 use strum::IntoStaticStr;
 
 use crate::{
-    headers::errors::HeaderRuleRuntimeError, projection::error::ProjectionError,
-    response::graphql_error::GraphQLError,
+    executors::error::SubgraphExecutorError, headers::errors::HeaderRuleRuntimeError,
+    projection::error::ProjectionError, response::graphql_error::GraphQLError,
 };
 
 #[derive(thiserror::Error, Debug, Clone, IntoStaticStr)]
@@ -14,6 +14,9 @@ pub enum PlanExecutionErrorKind {
     #[error(transparent)]
     #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
     HeaderPropagation(#[from] HeaderRuleRuntimeError),
+
+    #[error(transparent)]
+    SubgraphExecution(#[from] SubgraphExecutorError),
 }
 
 /// The central error type for all query plan execution failures.
@@ -59,7 +62,10 @@ impl PlanExecutionError {
     }
 
     pub fn error_code(&self) -> &'static str {
-        (&self.kind).into()
+        match &self.kind {
+            PlanExecutionErrorKind::SubgraphExecution(err) => err.into(),
+            other => other.into(),
+        }
     }
 
     pub fn subgraph_name(&self) -> &Option<String> {
@@ -71,6 +77,12 @@ impl PlanExecutionError {
     }
 }
 
+// This is needed for individual fetch node error handling
+// Individual fetch node errors are not propagated as PipelineError
+// but converted directly to GraphQLError
+// and added to `errors` field in GraphQL response
+// So failing plan nodes do not fail the whole operation
+// See `error_handling_e2e_tests` for reproduction
 impl From<PlanExecutionError> for GraphQLError {
     fn from(val: PlanExecutionError) -> Self {
         let mut error = GraphQLError::from_message_and_code(val.to_string(), val.error_code());
@@ -130,6 +142,22 @@ impl<T> IntoPlanExecutionError<T> for Result<T, HeaderRuleRuntimeError> {
     {
         self.map_err(|source| {
             let kind = PlanExecutionErrorKind::HeaderPropagation(source);
+            PlanExecutionError::new(kind, context)
+        })
+    }
+}
+
+impl<T> IntoPlanExecutionError<T> for Result<T, SubgraphExecutorError> {
+    fn with_plan_context<SN, AP>(
+        self,
+        context: LazyPlanContext<SN, AP>,
+    ) -> Result<T, PlanExecutionError>
+    where
+        SN: FnOnce() -> Option<String>,
+        AP: FnOnce() -> Option<String>,
+    {
+        self.map_err(|source| {
+            let kind = PlanExecutionErrorKind::SubgraphExecution(source);
             PlanExecutionError::new(kind, context)
         })
     }
