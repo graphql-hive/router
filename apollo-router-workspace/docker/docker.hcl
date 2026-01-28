@@ -86,6 +86,7 @@ target "apollo-router" {
   contexts = {
     router_pkg = "${PWD}/bin/router"
     config = "${PWD}"
+    root_dir = "${PWD}/.."
   }
   args = {
     IMAGE_TITLE = "graphql-hive/apollo-router"
