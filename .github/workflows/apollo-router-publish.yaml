@@ -134,11 +134,11 @@ jobs:
 
       - name: Strip binary from debug symbols
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: strip ./target/release/${{ env.RUST_TARGET_FILE }}
+        run: strip ./target/${{ env.RUST_TARGET }}/release
 
       - name: Compress
         run: |
-          ./target/release/compress ./target/release/${{ env.RUST_TARGET_FILE }} ./router.tar.gz
+          ./target/${{ env.RUST_TARGET }}/release/compress ./target/${{ env.RUST_TARGET }}/release ./router.tar.gz
 
       - name: Upload artifact
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
