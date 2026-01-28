@@ -62,6 +62,17 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
 
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: apollo-router-workspace/target
+          key: apollo-router-target-${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            apollo-router-target-${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
+            apollo-router-target-${{ runner.os }}-test-
+            apollo-router-target-${{ runner.os }}-
+            apollo-router-target-
+      
       - name: Run tests
         run: cargo test
 
@@ -122,9 +133,10 @@ jobs:
         uses: actions/cache@v3
         with:
           path: apollo-router-workspace/target
-          key: apollo-router-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          key: apollo-router-target-${{ runner.os }}-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            apollo-router-target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+            apollo-router-target-${{ runner.os }}-build-${{ hashFiles('**/Cargo.lock') }}
+            apollo-router-target-${{ runner.os }}-build-
             apollo-router-target-${{ runner.os }}-
             apollo-router-target-
 
