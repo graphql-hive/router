@@ -33,7 +33,7 @@ WORKDIR /usr/src/router
 # Get the dependencies cached, so we can use dummy input files so Cargo wont fail
 RUN echo 'fn main() { println!(""); }' > ./src/main.rs
 RUN echo 'fn main() { println!(""); }' > ./src/lib.rs
-RUN cargo build --release
+RUN cargo build --release --target-dir /usr/src/router/target
 
 # Copy in the actual source code
 COPY --from=router_pkg src ./src
