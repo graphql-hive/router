@@ -215,7 +215,7 @@ jobs:
             --env HIVE_TOKEN="fake" \
             --mount "type=bind,source=/$(pwd)/router.yaml,target=/dist/config/router.yaml" \
             --mount "type=bind,source=/$(pwd)/supergraph.graphql,target=/dist/config/supergraph.graphql" \
-            ghcr.io/graphql-hive/apollo-router:${{ needs.find-changes.outputs.release_version }} \
+            ghcr.io/graphql-hive/apollo-router:${{ needs.find-changes.outputs.release_version }}-amd64 \
             --log debug \
             --supergraph /dist/config/supergraph.graphql \
             --config /dist/config/router.yaml
