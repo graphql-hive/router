@@ -121,4 +121,3 @@ _redirects
 docker/docker-compose.override.yml
 
 test-results/
-Cargo.lock
