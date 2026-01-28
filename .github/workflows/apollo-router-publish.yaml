@@ -149,8 +149,7 @@ jobs:
         run: strip ./target/${{ env.RUST_TARGET }}/release/router
 
       - name: Compress
-        run: |
-          ./target/${{ env.RUST_TARGET }}/release/compress ./target/${{ env.RUST_TARGET }}/release ./router.tar.gz
+        run: tar -czvf ./router.tar.gz -C ./target/${{ env.RUST_TARGET }}/release router
 
       - name: Upload artifact
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
