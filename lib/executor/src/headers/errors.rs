@@ -27,19 +27,3 @@ pub enum HeaderRuleRuntimeError {
     #[error("Failed to convert VRL value to header value for '{0}': {1}")]
     ValueConversion(String, String),
 }
-
-impl HeaderRuleCompileError {
-    pub fn new_expression_build(header_name: String, err: String) -> Self {
-        HeaderRuleCompileError::ExpressionBuild(header_name, err)
-    }
-}
-
-impl HeaderRuleRuntimeError {
-    pub fn new_expression_evaluation(header_name: String, error: Box<ExpressionError>) -> Self {
-        HeaderRuleRuntimeError::ExpressionEvaluation(header_name, error)
-    }
-
-    pub fn new_value_conversion(header_name: String, reason: String) -> Self {
-        HeaderRuleRuntimeError::ValueConversion(header_name, reason)
-    }
-}
