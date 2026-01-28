@@ -7,7 +7,6 @@ on:
     paths:
       - 'apollo-router-workspace/bin/router/**'
       - 'apollo-router-workspace/docker/router.dockerfile'
-      - 'apollo-router-workspace/scripts/compress/**'
       - 'apollo-router-workspace/Cargo.lock'
       - 'apollo-router-workspace/Cargo.toml'
   # For `main` changes, this pipeline will look for changes in Rust crates or plugin versioning, and
@@ -16,7 +15,6 @@ on:
     paths:
       - 'apollo-router-workspace/bin/router/**'
       - 'apollo-router-workspace/docker/router.dockerfile'
-      - 'apollo-router-workspace/scripts/compress/**'
       - 'apollo-router-workspace/Cargo.lock'
       - 'apollo-router-workspace/Cargo.toml'
     branches:
