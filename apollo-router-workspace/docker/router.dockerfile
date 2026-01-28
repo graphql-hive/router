@@ -27,7 +27,7 @@ RUN cargo build --release
 
 # Copy in the actual source code
 COPY --from=router_pkg src ./src
-COPY --from=root_dir lib ./lib
+COPY --from=root_dir lib /lib
 RUN touch ./src/main.rs
 RUN touch ./src/lib.rs
 
