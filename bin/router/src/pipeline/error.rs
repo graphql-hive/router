@@ -3,6 +3,7 @@ use std::sync::Arc;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
+    headers::errors::HeaderRuleRuntimeError,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
@@ -118,6 +119,14 @@ pub enum PipelineError {
     #[error("Subscriptions are not supported over accepted transport(s)")]
     #[strum(serialize = "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED")]
     SubscriptionsTransportNotSupported,
+
+    #[error(transparent)]
+    #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
+    HeaderPropagation(#[from] HeaderRuleRuntimeError),
+
+    #[error("Failed to serialize the query plan: {0}")]
+    #[strum(serialize = "QUERY_PLAN_SERIALIZATION_ERROR")]
+    QueryPlanSerializationError(sonic_rs::Error),
 }
 
 impl PipelineError {
@@ -169,6 +178,8 @@ impl PipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::QueryPlanSerializationError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -182,35 +193,7 @@ impl PipelineError {
 
         let status = self.default_status_code(prefer_ok);
 
-        if let PipelineError::ValidationErrors(validation_errors) = self {
-            let validation_error_result = FailedExecutionResult {
-                errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-            };
-
-            return ResponseBuilder::new(status).json(&validation_error_result);
-        }
-
-        if let PipelineError::AuthorizationFailed(authorization_errors) = self {
-            let authorization_error_result = FailedExecutionResult {
-                errors: Some(
-                    authorization_errors
-                        .into_iter()
-                        .map(|error| error.into())
-                        .collect(),
-                ),
-            };
-
-            return ResponseBuilder::new(status).json(&authorization_error_result);
-        }
-
-        let code = self.graphql_error_code();
-        let message = self.graphql_error_message();
-
-        let graphql_error = GraphQLError::from_message_and_code(message, code);
-
-        let result = FailedExecutionResult {
-            errors: Some(vec![graphql_error]),
-        };
+        let result: FailedExecutionResult = self.into();
 
         ResponseBuilder::new(status).json(&result)
     }
@@ -218,6 +201,39 @@ impl PipelineError {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FailedExecutionResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub errors: Option<Vec<GraphQLError>>,
+    pub errors: Vec<GraphQLError>,
+}
+
+// This allows easy conversion from PipelineError to FailedExecutionResult
+// FailedExecutionResult is agnostic to HTTP so later on we can use it with different serialization formats
+impl From<PipelineError> for FailedExecutionResult {
+    fn from(error: PipelineError) -> Self {
+        if let PipelineError::ValidationErrors(validation_errors) = error {
+            let validation_error_result = FailedExecutionResult {
+                errors: validation_errors.iter().map(|error| error.into()).collect(),
+            };
+
+            return validation_error_result;
+        }
+
+        if let PipelineError::AuthorizationFailed(authorization_errors) = error {
+            let authorization_error_result = FailedExecutionResult {
+                errors: authorization_errors
+                    .into_iter()
+                    .map(|error| error.into())
+                    .collect(),
+            };
+
+            return authorization_error_result;
+        }
+
+        let code = error.graphql_error_code();
+        let message = error.graphql_error_message();
+
+        let graphql_error = GraphQLError::from_message_and_code(message, code);
+
+        FailedExecutionResult {
+            errors: vec![graphql_error],
+        }
+    }
 }
