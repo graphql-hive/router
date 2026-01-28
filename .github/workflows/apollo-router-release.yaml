@@ -185,6 +185,9 @@ jobs:
       - dockerize
       - find-changes
     runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: .
     env:
       HIVE_TOKEN: ${{ secrets.HIVE_TOKEN }}
     steps:
