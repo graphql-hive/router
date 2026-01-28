@@ -12,6 +12,7 @@ RUN update-ca-certificates
 RUN rustup component add rustfmt
 
 # Move root files and the root Cargo files (Not only lib because the root workspace has all of them)
+# At the end, it will only copy `build` so we don't bloat the image with unnecessary files
 COPY --from=root_dir lib /lib
 COPY --from=root_dir bin/dev-cli /bin/dev-cli
 COPY --from=root_dir bin/router /bin/router

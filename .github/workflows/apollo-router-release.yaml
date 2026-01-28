@@ -92,6 +92,7 @@ jobs:
       - find-changes
     if: ${{ needs.find-changes.outputs.should_release == 'true' }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - builder: hive-linux-x64-ubuntu2204
