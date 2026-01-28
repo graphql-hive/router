@@ -410,7 +410,7 @@ mod hive_usage_tests {
 
     lazy_static::lazy_static! {
         static ref SCHEMA_VALIDATOR: Validator =
-                jsonschema::validator_for(&serde_json::from_str(&std::fs::read_to_string("../../services/usage/usage-report-v2.schema.json").expect("can't load json schema file")).expect("failed to parse json schema")).expect("failed to parse schema");
+                jsonschema::validator_for(&serde_json::from_str(&std::fs::read_to_string("../../../lib/hive-console-sdk/usage-report-v2.schema.json").expect("can't load json schema file")).expect("failed to parse json schema")).expect("failed to parse schema");
     }
 
     struct UsageTestHelper {

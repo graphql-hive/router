@@ -11,6 +11,9 @@ RUN rm -rf /var/lib/apt/lists/*
 RUN update-ca-certificates
 RUN rustup component add rustfmt
 
+# Move libraries
+COPY --from=root_dir lib /lib
+
 WORKDIR /usr/src
 # Create blank projects
 RUN USER=root cargo new router
@@ -27,7 +30,6 @@ RUN cargo build --release
 
 # Copy in the actual source code
 COPY --from=router_pkg src ./src
-COPY --from=root_dir lib /lib
 RUN touch ./src/main.rs
 RUN touch ./src/lib.rs
 
