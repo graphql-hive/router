@@ -185,12 +185,13 @@ jobs:
       - dockerize
       - find-changes
     runs-on: ubuntu-22.04
-    defaults:
-      run:
-        working-directory: .
     env:
       HIVE_TOKEN: ${{ secrets.HIVE_TOKEN }}
     steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 2
       - name: Run Docker image
         run: |
           # Create router.yaml
