@@ -84,7 +84,7 @@ target "target-publish" {
 target "apollo-router" {
   inherits = ["router-base", get_target()]
   contexts = {
-    router_pkg = "${PWD}/packages/libraries/router"
+    router_pkg = "${PWD}/bin/router"
     config = "${PWD}/configs/cargo"
   }
   args = {

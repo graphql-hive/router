@@ -149,7 +149,7 @@ jobs:
           RELEASE: ${{ needs.find-changes.outputs.release_version }}
           BRANCH_NAME: ${{ steps.branch_name_fix.outputs.replaced }}
           BUILD_TYPE: 'publish'
-          PWD: ${{ github.workspace }}
+          PWD: ${{ github.workspace }}/apollo-router-workspace
           BUILD_STABLE: ${{ needs.find-changes.outputs.release_latest == 'true' && '1' || '' }}
           BUILD_PLATFORM: ${{ matrix.platform }}
           IMAGE_SUFFIX: ${{ matrix.suffix }}
