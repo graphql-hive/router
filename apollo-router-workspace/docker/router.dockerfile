@@ -13,7 +13,10 @@ RUN rustup component add rustfmt
 
 # Move root files and the root Cargo files (Not only lib because the root workspace has all of them)
 COPY --from=root_dir lib /lib
-COPY --from=root_dir bench /bench
+COPY --from=root_dir bin/dev-cli /bin/dev-cli
+COPY --from=root_dir bin/router /bin/router
+COPY --from=root_dir e2e /e2e
+COPY --from=root_dir bench/subgraphs /bench/subgraphs
 COPY --from=root_dir Cargo.toml /
 COPY --from=root_dir Cargo.lock /
 
