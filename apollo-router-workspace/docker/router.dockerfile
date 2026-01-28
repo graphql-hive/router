@@ -55,8 +55,8 @@ LABEL org.opencontainers.image.version=$RELEASE
 LABEL org.opencontainers.image.description=$IMAGE_DESCRIPTION
 LABEL org.opencontainers.image.authors="The Guild"
 LABEL org.opencontainers.image.vendor="Kamil Kisiela"
-LABEL org.opencontainers.image.url="https://github.com/graphql-hive/console"
-LABEL org.opencontainers.image.source="https://github.com/graphql-hive/console"
+LABEL org.opencontainers.image.url="https://github.com/graphql-hive/router"
+LABEL org.opencontainers.image.source="https://github.com/graphql-hive/router"
 
 RUN mkdir -p /dist/config
 RUN mkdir /dist/schema
