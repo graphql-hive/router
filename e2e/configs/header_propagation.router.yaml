@@ -7,3 +7,5 @@ headers:
     request:
       - propagate:
           named: x-context
+subscriptions:
+  enabled: true

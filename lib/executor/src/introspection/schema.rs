@@ -7,13 +7,13 @@ use graphql_tools::parser::{
 };
 use hive_router_query_planner::consumer_schema::ConsumerSchema;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FieldTypeInfo {
     pub output_type_name: String,
     pub is_non_null: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct SchemaMetadata {
     pub possible_types: PossibleTypes,
     pub enum_values: HashMap<String, HashSet<String>>,
@@ -52,7 +52,7 @@ impl SchemaMetadata {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PossibleTypes {
     map: HashMap<String, HashSet<String>>,
 }
