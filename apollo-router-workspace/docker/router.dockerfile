@@ -11,9 +11,9 @@ RUN rm -rf /var/lib/apt/lists/*
 RUN update-ca-certificates
 RUN rustup component add rustfmt
 
-# Move libraries and the root Cargo files
-COPY --from=root_dir lib/hive-console-sdk /lib/hive-console-sdk
-COPY --from=root_dir lib/graphql-tools /lib/graphql-tools
+# Move root files and the root Cargo files (Not only lib because the root workspace has all of them)
+COPY --from=root_dir lib /lib
+COPY --from=root_dir bench /bench
 COPY --from=root_dir Cargo.toml /
 COPY --from=root_dir Cargo.lock /
 
