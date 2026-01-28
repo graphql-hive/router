@@ -43,6 +43,9 @@ RUN touch ./src/lib.rs
 # Real build this time
 RUN cargo build --release
 
+# See the files built
+RUN ls -la /usr/src/router/target
+
 # Runtime
 FROM debian:bookworm-slim AS runtime
 
