@@ -111,24 +111,23 @@ pub fn traverse_and_callback_mut<'a, Callback>(
     }
 }
 
-pub fn traverse_and_callback<'a, E, Callback>(
+pub fn traverse_and_callback<'a, Callback>(
     current_data: &'a Value<'a>,
     remaining_path: &'a [FlattenNodePathSegment],
     schema_metadata: &'a SchemaMetadata,
     callback: &mut Callback,
-) -> Result<(), E>
-where
-    Callback: FnMut(&'a Value<'a>) -> Result<(), E>,
+) where
+    Callback: FnMut(&'a Value<'a>),
 {
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {
             for item in arr.iter() {
-                callback(item)?;
+                callback(item);
             }
         } else {
-            callback(current_data)?;
+            callback(current_data);
         }
-        return Ok(());
+        return;
     }
 
     match &remaining_path[0] {
@@ -136,7 +135,7 @@ where
             if let Value::Array(arr) = current_data {
                 let rest_of_path = &remaining_path[1..];
                 for item in arr.iter() {
-                    traverse_and_callback(item, rest_of_path, schema_metadata, callback)?;
+                    traverse_and_callback(item, rest_of_path, schema_metadata, callback);
                 }
             }
         }
@@ -145,7 +144,7 @@ where
                 if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
                     let (_, next_data) = &map[idx];
                     let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback(next_data, rest_of_path, schema_metadata, callback)?;
+                    traverse_and_callback(next_data, rest_of_path, schema_metadata, callback);
                 }
             }
         }
@@ -161,17 +160,15 @@ where
                     .entity_satisfies_type_condition(type_name, type_condition)
                 {
                     let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback(current_data, rest_of_path, schema_metadata, callback)?;
+                    traverse_and_callback(current_data, rest_of_path, schema_metadata, callback);
                 }
             } else if let Value::Array(arr) = current_data {
                 for item in arr.iter() {
-                    traverse_and_callback(item, remaining_path, schema_metadata, callback)?;
+                    traverse_and_callback(item, remaining_path, schema_metadata, callback);
                 }
             }
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
