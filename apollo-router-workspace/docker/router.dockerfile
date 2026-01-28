@@ -11,8 +11,10 @@ RUN rm -rf /var/lib/apt/lists/*
 RUN update-ca-certificates
 RUN rustup component add rustfmt
 
-# Move libraries
+# Move libraries and the root Cargo files
 COPY --from=root_dir lib /lib
+COPY --from=root_dir Cargo.toml /
+COPY --from=root_dir Cargo.lock /
 
 WORKDIR /usr/src
 # Create blank projects
