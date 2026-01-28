@@ -68,6 +68,19 @@ target "router-base" {
   }
 }
 
+target "target-dev" {}
+
+target "target-ci" {
+  cache-from = ["type=gha,ignore-error=true"]
+  cache-to = ["type=gha,mode=max,ignore-error=true"]
+}
+
+target "target-publish" {
+  platforms = [get_platform()]
+  cache-from = ["type=gha,ignore-error=true"]
+  cache-to = ["type=gha,mode=max,ignore-error=true"]
+}
+
 target "apollo-router" {
   inherits = ["router-base", get_target()]
   contexts = {
