@@ -82,7 +82,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            file: router
+            target: x86_64-unknown-linux-gnu
+            os_name: linux
+          - os: windows-latest
+            file: router.exe
+            target: x86_64-pc-windows-msvc
+            os_name: win
+          - os: macos-latest
+            file: router
+            target: x86_64-apple-darwin
+            os_name: macos
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
 
@@ -91,27 +103,6 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 2
-
-      - name: Prepare MacOS
-        if: ${{ matrix.os == 'macos-latest' }}
-        run: |
-          echo "RUST_TARGET=x86_64-apple-darwin" >> $GITHUB_ENV
-          echo "RUST_TARGET_FILE=router" >> $GITHUB_ENV
-          echo "RUST_TARGET_OS=macos" >> $GITHUB_ENV
-
-      - name: Prepare Linux
-        if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: |
-          echo "RUST_TARGET=x86_64-unknown-linux-gnu" >> $GITHUB_ENV
-          echo "RUST_TARGET_FILE=router" >> $GITHUB_ENV
-          echo "RUST_TARGET_OS=linux" >> $GITHUB_ENV
-
-      - name: Prepare Windows
-        if: ${{ matrix.os == 'windows-latest' }}
-        run: |
-          echo "RUST_TARGET=x86_64-pc-windows-msvc" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "RUST_TARGET_FILE=router.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "RUST_TARGET_OS=win" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
@@ -122,7 +113,7 @@ jobs:
         uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1
         with:
           toolchain: '1.91.1'
-          target: ${{ env.RUST_TARGET }}
+          target: ${{ matrix.target }}
           default: true
           override: true
 
@@ -142,19 +133,19 @@ jobs:
 
       - name: Build
         run:
-          cargo build --release --target ${{ env.RUST_TARGET }}
+          cargo build --release --target ${{ matrix.target }}
 
       - name: Strip binary from debug symbols
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: strip ./target/${{ env.RUST_TARGET }}/release/router
+        run: strip ./target/${{ matrix.target }}/release/router
 
       - name: Compress
-        run: tar -czvf ./router.tar.gz -C ./target/${{ env.RUST_TARGET }}/release ${{ env.RUST_TARGET_FILE }}
+        run: tar -czvf ./router.tar.gz -C ./target/${{ matrix.target }}/release ${{ matrix.file }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
         with:
-          name: router-${{ env.RUST_TARGET_OS }}
+          name: router-${{ matrix.os_name }}
           path: ./apollo-router-workspace/router.tar.gz
 
       - name: Upload to R2 (${{ inputs.version }})
@@ -166,7 +157,7 @@ jobs:
           secretaccesskey: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           bucket: apollo-router
           file: ./apollo-router-workspace/router.tar.gz
-          destination: ${{ inputs.version }}/${{ env.RUST_TARGET_OS }}/router.tar.gz
+          destination: ${{ inputs.version }}/${{ matrix.os_name }}/router.tar.gz
 
       - name: Upload to R2 (latest)
         if: ${{ inputs.publish && inputs.latest }}
@@ -177,4 +168,4 @@ jobs:
           secretaccesskey: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           bucket: apollo-router
           file: ./apollo-router-workspace/router.tar.gz
-          destination: latest/${{ env.RUST_TARGET_OS }}/router.tar.gz
+          destination: latest/${{ matrix.os_name }}/router.tar.gz
