@@ -191,7 +191,7 @@ impl Plugin for PersistedDocumentsPlugin {
                             Ok(payload) => payload,
                             Err(e) => {
                                 return Ok(ControlFlow::Break(
-                                    to_router_response(e, req.context),
+                                    to_router_response(e, req.context)?,
                                 ));
                             }
                         };
@@ -210,21 +210,21 @@ impl Plugin for PersistedDocumentsPlugin {
                                 return Ok(ControlFlow::Continue(roll_req));
                             } else {
                                 return Ok(ControlFlow::Break(
-                                    to_router_response(PersistedDocumentsError::PersistedDocumentRequired, req.context)
+                                    to_router_response(PersistedDocumentsError::PersistedDocumentRequired, req.context)?
                                 ));
                             }
                         }
 
                         if payload.document_id.is_none() {
                             return Ok(ControlFlow::Break(
-                                    to_router_response(PersistedDocumentsError::KeyNotFound, req.context)
+                                    to_router_response(PersistedDocumentsError::KeyNotFound, req.context)?
                             ));
                         }
 
                         match payload.document_id.as_ref() {
                             None => {
                                 Ok(ControlFlow::Break(
-                                    to_router_response(PersistedDocumentsError::PersistedDocumentRequired, req.context)
+                                    to_router_response(PersistedDocumentsError::PersistedDocumentRequired, req.context)?
                                 ))
                             }
                             Some(document_id) => match mgr.resolve_document(document_id).await {
@@ -239,10 +239,9 @@ impl Plugin for PersistedDocumentsPlugin {
                                         warn!("failed to extend router context with persisted document hash key");
                                     }
 
-                                    payload.original_req.query = Some(document);
+                                    payload.original_req.query = Some(document); 
 
-                                    let mut bytes: Vec<u8> = Vec::new();
-                                    serde_json::to_writer(&mut bytes, &payload).unwrap();
+                                    let bytes = serde_json::to_vec(&payload.original_req)?;
 
                                     let roll_req: router::Request = (
                                         http::Request::<Body>::from_parts(parts, body_from_bytes(bytes)),
@@ -254,7 +253,7 @@ impl Plugin for PersistedDocumentsPlugin {
                                 }
                                 Err(e) => {
                                     Ok(ControlFlow::Break(
-                                        to_router_response(e, req.context),
+                                        to_router_response(e, req.context)?,
                                     ))
                                 }
                             },
@@ -283,7 +282,7 @@ impl Drop for PersistedDocumentsPlugin {
     }
 }
 
-fn to_router_response(err: PersistedDocumentsError, ctx: Context) -> router::Response {
+fn to_router_response(err: PersistedDocumentsError, ctx: Context) -> Result<router::Response, BoxError> {
     let errors = vec![Error::builder()
         .message(err.message())
         .extension_code(err.code())
@@ -294,7 +293,6 @@ fn to_router_response(err: PersistedDocumentsError, ctx: Context) -> router::Res
         .status_code(StatusCode::OK)
         .context(ctx)
         .build()
-        .unwrap()
 }
 
 /// Expected body structure for the router incoming requests

@@ -50,7 +50,7 @@ use hive_apollo_router_plugin::registry::HiveRegistry;
 // Import the usage plugin
 use hive_apollo_router_plugin::usage::UsagePlugin;
 // Import persisted documents plugin, if needed
-use persisted_documents::PersistedDocumentsPlugin;
+use hive_apollo_router_plugin::persisted_documents::PersistedDocumentsPlugin;
 
 
 // In your main function, make sure to register the plugin before you create or initialize Apollo-Router

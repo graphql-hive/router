@@ -122,7 +122,7 @@ impl UsagePlugin {
             .body()
             .query
             .clone()
-            .expect("operation body should not be empty");
+            .unwrap_or_default();
 
         let excluded_operation_names: HashSet<String> = config
             .exclude
