@@ -227,34 +227,41 @@ impl Plugin for PersistedDocumentsPlugin {
                                     to_router_response(PersistedDocumentsError::PersistedDocumentRequired, req.context)?
                                 ))
                             }
-                            Some(document_id) => match mgr.resolve_document(document_id).await {
-                                Ok(document) => {
-                                    info!("Document found in persisted documents: {}", document);
-
-                                    if req
-                                        .context
-                                        .insert(PERSISTED_DOCUMENT_HASH_KEY, document_id.clone())
-                                        .is_err()
-                                    {
-                                        warn!("failed to extend router context with persisted document hash key");
-                                    }
-
-                                    payload.original_req.query = Some(document); 
-
-                                    let bytes = serde_json::to_vec(&payload.original_req)?;
-
-                                    let roll_req: router::Request = (
-                                        http::Request::<Body>::from_parts(parts, body_from_bytes(bytes)),
-                                        req.context,
-                                    )
-                                        .into();
-
-                                    Ok(ControlFlow::Continue(roll_req))
+                            Some(document_id) => {
+                                if document_id.contains("..") {
+                                    return Ok(ControlFlow::Break(
+                                        to_router_response(PersistedDocumentsError::KeyNotFound, req.context)?,
+                                    ));
                                 }
-                                Err(e) => {
-                                    Ok(ControlFlow::Break(
-                                        to_router_response(e, req.context)?,
-                                    ))
+                                match mgr.resolve_document(document_id).await {
+                                    Ok(document) => {
+                                        info!("Document found in persisted documents: {}", document);
+
+                                        if req
+                                            .context
+                                            .insert(PERSISTED_DOCUMENT_HASH_KEY, document_id.clone())
+                                            .is_err()
+                                        {
+                                            warn!("failed to extend router context with persisted document hash key");
+                                        }
+
+                                        payload.original_req.query = Some(document);
+
+                                        let bytes = serde_json::to_vec(&payload.original_req)?;
+
+                                        let roll_req: router::Request = (
+                                            http::Request::<Body>::from_parts(parts, body_from_bytes(bytes)),
+                                            req.context,
+                                        )
+                                            .into();
+
+                                        Ok(ControlFlow::Continue(roll_req))
+                                    }
+                                    Err(e) => {
+                                        Ok(ControlFlow::Break(
+                                            to_router_response(e, req.context)?,
+                                        ))
+                                    }
                                 }
                             },
                         }
@@ -282,7 +289,10 @@ impl Drop for PersistedDocumentsPlugin {
     }
 }
 
-fn to_router_response(err: PersistedDocumentsError, ctx: Context) -> Result<router::Response, BoxError> {
+fn to_router_response(
+    err: PersistedDocumentsError,
+    ctx: Context,
+) -> Result<router::Response, BoxError> {
     let errors = vec![Error::builder()
         .message(err.message())
         .extension_code(err.code())
@@ -309,9 +319,7 @@ struct ExpectedBodyStructure {
     original_req: graphql::Request,
 }
 
-fn extract_document_id(
-    body: &bytes::Bytes,
-) -> Result<ExpectedBodyStructure, PersistedDocumentsError> {
+fn extract_document_id(body: &[u8]) -> Result<ExpectedBodyStructure, PersistedDocumentsError> {
     serde_json::from_slice::<ExpectedBodyStructure>(body)
         .map_err(PersistedDocumentsError::FailedToParseBody)
 }
