@@ -47,7 +47,7 @@ scopes = ["node-addon"]
 changelog = "lib/node-addon/CHANGELOG.md"
 
 [packages.hive-apollo-router-plugin]
-versioned_files = ["apollo-router-workspace/bin/router/package.json", "apollo-router-workspace/bin/router/Cargo.toml", "apollo-router-workspace/Cargo.lock"]
+versioned_files = ["apollo-router-workspace/bin/router/Cargo.toml", "apollo-router-workspace/Cargo.lock"]
 scopes = ["hive-apollo-router-plugin", "apollo-router", "graphql-tools", "hive-console-sdk"]
 
 # "release" pipeline that prepares the release and pushes a release PR
