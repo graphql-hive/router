@@ -153,7 +153,7 @@ impl UsagePlugin {
                 operation_body,
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs()
                     * 1000,
             },
@@ -271,20 +271,21 @@ impl Plugin for UsagePlugin {
                             async move {
                                 let start: Instant = Instant::now();
 
+                                let result: supergraph::ServiceResult = fut.await;
+
                                 // nested async block, bc async is unstable with closures that receive arguments
-                                let operation_context = ctx
+                                let Some(operation_context) = ctx
                                     .get::<_, OperationContext>(OPERATION_CONTEXT)
-                                    .unwrap_or_default()
-                                    .unwrap();
+                                    .unwrap_or_default() else {
+                                    tracing::debug!("Operation context not found in request context, skipping usage reporting");
+                                    return result;
+                                };
 
                                 // Injected by the persisted document plugin, if it was activated
                                 // and discovered document id
                                 let persisted_document_hash = ctx
                                     .get::<_, String>(PERSISTED_DOCUMENT_HASH_KEY)
-                                    .ok()
-                                    .unwrap();
-
-                                let result: supergraph::ServiceResult = fut.await;
+                                    .unwrap_or_default();
 
                                 if operation_context.dropped {
                                     tracing::debug!(
@@ -292,8 +293,7 @@ impl Plugin for UsagePlugin {
                                         operation_context
                                             .operation_name
                                             .clone()
-                                            .or_else(|| Some("anonymous".to_string()))
-                                            .unwrap()
+                                            .unwrap_or_else(|| "anonymous".to_string())
                                     );
                                     return result;
                                 }
