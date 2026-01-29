@@ -26,8 +26,8 @@ defaults:
 
 jobs:
   # This script is doing the following:
-  # 1. Get the version of the apollo-router and the plugin from the Cargo.toml and package.json files
-  # 2. Check if there are changes in the Cargo.toml and package.json files in the current commit
+  # 1. Get the version of the apollo-router and the plugin from the Cargo.toml file
+  # 2. Check if there are changes in the Cargo.toml file in the current commit
   # 3. If there are changes, check if the image tag exists in the GitHub Container Registry
   find-changes:
     runs-on: ubuntu-22.04
@@ -59,8 +59,8 @@ jobs:
           image_name="apollo-router"
           github_org="graphql-hive"
           router_version=$(cargo tree -i apollo-router --quiet | head -n 1 | awk -F" v" '{print $2}')
-          plugin_version=$(jq -r '.version' bin/router/package.json)
-          has_changes=$(git diff HEAD~ HEAD --name-only -- 'bin/router/Cargo.toml' 'bin/router/package.json' 'Cargo.lock')
+          plugin_version=$(grep '^version' Cargo.toml | sed 's/version *= *"\(.*\)"/\1/')
+          has_changes=$(git diff HEAD~ HEAD --name-only -- 'bin/router/Cargo.toml' 'Cargo.lock')
 
           if [ "$has_changes" ]; then
             image_tag_version="router${router_version}-plugin${plugin_version}"
