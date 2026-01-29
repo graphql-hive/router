@@ -1637,8 +1637,7 @@ fn find_satisfiable_key<'a>(
             // as the result of this function is guaranteed to be successful,
             // and fast.
             &CancellationToken::new(),
-        )
-        .map_err(|err| FetchGraphError::SatisfiableKeyFailure(Box::new(err)))?
+        )?
         .is_some()
         {
             return edge_ref
