@@ -12,7 +12,7 @@
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
-|[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{}`<br/>||
+|[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_request_body_size":"2 MB"}`<br/>||
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
@@ -92,7 +92,8 @@ jwt:
     - name: authorization
       prefix: Bearer
       source: header
-limits: {}
+limits:
+  max_request_body_size: 2 MB
 log:
   filter: null
   format: json
@@ -1661,6 +1662,7 @@ Configuration for checking the limits such as query depth, complexity, etc.
 |[**max\_aliases**](#limitsmax_aliases)|`object`, `null`|Configuration of limiting the number of aliases in the incoming GraphQL operations.<br/>|yes|
 |[**max\_depth**](#limitsmax_depth)|`object`, `null`|Configuration of limiting the depth of the incoming GraphQL operations.<br/>|yes|
 |[**max\_directives**](#limitsmax_directives)|`object`, `null`|Configuration of limiting the number of directives in the incoming GraphQL operations.<br/>|yes|
+|**max\_request\_body\_size**|`string`|Default: `"2 MB"`<br/>||
 |[**max\_tokens**](#limitsmax_tokens)|`object`, `null`|Configuration of limiting the number of tokens in the incoming GraphQL operations.<br/>|yes|
 
 <a name="limitsmax_aliases"></a>
@@ -1677,6 +1679,12 @@ It is used to prevent too many aliases that could lead to overfetching or DOS at
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**n**|`integer`|Aliases threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
+**Example**
+
+```yaml
+max_request_body_size: 2 MB
+
+```
 
 <a name="limitsmax_depth"></a>
 ### limits\.max\_depth: object,null

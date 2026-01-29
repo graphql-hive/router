@@ -10,7 +10,7 @@ use hive_router_query_planner::{
 };
 use http::{HeaderName, Method, StatusCode};
 use ntex::{
-    http::ResponseBuilder,
+    http::{error::PayloadError, ResponseBuilder},
     web::{self, error::QueryPayloadError},
 };
 use serde::{Deserialize, Serialize};
@@ -118,6 +118,14 @@ pub enum PipelineError {
     #[error("Subscriptions are not supported over accepted transport(s)")]
     #[strum(serialize = "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED")]
     SubscriptionsTransportNotSupported,
+
+    #[error(transparent)]
+    #[strum(serialize = "PAYLOAD_READ_ERROR")]
+    PayloadReadError(#[from] PayloadError),
+
+    #[error("Request body size exceeds the limit")]
+    #[strum(serialize = "PAYLOAD_TOO_LARGE")]
+    PayloadTooLarge,
 }
 
 impl PipelineError {
@@ -169,6 +177,8 @@ impl PipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::PayloadReadError(_), _) => StatusCode::UNPROCESSABLE_ENTITY,
+            (Self::PayloadTooLarge, _) => StatusCode::PAYLOAD_TOO_LARGE,
         }
     }
 

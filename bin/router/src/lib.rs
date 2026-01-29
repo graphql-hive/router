@@ -38,17 +38,14 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
 use http::header::{CONTENT_TYPE, RETRY_AFTER};
-use ntex::{
-    util::Bytes,
-    web::{self, HttpRequest},
-};
+use ntex::web::{self, HttpRequest};
 use tracing::{info, warn};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
 async fn graphql_endpoint_handler(
     request: HttpRequest,
-    body_bytes: Bytes,
+    body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
@@ -83,7 +80,7 @@ async fn graphql_endpoint_handler(
 
         let mut res = match graphql_request_handler(
             &request,
-            body_bytes,
+            body_stream,
             &response_mode,
             supergraph,
             app_state.get_ref(),
