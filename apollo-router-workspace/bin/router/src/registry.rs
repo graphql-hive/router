@@ -119,7 +119,7 @@ impl HiveRegistry {
                 .to_string_lossy()
                 .to_string(),
         );
-        
+
         env::set_var("APOLLO_ROUTER_SUPERGRAPH_PATH", file_name.clone());
         env::set_var("APOLLO_ROUTER_HOT_RELOAD", "true");
 
