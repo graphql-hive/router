@@ -6,15 +6,13 @@ use apollo_router::plugin::PluginInit;
 use apollo_router::services::router;
 use apollo_router::services::router::Body;
 use apollo_router::Context;
-use bytes::Bytes;
+use apollo_router::services::router::body::from_bytes;
 use core::ops::Drop;
 use futures::FutureExt;
 use hive_console_sdk::persisted_documents::PersistedDocumentsError;
 use hive_console_sdk::persisted_documents::PersistedDocumentsManager;
 use http::StatusCode;
-use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::BodyExt;
-use http_body_util::Full;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -201,7 +199,7 @@ impl Plugin for PersistedDocumentsPlugin {
                                 let roll_req: router::Request = (
                                     http::Request::<Body>::from_parts(
                                         parts,
-                                        body_from_bytes(bytes),
+                                        from_bytes(bytes),
                                     ),
                                     req.context,
                                 )
@@ -250,7 +248,7 @@ impl Plugin for PersistedDocumentsPlugin {
                                         let bytes = serde_json::to_vec(&payload.original_req)?;
 
                                         let roll_req: router::Request = (
-                                            http::Request::<Body>::from_parts(parts, body_from_bytes(bytes)),
+                                            http::Request::<Body>::from_parts(parts, from_bytes(bytes)),
                                             req.context,
                                         )
                                             .into();
@@ -275,12 +273,6 @@ impl Plugin for PersistedDocumentsPlugin {
             service
         }
     }
-}
-
-fn body_from_bytes<T: Into<Bytes>>(chunk: T) -> UnsyncBoxBody<Bytes, axum_core::Error> {
-    Full::new(chunk.into())
-        .map_err(|never| match never {})
-        .boxed_unsync()
 }
 
 impl Drop for PersistedDocumentsPlugin {
