@@ -8,7 +8,7 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
 };
-use http::{HeaderName, Method, StatusCode};
+use http::{header::RETRY_AFTER, HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError},
@@ -19,8 +19,7 @@ use strum::IntoStaticStr;
 use crate::{
     jwt::errors::JwtError,
     pipeline::{
-        authorization::AuthorizationError,
-        header::{ResponseMode, SingleContentType},
+        authorization::AuthorizationError, header::RequestAccepts,
         progressive_override::LabelEvaluationError,
     },
 };
@@ -118,6 +117,10 @@ pub enum PipelineError {
     #[error("Subscriptions are not supported over accepted transport(s)")]
     #[strum(serialize = "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED")]
     SubscriptionsTransportNotSupported,
+
+    #[error("No supergraph available yet, unable to process request")]
+    #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
+    NoSupergraphAvailable,
 }
 
 impl PipelineError {
@@ -169,18 +172,17 @@ impl PipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
+}
 
-    pub fn into_response(self, response_mode: Option<ResponseMode>) -> web::HttpResponse {
-        let response_mode = response_mode.unwrap_or_default();
-        let prefer_ok = matches!(
-            response_mode,
-            ResponseMode::SingleOnly(SingleContentType::JSON)
-                | ResponseMode::Dual(SingleContentType::JSON, _)
-        );
+impl web::error::WebResponseError for PipelineError {
+    fn error_response(&self, req: &web::HttpRequest) -> web::HttpResponse {
+        // Retrieve the negotiated response mode, defaulting to standard if not set
+        let response_mode = req.response_mode().unwrap_or_default();
 
-        let status = self.default_status_code(prefer_ok);
+        let status = self.default_status_code(response_mode.prefer_status_ok_for_errors());
 
         if let PipelineError::ValidationErrors(validation_errors) = self {
             let validation_error_result = FailedExecutionResult {
@@ -194,7 +196,7 @@ impl PipelineError {
             let authorization_error_result = FailedExecutionResult {
                 errors: Some(
                     authorization_errors
-                        .into_iter()
+                        .iter()
                         .map(|error| error.into())
                         .collect(),
                 ),
@@ -212,7 +214,13 @@ impl PipelineError {
             errors: Some(vec![graphql_error]),
         };
 
-        ResponseBuilder::new(status).json(&result)
+        let mut res = ResponseBuilder::new(status);
+
+        if matches!(self, PipelineError::NoSupergraphAvailable) {
+            res.header(RETRY_AFTER, "10");
+        }
+
+        res.json(&result)
     }
 }
 
