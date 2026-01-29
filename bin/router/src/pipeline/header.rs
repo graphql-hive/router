@@ -5,8 +5,8 @@ use mediatype::{
     MediaType, Name, ReadParams,
 };
 use ntex::web::HttpRequest;
-use std::str::FromStr;
 use std::sync::LazyLock;
+use std::{str::FromStr, sync::Arc};
 use strum::{AsRefStr, EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 use tracing::error;
 
@@ -258,12 +258,13 @@ pub trait RequestAccepts {
     /// Reads the request's `Accept` header and returns the agreed response mode.
     ///
     /// Returns an error if no valid content types are found in the Accept header.
-    fn negotiate(&self) -> Result<ResponseMode, PipelineError>;
+    fn negotiate(&mut self) -> Result<Arc<ResponseMode>, PipelineError>;
+    fn response_mode(&self) -> Option<Arc<ResponseMode>>;
 }
 
 impl RequestAccepts for HttpRequest {
     #[inline]
-    fn negotiate(&self) -> Result<ResponseMode, PipelineError> {
+    fn negotiate(&mut self) -> Result<Arc<ResponseMode>, PipelineError> {
         let content_types = self
             .headers()
             .get(ACCEPT)
@@ -278,9 +279,17 @@ impl RequestAccepts for HttpRequest {
         // this is because only empty accept header or */* is treated as "accept everything" and we check
         // that above
         match agreed {
-            Some(response_mode) => Ok(response_mode),
+            Some(response_mode) => {
+                let response_mode = Arc::new(response_mode);
+                self.extensions_mut().insert(response_mode.clone());
+                Ok(response_mode)
+            }
             None => Err(PipelineError::UnsupportedContentType),
         }
+    }
+    #[inline]
+    fn response_mode(&self) -> Option<Arc<ResponseMode>> {
+        self.extensions().get::<Arc<ResponseMode>>().cloned()
     }
 }
 

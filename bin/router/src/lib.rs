@@ -23,6 +23,7 @@ use crate::{
     jwt::JwtAuthRuntime,
     logger::configure_logging,
     pipeline::{
+        error::PipelineError,
         graphql_request_handler,
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         usage_reporting::init_hive_user_agent,
@@ -34,7 +35,7 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
-use http::header::{CONTENT_TYPE, RETRY_AFTER};
+use http::header::CONTENT_TYPE;
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
@@ -44,72 +45,56 @@ use tracing::{info, warn};
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
 async fn graphql_endpoint_handler(
-    request: HttpRequest,
+    mut request: HttpRequest,
     body_bytes: Bytes,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
-) -> impl web::Responder {
-    let maybe_supergraph = schema_state.current_supergraph();
-
-    if let Some(supergraph) = maybe_supergraph.as_ref() {
-        // If an early CORS response is needed, return it immediately.
-        if let Some(early_response) = app_state
-            .cors_runtime
-            .as_ref()
-            .and_then(|cors| cors.get_early_response(&request))
-        {
-            return early_response;
-        }
-
-        // agree on the response content type so that errors can be handled
-        // properly outside the request handler.
-        let response_mode = match request.negotiate() {
-            Ok(response_mode) => response_mode,
-            Err(err) => return err.into_response(None),
-        };
-
-        if response_mode == ResponseMode::GraphiQL {
-            if app_state.router_config.graphiql.enabled {
-                return web::HttpResponse::Ok()
-                    .header(CONTENT_TYPE, TEXT_HTML_MIME)
-                    .body(GRAPHIQL_HTML);
-            } else {
-                return web::HttpResponse::NotFound().into();
-            }
-        }
-
-        let mut res = match graphql_request_handler(
-            &request,
-            body_bytes,
-            &response_mode,
-            supergraph,
-            app_state.get_ref(),
-            schema_state.get_ref(),
-        )
-        .await
-        {
-            Ok(response) => response,
-            Err(err) => {
-                return {
-                    tracing::error!("{}", err);
-                    err.into_response(Some(response_mode))
-                }
-            }
-        };
-
-        // Apply CORS headers to the final response if CORS is configured.
-        if let Some(cors) = app_state.cors_runtime.as_ref() {
-            cors.set_headers(&request, res.headers_mut());
-        }
-
-        res
-    } else {
+) -> Result<web::HttpResponse, PipelineError> {
+    let Some(ref supergraph) = **schema_state.current_supergraph() else {
         warn!("No supergraph available yet, unable to process request");
 
-        web::HttpResponse::ServiceUnavailable()
-            .header(RETRY_AFTER, 10)
-            .finish()
+        return Err(PipelineError::NoSupergraphAvailable);
+    };
+
+    // If an early CORS response is needed, return it immediately.
+    if let Some(early_response) = app_state
+        .cors_runtime
+        .as_ref()
+        .and_then(|cors| cors.get_early_response(&request))
+    {
+        return Ok(early_response);
     }
+
+    // agree on the response content type so that errors can be handled
+    // properly outside the request handler.
+    let response_mode = request.negotiate()?;
+
+    if response_mode == ResponseMode::GraphiQL.into() {
+        if app_state.router_config.graphiql.enabled {
+            return Ok(web::HttpResponse::Ok()
+                .header(CONTENT_TYPE, TEXT_HTML_MIME)
+                .body(GRAPHIQL_HTML));
+        } else {
+            return Ok(web::HttpResponse::NotFound().into());
+        }
+    }
+
+    let mut res = graphql_request_handler(
+        &request,
+        body_bytes,
+        &response_mode,
+        supergraph,
+        app_state.get_ref(),
+        schema_state.get_ref(),
+    )
+    .await?;
+
+    // Apply CORS headers to the final response if CORS is configured.
+    if let Some(cors) = app_state.cors_runtime.as_ref() {
+        cors.set_headers(&request, res.headers_mut());
+    }
+
+    Ok(res)
 }
 
 pub async fn router_entrypoint() -> Result<(), RouterInitError> {
