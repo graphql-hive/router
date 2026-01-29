@@ -1,6 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setOutput } from '@actions/core';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const [localVersion, latestStableVersion] = await Promise.all([
   fetchLocalVersion(),
@@ -29,15 +33,6 @@ if (await isPullRequestOpen(latestStableVersion)) {
   setOutput('version', latestStableVersion);
 }
 
-function ensureEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing ${name} environment variable`);
-  }
-
-  return value;
-}
-
 async function fetchLatestVersion() {
   const latestResponse = await fetch(
     'https://api.github.com/repos/apollographql/router/releases/latest',
@@ -59,9 +54,8 @@ async function fetchLatestVersion() {
 
   return latestStableVersion;
 }
-
 async function fetchLocalVersion() {
-  const lockFile = await readFile(join(process.cwd(), './Cargo.lock'), 'utf-8');
+  const lockFile = await readFile(join(__dirname, '../../../Cargo.toml'), 'utf-8');
 
   const apolloRouterPackage = lockFile
     .split('[[package]]')
