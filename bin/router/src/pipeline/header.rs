@@ -208,6 +208,16 @@ impl ResponseMode {
             _ => None,
         }
     }
+    /**
+     * Whether to prefer HTTP 200 OK status code for errors.
+     */
+    pub fn prefer_status_ok_for_errors(&self) -> bool {
+        matches!(
+            self,
+            ResponseMode::SingleOnly(SingleContentType::JSON)
+                | ResponseMode::Dual(SingleContentType::JSON, _)
+        )
+    }
 }
 
 /// Reads the `Accept` header contents and returns a tuple of accepted/parsed content types.
@@ -259,6 +269,8 @@ pub trait RequestAccepts {
     ///
     /// Returns an error if no valid content types are found in the Accept header.
     fn negotiate(&mut self) -> Result<Arc<ResponseMode>, PipelineError>;
+    /// If the request has already negotiated the response mode, return it.
+    /// Useful in the error to response handler
     fn response_mode(&self) -> Option<Arc<ResponseMode>>;
 }
 
@@ -281,6 +293,7 @@ impl RequestAccepts for HttpRequest {
         match agreed {
             Some(response_mode) => {
                 let response_mode = Arc::new(response_mode);
+                // Save the negotiated response mode for later retrieval (e.g., in error handling).
                 self.extensions_mut().insert(response_mode.clone());
                 Ok(response_mode)
             }

@@ -69,7 +69,7 @@ async fn graphql_endpoint_handler(
     // properly outside the request handler.
     let response_mode = request.negotiate()?;
 
-    if response_mode == ResponseMode::GraphiQL.into() {
+    if *response_mode == ResponseMode::GraphiQL {
         if app_state.router_config.graphiql.enabled {
             return Ok(web::HttpResponse::Ok()
                 .header(CONTENT_TYPE, TEXT_HTML_MIME)

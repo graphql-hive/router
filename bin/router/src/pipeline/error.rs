@@ -19,8 +19,7 @@ use strum::IntoStaticStr;
 use crate::{
     jwt::errors::JwtError,
     pipeline::{
-        authorization::AuthorizationError,
-        header::{RequestAccepts, ResponseMode, SingleContentType},
+        authorization::AuthorizationError, header::RequestAccepts,
         progressive_override::LabelEvaluationError,
     },
 };
@@ -180,14 +179,10 @@ impl PipelineError {
 
 impl web::error::WebResponseError for PipelineError {
     fn error_response(&self, req: &web::HttpRequest) -> web::HttpResponse {
+        // Retrieve the negotiated response mode, defaulting to standard if not set
         let response_mode = req.response_mode().unwrap_or_default();
-        let prefer_ok = matches!(
-            response_mode.as_ref(),
-            ResponseMode::SingleOnly(SingleContentType::JSON)
-                | ResponseMode::Dual(SingleContentType::JSON, _)
-        );
 
-        let status = self.default_status_code(prefer_ok);
+        let status = self.default_status_code(response_mode.prefer_status_ok_for_errors());
 
         if let PipelineError::ValidationErrors(validation_errors) = self {
             let validation_error_result = FailedExecutionResult {
