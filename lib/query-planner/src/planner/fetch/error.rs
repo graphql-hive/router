@@ -10,7 +10,7 @@ pub enum FetchGraphError {
     #[error("Internal Error: {0}")]
     Internal(String),
     #[error("Graph error: {0}")]
-    GraphFailure(Box<GraphError>),
+    GraphFailure(#[from] GraphError),
     #[error("Missing FetchStep: {0} {1}")]
     MissingStep(usize, String),
     #[error("Missing parent of FetchStep: {0}")]
@@ -30,7 +30,7 @@ pub enum FetchGraphError {
     #[error("Expected different indexes: {0}")]
     SameNodeIndex(usize),
     #[error("Failed ot find satisfiable key for @requires: {0}")]
-    SatisfiableKeyFailure(Box<WalkOperationError>),
+    SatisfiableKeyFailure(#[from] WalkOperationError),
     #[error("Expected a FetchStep with Mutation to have its order defined")]
     MutationStepWithNoOrder,
     #[error("Index mapping got lost")]
@@ -51,10 +51,4 @@ pub enum FetchGraphError {
     SelectionSetManipulationError(#[from] TypeAwareSelectionError),
     #[error(transparent)]
     CancellationError(#[from] CancellationError),
-}
-
-impl From<GraphError> for FetchGraphError {
-    fn from(error: GraphError) -> Self {
-        FetchGraphError::GraphFailure(Box::new(error))
-    }
 }
