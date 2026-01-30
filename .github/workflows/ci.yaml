@@ -75,6 +75,15 @@ jobs:
         uses: the-guild-org/shared-config/setup@v1
         with:
           node-version-file: .node-version
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-node-addon-test
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-node-addon-test
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - name: build
         run: npm run build:debug
         working-directory: lib/node-addon
@@ -318,6 +327,15 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-federation-audit
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-federation-audit
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - run: cargo build --package hive-router
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1

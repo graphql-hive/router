@@ -196,6 +196,15 @@ jobs:
         uses: the-guild-org/shared-config/setup@v1
         with:
           node-version-file: .node-version
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-npm-publish
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-npm-publish
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - name: download node addon artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
