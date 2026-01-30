@@ -76,7 +76,7 @@ pub struct MaxTokensRuleConfig {
 }
 
 fn default_max_request_body_size() -> Size {
-    "2MB"
-        .parse()
-        .expect("Default max request body size should be a valid human size")
+    "2MB".parse().expect(
+        "Default value for 'limits.max_request_body_size' should be a valid human-readable size",
+    )
 }
