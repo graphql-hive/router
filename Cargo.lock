@@ -2244,6 +2244,7 @@ dependencies = [
  "regex-automata",
  "ryu",
  "serde",
+ "serde_json",
  "sonic-rs",
  "sonic-simd",
  "strum 0.27.2",
