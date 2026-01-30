@@ -288,12 +288,17 @@ impl GraphQLTransportWSClient {
             }
         }))
     }
+}
 
-    pub async fn close(&self) {
-        let _ = self
-            .sink
-            .send(ws::Message::Close(Some(ws::CloseCode::Normal.into())))
-            .await;
+impl Drop for GraphQLTransportWSClient {
+    fn drop(&mut self) {
+        let sink = self.sink.clone();
+        // sending is async, so spawn a task to do it
+        rt::spawn(async move {
+            let _ = sink
+                .send(ws::Message::Close(Some(ws::CloseCode::Normal.into())))
+                .await;
+        });
     }
 }
 
