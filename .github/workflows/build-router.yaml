@@ -117,7 +117,6 @@ jobs:
         with:
           cache: false
           target: ${{ matrix.rust_target }}
-          cache-key: ${{ matrix.name }}
       - uses: jkelleyrtp/rust-cache@jk/speedy-cache # v2
         with:
           incremental: true
