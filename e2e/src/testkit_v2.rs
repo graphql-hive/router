@@ -194,6 +194,7 @@ impl TestRouter<Built> {
 }
 
 impl TestRouter<Started> {
+    #[allow(unused)]
     pub async fn send_graphql_request(
         &self,
         query: &str,
