@@ -63,8 +63,8 @@ pub enum GraphQLTransportWsClientError {
     ReceiveError(String),
     #[error("Invalid message: {0}")]
     InvalidMessage(String),
-    #[error("Timeout")]
-    Timeout,
+    #[error("Connection acknowledgement timeout")]
+    ConnectionAcknowledgementTimeout,
 }
 
 fn error_response(message: String) -> SubgraphResponse<'static> {
@@ -151,8 +151,7 @@ impl GraphQLTransportWSClient {
 
         let timeout_duration = timeout.unwrap_or(Duration::from_secs(10));
 
-        // Wait for ConnectionAck
-        let ack_result = tokio::select! {
+        tokio::select! {
             maybe_frame = receiver.next() => {
                 match maybe_frame {
                     Some(Ok(frame)) => match frame {
@@ -193,11 +192,11 @@ impl GraphQLTransportWSClient {
                 }
             }
             _ = ntex::time::sleep(timeout_duration) => {
-                Err(GraphQLTransportWsClientError::Timeout)
+                let _ = sink.send(CloseCode::ConnectionAcknowledgementTimeout.into())
+                    .await;
+                Err(GraphQLTransportWsClientError::ConnectionAcknowledgementTimeout)
             }
-        };
-
-        ack_result?;
+        }?;
 
         let subscriptions: SubscriptionsMap = Rc::new(RefCell::new(HashMap::new()));
 

@@ -9,6 +9,7 @@ use crate::response::graphql_error::GraphQLError;
 
 pub enum CloseCode {
     ConnectionInitTimeout,
+    ConnectionAcknowledgementTimeout,
     TooManyInitialisationRequests,
     Unauthorized,
     Forbidden(String),
@@ -25,6 +26,12 @@ impl From<CloseCode> for ws::Message {
                 code: ws::CloseCode::from(4408),
                 description: Some("Connection initialisation timeout".into()),
             })),
+            CloseCode::ConnectionAcknowledgementTimeout => {
+                ws::Message::Close(Some(ws::CloseReason {
+                    code: ws::CloseCode::from(4504),
+                    description: Some("Connection acknowledgement timeout".into()),
+                }))
+            }
             CloseCode::TooManyInitialisationRequests => ws::Message::Close(Some(ws::CloseReason {
                 code: ws::CloseCode::from(4429),
                 description: Some("Too many initialisation requests".into()),
