@@ -3,8 +3,11 @@ use std::time::Duration;
 
 use crate::executors::dedupe::request_fingerprint;
 use crate::executors::map::InflightRequestsMap;
+use crate::executors::multipart_subscribe;
+use crate::executors::sse;
 use crate::response::subgraph_response::SubgraphResponse;
-use futures::TryFutureExt;
+use futures::stream::BoxStream;
+use futures_util::TryFutureExt;
 
 use async_trait::async_trait;
 
@@ -17,11 +20,10 @@ use hyper::Version;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
-use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
@@ -196,24 +198,13 @@ impl HTTPSubgraphExecutor {
             headers: parts.headers.into(),
         })
     }
+}
 
-    fn error_to_response<'exec>(&self, error: SubgraphExecutorError) -> SubgraphResponse<'exec> {
-        let graphql_error: GraphQLError = error.into();
-        let mut graphql_error = graphql_error.add_subgraph_name(&self.subgraph_name);
-        graphql_error.message = "Failed to execute request to subgraph".to_string();
-
-        SubgraphResponse {
-            errors: Some(vec![graphql_error]),
-            ..Default::default()
-        }
-    }
-
-    fn log_error(&self, error: &SubgraphExecutorError) {
-        tracing::error!(
-            error = error as &dyn std::error::Error,
-            "Subgraph executor error"
-        );
-    }
+fn log_error(error: &SubgraphExecutorError) {
+    tracing::error!(
+        error = error as &dyn std::error::Error,
+        "Subgraph executor error"
+    );
 }
 
 #[async_trait]
@@ -227,8 +218,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
             Err(e) => {
-                self.log_error(&e);
-                return self.error_to_response(e);
+                log_error(&e);
+                return e.to_subgraph_response(&self.subgraph_name);
             }
         };
 
@@ -244,10 +235,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             return match self._send_request(body, headers, timeout).await {
                 Ok(shared_response) => shared_response
                     .deserialize_http_response()
-                    .unwrap_or_else(|err| self.error_to_response(err)),
+                    .unwrap_or_else(|err| err.to_subgraph_response(&self.subgraph_name)),
                 Err(e) => {
-                    self.log_error(&e);
-                    self.error_to_response(e)
+                    log_error(&e);
+                    e.to_subgraph_response(&self.subgraph_name)
                 }
             };
         }
@@ -282,11 +273,219 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         match response_result {
             Ok(shared_response) => shared_response
                 .deserialize_http_response()
-                .unwrap_or_else(|err| self.error_to_response(err)),
+                .unwrap_or_else(|err| err.to_subgraph_response(&self.subgraph_name)),
             Err(e) => {
-                self.log_error(&e);
-                self.error_to_response(e)
+                log_error(&e);
+                e.to_subgraph_response(&self.subgraph_name)
             }
+        }
+    }
+
+    #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
+    async fn subscribe<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+        connection_timeout: Option<Duration>,
+    ) -> BoxStream<'static, SubgraphResponse<'static>> {
+        // NOTE: we intentionally stream once errors. read more in https://github.com/enisdenjo/graphql-sse/blob/master/PROTOCOL.md#distinct-connections-mode
+
+        let body = match self.build_request_body(&execution_request) {
+            Ok(body) => body,
+            Err(e) => {
+                log_error(&e);
+                return e.stream_once_subgraph_response(&self.subgraph_name);
+            }
+        };
+
+        let mut req = match hyper::Request::builder()
+            .method(http::Method::POST)
+            .uri(&self.endpoint)
+            .version(Version::HTTP_11)
+            .body(Full::new(Bytes::from(body)))
+        {
+            Ok(req) => req,
+            Err(e) => {
+                let e = SubgraphExecutorError::RequestBuildFailure(
+                    self.endpoint.to_string(),
+                    e.to_string(),
+                );
+                log_error(&e);
+                return e.stream_once_subgraph_response(&self.subgraph_name);
+            }
+        };
+
+        let mut headers = execution_request.headers;
+        self.header_map.iter().for_each(|(key, value)| {
+            headers.insert(key, value.clone());
+        });
+
+        // Prefer multipart over SSE for subscriptions
+        // https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol
+        headers.insert(
+            http::header::ACCEPT,
+            HeaderValue::from_static(
+                r#"multipart/mixed;subscriptionSpec="1.0", text/event-stream"#,
+            ),
+        );
+        *req.headers_mut() = headers;
+
+        debug!(
+            "establishing subscription connection to subgraph {} at {}",
+            self.subgraph_name,
+            self.endpoint.to_string()
+        );
+
+        let req_fut = self.http_client.request(req);
+        let res = if let Some(timeout_duration) = connection_timeout {
+            match tokio::time::timeout(timeout_duration, req_fut).await {
+                Ok(Ok(response)) => {
+                    // good
+                    response
+                }
+                Ok(Err(e)) => {
+                    // request error
+                    let e = SubgraphExecutorError::RequestFailure(
+                        self.endpoint.to_string(),
+                        e.to_string(),
+                    );
+                    log_error(&e);
+                    return e.stream_once_subgraph_response(&self.subgraph_name);
+                }
+                Err(_) => {
+                    // connection timeout
+                    let e = SubgraphExecutorError::RequestTimeout(
+                        self.endpoint.to_string(),
+                        timeout_duration.as_millis(),
+                    );
+                    log_error(&e);
+                    return e.stream_once_subgraph_response(&self.subgraph_name);
+                }
+            }
+        } else {
+            match req_fut.await {
+                Ok(response) => response,
+                Err(e) => {
+                    let e = SubgraphExecutorError::RequestFailure(
+                        self.endpoint.to_string(),
+                        e.to_string(),
+                    );
+                    log_error(&e);
+                    return e.stream_once_subgraph_response(&self.subgraph_name);
+                }
+            }
+        };
+
+        debug!(
+            "subscription connection to subgraph {} at {} established, status: {}",
+            self.subgraph_name,
+            self.endpoint.to_string(),
+            res.status()
+        );
+
+        if !res.status().is_success() {
+            // TODO: how are non-success statuses handled in single-shot results?
+            //       seems like the body is read regardless
+            let e = SubgraphExecutorError::RequestFailure(
+                self.endpoint.to_string(),
+                format!("Subgraph returned non-success status: {}", res.status()),
+            );
+            log_error(&e);
+            return e.stream_once_subgraph_response(&self.subgraph_name);
+        }
+
+        let (parts, body_stream) = res.into_parts();
+        let _response_headers = parts.headers.clone();
+
+        let content_type = parts
+            .headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        let is_multipart = content_type.starts_with("multipart/mixed");
+        let is_sse = content_type == "text/event-stream";
+
+        if !is_multipart && !is_sse {
+            let e = SubgraphExecutorError::UnsupportedContentTypeError(
+                content_type.to_string(),
+                self.subgraph_name.clone(),
+            );
+            log_error(&e);
+            return e.stream_once_subgraph_response(&self.subgraph_name);
+        }
+
+        // clone to avoid borrowing self in stream closures
+        let endpoint = self.endpoint.to_string();
+        let subgraph_name = self.subgraph_name.clone();
+
+        if is_multipart {
+            debug!(
+                subgraph_name = self.subgraph_name,
+                "using multipart HTTP for subscription",
+            );
+
+            let boundary = match multipart_subscribe::parse_boundary_from_header(content_type) {
+                Ok(boundary) => boundary,
+                Err(e) => {
+                    let error = SubgraphExecutorError::RequestFailure(
+                        self.endpoint.to_string(),
+                        format!("Failed to parse boundary from Content-Type header: {}", e),
+                    );
+                    log_error(&error);
+                    return error.stream_once_subgraph_response(&self.subgraph_name);
+                }
+            };
+            let stream = multipart_subscribe::parse_to_stream(boundary, body_stream);
+
+            Box::pin(async_stream::stream! {
+                trace!("multipart subscription stream started");
+                for await result in stream {
+                    match result {
+                        Ok(response) => {
+                            trace!(response = ?response, "multipart subscription event received");
+                            yield response;
+                        }
+                        Err(e) => {
+                            let error = SubgraphExecutorError::SubscriptionStreamError(
+                                endpoint.clone(),
+                                e.to_string(),
+                            );
+                            log_error(&error);
+                            yield error.to_subgraph_response(subgraph_name.as_str());
+                            return;
+                        }
+                    }
+                }
+            })
+        } else {
+            debug!(
+                "using SSE for subscription connection to subgraph {} at {}",
+                self.subgraph_name,
+                self.endpoint.to_string(),
+            );
+
+            let stream = sse::parse_to_stream(body_stream);
+
+            Box::pin(async_stream::stream! {
+                trace!("SSE subscription stream started");
+                for await result in stream {
+                    match result {
+                        Ok(response) => {
+                            trace!(response = ?response, "SSE subscription event received");
+                            yield response;
+                        }
+                        Err(e) => {
+                            let error = SubgraphExecutorError::SubscriptionStreamError(
+                                endpoint.clone(),
+                                e.to_string(),
+                            );
+                            log_error(&error);
+                            yield error.to_subgraph_response(subgraph_name.as_str());
+                            return;
+                        }
+                    }
+                }
+            })
         }
     }
 }
@@ -300,24 +499,12 @@ pub struct HttpResponse {
 
 impl HttpResponse {
     fn deserialize_http_response<'a>(&self) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
-        let bytes_ref: &[u8] = &self.body;
-
-        // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'a`.
-        // This is safe because the returned `SubgraphResponse` contains a clone of `self.body`
-        // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
-        // underlying data remains alive as long as the `SubgraphResponse` does.
-        // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
-        // creating a self-referential struct, which is why `unsafe` is required.
-        let bytes_ref: &'a [u8] = unsafe { std::mem::transmute(bytes_ref) };
-
-        sonic_rs::from_slice(bytes_ref)
-            .map_err(|err| SubgraphExecutorError::ResponseDeserializationFailure(err.to_string()))
-            .map(|mut resp: SubgraphResponse<'a>| {
-                // This is Arc
+        SubgraphResponse::deserialize_from_bytes(self.body.clone()).map(
+            |mut resp: SubgraphResponse<'a>| {
+                // headers are under arc, zero cost clone
                 resp.headers = Some(self.headers.clone());
-                // Zero cost of cloning Bytes
-                resp.bytes = Some(self.body.clone());
                 resp
-            })
+            },
+        )
     }
 }

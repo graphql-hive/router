@@ -11,7 +11,9 @@ use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::error::{IntoPlanExecutionError, LazyPlanContext};
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
+use hive_router_plan_executor::execution::plan::{
+    PlanExecutionOutput, QueryPlanExecutionContext, QueryPlanExecutionResult,
+};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::projection::response::project_by_operation;
 use hive_router_plan_executor::response::value::Value;
@@ -41,7 +43,7 @@ pub async fn execute_plan(
     app_state: &Arc<RouterSharedState>,
     expose_query_plan: &ExposeQueryPlanMode,
     planned_request: PlannedRequest<'_>,
-) -> Result<PlanExecutionOutput, PipelineError> {
+) -> Result<QueryPlanExecutionResult, PipelineError> {
     let introspection_context = IntrospectionContext {
         query: planned_request
             .normalized_payload
@@ -79,11 +81,11 @@ pub async fn execute_plan(
             affected_path: || None,
         })?;
 
-        return Ok(PlanExecutionOutput {
+        return Ok(QueryPlanExecutionResult::Single(PlanExecutionOutput {
             body,
             headers: HeaderMap::new(),
             error_count: 0,
-        });
+        }));
     }
 
     let jwt_forward_plan: Option<JwtAuthForwardingPlan> = if app_state

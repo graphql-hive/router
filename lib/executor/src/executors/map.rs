@@ -5,6 +5,7 @@ use std::{
 };
 
 use dashmap::DashMap;
+use futures::{stream, stream::BoxStream};
 use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
     HiveRouterConfig,
@@ -29,7 +30,7 @@ use crate::{
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, HttpResponse},
     },
-    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
+    response::subgraph_response::SubgraphResponse,
 };
 
 type SubgraphName = String;
@@ -48,6 +49,7 @@ struct ResolvedSubgraphConfig<'a> {
 
 pub type InflightRequestsMap = Arc<DashMap<u64, Arc<OnceCell<HttpResponse>>, ABuildHasher>>;
 
+#[derive(Clone)]
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
     /// Mapping from subgraph name to static endpoint for quick lookup
@@ -165,7 +167,7 @@ impl SubgraphExecutorMap {
                             "Failed to resolve timeout for subgraph '{}': {}",
                             subgraph_name, err,
                         );
-                        self.internal_server_error_response(err.into(), subgraph_name)
+                        err.to_subgraph_response(subgraph_name)
                     }
                 }
             }
@@ -174,20 +176,54 @@ impl SubgraphExecutorMap {
                     "Subgraph executor error for subgraph '{}': {}",
                     subgraph_name, err,
                 );
-                self.internal_server_error_response(err.into(), subgraph_name)
+                err.to_subgraph_response(subgraph_name)
             }
         }
     }
 
-    fn internal_server_error_response<'exec>(
+    pub async fn subscribe<'exec>(
         &self,
-        graphql_error: GraphQLError,
         subgraph_name: &'exec str,
-    ) -> SubgraphResponse<'exec> {
-        let error_with_subgraph_name = graphql_error.add_subgraph_name(subgraph_name);
-        SubgraphResponse {
-            errors: Some(vec![error_with_subgraph_name]),
-            ..Default::default()
+        execution_request: SubgraphExecutionRequest<'exec>,
+        client_request: &ClientRequestDetails<'exec>,
+    ) -> BoxStream<'static, SubgraphResponse<'static>> {
+        match self.get_or_create_executor(subgraph_name, client_request) {
+            Ok(executor) => {
+                let timeout = self
+                    .timeouts_by_subgraph
+                    .get(subgraph_name)
+                    .map(|t| {
+                        let global_timeout_duration =
+                            resolve_timeout(&self.global_timeout, client_request, None, "all")?;
+                        resolve_timeout(
+                            t.value(),
+                            client_request,
+                            Some(global_timeout_duration),
+                            subgraph_name,
+                        )
+                    })
+                    .transpose();
+
+                match timeout {
+                    Ok(timeout) => executor.subscribe(execution_request, timeout).await,
+                    Err(err) => {
+                        error!(
+                            "Failed to resolve timeout for subgraph '{}': {}",
+                            subgraph_name, err,
+                        );
+                        let response = err.to_subgraph_response(subgraph_name);
+                        Box::pin(stream::once(async move { response }))
+                    }
+                }
+            }
+            Err(err) => {
+                error!(
+                    "Subgraph executor error for subgraph '{}': {}",
+                    subgraph_name, err,
+                );
+                let response = err.to_subgraph_response(subgraph_name);
+                Box::pin(stream::once(async move { response }))
+            }
         }
     }
 
