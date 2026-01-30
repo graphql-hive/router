@@ -291,7 +291,7 @@ async fn handle_text_frame(
                 let _ = tx.send(());
             }
 
-            let _ = sink.send(ServerMessage::ack(None).into()).await;
+            let _ = sink.send(ServerMessage::ack().into()).await;
 
             debug!("Connection acknowledged");
 
