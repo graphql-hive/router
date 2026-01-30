@@ -67,8 +67,6 @@ pub async fn read_body_stream(
         }
     };
 
-    println!("content_length: {:?}", content_length);
-
     let mut body = if let Some(content_length) = content_length {
         BytesMut::with_capacity(content_length)
     } else {
