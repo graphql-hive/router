@@ -24,6 +24,15 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-release-check
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-release-check
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - name: Run release-crates-check.sh
         id: check_crates
         run: |
@@ -54,6 +63,16 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-publish-crates
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-publish-crates
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
 
       - name: authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@v1

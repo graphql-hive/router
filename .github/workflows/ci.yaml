@@ -26,6 +26,15 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-unit
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-unit
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - name: test all
         run: cargo test_all
         timeout-minutes: 5
@@ -41,6 +50,15 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-e2e
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-e2e
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - name: test e2e
         run: cargo test_e2e
         timeout-minutes: 60
@@ -73,6 +91,15 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-build
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-build
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - name: build
         run: cargo build --release
 
@@ -125,6 +152,16 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-benchmark-${{ matrix.name }}
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-benchmark-${{ matrix.name }}
+            target-${{ hashFiles('**/Cargo.lock') }}-benchmark-
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - if: matrix.name == 'executor'
         name: Build subgraphs
         run: cargo build --release -p subgraphs
@@ -161,6 +198,15 @@ jobs:
           wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
           sudo apt-get update
           sudo apt-get install ./k6-v0.37.0-linux-amd64.deb
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-router-benchmark
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-router-benchmark
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - name: Build subgraphs
         run: cargo build --release -p subgraphs
       - name: Run subgraphs
@@ -218,6 +264,15 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-graphql-over-http
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-graphql-over-http
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1
         with:

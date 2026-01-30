@@ -40,6 +40,15 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-config
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-config
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
       - name: generate config schema
         run: cargo router-config
       - name: setup node
@@ -109,6 +118,16 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: target-${{ hashFiles('**/Cargo.lock') }}-binary-${{ matrix.name }}
+          restore-keys: |
+            target-${{ hashFiles('**/Cargo.lock') }}-binary-${{ matrix.name }}
+            target-${{ hashFiles('**/Cargo.lock') }}-binary-
+            target-${{ hashFiles('**/Cargo.lock') }}-
+            target-
 
       # Only if using Zigbuild
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
