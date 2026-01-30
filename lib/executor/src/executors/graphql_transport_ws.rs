@@ -86,13 +86,14 @@ pub struct ConnectionInitPayload {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     ConnectionAck {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        payload: Option<sonic_rs::Value>,
+        // NOTE: as per spec there is a "payload" field here, but we don't use it
     },
     Pong {},
     Next {
         id: String,
-        payload: sonic_rs::Value,
+        // using serde_json::Value instead of sonic_rs due to compatibility issues
+        // with internally-tagged enum deserialization (#[serde(tag = "type")])
+        payload: serde_json::Value,
     },
     Error {
         id: String,
@@ -104,8 +105,8 @@ pub enum ServerMessage {
 }
 
 impl ServerMessage {
-    pub fn ack(payload: Option<sonic_rs::Value>) -> ws::Message {
-        ServerMessage::ConnectionAck { payload }.into()
+    pub fn ack() -> ws::Message {
+        ServerMessage::ConnectionAck {}.into()
     }
 
     pub fn pong() -> ws::Message {
