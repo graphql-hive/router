@@ -16,6 +16,9 @@ permissions:
   checks: write
   pull-requests: write
 
+env:
+  CARGO_INCREMENTAL: 1
+
 jobs:
   unit:
     name: test / unit
