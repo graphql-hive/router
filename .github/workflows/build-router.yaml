@@ -37,9 +37,9 @@ jobs:
       - name: checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: Cache target
         uses: actions/cache@v3
         with:
@@ -115,9 +115,9 @@ jobs:
         with:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: Cache target
         uses: actions/cache@v3
         with:

@@ -23,9 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: Cache target
         uses: actions/cache@v3
         with:
@@ -47,9 +47,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: Cache target
         uses: actions/cache@v3
         with:
@@ -97,9 +97,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: Cache target
         uses: actions/cache@v3
         with:
@@ -117,15 +117,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         with:
           components: rustfmt
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: cargo fmt
         uses: actions-rust-lang/rustfmt@4066006ec54a31931b9b1fddfd38f2fdf2d27143 # v1
 
@@ -137,9 +137,9 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: cargo clippy
         run: cargo clippy --all
 
@@ -158,9 +158,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: Cache target
         uses: actions/cache@v3
         with:
@@ -199,9 +199,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: Setup K6
         run: |
           wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
@@ -270,9 +270,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: Cache target
         uses: actions/cache@v3
         with:
@@ -324,9 +324,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
         with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          incremental: true
       - name: Cache target
         uses: actions/cache@v3
         with:
