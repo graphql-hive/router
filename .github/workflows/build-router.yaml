@@ -27,7 +27,6 @@ env:
   DOCKER_PLATFORMS: linux/amd64,linux/arm64
   ZIG_VERSION: 0.15.1
   BINARY_NAME: hive_router
-  CARGO_INCREMENTAL: 1
 
 jobs:
   config:
