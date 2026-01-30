@@ -65,7 +65,16 @@ pub async fn graphql_request_handler(
 
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
-    let body_bytes = read_body_stream(req, body_stream, shared_state).await?;
+    let body_bytes = read_body_stream(
+        req,
+        body_stream,
+        shared_state
+            .router_config
+            .limits
+            .max_request_body_size
+            .to_bytes() as usize,
+    )
+    .await?;
 
     let mut execution_request = get_execution_request_from_http_request(req, body_bytes).await?;
 

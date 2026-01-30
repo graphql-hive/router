@@ -10,7 +10,7 @@ use hive_router_query_planner::{
 };
 use http::{HeaderName, Method, StatusCode};
 use ntex::{
-    http::{error::PayloadError, ResponseBuilder},
+    http::ResponseBuilder,
     web::{self, error::QueryPayloadError},
 };
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ use crate::{
     jwt::errors::JwtError,
     pipeline::{
         authorization::AuthorizationError,
+        body_read::ReadBodyStreamError,
         header::{ResponseMode, SingleContentType},
         progressive_override::LabelEvaluationError,
     },
@@ -120,12 +121,8 @@ pub enum PipelineError {
     SubscriptionsTransportNotSupported,
 
     #[error(transparent)]
-    #[strum(serialize = "PAYLOAD_READ_ERROR")]
-    PayloadReadError(#[from] PayloadError),
-
-    #[error("Request body size exceeds the limit")]
-    #[strum(serialize = "PAYLOAD_TOO_LARGE")]
-    PayloadTooLarge,
+    #[strum(serialize = "READ_BODY_STREAM_ERROR")]
+    ReadBodyStreamError(#[from] ReadBodyStreamError),
 }
 
 impl PipelineError {
@@ -133,6 +130,7 @@ impl PipelineError {
         match self {
             Self::JwtError(err) => err.error_code(),
             Self::PlanExecutionError(err) => err.error_code(),
+            Self::ReadBodyStreamError(err) => err.error_code(),
             _ => self.into(),
         }
     }
@@ -177,8 +175,7 @@ impl PipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
-            (Self::PayloadReadError(_), _) => StatusCode::UNPROCESSABLE_ENTITY,
-            (Self::PayloadTooLarge, _) => StatusCode::PAYLOAD_TOO_LARGE,
+            (Self::ReadBodyStreamError(err), _) => err.status_code(),
         }
     }
 
