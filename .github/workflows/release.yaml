@@ -19,7 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
+        with:
+          cache: false
+      - uses: jkelleyrtp/rust-cache@jk/speedy-cache # v2
         with:
           incremental: true
       - name: Cache target
@@ -55,8 +57,10 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+        with:
+          cache: false
 
-      - uses: Swatinem/rust-cache@jk/speedy-cache # v2
+      - uses: jkelleyrtp/rust-cache@jk/speedy-cache # v2
         with:
           incremental: true
 
