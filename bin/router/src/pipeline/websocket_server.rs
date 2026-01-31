@@ -4,7 +4,7 @@ use hive_router_plan_executor::execution::client_request_details::{
 };
 use hive_router_plan_executor::execution::plan::QueryPlanExecutionResult;
 use hive_router_plan_executor::executors::graphql_transport_ws::{
-    ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage,
+    ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
 };
 use hive_router_plan_executor::executors::websocket_common::{
     handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
@@ -26,6 +26,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
+use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
+
 use crate::jwt::errors::JwtError;
 use crate::pipeline::coerce_variables::coerce_request_variables;
 use crate::pipeline::error::PipelineError;
@@ -38,7 +40,6 @@ use crate::pipeline::parser::parse_operation_with_cache;
 use crate::pipeline::validation::validate_operation_with_cache;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
-use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
@@ -50,8 +51,13 @@ pub async fn ws_index(
     let schema_state = schema_state.get_ref().clone();
     let shared_state = shared_state.get_ref().clone();
 
-    ws::start(
+    let accepted_subprotocol = ws::subprotocols(&req)
+        .find(|p| *p == WS_SUBPROTOCOL)
+        .map(|_| WS_SUBPROTOCOL);
+
+    ws::start_using_subprotocol(
         req,
+        accepted_subprotocol,
         fn_factory_with_config(move |sink: ws::WsSink| {
             let schema_state = schema_state.clone();
             let shared_state = shared_state.clone();
