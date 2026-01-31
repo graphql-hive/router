@@ -57,12 +57,6 @@ pub async fn connect(url: &str) -> Result<WsConnection<ntex::io::Sealed>, WsConn
     }
 }
 
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum WsClientError {
-    #[error("Send error: {0}")]
-    SendError(String),
-}
-
 /// The client's WebSocket state. Its subscriptions map subscription IDs to their response senders.
 type WsStateRef = Rc<RefCell<WsState<mpsc::Sender<SubgraphResponse<'static>>>>>;
 
@@ -125,6 +119,8 @@ impl WsClient {
 
         let _ = sink.send(ClientMessage::init(payload)).await;
 
+        // TODO: wait for connection ack before returning?
+
         Self {
             sink,
             state,
@@ -152,7 +148,7 @@ impl WsClient {
         operation_name: Option<&str>,
         variables: Option<HashMap<String, sonic_rs::Value>>,
         extensions: Option<HashMap<String, sonic_rs::Value>>,
-    ) -> Result<LocalBoxStream<'static, SubgraphResponse<'static>>, WsClientError> {
+    ) -> LocalBoxStream<'static, SubgraphResponse<'static>> {
         let subscribe_id = self.next_subscription_id();
 
         let _ = self
@@ -183,7 +179,7 @@ impl WsClient {
         let state = self.state.clone();
         let sink = self.sink.clone();
 
-        Ok(Box::pin(async_stream::stream! {
+        Box::pin(async_stream::stream! {
             let mut rx = rx;
             let _guard = SubscriptionGuard {
                 state,
@@ -203,7 +199,7 @@ impl WsClient {
                     }
                 }
             }
-        }))
+        })
     }
 }
 
