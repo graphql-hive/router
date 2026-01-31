@@ -130,6 +130,21 @@ impl ConnectionInitPayload {
     }
 }
 
+impl From<http::HeaderMap> for ConnectionInitPayload {
+    fn from(headers: http::HeaderMap) -> Self {
+        let fields: HashMap<String, sonic_rs::Value> = headers
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|v| (name.to_string(), sonic_rs::Value::from(v)))
+            })
+            .collect();
+        Self::new(fields)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
