@@ -169,7 +169,9 @@ async fn handle_text_frame(
             None
         }
         ClientMessage::Subscribe { id, payload } => {
-            state.borrow().check_acknowledged()?;
+            if let Some(msg) = state.borrow().check_acknowledged() {
+                return Some(msg);
+            }
 
             if state.borrow().subscriptions.contains_key(&id) {
                 return Some(CloseCode::SubscriberAlreadyExists(id).into());
@@ -395,7 +397,9 @@ async fn handle_text_frame(
             }
         }
         ClientMessage::Complete { id } => {
-            state.borrow().check_acknowledged()?;
+            if let Some(msg) = state.borrow().check_acknowledged() {
+                return Some(msg);
+            }
 
             if let Some(cancel_tx) = state.borrow_mut().subscriptions.remove(&id) {
                 trace!(id = %id, "Client requested subscription cancellation");
