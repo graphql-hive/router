@@ -1,6 +1,6 @@
 /// Common types and messages for the GraphQL over WebSocket Transport Protocol
 /// as per the spec: https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md
-use ntex::web::ws;
+use ntex::ws;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use tracing::error;
