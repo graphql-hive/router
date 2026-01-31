@@ -39,8 +39,7 @@ mod websocket_e2e_tests {
                 None,
                 None,
             )
-            .await
-            .expect("Failed to subscribe");
+            .await;
 
         let response = stream.next().await.expect("Expected a response");
 
@@ -87,8 +86,7 @@ mod websocket_e2e_tests {
                 None,
                 None,
             )
-            .await
-            .expect("Failed to subscribe");
+            .await;
 
         let mut received_count = 0;
         while let Some(response) = stream.next().await {
@@ -138,8 +136,7 @@ mod websocket_e2e_tests {
                 None,
                 None,
             )
-            .await
-            .expect("Failed to subscribe to stream1");
+            .await;
 
         let mut stream2 = client
             .subscribe(
@@ -154,8 +151,7 @@ mod websocket_e2e_tests {
                 None,
                 None,
             )
-            .await
-            .expect("Failed to subscribe to stream2");
+            .await;
 
         let mut count1 = 0;
         let mut count2 = 0;

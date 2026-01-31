@@ -124,6 +124,12 @@ pub struct ConnectionInitPayload {
     pub fields: HashMap<String, sonic_rs::Value>,
 }
 
+impl ConnectionInitPayload {
+    pub fn new(fields: HashMap<String, sonic_rs::Value>) -> Self {
+        Self { fields }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
