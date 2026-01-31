@@ -461,3 +461,5 @@ fn text_to_server_message(text: &str) -> Result<ServerMessage, ws::Message> {
     };
     Ok(server_msg)
 }
+
+// TODO: hella tests
