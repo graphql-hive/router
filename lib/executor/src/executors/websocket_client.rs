@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use futures::{stream::LocalBoxStream, StreamExt};
 use ntex::{
@@ -13,6 +13,7 @@ use tracing::{debug, error, trace};
 use crate::response::subgraph_response::SubgraphResponse;
 use crate::{
     executors::{
+        common::SubgraphExecutionRequest,
         graphql_transport_ws::{
             ClientMessage, CloseCode, ConnectionInitPayload, ExecutionRequest, ServerMessage,
         },
@@ -144,27 +145,31 @@ impl WsClient {
     /// Multiple subscriptions can be active simultaneously on the same connection.
     pub async fn subscribe(
         &mut self,
-        query: &str,
-        operation_name: Option<&str>,
-        variables: Option<HashMap<String, sonic_rs::Value>>,
-        extensions: Option<HashMap<String, sonic_rs::Value>>,
+        request: SubgraphExecutionRequest<'_>,
     ) -> LocalBoxStream<'static, SubgraphResponse<'static>> {
         let subscribe_id = self.next_subscription_id();
 
+        // TODO: should we add request.headers to extensions.headers of the execution request?
+        //       I dont think that subgraphs out there would expect headers to be sent anywhere else
+        //       aside from the connection init message though
+
+        let execution_request = ExecutionRequest {
+            query: request.query.to_string(),
+            operation_name: request.operation_name.map(|s| s.to_string()),
+            variables: request
+                .variables
+                .map(|vars| {
+                    vars.into_iter()
+                        .map(|(k, v)| (k.to_string(), v.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            extensions: request.extensions,
+        };
+
         let _ = self
             .sink
-            .send(
-                ClientMessage::subscribe(
-                    subscribe_id.clone(),
-                    ExecutionRequest {
-                        query: query.to_string(),
-                        operation_name: operation_name.map(|s| s.to_string()),
-                        variables: variables.unwrap_or_default(),
-                        extensions,
-                    },
-                )
-                .into(),
-            )
+            .send(ClientMessage::subscribe(subscribe_id.clone(), execution_request).into())
             .await;
 
         trace!(id = %subscribe_id, "Subscribe message sent");

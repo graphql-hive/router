@@ -18,6 +18,7 @@ jsonwebtoken = { workspace = true }
 insta = { workspace = true }
 reqwest = { workspace = true }
 futures = { workspace = true }
+http = { workspace = true }
 
 hive-router = { path = "../bin/router" }
 hive-router-config = { path = "../lib/router-config" }
