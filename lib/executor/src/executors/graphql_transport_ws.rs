@@ -7,6 +7,8 @@ use tracing::error;
 
 use crate::response::graphql_error::GraphQLError;
 
+pub const WS_SUBPROTOCOL: &str = "graphql-transport-ws";
+
 pub enum CloseCode {
     ConnectionInitTimeout,
     ConnectionAcknowledgementTimeout,
