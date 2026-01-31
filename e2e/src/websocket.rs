@@ -1,10 +1,9 @@
 #[cfg(test)]
 mod websocket_e2e_tests {
     use futures::StreamExt;
-    use http::HeaderMap;
+    use std::collections::HashMap;
 
     use crate::testkit_v2::TestRouterBuilder;
-    use hive_router_plan_executor::executors::common::SubgraphExecutionRequest;
     use hive_router_plan_executor::executors::websocket_client::WsClient;
 
     #[ntex::test]
@@ -25,25 +24,25 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(wsconn, None).await.expect("Failed to init WsClient");
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
 
         let mut stream = client
-            .subscribe(SubgraphExecutionRequest {
-                query: r#"
+            .subscribe(
+                r#"
                 query {
                     topProducts(first: 2) {
                         name
                         upc
                     }
                 }
-                "#,
-                dedupe: false,
-                operation_name: None,
-                variables: None,
-                headers: HeaderMap::new(),
-                representations: None,
-                extensions: None,
-            })
+                "#
+                .to_string(),
+                None,
+                HashMap::new(),
+                None,
+            )
             .await;
 
         let response = stream.next().await.expect("Expected a response");
@@ -75,25 +74,25 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(wsconn, None).await.expect("Failed to init WsClient");
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
 
         let mut stream = client
-            .subscribe(SubgraphExecutionRequest {
-                query: r#"
+            .subscribe(
+                r#"
                 subscription {
                     reviewAdded(step: 1, intervalInMs: 0) {
                         id
                         body
                     }
                 }
-                "#,
-                dedupe: false,
-                operation_name: None,
-                variables: None,
-                headers: HeaderMap::new(),
-                representations: None,
-                extensions: None,
-            })
+                "#
+                .to_string(),
+                None,
+                HashMap::new(),
+                None,
+            )
             .await;
 
         let mut received_count = 0;
@@ -129,42 +128,40 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(wsconn, None).await.expect("Failed to init WsClient");
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
 
         let mut stream1 = client
-            .subscribe(SubgraphExecutionRequest {
-                query: r#"
+            .subscribe(
+                r#"
                 subscription {
                     reviewAdded(step: 1, intervalInMs: 0) {
                         id
                     }
                 }
-                "#,
-                dedupe: false,
-                operation_name: None,
-                variables: None,
-                headers: HeaderMap::new(),
-                representations: None,
-                extensions: None,
-            })
+                "#
+                .to_string(),
+                None,
+                HashMap::new(),
+                None,
+            )
             .await;
 
         let mut stream2 = client
-            .subscribe(SubgraphExecutionRequest {
-                query: r#"
+            .subscribe(
+                r#"
                 subscription {
                     reviewAdded(step: 2, intervalInMs: 0) {
                         id
                     }
                 }
-                "#,
-                dedupe: false,
-                operation_name: None,
-                variables: None,
-                headers: HeaderMap::new(),
-                representations: None,
-                extensions: None,
-            })
+                "#
+                .to_string(),
+                None,
+                HashMap::new(),
+                None,
+            )
             .await;
 
         let mut count1 = 0;

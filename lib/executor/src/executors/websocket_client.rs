@@ -13,7 +13,6 @@ use tracing::{debug, error, trace};
 use crate::response::subgraph_response::SubgraphResponse;
 use crate::{
     executors::{
-        common::SubgraphExecutionRequest,
         graphql_transport_ws::{
             ClientMessage, CloseCode, ConnectionInitPayload, ExecutionRequest, ServerMessage,
         },
@@ -215,26 +214,18 @@ impl WsClient {
     /// Multiple subscriptions can be active simultaneously on the same connection.
     pub async fn subscribe(
         &mut self,
-        request: SubgraphExecutionRequest<'_>,
+        query: String,
+        operation_name: Option<String>,
+        variables: std::collections::HashMap<String, sonic_rs::Value>,
+        extensions: Option<std::collections::HashMap<String, sonic_rs::Value>>,
     ) -> LocalBoxStream<'static, SubgraphResponse<'static>> {
         let subscribe_id = self.next_subscription_id();
 
-        // TODO: should we add request.headers to extensions.headers of the execution request?
-        //       I dont think that subgraphs out there would expect headers to be sent anywhere else
-        //       aside from the connection init message though
-
         let execution_request = ExecutionRequest {
-            query: request.query.to_string(),
-            operation_name: request.operation_name.map(|s| s.to_string()),
-            variables: request
-                .variables
-                .map(|vars| {
-                    vars.into_iter()
-                        .map(|(k, v)| (k.to_string(), v.clone()))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            extensions: request.extensions,
+            query,
+            operation_name,
+            variables,
+            extensions,
         };
 
         let _ = self

@@ -9,7 +9,6 @@ use tracing::debug;
 
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
-use crate::executors::graphql_transport_ws::ConnectionInitPayload;
 use crate::executors::websocket_client::{connect, WsClient};
 use crate::response::subgraph_response::SubgraphResponse;
 
@@ -45,74 +44,6 @@ fn log_error(error: &SubgraphExecutorError) {
     );
 }
 
-struct OwnedExecutionRequest {
-    query: String,
-    operation_name: Option<String>,
-    variables: HashMap<String, sonic_rs::Value>,
-    headers: http::HeaderMap,
-    extensions: Option<HashMap<String, sonic_rs::Value>>,
-}
-
-impl OwnedExecutionRequest {
-    fn from_request(request: &SubgraphExecutionRequest<'_>) -> Self {
-        Self {
-            query: request.query.to_string(),
-            operation_name: request.operation_name.map(|s| s.to_string()),
-            variables: request
-                .variables
-                .as_ref()
-                .map(|vars| {
-                    vars.iter()
-                        .map(|(k, v)| (k.to_string(), (*v).clone()))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            headers: request.headers.clone(),
-            extensions: request.extensions.clone(),
-        }
-    }
-
-    fn to_subgraph_request(&self) -> SubgraphExecutionRequest<'_> {
-        SubgraphExecutionRequest {
-            query: &self.query,
-            dedupe: false,
-            operation_name: self.operation_name.as_deref(),
-            variables: Some(
-                self.variables
-                    .iter()
-                    .map(|(k, v)| (k.as_str(), v))
-                    .collect(),
-            ),
-            headers: self.headers.clone(),
-            representations: None,
-            extensions: self.extensions.clone(),
-        }
-    }
-
-    fn init_payload(&self) -> Option<ConnectionInitPayload> {
-        if self.headers.is_empty() {
-            return None;
-        }
-
-        let fields: HashMap<String, sonic_rs::Value> = self
-            .headers
-            .iter()
-            .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|v| (name.to_string(), sonic_rs::Value::from(v)))
-            })
-            .collect();
-
-        if fields.is_empty() {
-            None
-        } else {
-            Some(ConnectionInitPayload::new(fields))
-        }
-    }
-}
-
 #[async_trait]
 impl SubgraphExecutor for WsSubgraphExecutor {
     #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
@@ -123,7 +54,24 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     ) -> SubgraphResponse<'a> {
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
-        let owned_request = OwnedExecutionRequest::from_request(&execution_request);
+
+        let query = execution_request.query.to_string();
+        let operation_name = execution_request.operation_name.map(|s| s.to_string());
+        let variables: HashMap<String, sonic_rs::Value> = execution_request
+            .variables
+            .as_ref()
+            .map(|vars| {
+                vars.iter()
+                    .map(|(k, v)| (k.to_string(), (*v).clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // TODO: should we add request.headers to extensions.headers of the execution request?
+        //       I dont think that subgraphs out there would expect headers to be sent anywhere else
+        //       aside from the connection init message though
+        let headers = execution_request.headers.clone();
+        let extensions = execution_request.extensions.clone();
 
         debug!(
             "establishing WebSocket connection to subgraph {} at {}",
@@ -133,7 +81,11 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let result = self
             .arbiter
             .spawn_with(async move || {
-                let init_payload = owned_request.init_payload();
+                let init_payload = if headers.is_empty() {
+                    None
+                } else {
+                    Some(headers.into())
+                };
 
                 let connection = match connect(&endpoint).await {
                     Ok(conn) => conn,
@@ -158,8 +110,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     subgraph_name, endpoint
                 );
 
-                let subgraph_request = owned_request.to_subgraph_request();
-                let mut stream = client.subscribe(subgraph_request).await;
+                let mut stream = client
+                    .subscribe(query, operation_name, variables, extensions)
+                    .await;
 
                 match stream.next().await {
                     Some(response) => response,
@@ -198,7 +151,24 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
-        let owned_request = OwnedExecutionRequest::from_request(&execution_request);
+
+        let query = execution_request.query.to_string();
+        let operation_name = execution_request.operation_name.map(|s| s.to_string());
+        let variables: HashMap<String, sonic_rs::Value> = execution_request
+            .variables
+            .as_ref()
+            .map(|vars| {
+                vars.iter()
+                    .map(|(k, v)| (k.to_string(), (*v).clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // TODO: should we add request.headers to extensions.headers of the execution request?
+        //       I dont think that subgraphs out there would expect headers to be sent anywhere else
+        //       aside from the connection init message though
+        let headers = execution_request.headers.clone();
+        let extensions = execution_request.extensions.clone();
 
         debug!(
             "establishing WebSocket subscription connection to subgraph {} at {}",
@@ -209,7 +179,11 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // and sends responses through the channel. The returned future would only resolve
         // when the subscription completes, but we want to return the stream immediately
         drop(self.arbiter.spawn_with(move || async move {
-            let init_payload = owned_request.init_payload();
+            let init_payload = if headers.is_empty() {
+                None
+            } else {
+                Some(headers.into())
+            };
 
             let connection = match connect(&endpoint).await {
                 Ok(conn) => conn,
@@ -236,8 +210,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 subgraph_name, endpoint
             );
 
-            let subgraph_request = owned_request.to_subgraph_request();
-            let mut stream = client.subscribe(subgraph_request).await;
+            let mut stream = client
+                .subscribe(query, operation_name, variables, extensions)
+                .await;
 
             while let Some(response) = stream.next().await {
                 if tx.send(response).is_err() {
