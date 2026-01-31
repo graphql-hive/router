@@ -10,6 +10,7 @@ use crate::response::graphql_error::GraphQLError;
 pub const WS_SUBPROTOCOL: &str = "graphql-transport-ws";
 
 pub enum CloseCode {
+    SubprotocolNotAcceptable,
     ConnectionInitTimeout,
     ConnectionAcknowledgementTimeout,
     TooManyInitialisationRequests,
@@ -24,6 +25,10 @@ pub enum CloseCode {
 impl From<CloseCode> for ws::Message {
     fn from(msg: CloseCode) -> Self {
         match msg {
+            CloseCode::SubprotocolNotAcceptable => ws::Message::Close(Some(ws::CloseReason {
+                code: ws::CloseCode::from(4406),
+                description: Some("Subprotocol not acceptable".into()),
+            })),
             CloseCode::ConnectionInitTimeout => ws::Message::Close(Some(ws::CloseReason {
                 code: ws::CloseCode::from(4408),
                 description: Some("Connection initialisation timeout".into()),
