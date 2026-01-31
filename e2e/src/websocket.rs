@@ -3,7 +3,7 @@ mod websocket_e2e_tests {
     use futures::StreamExt;
 
     use crate::testkit_v2::TestRouterBuilder;
-    use hive_router_plan_executor::executors::websocket_client::GraphQLTransportWSClient;
+    use hive_router_plan_executor::executors::websocket_client::WsClient;
 
     #[ntex::test]
     async fn query_over_websocket() {
@@ -23,9 +23,7 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = GraphQLTransportWSClient::init(wsconn, None, None)
-            .await
-            .expect("Failed to init WebSocket client");
+        let mut client = WsClient::init(wsconn, None).await;
 
         let mut stream = client
             .subscribe(
@@ -73,9 +71,7 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = GraphQLTransportWSClient::init(wsconn, None, None)
-            .await
-            .expect("Failed to init WebSocket client");
+        let mut client = WsClient::init(wsconn, None).await;
 
         let mut stream = client
             .subscribe(
@@ -127,9 +123,7 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = GraphQLTransportWSClient::init(wsconn, None, None)
-            .await
-            .expect("Failed to init WebSocket client");
+        let mut client = WsClient::init(wsconn, None).await;
 
         let mut stream1 = client
             .subscribe(

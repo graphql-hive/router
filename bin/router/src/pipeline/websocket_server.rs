@@ -1,4 +1,3 @@
-use futures::future::{select, Either};
 use futures::StreamExt;
 use hive_router_plan_executor::execution::client_request_details::{
     ClientRequestDetails, JwtRequestDetails, OperationDetails,
@@ -7,13 +6,15 @@ use hive_router_plan_executor::execution::plan::QueryPlanExecutionResult;
 use hive_router_plan_executor::executors::graphql_transport_ws::{
     ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage,
 };
+use hive_router_plan_executor::executors::websocket_common::{
+    handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
+};
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
-use ntex::util::Bytes;
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
@@ -22,7 +23,6 @@ use std::collections::HashMap;
 use std::io;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
@@ -39,6 +39,8 @@ use crate::pipeline::validation::validate_operation_with_cache;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
+
+type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
 pub async fn ws_index(
     req: HttpRequest,
@@ -59,116 +61,6 @@ pub async fn ws_index(
     .await
 }
 
-struct WsState {
-    /// The moment of the last heartbeat received from the client. This is used
-    /// to detect stale clients and drop the connection on timeout.
-    last_heartbeat: Instant,
-    /// Indicates whether the connection init message has been received.
-    ///
-    /// This flag is only used to enforce the client cant send multiple connection
-    /// init messages.
-    ///
-    /// Do not confuse it with acknowledged_tx.
-    connection_init_received: bool,
-    /// Sender to indicate that the connection init has been received and that
-    /// the timeout task should cancel.
-    ///
-    /// When `None`, the connection init message has been received, validated and
-    /// therefore the connection acknowledged.
-    acknowledged_tx: Option<oneshot::Sender<()>>,
-    /// Current headers from the client (from connection init or last message).
-    ///
-    /// Not to be confused with http headers, these are NOT http headers, these
-    /// are either the map sent in the connection init message payload or the headers
-    /// property in the extensions of the subscribe message payload (graphql execution request).
-    ///
-    /// They are considered "current" because they can be updated by the client
-    /// on each subscribe message by providing new headers in the extensions.
-    current_headers: HeaderMap,
-    /// Active subscriptions with their cancellation senders.
-    active_subscriptions: HashMap<String, mpsc::Sender<()>>,
-}
-
-impl WsState {
-    fn new(acknowledged: oneshot::Sender<()>) -> Self {
-        Self {
-            last_heartbeat: Instant::now(),
-            connection_init_received: false,
-            acknowledged_tx: Some(acknowledged),
-            current_headers: HeaderMap::new(),
-            active_subscriptions: HashMap::new(),
-        }
-    }
-    /// Checks if the connection has been acknowledged; if not, returns a close
-    /// frame for the client.
-    fn check_acknowledged(&self) -> Option<ws::Message> {
-        if self.acknowledged_tx.is_none() {
-            Some(CloseCode::Unauthorized.into())
-        } else {
-            None
-        }
-    }
-}
-
-/// Heartbeat ping interval.
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-/// Client response to heartbeat timeout.
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Ping client every heartbeat interval.
-async fn heartbeat(
-    state: Rc<RefCell<WsState>>,
-    sink: web::ws::WsSink,
-    mut rx: oneshot::Receiver<()>,
-) {
-    loop {
-        match select(Box::pin(ntex::time::sleep(HEARTBEAT_INTERVAL)), &mut rx).await {
-            Either::Left(_) => {
-                if Instant::now().duration_since(state.borrow().last_heartbeat) > CLIENT_TIMEOUT {
-                    debug!("WebSocket client heartbeat timeout");
-                    return;
-                }
-                if sink
-                    .send(web::ws::Message::Ping(Bytes::default()))
-                    .await
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Either::Right(_) => return,
-        }
-    }
-}
-
-/// Connection init message received timeout.
-const CONNECTION_INIT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Monitor connection init timeout and close connection if init not received in time.
-async fn connection_init_timeout(
-    state: Rc<RefCell<WsState>>,
-    sink: web::ws::WsSink,
-    mut rx: oneshot::Receiver<()>,
-) {
-    match select(
-        Box::pin(ntex::time::sleep(CONNECTION_INIT_TIMEOUT)),
-        &mut rx,
-    )
-    .await
-    {
-        Either::Left(_) => {
-            // connection_init_received should always be here false, but double check
-            // just to avoid any potential race conditions (see handling of the connection
-            // init message below)
-            if !state.borrow().connection_init_received {
-                debug!("WebSocket connection init timeout, closing connection");
-                let _ = sink.send(CloseCode::ConnectionInitTimeout.into()).await;
-            }
-        }
-        Either::Right(_) => {
-            // cancelled, connection_init was received
-        }
-    }
-}
-
 async fn ws_service(
     sink: ws::WsSink,
     schema_state: Arc<SchemaState>,
@@ -178,16 +70,17 @@ async fn ws_service(
     debug!("WebSocket connection opened");
 
     let (heartbeat_tx, heartbeat_rx) = oneshot::channel();
-    let (init_timeout_tx, _) = oneshot::channel();
+    let (handshake_timeout_tx, _) = oneshot::channel();
     let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
 
-    let state = Rc::new(RefCell::new(WsState::new(acknowledged_tx)));
+    let state: WsStateRef = Rc::new(RefCell::new(WsState::new(acknowledged_tx)));
 
     rt::spawn(heartbeat(state.clone(), sink.clone(), heartbeat_rx));
-    rt::spawn(connection_init_timeout(
+    rt::spawn(handshake_timeout(
         state.clone(),
         sink.clone(),
         acknowledged_rx,
+        CloseCode::ConnectionInitTimeout,
     ));
 
     let service = fn_service(move |frame| {
@@ -196,79 +89,52 @@ async fn ws_service(
         let schema_state = schema_state.clone();
         let shared_state = shared_state.clone();
         async move {
-            let item = match frame {
-                ws::Frame::Text(text) => {
-                    handle_text_frame(text, sink, state, &schema_state, &shared_state).await
+            match parse_frame_to_text(frame, &state) {
+                Ok(text) => {
+                    Ok(handle_text_frame(text, sink, state, &schema_state, &shared_state).await)
                 }
-                // heartbeat
-                web::ws::Frame::Ping(msg) => {
-                    state.borrow_mut().last_heartbeat = Instant::now();
-                    Some(web::ws::Message::Pong(msg))
-                }
-                web::ws::Frame::Pong(_) => {
-                    state.borrow_mut().last_heartbeat = Instant::now();
-                    None
-                }
-                // we don't support binary frames
-                ws::Frame::Binary(_) => Some(ws::Message::Close(Some(ws::CloseReason {
-                    // this one is not in the CloseCode enum because it's an internal WebSocket
-                    // transport error that has nothing to do with GraphQL over WebSockets
-                    code: ws::CloseCode::Unsupported,
-                    description: Some("Unsupported message type".into()),
-                }))),
-                // closing connection. we cant send any more message so we just None
-                ws::Frame::Close(msg) => {
-                    if let Some(close_reason) = msg {
-                        debug!(
-                            code = ?close_reason.code,
-                            description = ?close_reason.description,
-                            "WebSocket connection closed",
-                        );
-                    }
+                Err(FrameNotParsedToText::Message(msg)) => Ok(Some(msg)),
+                Err(FrameNotParsedToText::Closed) => {
                     // clearing the map will drop all the senders, which will
                     // in turn cancel all active subscription streams and perform
                     // the cleanup in there
-                    state.borrow_mut().active_subscriptions.clear();
-                    None
+                    state.borrow_mut().subscriptions.clear();
+                    Ok(None)
                 }
-                // ignore other frames (should not match)
-                _ => None,
-            };
-            Ok(item)
+                Err(FrameNotParsedToText::None) => Ok(None),
+            }
         }
     });
 
     let on_shutdown = fn_shutdown(move || {
-        // stop heartbeat and init timeout tasks on shutdown
+        // stop heartbeat and handshake timeout tasks on shutdown
         let _ = heartbeat_tx.send(());
-        let _ = init_timeout_tx.send(());
+        let _ = handshake_timeout_tx.send(());
     });
 
     Ok(chain(service).and_then(on_shutdown))
 }
 
+/// Ensure a subscription is removed from active subscriptions when dropped (server-side).
+struct SubscriptionGuard {
+    state: WsStateRef,
+    id: String,
+}
+
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        self.state.borrow_mut().subscriptions.remove(&self.id);
+        trace!(id = %self.id, "Subscription removed from active subscriptions");
+    }
+}
+
 async fn handle_text_frame(
-    text: Bytes,
+    text: String,
     sink: ws::WsSink,
-    state: Rc<RefCell<WsState>>,
+    state: WsStateRef,
     schema_state: &Arc<SchemaState>,
     shared_state: &Arc<RouterSharedState>,
 ) -> Option<ws::Message> {
-    let text = match String::from_utf8(text.to_vec()) {
-        Ok(s) => s,
-        Err(e) => {
-            error!("Invalid UTF-8 in WebSocket message: {}", e);
-            return Some(ws::Message::Close(Some(
-                // this one is not in the CloseCode enum because it's an internal WebSocket
-                // transport error that has nothing to do with GraphQL over WebSockets
-                ws::CloseReason {
-                    code: ws::CloseCode::Unsupported,
-                    description: Some("Invalid UTF-8 in message".into()),
-                },
-            )));
-        }
-    };
-
     let client_msg: ClientMessage = match sonic_rs::from_str(&text) {
         Ok(msg) => msg,
         Err(e) => {
@@ -281,39 +147,35 @@ async fn handle_text_frame(
 
     match client_msg {
         ClientMessage::ConnectionInit { payload } => {
-            if state.borrow().connection_init_received {
+            if state.borrow().handshake_received {
                 return Some(CloseCode::TooManyInitialisationRequests.into());
             }
-            state.borrow_mut().connection_init_received = true;
-
-            // cancel the connection init timeout since we received the init message
-            if let Some(tx) = state.borrow_mut().acknowledged_tx.take() {
-                let _ = tx.send(());
-            }
+            state.borrow_mut().handshake_received = true;
+            state.borrow_mut().init_payload = payload;
+            state.borrow_mut().complete_handshake();
 
             let _ = sink.send(ServerMessage::ack().into()).await;
 
             debug!("Connection acknowledged");
 
-            let header_map = parse_headers_from_connection_init_payload(payload);
+            let header_map =
+                parse_headers_from_connection_init_payload(state.borrow().init_payload.as_ref());
             if !header_map.is_empty() {
                 trace!(headers = ?header_map, "Connection init message contains headers in the payload");
             } else {
                 trace!("Connection init message does not contain headers in the payload");
             }
-            state.borrow_mut().current_headers = header_map;
 
             None
         }
-        ClientMessage::Ping {} => {
-            // respond with pong always, regardless of acknowledged state
-            // the client should be able to use subprotocol pings/pongs to check liveness
-            Some(ServerMessage::pong())
-        }
         ClientMessage::Subscribe { id, payload } => {
-            state.borrow().check_acknowledged()?;
+            trace!(id = %id, payload = ?payload, "Received subscribe message");
 
-            if state.borrow().active_subscriptions.contains_key(&id) {
+            if let Some(msg) = state.borrow().check_acknowledged() {
+                return Some(msg);
+            }
+
+            if state.borrow().subscriptions.contains_key(&id) {
                 return Some(CloseCode::SubscriberAlreadyExists(id).into());
             }
 
@@ -336,12 +198,12 @@ async fn handle_text_frame(
 
             let mut headers = parse_headers_from_extensions(payload.extensions.as_ref());
 
-            // merge with current headers from state
-            for (key, value) in state.borrow().current_headers.iter() {
+            // merge with headers from connection init payload
+            let init_headers =
+                parse_headers_from_connection_init_payload(state.borrow().init_payload.as_ref());
+            for (key, value) in init_headers.iter() {
                 headers.insert(key.clone(), value.clone());
             }
-
-            // TODO: we should also update the current headers in state, right?
 
             // TODO: ExecutionRequest from pipeline is different from ExecutionRequest from
             //       graphql_transport_ws. see comment there to understand why.
@@ -487,10 +349,10 @@ async fn handle_text_frame(
 
                     state
                         .borrow_mut()
-                        .active_subscriptions
+                        .subscriptions
                         .insert(id.clone(), cancel_tx);
 
-                    // automatically remove the subscription from active_subscriptions when dropped
+                    // automatically remove the subscription from subscriptions when dropped
                     let _guard = SubscriptionGuard {
                         state: state.clone(),
                         id: id.clone(),
@@ -537,32 +399,22 @@ async fn handle_text_frame(
             }
         }
         ClientMessage::Complete { id } => {
-            state.borrow().check_acknowledged()?;
+            if let Some(msg) = state.borrow().check_acknowledged() {
+                return Some(msg);
+            }
 
-            if let Some(cancel_tx) = state.borrow_mut().active_subscriptions.remove(&id) {
+            if let Some(cancel_tx) = state.borrow_mut().subscriptions.remove(&id) {
                 trace!(id = %id, "Client requested subscription cancellation");
                 let _ = cancel_tx.try_send(());
             }
             None
         }
-    }
-}
-
-/// Ensure a subscription is removed from active_subscriptions when dropped,
-/// regardless of how the subscription stream itself ends (normal completion,
-/// cancellation, panic (hopefully not), or future being dropped at an await point).
-struct SubscriptionGuard {
-    state: Rc<RefCell<WsState>>,
-    id: String,
-}
-
-impl Drop for SubscriptionGuard {
-    fn drop(&mut self) {
-        self.state
-            .borrow_mut()
-            .active_subscriptions
-            .remove(&self.id);
-        trace!(id = %self.id, "Subscription removed from active subscritpions");
+        ClientMessage::Ping {} => {
+            // respond with pong always, regardless of acknowledged state
+            // the client should be able to use subprotocol pings/pongs to check liveness
+            Some(ServerMessage::pong())
+        }
+        ClientMessage::Pong {} => None,
     }
 }
 
@@ -596,7 +448,9 @@ fn parse_headers_from_object(headers_obj: &sonic_rs::Object) -> HeaderMap {
     header_map
 }
 
-fn parse_headers_from_connection_init_payload(payload: Option<ConnectionInitPayload>) -> HeaderMap {
+fn parse_headers_from_connection_init_payload(
+    payload: Option<&ConnectionInitPayload>,
+) -> HeaderMap {
     let mut header_map = HeaderMap::new();
     if let Some(payload) = payload {
         if let Some(headers_prop) = payload.fields.get("headers") {

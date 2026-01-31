@@ -1,33 +1,37 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
-
 use bytes::Bytes;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
 use futures::{stream::LocalBoxStream, StreamExt};
 use ntex::{
-    channel::mpsc,
+    channel::{mpsc, oneshot},
     io::Sealed,
     rt,
-    ws::{
-        self,
-        error::{WsClientBuilderError, WsClientError, WsError},
-        WsClient, WsConnection, WsSink,
-    },
+    ws::{self, error::WsError, WsClient as NtexWsClient, WsConnection, WsSink},
 };
-use tracing::{error, trace, warn};
+use tracing::{debug, error, trace};
 
+use crate::response::subgraph_response::SubgraphResponse;
 use crate::{
-    executors::graphql_transport_ws::{ClientMessage, CloseCode, ExecutionRequest, ServerMessage},
-    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
+    executors::{
+        graphql_transport_ws::{
+            ClientMessage, CloseCode, ConnectionInitPayload, ExecutionRequest, ServerMessage,
+        },
+        websocket_common::{
+            handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
+        },
+    },
+    response::graphql_error::GraphQLError,
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum WsConnectError {
     #[error("WebSocket client error: {0}")]
-    Client(#[from] WsClientError),
+    Client(#[from] ws::error::WsClientError),
     #[error("WebSocket client builder error: {0}")]
-    Builder(#[from] WsClientBuilderError),
+    Builder(#[from] ws::error::WsClientBuilderError),
 }
 
-pub async fn connect(url: &str) -> Result<WsConnection<Sealed>, WsConnectError> {
+pub async fn connect(url: &str) -> Result<WsConnection<ntex::io::Sealed>, WsConnectError> {
     if url.starts_with("wss://") {
         use tls_openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
@@ -35,9 +39,9 @@ pub async fn connect(url: &str) -> Result<WsConnection<Sealed>, WsConnectError> 
         builder.set_verify(SslVerifyMode::PEER);
         let _ = builder
             .set_alpn_protos(b"\x08http/1.1")
-            .map_err(|e| error!("Cannot set alpn protocol: {e:?}"));
+            .map_err(|e| tracing::error!("Cannot set alpn protocol: {e:?}"));
 
-        let ws_client = WsClient::build(url)
+        let ws_client = NtexWsClient::build(url)
             .timeout(ntex::time::Seconds(60))
             .openssl(builder.build())
             .take()
@@ -45,7 +49,7 @@ pub async fn connect(url: &str) -> Result<WsConnection<Sealed>, WsConnectError> 
 
         Ok(ws_client.connect().await?.seal())
     } else {
-        let ws_client = WsClient::build(url)
+        let ws_client = NtexWsClient::build(url)
             .timeout(ntex::time::Seconds(60))
             .finish()?;
 
@@ -54,60 +58,13 @@ pub async fn connect(url: &str) -> Result<WsConnection<Sealed>, WsConnectError> 
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum GraphQLTransportWsClientError {
-    #[error("Connection closed: {code} - {reason}")]
-    ConnectionClosed { code: u16, reason: String },
+pub enum WsClientError {
     #[error("Send error: {0}")]
     SendError(String),
-    #[error("Receive error: {0}")]
-    ReceiveError(String),
-    #[error("Invalid message: {0}")]
-    InvalidMessage(String),
-    #[error("Connection acknowledgement timeout")]
-    ConnectionAcknowledgementTimeout,
 }
 
-fn error_response(message: String) -> SubgraphResponse<'static> {
-    SubgraphResponse {
-        errors: Some(vec![GraphQLError::from_message_and_code(
-            message,
-            "WEBSOCKET_ERROR",
-        )]),
-        ..Default::default()
-    }
-}
-
-type SubscriptionSender = mpsc::Sender<SubgraphResponse<'static>>;
-
-type SubscriptionsMap = Rc<RefCell<HashMap<String, SubscriptionSender>>>;
-
-/// Ensures a subscription is cleaned up when dropped.
-struct SubscriptionGuard {
-    subscriptions: SubscriptionsMap,
-    sink: WsSink,
-    id: String,
-}
-
-impl Drop for SubscriptionGuard {
-    fn drop(&mut self) {
-        // only send complete message if the subscription is still active - client cancelled.
-        // if the server sent the complete/error message, the subscription would've been removed
-        // by the dispatcher so no complete message would be sent from the client back to the server
-        if self.subscriptions.borrow_mut().remove(&self.id).is_some() {
-            let id = self.id.clone();
-            let sink = self.sink.clone();
-
-            // sending is async, so spawn a task to do it
-            rt::spawn(async move {
-                let complete_msg = ClientMessage::Complete { id: id.clone() };
-                if let Ok(msg_str) = sonic_rs::to_string(&complete_msg) {
-                    let _ = sink.send(ws::Message::Text(msg_str.into())).await;
-                    trace!(id = %id, "Sent complete message on stream drop");
-                }
-            });
-        }
-    }
-}
+/// The client's WebSocket state. Its subscriptions map subscription IDs to their response senders.
+type WsStateRef = Rc<RefCell<WsState<mpsc::Sender<SubgraphResponse<'static>>>>>;
 
 /// GraphQL over WebSocket client implementing the graphql-transport-ws protocol.
 ///
@@ -117,106 +74,69 @@ impl Drop for SubscriptionGuard {
 /// Supports multiplexing multiple subscriptions over a single WebSocket connection,
 /// it does so by spawning a background task to handle incoming messages and dispatch them
 /// to the appropriate subscription streams as well as handling connection-level messages.
-pub struct GraphQLTransportWSClient {
-    sink: WsSink,
-    subscriptions: SubscriptionsMap,
-    next_id: u64,
+pub struct WsClient {
+    sink: ws::WsSink,
+    state: WsStateRef,
+    next_subscription_id: u64,
+    heartbeat_stop_tx: Option<oneshot::Sender<()>>,
 }
 
-impl GraphQLTransportWSClient {
+impl WsClient {
     /// Initialize a new GraphQL over WebSocket client.
     ///
-    /// This performs the connection handshake and blocks until the server acknowledges
-    /// the connection. Returns an error if the handshake fails or times out.
+    /// This sends the connection init message and spawns background tasks for:
+    /// - Message dispatching
+    /// - Heartbeat pings
+    /// - Handshake timeout monitoring
+    ///
+    /// The handshake completes asynchronously in the background. Subscribe calls
+    /// will fail with Unauthorized if the handshake hasn't completed yet.
     pub async fn init(
         connection: WsConnection<Sealed>,
-        payload: Option<HashMap<String, sonic_rs::Value>>,
-        timeout: Option<Duration>,
-    ) -> Result<Self, GraphQLTransportWsClientError> {
+        payload: Option<ConnectionInitPayload>,
+    ) -> Self {
+        debug!("Initialising WebSocket client connection");
+
         let sink = connection.sink();
-        let mut receiver = connection.receiver();
+        let receiver = connection.receiver();
 
-        let init_msg = ClientMessage::ConnectionInit {
-            payload: payload.map(|fields| {
-                crate::executors::graphql_transport_ws::ConnectionInitPayload { fields }
-            }),
-        };
+        let (heartbeat_stop_tx, heartbeat_stop_rx) = oneshot::channel();
+        let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
 
-        let msg_str = sonic_rs::to_string(&init_msg)
-            .map_err(|e| GraphQLTransportWsClientError::SendError(e.to_string()))?;
+        let state: WsStateRef = Rc::new(RefCell::new(WsState::new(acknowledged_tx)));
 
-        sink.send(ws::Message::Text(msg_str.into()))
-            .await
-            .map_err(|e| GraphQLTransportWsClientError::SendError(e.to_string()))?;
-
-        let timeout_duration = timeout.unwrap_or(Duration::from_secs(10));
-
-        tokio::select! {
-            maybe_frame = receiver.next() => {
-                match maybe_frame {
-                    Some(Ok(frame)) => match frame {
-                        ws::Frame::Text(text) => {
-                            let text_str = String::from_utf8(text.to_vec()).map_err(|e| {
-                                GraphQLTransportWsClientError::InvalidMessage(e.to_string())
-                            })?;
-                            let server_msg: ServerMessage =
-                                sonic_rs::from_str(&text_str).map_err(|e| {
-                                    GraphQLTransportWsClientError::InvalidMessage(e.to_string())
-                                })?;
-
-                            match server_msg {
-                                ServerMessage::ConnectionAck { .. } => Ok(()),
-                                _ => Err(GraphQLTransportWsClientError::InvalidMessage(
-                                    "Expected ConnectionAck".to_string(),
-                                )),
-                            }
-                        }
-                        ws::Frame::Close(reason) => {
-                            let (code, desc) = reason
-                                .map(|r| (r.code.into(), r.description.unwrap_or_default()))
-                                .unwrap_or((1000, String::new()));
-                            Err(GraphQLTransportWsClientError::ConnectionClosed { code, reason: desc })
-                        }
-                        _ => Err(GraphQLTransportWsClientError::InvalidMessage(
-                            "Unexpected frame type".to_string(),
-                        )),
-                    },
-                    Some(Err(e)) => Err(GraphQLTransportWsClientError::ReceiveError(format!(
-                        "{:?}",
-                        e
-                    ))),
-                    None => Err(GraphQLTransportWsClientError::ConnectionClosed {
-                        code: 1000,
-                        reason: "Connection closed".to_string(),
-                    }),
-                }
-            }
-            _ = ntex::time::sleep(timeout_duration) => {
-                let _ = sink.send(CloseCode::ConnectionAcknowledgementTimeout.into())
-                    .await;
-                Err(GraphQLTransportWsClientError::ConnectionAcknowledgementTimeout)
-            }
-        }?;
-
-        let subscriptions: SubscriptionsMap = Rc::new(RefCell::new(HashMap::new()));
-
-        // Spawn background task to dispatch messages to subscriptions
-        rt::spawn(dispatch_messages(
-            receiver,
+        rt::spawn(heartbeat(state.clone(), sink.clone(), heartbeat_stop_rx));
+        rt::spawn(handshake_timeout(
+            state.clone(),
             sink.clone(),
-            subscriptions.clone(),
+            acknowledged_rx,
+            CloseCode::ConnectionAcknowledgementTimeout,
         ));
 
-        Ok(Self {
+        // dispatch messages to subscriptions
+        let dispatcher_state = state.clone();
+        let dispatcher_sink = sink.clone();
+        rt::spawn(async move {
+            let _guard = DispatcherGuard {
+                state: dispatcher_state.clone(),
+            };
+            dispatch_loop(receiver, dispatcher_sink, dispatcher_state).await;
+        });
+
+        let _ = sink.send(ClientMessage::init(payload)).await;
+
+        Self {
             sink,
-            subscriptions,
-            next_id: 1,
-        })
+            state,
+            next_subscription_id: 1,
+            // TODO: doesnt get cleaned up when dispatcher dies
+            heartbeat_stop_tx: Some(heartbeat_stop_tx),
+        }
     }
 
     fn next_subscription_id(&mut self) -> String {
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = self.next_subscription_id;
+        self.next_subscription_id += 1;
         id.to_string()
     }
 
@@ -232,43 +152,41 @@ impl GraphQLTransportWSClient {
         operation_name: Option<&str>,
         variables: Option<HashMap<String, sonic_rs::Value>>,
         extensions: Option<HashMap<String, sonic_rs::Value>>,
-    ) -> Result<LocalBoxStream<'static, SubgraphResponse<'static>>, GraphQLTransportWsClientError>
-    {
+    ) -> Result<LocalBoxStream<'static, SubgraphResponse<'static>>, WsClientError> {
         let subscribe_id = self.next_subscription_id();
 
-        let subscribe_msg = ClientMessage::Subscribe {
-            id: subscribe_id.clone(),
-            payload: ExecutionRequest {
-                query: query.to_string(),
-                operation_name: operation_name.map(|s| s.to_string()),
-                variables: variables.unwrap_or_default(),
-                extensions,
-            },
-        };
-
-        let msg_str = sonic_rs::to_string(&subscribe_msg)
-            .map_err(|e| GraphQLTransportWsClientError::SendError(e.to_string()))?;
-
-        self.sink
-            .send(ws::Message::Text(msg_str.into()))
-            .await
-            .map_err(|e| GraphQLTransportWsClientError::SendError(e.to_string()))?;
+        let _ = self
+            .sink
+            .send(
+                ClientMessage::subscribe(
+                    subscribe_id.clone(),
+                    ExecutionRequest {
+                        query: query.to_string(),
+                        operation_name: operation_name.map(|s| s.to_string()),
+                        variables: variables.unwrap_or_default(),
+                        extensions,
+                    },
+                )
+                .into(),
+            )
+            .await;
 
         trace!(id = %subscribe_id, "Subscribe message sent");
 
         let (tx, rx) = mpsc::channel();
 
-        self.subscriptions
+        self.state
             .borrow_mut()
+            .subscriptions
             .insert(subscribe_id.clone(), tx);
 
-        let subscriptions = self.subscriptions.clone();
+        let state = self.state.clone();
         let sink = self.sink.clone();
 
         Ok(Box::pin(async_stream::stream! {
             let mut rx = rx;
             let _guard = SubscriptionGuard {
-                subscriptions,
+                state,
                 sink,
                 id: subscribe_id,
             };
@@ -289,11 +207,16 @@ impl GraphQLTransportWSClient {
     }
 }
 
-impl Drop for GraphQLTransportWSClient {
+impl Drop for WsClient {
     fn drop(&mut self) {
-        let sink = self.sink.clone();
+        if let Some(tx) = self.heartbeat_stop_tx.take() {
+            let _ = tx.send(());
+        }
+
         // sending is async, so spawn a task to do it
+        let sink = self.sink.clone();
         rt::spawn(async move {
+            // TODO: client can be dropped but already closed by server, should be ok though
             let _ = sink
                 .send(ws::Message::Close(Some(ws::CloseCode::Normal.into())))
                 .await;
@@ -301,124 +224,169 @@ impl Drop for GraphQLTransportWSClient {
     }
 }
 
-struct MessageDispatcherGuard {
-    subscriptions: SubscriptionsMap,
+/// Ensures a subscription is cleaned up when dropped.
+struct SubscriptionGuard {
+    state: WsStateRef,
+    sink: WsSink,
+    id: String,
 }
 
-impl Drop for MessageDispatcherGuard {
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        // only send complete message if the subscription is still active - client cancelled.
+        // if the server sent the complete/error message, the subscription would've been removed
+        // by the dispatcher so no complete message would be sent from the client back to the server
+        if self
+            .state
+            .borrow_mut()
+            .subscriptions
+            .remove(&self.id)
+            .is_some()
+        {
+            let id = self.id.clone();
+            let sink = self.sink.clone();
+
+            // sending is async, so spawn a task to do it
+            rt::spawn(async move {
+                let _ = sink.send(ClientMessage::complete(id.clone()).into()).await;
+            });
+        }
+    }
+}
+
+/// Guard that cleans up all subscriptions when the message dispatcher is dropped (client-side).
+struct DispatcherGuard {
+    state: WsStateRef,
+}
+
+impl Drop for DispatcherGuard {
     fn drop(&mut self) {
         let err_msg = "Message dispatcher closed";
-        for (_, tx) in self.subscriptions.borrow_mut().drain() {
-            let _ = tx.send(error_response(err_msg.to_string()));
+        for (_, tx) in self.state.borrow_mut().subscriptions.drain() {
+            let _ = tx.send(subgraph_response_with_error(err_msg));
             tx.close();
         }
     }
 }
 
-async fn dispatch_messages(
+/// Dispatch loop handling WebSocket messages and distributing them accordingly across subscriptions.
+async fn dispatch_loop(
     mut receiver: mpsc::Receiver<Result<ws::Frame, WsError<()>>>,
     sink: WsSink,
-    subscriptions: SubscriptionsMap,
+    state: WsStateRef,
 ) {
-    let _guard = MessageDispatcherGuard {
-        subscriptions: subscriptions.clone(),
-    };
-
     loop {
         match receiver.next().await {
-            Some(Ok(ws::Frame::Text(text))) => {
-                let text = match String::from_utf8(text.to_vec()) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        error!("Invalid UTF-8 in message: {}", e);
-                        let _ = sink
-                            .send(ws::Message::Close(Some(
-                                // this one is not in the CloseCode enum because it's an internal WebSocket
-                                // transport error that has nothing to do with GraphQL over WebSockets
-                                ws::CloseReason {
-                                    code: ws::CloseCode::Unsupported,
-                                    description: Some("Invalid UTF-8 in message".into()),
-                                },
-                            )))
-                            .await;
-                        return;
-                    }
-                };
-
-                let server_msg: ServerMessage = match sonic_rs::from_str(&text) {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        error!("Failed to parse server message to JSON: {}", e);
-                        let _ = sink
-                            .send(
-                                CloseCode::BadResponse("Invalid message received from server")
-                                    .into(),
-                            )
-                            .await;
-                        return;
-                    }
-                };
-
-                match server_msg {
-                    ServerMessage::Next { id, payload } => {
-                        trace!(id = %id, "Received next message");
-                        if let Some(tx) = subscriptions.borrow().get(&id) {
-                            let payload_bytes =
-                                Bytes::from(sonic_rs::to_string(&payload).unwrap_or_default());
-                            let response =
-                                match SubgraphResponse::deserialize_from_bytes(payload_bytes) {
-                                    Ok(response) => response,
-                                    Err(e) => {
-                                        warn!("Failed to deserialize payload: {}", e);
-                                        error_response(format!(
-                                            "Failed to deserialize payload: {}",
-                                            e
-                                        ))
-                                    }
-                                };
-                            let _ = tx.send(response);
+            Some(Ok(frame)) => {
+                match parse_frame_to_text(frame, &state) {
+                    Ok(text) => {
+                        if let Some(msg) = handle_text_frame(text, &state) {
+                            if send_and_is_closed(sink.clone(), msg).await {
+                                return;
+                            }
                         }
                     }
-                    ServerMessage::Error { id, payload } => {
-                        trace!(id = %id, "Received error message");
-                        if let Some(tx) = subscriptions.borrow_mut().remove(&id) {
-                            let _ = tx.send(SubgraphResponse {
-                                errors: Some(payload),
-                                ..Default::default()
-                            });
+                    Err(FrameNotParsedToText::Message(msg)) => {
+                        if send_and_is_closed(sink.clone(), msg).await {
+                            return;
+                        }
+                    }
+                    Err(FrameNotParsedToText::Closed) => {
+                        // notify all subscriptions that the connection was closed
+                        for (_, tx) in state.borrow_mut().subscriptions.drain() {
+                            let _ = tx.send(subgraph_response_with_error("Connection closed"));
                             tx.close();
                         }
+                        return;
                     }
-                    ServerMessage::Complete { id } => {
-                        trace!(id = %id, "Received complete message");
-                        if let Some(tx) = subscriptions.borrow_mut().remove(&id) {
-                            tx.close();
-                        }
-                    }
-                    // TODO: handle ping
-                    ServerMessage::Pong {} => {
-                        trace!("Received pong");
-                    }
-                    ServerMessage::ConnectionAck { .. } => {
-                        trace!("Received unexpected ConnectionAck");
-                    }
+                    Err(FrameNotParsedToText::None) => {}
                 }
             }
-            Some(Ok(ws::Frame::Ping(data))) => {
-                let _ = sink.send(ws::Message::Pong(data)).await;
-            }
-            Some(Ok(ws::Frame::Close(_reason))) => {
-                // TODO: what to do?
-                return;
-            }
             Some(Err(e)) => {
-                error!("WebSocket error: {:?}", e);
+                error!("Dispatch loop WebSocket receiver error: {:?}", e);
                 return;
             }
             None => {
                 return;
             }
-            _ => {}
         }
+    }
+}
+
+async fn send_and_is_closed(sink: WsSink, msg: ws::Message) -> bool {
+    let is_close = matches!(msg, ws::Message::Close(_));
+    let _ = sink.send(msg).await;
+    return is_close;
+}
+
+fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
+    let server_msg: ServerMessage = match sonic_rs::from_str(&text) {
+        Ok(msg) => msg,
+        Err(e) => {
+            error!("Failed to parse server message to JSON: {}", e);
+            return Some(CloseCode::BadResponse("Invalid message received from server").into());
+        }
+    };
+
+    trace!(msg = ?server_msg, "Received server message");
+
+    match server_msg {
+        ServerMessage::ConnectionAck { .. } => {
+            if state.borrow().handshake_received {
+                // already received, ignore duplicate
+                // TODO: consider closing the connection with error
+                return None;
+            }
+            state.borrow_mut().handshake_received = true;
+            state.borrow_mut().complete_handshake();
+
+            debug!("Connection acknowledged");
+
+            None
+        }
+        ServerMessage::Next { id, payload } => {
+            if let Some(tx) = state.borrow().subscriptions.get(&id) {
+                let payload_bytes = Bytes::from(sonic_rs::to_string(&payload).unwrap_or_default());
+                let response = match SubgraphResponse::deserialize_from_bytes(payload_bytes) {
+                    Ok(response) => response,
+                    Err(e) => {
+                        tracing::warn!("Failed to deserialize payload: {}", e);
+                        subgraph_response_with_error("Failed to deserialize payload")
+                    }
+                };
+                // TODO: should we be strict and close the connection if id did not match any subscription?
+                let _ = tx.send(response);
+            }
+            None
+        }
+        ServerMessage::Error { id, payload } => {
+            if let Some(tx) = state.borrow_mut().subscriptions.remove(&id) {
+                let _ = tx.send(SubgraphResponse {
+                    errors: Some(payload),
+                    ..Default::default()
+                });
+                tx.close();
+            }
+            None
+        }
+        ServerMessage::Complete { id } => {
+            if let Some(tx) = state.borrow_mut().subscriptions.remove(&id) {
+                tx.close();
+            }
+            None
+        }
+        ServerMessage::Ping {} => Some(ServerMessage::pong()),
+        ServerMessage::Pong {} => None,
+    }
+}
+
+fn subgraph_response_with_error(message: &str) -> SubgraphResponse<'static> {
+    SubgraphResponse {
+        errors: Some(vec![GraphQLError::from_message_and_code(
+            message,
+            // TODO: define a proper error code for websocket errors
+            "WEBSOCKET_ERROR",
+        )]),
+        ..Default::default()
     }
 }

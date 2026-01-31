@@ -7,3 +7,4 @@ pub mod map;
 pub mod multipart_subscribe;
 pub mod sse;
 pub mod websocket_client;
+pub mod websocket_common;
