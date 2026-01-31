@@ -71,6 +71,7 @@ pub enum ClientMessage {
         payload: Option<ConnectionInitPayload>,
     },
     Ping {},
+    Pong {},
     Subscribe {
         id: String,
         payload: ExecutionRequest,
@@ -80,10 +81,44 @@ pub enum ClientMessage {
     },
 }
 
+impl ClientMessage {
+    pub fn init(payload: Option<ConnectionInitPayload>) -> ws::Message {
+        ClientMessage::ConnectionInit { payload }.into()
+    }
+
+    pub fn ping() -> ws::Message {
+        ServerMessage::Ping {}.into()
+    }
+
+    pub fn pong() -> ws::Message {
+        ServerMessage::Pong {}.into()
+    }
+
+    pub fn subscribe(id: String, payload: ExecutionRequest) -> ws::Message {
+        ClientMessage::Subscribe { id, payload }.into()
+    }
+
+    pub fn complete(id: String) -> ws::Message {
+        ClientMessage::Complete { id }.into()
+    }
+}
+
+impl From<ClientMessage> for ws::Message {
+    fn from(msg: ClientMessage) -> Self {
+        match sonic_rs::to_string(&msg) {
+            Ok(text) => ws::Message::Text(text.into()),
+            Err(e) => {
+                error!("Failed to serialize client message to JSON: {}", e);
+                CloseCode::InternalServerError(None).into()
+            }
+        }
+    }
+}
+
 /// The connection init message payload MUST be a map of string to arbitrary JSON
 /// values as per the spec. We represent this as a HashMap<String, Value> and use
 /// serde(flatten) to capture all fields for easier parsing to headers later.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectionInitPayload {
     #[serde(flatten)]
     pub fields: HashMap<String, sonic_rs::Value>,
@@ -95,6 +130,7 @@ pub enum ServerMessage {
     ConnectionAck {
         // NOTE: as per spec there is a "payload" field here, but we don't use it
     },
+    Ping {},
     Pong {},
     Next {
         id: String,
@@ -114,6 +150,10 @@ pub enum ServerMessage {
 impl ServerMessage {
     pub fn ack() -> ws::Message {
         ServerMessage::ConnectionAck {}.into()
+    }
+
+    pub fn ping() -> ws::Message {
+        ServerMessage::Ping {}.into()
     }
 
     pub fn pong() -> ws::Message {
