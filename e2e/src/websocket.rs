@@ -25,7 +25,7 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(wsconn, None).await;
+        let mut client = WsClient::init(wsconn, None).await.expect("Failed to init WsClient");
 
         let mut stream = client
             .subscribe(SubgraphExecutionRequest {
@@ -75,7 +75,7 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(wsconn, None).await;
+        let mut client = WsClient::init(wsconn, None).await.expect("Failed to init WsClient");
 
         let mut stream = client
             .subscribe(SubgraphExecutionRequest {
@@ -129,7 +129,7 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(wsconn, None).await;
+        let mut client = WsClient::init(wsconn, None).await.expect("Failed to init WsClient");
 
         let mut stream1 = client
             .subscribe(SubgraphExecutionRequest {
