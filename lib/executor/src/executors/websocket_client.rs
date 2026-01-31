@@ -10,7 +10,9 @@ use ntex::{
 };
 use tracing::{debug, error, trace};
 
-use crate::response::subgraph_response::SubgraphResponse;
+use crate::{
+    executors::graphql_transport_ws::WS_SUBPROTOCOL, response::subgraph_response::SubgraphResponse,
+};
 use crate::{
     executors::{
         graphql_transport_ws::{
@@ -56,6 +58,7 @@ pub async fn connect(url: &str) -> Result<WsConnection<ntex::io::Sealed>, WsConn
             .map_err(|e| tracing::error!("Cannot set alpn protocol: {e:?}"));
 
         let ws_client = NtexWsClient::build(url)
+            .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
             .openssl(builder.build())
             .take()
@@ -64,6 +67,7 @@ pub async fn connect(url: &str) -> Result<WsConnection<ntex::io::Sealed>, WsConn
         Ok(ws_client.connect().await?.seal())
     } else {
         let ws_client = NtexWsClient::build(url)
+            .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
             .finish()?;
 
