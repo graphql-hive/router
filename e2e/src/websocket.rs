@@ -1,8 +1,10 @@
 #[cfg(test)]
 mod websocket_e2e_tests {
     use futures::StreamExt;
+    use http::HeaderMap;
 
     use crate::testkit_v2::TestRouterBuilder;
+    use hive_router_plan_executor::executors::common::SubgraphExecutionRequest;
     use hive_router_plan_executor::executors::websocket_client::WsClient;
 
     #[ntex::test]
@@ -26,8 +28,8 @@ mod websocket_e2e_tests {
         let mut client = WsClient::init(wsconn, None).await;
 
         let mut stream = client
-            .subscribe(
-                r#"
+            .subscribe(SubgraphExecutionRequest {
+                query: r#"
                 query {
                     topProducts(first: 2) {
                         name
@@ -35,10 +37,13 @@ mod websocket_e2e_tests {
                     }
                 }
                 "#,
-                None,
-                None,
-                None,
-            )
+                dedupe: false,
+                operation_name: None,
+                variables: None,
+                headers: HeaderMap::new(),
+                representations: None,
+                extensions: None,
+            })
             .await;
 
         let response = stream.next().await.expect("Expected a response");
@@ -73,8 +78,8 @@ mod websocket_e2e_tests {
         let mut client = WsClient::init(wsconn, None).await;
 
         let mut stream = client
-            .subscribe(
-                r#"
+            .subscribe(SubgraphExecutionRequest {
+                query: r#"
                 subscription {
                     reviewAdded(step: 1, intervalInMs: 0) {
                         id
@@ -82,10 +87,13 @@ mod websocket_e2e_tests {
                     }
                 }
                 "#,
-                None,
-                None,
-                None,
-            )
+                dedupe: false,
+                operation_name: None,
+                variables: None,
+                headers: HeaderMap::new(),
+                representations: None,
+                extensions: None,
+            })
             .await;
 
         let mut received_count = 0;
@@ -124,33 +132,39 @@ mod websocket_e2e_tests {
         let mut client = WsClient::init(wsconn, None).await;
 
         let mut stream1 = client
-            .subscribe(
-                r#"
+            .subscribe(SubgraphExecutionRequest {
+                query: r#"
                 subscription {
                     reviewAdded(step: 1, intervalInMs: 0) {
                         id
                     }
                 }
                 "#,
-                None,
-                None,
-                None,
-            )
+                dedupe: false,
+                operation_name: None,
+                variables: None,
+                headers: HeaderMap::new(),
+                representations: None,
+                extensions: None,
+            })
             .await;
 
         let mut stream2 = client
-            .subscribe(
-                r#"
+            .subscribe(SubgraphExecutionRequest {
+                query: r#"
                 subscription {
                     reviewAdded(step: 2, intervalInMs: 0) {
                         id
                     }
                 }
                 "#,
-                None,
-                None,
-                None,
-            )
+                dedupe: false,
+                operation_name: None,
+                variables: None,
+                headers: HeaderMap::new(),
+                representations: None,
+                extensions: None,
+            })
             .await;
 
         let mut count1 = 0;
