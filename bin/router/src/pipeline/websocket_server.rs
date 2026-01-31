@@ -82,7 +82,15 @@ async fn ws_service(
     shared_state: Arc<RouterSharedState>,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
-    debug!("WebSocket connection opened");
+    if !has_accepted_subprotocol {
+        debug!("WebSocket connection rejecting due to unacceptable subprotocol");
+        let _ = sink.send(CloseCode::SubprotocolNotAcceptable.into()).await;
+        // we dont return an Err here because we want to gracefully close the
+        // connection for the client side with a close frame. returning an Err
+        // would result in an abrupt termination of the connection
+    } else {
+        debug!("WebSocket connection accepted");
+    }
 
     let (heartbeat_tx, heartbeat_rx) = oneshot::channel();
     let (handshake_timeout_tx, _) = oneshot::channel();
@@ -104,10 +112,6 @@ async fn ws_service(
         let schema_state = schema_state.clone();
         let shared_state = shared_state.clone();
         async move {
-            if !has_accepted_subprotocol {
-                debug!("Closing WebSocket connection because subprotocol was not accepted");
-                return Ok(Some(CloseCode::SubprotocolNotAcceptable.into()));
-            }
             match parse_frame_to_text(frame, &state) {
                 Ok(text) => {
                     Ok(handle_text_frame(text, sink, state, &schema_state, &shared_state).await)
