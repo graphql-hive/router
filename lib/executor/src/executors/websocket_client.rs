@@ -73,7 +73,7 @@ pub struct WsClient {
     sink: ws::WsSink,
     state: WsStateRef,
     next_subscription_id: u64,
-    heartbeat_stop_tx: Option<oneshot::Sender<()>>,
+    _heartbeat_stop_tx: Option<oneshot::Sender<()>>,
 }
 
 impl WsClient {
@@ -126,9 +126,8 @@ impl WsClient {
             sink,
             state,
             next_subscription_id: 1,
-            // TODO: doesnt get cleaned up when dispatcher dies
-            heartbeat_stop_tx: Some(heartbeat_stop_tx),
-        }
+            _heartbeat_stop_tx: Some(heartbeat_stop_tx),
+        })
     }
 
     fn next_subscription_id(&mut self) -> String {
@@ -210,9 +209,7 @@ impl WsClient {
 
 impl Drop for WsClient {
     fn drop(&mut self) {
-        if let Some(tx) = self.heartbeat_stop_tx.take() {
-            let _ = tx.send(());
-        }
+        // heartbeat_stop_tx will be dropped automatically, stopping the heartbeat task
 
         // sending is async, so spawn a task to do it
         let sink = self.sink.clone();
