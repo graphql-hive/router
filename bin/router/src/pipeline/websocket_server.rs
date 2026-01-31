@@ -61,13 +61,22 @@ pub async fn ws_index(
         fn_factory_with_config(move |sink: ws::WsSink| {
             let schema_state = schema_state.clone();
             let shared_state = shared_state.clone();
-            async move { ws_service(sink, schema_state, shared_state).await }
+            async move {
+                ws_service(
+                    accepted_subprotocol.is_some(),
+                    sink,
+                    schema_state,
+                    shared_state,
+                )
+                .await
+            }
         }),
     )
     .await
 }
 
 async fn ws_service(
+    has_accepted_subprotocol: bool,
     sink: ws::WsSink,
     schema_state: Arc<SchemaState>,
     shared_state: Arc<RouterSharedState>,
@@ -95,6 +104,10 @@ async fn ws_service(
         let schema_state = schema_state.clone();
         let shared_state = shared_state.clone();
         async move {
+            if !has_accepted_subprotocol {
+                debug!("Closing WebSocket connection because subprotocol was not accepted");
+                return Ok(Some(CloseCode::SubprotocolNotAcceptable.into()));
+            }
             match parse_frame_to_text(frame, &state) {
                 Ok(text) => {
                     Ok(handle_text_frame(text, sink, state, &schema_state, &shared_state).await)
