@@ -32,6 +32,20 @@ pub enum WsConnectError {
     Builder(#[from] ws::error::WsClientBuilderError),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum WsInitError {
+    #[error("Connection acknowledgement receiver failed")]
+    ConnectionAckReceiverError,
+    #[error("Connection acknowledgement receiver closed")]
+    ConnectionAckReceiverClosed,
+    #[error("Connection closed before acknowledgement")]
+    ConnectionClosedBeforeAck,
+    #[error("Invalid message received during acknowledgement")]
+    InvalidMessage,
+    #[error("Wrong message received before connection acknowledgement")]
+    WrongMessageBeforeAck,
+}
+
 pub async fn connect(url: &str) -> Result<WsConnection<ntex::io::Sealed>, WsConnectError> {
     if url.starts_with("wss://") {
         use tls_openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
@@ -79,28 +93,30 @@ pub struct WsClient {
 impl WsClient {
     /// Initialize a new GraphQL over WebSocket client.
     ///
-    /// This sends the connection init message and spawns background tasks for:
+    /// This sends the connection init message and waits for the server to acknowledge.
+    /// After acknowledgement, spawns background tasks for:
     /// - Message dispatching
     /// - Heartbeat pings
-    /// - Handshake timeout monitoring
     ///
-    /// The handshake completes asynchronously in the background. Subscribe calls
-    /// will fail with Unauthorized if the handshake hasn't completed yet.
+    /// Returns an error if the connection is closed before acknowledgement.
     pub async fn init(
         connection: WsConnection<Sealed>,
         payload: Option<ConnectionInitPayload>,
-    ) -> Self {
+    ) -> Result<Self, WsInitError> {
         debug!("Initialising WebSocket client connection");
 
         let sink = connection.sink();
-        let receiver = connection.receiver();
+        let mut receiver = connection.receiver();
 
-        let (heartbeat_stop_tx, heartbeat_stop_rx) = oneshot::channel();
         let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
 
         let state: WsStateRef = Rc::new(RefCell::new(WsState::new(acknowledged_tx)));
 
+        // heartbeats
+        let (heartbeat_stop_tx, heartbeat_stop_rx) = oneshot::channel();
         rt::spawn(heartbeat(state.clone(), sink.clone(), heartbeat_stop_rx));
+
+        // handshake timeout monitor will close connection if no ack received in time
         rt::spawn(handshake_timeout(
             state.clone(),
             sink.clone(),
@@ -108,7 +124,66 @@ impl WsClient {
             CloseCode::ConnectionAcknowledgementTimeout,
         ));
 
-        // dispatch messages to subscriptions
+        // send init and wait for ack or connection close
+        let _ = sink.send(ClientMessage::init(payload)).await;
+        loop {
+            match receiver.next().await {
+                Some(Ok(frame)) => {
+                    match parse_frame_to_text(frame, &state) {
+                        Ok(text) => {
+                            let server_msg = match text_to_server_message(&text) {
+                                Ok(msg) => msg,
+                                Err(msg) => {
+                                    let _ = sink.send(msg).await;
+                                    return Err(WsInitError::InvalidMessage);
+                                }
+                            };
+
+                            match server_msg {
+                                ServerMessage::ConnectionAck {} => {
+                                    state.borrow_mut().handshake_received = true;
+                                    state.borrow_mut().complete_handshake();
+                                    debug!("Connection acknowledged");
+                                    break;
+                                }
+                                ServerMessage::Ping {} => {
+                                    let _ = sink.send(ClientMessage::pong()).await;
+                                }
+                                ServerMessage::Pong {} => {}
+                                _ => {
+                                    // any other message before ack is an error
+                                    error!(
+                                        "Wrong message received before ConnectionAck: {:?}",
+                                        server_msg
+                                    );
+                                    let _ = sink.send(CloseCode::Unauthorized.into()).await;
+                                    return Err(WsInitError::WrongMessageBeforeAck);
+                                }
+                            }
+                        }
+                        Err(FrameNotParsedToText::Message(msg)) => {
+                            // this is safe to send indenependently of ack, it could be a ping/pong
+                            // or a close frame due to parsing issues
+                            let _ = sink.send(msg).await;
+                        }
+                        Err(FrameNotParsedToText::Closed) => {
+                            debug!("Connection closed before acknowledgement");
+                            return Err(WsInitError::ConnectionClosedBeforeAck);
+                        }
+                        Err(FrameNotParsedToText::None) => {}
+                    }
+                }
+                Some(Err(e)) => {
+                    error!("WebSocket receiver error during init: {:?}", e);
+                    return Err(WsInitError::ConnectionAckReceiverError);
+                }
+                None => {
+                    debug!("WebSocket receiver closed during init");
+                    return Err(WsInitError::ConnectionAckReceiverClosed);
+                }
+            }
+        }
+
         let dispatcher_state = state.clone();
         let dispatcher_sink = sink.clone();
         rt::spawn(async move {
@@ -118,11 +193,7 @@ impl WsClient {
             dispatch_loop(receiver, dispatcher_sink, dispatcher_state).await;
         });
 
-        let _ = sink.send(ClientMessage::init(payload)).await;
-
-        // TODO: wait for connection ack before returning?
-
-        Self {
+        Ok(Self {
             sink,
             state,
             next_subscription_id: 1,
@@ -252,21 +323,6 @@ impl Drop for SubscriptionGuard {
     }
 }
 
-/// Guard that cleans up all subscriptions when the message dispatcher is dropped (client-side).
-struct DispatcherGuard {
-    state: WsStateRef,
-}
-
-impl Drop for DispatcherGuard {
-    fn drop(&mut self) {
-        let err_msg = "Message dispatcher closed";
-        for (_, tx) in self.state.borrow_mut().subscriptions.drain() {
-            let _ = tx.send(subgraph_response_with_error(err_msg));
-            tx.close();
-        }
-    }
-}
-
 /// Dispatch loop handling WebSocket messages and distributing them accordingly across subscriptions.
 async fn dispatch_loop(
     mut receiver: mpsc::Receiver<Result<ws::Frame, WsError<()>>>,
@@ -311,6 +367,21 @@ async fn dispatch_loop(
     }
 }
 
+/// Guard that cleans up all subscriptions when the message dispatcher is dropped (client-side).
+struct DispatcherGuard {
+    state: WsStateRef,
+}
+
+impl Drop for DispatcherGuard {
+    fn drop(&mut self) {
+        let err_msg = "Message dispatcher closed";
+        for (_, tx) in self.state.borrow_mut().subscriptions.drain() {
+            let _ = tx.send(subgraph_response_with_error(err_msg));
+            tx.close();
+        }
+    }
+}
+
 async fn send_and_is_closed(sink: WsSink, msg: ws::Message) -> bool {
     let is_close = matches!(msg, ws::Message::Close(_));
     let _ = sink.send(msg).await;
@@ -318,28 +389,19 @@ async fn send_and_is_closed(sink: WsSink, msg: ws::Message) -> bool {
 }
 
 fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
-    let server_msg: ServerMessage = match sonic_rs::from_str(&text) {
+    let server_msg = match text_to_server_message(&text) {
         Ok(msg) => msg,
-        Err(e) => {
-            error!("Failed to parse server message to JSON: {}", e);
-            return Some(CloseCode::BadResponse("Invalid message received from server").into());
-        }
+        Err(msg) => return Some(msg),
     };
 
     trace!(msg = ?server_msg, "Received server message");
 
     match server_msg {
-        ServerMessage::ConnectionAck { .. } => {
-            if state.borrow().handshake_received {
-                // already received, ignore duplicate
-                // TODO: consider closing the connection with error
-                return None;
-            }
-            state.borrow_mut().handshake_received = true;
-            state.borrow_mut().complete_handshake();
-
-            debug!("Connection acknowledged");
-
+        ServerMessage::ConnectionAck {} => {
+            // already received during init, ignore duplicate
+            // TODO: consider closing the connection with error,
+            //       but it's not that big of a deal since ack is
+            //       just a handshake confirmation
             None
         }
         ServerMessage::Next { id, payload } => {
@@ -373,7 +435,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
             }
             None
         }
-        ServerMessage::Ping {} => Some(ServerMessage::pong()),
+        ServerMessage::Ping {} => Some(ClientMessage::pong()),
         ServerMessage::Pong {} => None,
     }
 }
@@ -387,4 +449,15 @@ fn subgraph_response_with_error(message: &str) -> SubgraphResponse<'static> {
         )]),
         ..Default::default()
     }
+}
+
+fn text_to_server_message(text: &str) -> Result<ServerMessage, ws::Message> {
+    let server_msg: ServerMessage = match sonic_rs::from_str(text) {
+        Ok(msg) => msg,
+        Err(e) => {
+            error!("Failed to parse server message to JSON: {}", e);
+            return Err(CloseCode::BadResponse("Invalid message received from server").into());
+        }
+    };
+    Ok(server_msg)
 }
