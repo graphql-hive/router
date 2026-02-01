@@ -37,6 +37,7 @@ impl WsSubgraphExecutor {
 
 impl Drop for WsSubgraphExecutor {
     fn drop(&mut self) {
+        // arbiter does not seem to stop itself on drop, so stop it manually on executor drop
         self.arbiter.stop();
     }
 }
