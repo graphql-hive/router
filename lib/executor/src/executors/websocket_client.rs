@@ -27,6 +27,10 @@ use crate::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum WsConnectError {
+    #[error("Missing schema from WebSocket URI: {0}")]
+    MissingUriSchema(String),
+    #[error("Wrong WebSocket URI schema: {0}")]
+    WrongUriSchema(String),
     #[error("WebSocket client error: {0}")]
     Client(#[from] ws::error::WsClientError),
     #[error("WebSocket client builder error: {0}")]
@@ -47,8 +51,11 @@ pub enum WsInitError {
     WrongMessageBeforeAck,
 }
 
-pub async fn connect(url: &str) -> Result<WsConnection<ntex::io::Sealed>, WsConnectError> {
-    if url.starts_with("wss://") {
+pub async fn connect(uri: &http::Uri) -> Result<WsConnection<ntex::io::Sealed>, WsConnectError> {
+    let scheme = uri
+        .scheme_str()
+        .ok_or_else(|| WsConnectError::MissingUriSchema(uri.to_string()))?;
+    if scheme == "wss" {
         use tls_openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
         let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
@@ -57,7 +64,7 @@ pub async fn connect(url: &str) -> Result<WsConnection<ntex::io::Sealed>, WsConn
             .set_alpn_protos(b"\x08http/1.1")
             .map_err(|e| tracing::error!("Cannot set alpn protocol: {e:?}"));
 
-        let ws_client = NtexWsClient::build(url)
+        let ws_client = NtexWsClient::build(uri)
             .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
             .openssl(builder.build())
@@ -65,13 +72,15 @@ pub async fn connect(url: &str) -> Result<WsConnection<ntex::io::Sealed>, WsConn
             .finish()?;
 
         Ok(ws_client.connect().await?.seal())
-    } else {
-        let ws_client = NtexWsClient::build(url)
+    } else if scheme == "ws" {
+        let ws_client = NtexWsClient::build(uri)
             .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
             .finish()?;
 
         Ok(ws_client.connect().await?.seal())
+    } else {
+        Err(WsConnectError::WrongUriSchema(uri.to_string()))
     }
 }
 

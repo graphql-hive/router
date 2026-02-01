@@ -14,12 +14,12 @@ use crate::response::subgraph_response::SubgraphResponse;
 
 pub struct WsSubgraphExecutor {
     subgraph_name: String,
-    endpoint: String,
+    endpoint: http::Uri,
     arbiter: Arbiter,
 }
 
 impl WsSubgraphExecutor {
-    pub fn new(subgraph_name: String, endpoint: String) -> Self {
+    pub fn new(subgraph_name: String, endpoint: http::Uri) -> Self {
         Self {
             subgraph_name,
             endpoint,
@@ -90,7 +90,10 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 let connection = match connect(&endpoint).await {
                     Ok(conn) => conn,
                     Err(e) => {
-                        let error = SubgraphExecutorError::RequestFailure(endpoint, e.to_string());
+                        let error = SubgraphExecutorError::RequestFailure(
+                            endpoint.to_string(),
+                            e.to_string(),
+                        );
                         log_error(&error);
                         return error.to_subgraph_response(&subgraph_name);
                     }
@@ -99,7 +102,10 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 let mut client = match WsClient::init(connection, init_payload).await {
                     Ok(client) => client,
                     Err(e) => {
-                        let error = SubgraphExecutorError::RequestFailure(endpoint, e.to_string());
+                        let error = SubgraphExecutorError::RequestFailure(
+                            endpoint.to_string(),
+                            e.to_string(),
+                        );
                         log_error(&error);
                         return error.to_subgraph_response(&subgraph_name);
                     }
@@ -118,7 +124,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     Some(response) => response,
                     None => {
                         let error = SubgraphExecutorError::RequestFailure(
-                            endpoint,
+                            endpoint.to_string(),
                             "Stream closed without response".to_string(),
                         );
                         log_error(&error);
@@ -132,7 +138,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             Ok(response) => response,
             Err(_) => {
                 let error = SubgraphExecutorError::RequestFailure(
-                    self.endpoint.clone(),
+                    self.endpoint.to_string(),
                     "WebSocket executor channel closed".to_string(),
                 );
                 log_error(&error);
@@ -188,7 +194,8 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             let connection = match connect(&endpoint).await {
                 Ok(conn) => conn,
                 Err(e) => {
-                    let error = SubgraphExecutorError::RequestFailure(endpoint, e.to_string());
+                    let error =
+                        SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string());
                     log_error(&error);
                     let _ = tx.send(error.to_subgraph_response(&subgraph_name));
                     return;
@@ -198,7 +205,8 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             let mut client = match WsClient::init(connection, init_payload).await {
                 Ok(client) => client,
                 Err(e) => {
-                    let error = SubgraphExecutorError::RequestFailure(endpoint, e.to_string());
+                    let error =
+                        SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string());
                     log_error(&error);
                     let _ = tx.send(error.to_subgraph_response(&subgraph_name));
                     return;

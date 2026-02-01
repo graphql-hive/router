@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc, time::Duration};
+use std::{marker::PhantomData, str::FromStr, sync::Arc, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
@@ -220,7 +220,8 @@ impl TestRouter<Started> {
 
     pub async fn ws(&self) -> WsConnection<Sealed> {
         let url = self.handle.as_ref().unwrap().serv.url("/ws");
-        websocket_client::connect(url.as_str())
+        let uri = http::Uri::from_str(url.as_str()).expect("Failed to parse ws url");
+        websocket_client::connect(&uri)
             .await
             .expect("Failed to connect to websocket")
     }
