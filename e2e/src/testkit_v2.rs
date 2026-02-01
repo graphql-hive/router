@@ -220,8 +220,9 @@ impl TestRouter<Started> {
 
     pub async fn ws(&self) -> WsConnection<Sealed> {
         let url = self.handle.as_ref().unwrap().serv.url("/ws");
-        let uri = http::Uri::from_str(url.as_str()).expect("Failed to parse ws url");
-        websocket_client::connect(&uri)
+        let ws_url = url.as_str().replace("http://", "ws://");
+        let ws_uri = http::Uri::from_str(&ws_url).expect("Failed to parse ws url");
+        websocket_client::connect(&ws_uri)
             .await
             .expect("Failed to connect to websocket")
     }
