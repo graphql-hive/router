@@ -70,7 +70,3 @@ moka = { version = "0.12.11", features = ["future", "sync"] }
 hyper-rustls = { version = "0.27.7", features = ["http1", "http2"] }
 combine = "4.6.6"
 strum = { version = "0.27.2", features = ["derive"] }
-
-[patch.crates-io]
-# https://github.com/ntex-rs/ntex/issues/734
-ntex = { git = "https://github.com/enisdenjo/ntex", branch = "ws-subprotocols" }
