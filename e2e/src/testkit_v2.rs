@@ -5,6 +5,7 @@ use hive_router::{
     init_rustls_crypto_provider,
 };
 use hive_router_config::{parse_yaml_config, HiveRouterConfig};
+use hive_router_plan_executor::executors::websocket_client;
 use ntex::{
     http::client::ClientResponse,
     io::Sealed,
@@ -218,13 +219,10 @@ impl TestRouter<Started> {
     }
 
     pub async fn ws(&self) -> WsConnection<Sealed> {
-        self.handle
-            .as_ref()
-            .unwrap()
-            .serv
-            .ws_at("/ws") // TODO: respect router config
+        let url = self.handle.as_ref().unwrap().serv.url("/ws");
+        websocket_client::connect(url.as_str())
             .await
-            .expect("Failed to establish websocket connection")
+            .expect("Failed to connect to websocket")
     }
 
     #[allow(dead_code)]
