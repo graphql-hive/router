@@ -51,6 +51,38 @@ pub enum WsInitError {
     WrongMessageBeforeAck,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum WsClientError {
+    #[error("Connection closed")]
+    ConnectionClosed,
+    #[error("Message dispatcher closed")]
+    MessageDispatcherClosed,
+    #[error("Failed to deserialize payload")]
+    FailedToDeserializePayload,
+}
+
+impl WsClientError {
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            WsClientError::ConnectionClosed => "WS_CONNECTION_CLOSED",
+            WsClientError::MessageDispatcherClosed => "WS_MESSAGE_DISPATCHER_CLOSED",
+            WsClientError::FailedToDeserializePayload => "WS_FAILED_TO_DESERIALIZE_PAYLOAD",
+        }
+    }
+}
+
+impl From<WsClientError> for SubgraphResponse<'static> {
+    fn from(err: WsClientError) -> Self {
+        SubgraphResponse {
+            errors: Some(vec![GraphQLError::from_message_and_code(
+                err.to_string(),
+                err.error_code(),
+            )]),
+            ..Default::default()
+        }
+    }
+}
+
 pub async fn connect(uri: &http::Uri) -> Result<WsConnection<ntex::io::Sealed>, WsConnectError> {
     let scheme = uri
         .scheme_str()
@@ -352,7 +384,7 @@ async fn dispatch_loop(
                     Err(FrameNotParsedToText::Closed) => {
                         // notify all subscriptions that the connection was closed
                         for (_, tx) in state.borrow_mut().subscriptions.drain() {
-                            let _ = tx.send(subgraph_response_with_error("Connection closed"));
+                            let _ = tx.send(WsClientError::ConnectionClosed.into());
                             tx.close();
                         }
                         return;
@@ -378,9 +410,8 @@ struct DispatcherGuard {
 
 impl Drop for DispatcherGuard {
     fn drop(&mut self) {
-        let err_msg = "Message dispatcher closed";
         for (_, tx) in self.state.borrow_mut().subscriptions.drain() {
-            let _ = tx.send(subgraph_response_with_error(err_msg));
+            let _ = tx.send(WsClientError::ConnectionClosed.into());
             tx.close();
         }
     }
@@ -415,7 +446,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
                     Ok(response) => response,
                     Err(e) => {
                         tracing::warn!("Failed to deserialize payload: {}", e);
-                        subgraph_response_with_error("Failed to deserialize payload")
+                        WsClientError::FailedToDeserializePayload.into()
                     }
                 };
                 // TODO: should we be strict and close the connection if id did not match any subscription?
@@ -441,17 +472,6 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
         }
         ServerMessage::Ping {} => Some(ClientMessage::pong()),
         ServerMessage::Pong {} => None,
-    }
-}
-
-fn subgraph_response_with_error(message: &str) -> SubgraphResponse<'static> {
-    SubgraphResponse {
-        errors: Some(vec![GraphQLError::from_message_and_code(
-            message,
-            // TODO: define a proper error code for websocket errors
-            "WEBSOCKET_ERROR",
-        )]),
-        ..Default::default()
     }
 }
 
