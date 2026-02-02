@@ -101,7 +101,7 @@ impl ActiveTrace {
             self.root_end_time = Some(now);
         }
 
-        if self.spans.len() < config.max_spans_per_trace as usize {
+        if self.spans.len() < config.max_spans_per_trace {
             self.spans.push(span);
             return root_ended_now;
         }
@@ -180,7 +180,7 @@ impl SpanProcessor for TraceBatchSpanProcessor {
                   name: "TraceBatchSpanProcessor.SpanDroppingStarted",
                   message = "Beginning to drop span messages due to full/internal errors. No further log will be emitted for next 100 spans. During Shutdown time, a log will be emitted with exact count of total spans dropped."
                 );
-            } else if count % 100 == 0 {
+            } else if count.is_multiple_of(100) {
                 warn!(
                   name: "TraceBatchSpanProcessor.SpanDroppingStarted",
                   message = "Still droping span messages due to full/internal errors. No further log will be emitted for next 100 spans. During Shutdown time, a log will be emitted with exact count of total spans dropped."
@@ -286,7 +286,7 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
             BatchMessage::ExportSpan(span) => {
                 self.handle_span(span);
                 // Trigger export if we have enough traces to fill a batch
-                if self.export_queue.len() >= self.config.max_export_batch_size as usize {
+                if self.export_queue.len() >= self.config.max_export_batch_size {
                     self.flush_export_queue().await;
                 }
             }
@@ -373,7 +373,7 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
                     self.cached_time = Instant::now();
                     self.sweep();
                     // If sweeping produced enough traces, export immediately
-                    if self.export_queue.len() >= self.config.max_export_batch_size as usize {
+                    if self.export_queue.len() >= self.config.max_export_batch_size {
                         self.flush_export_queue().await;
                     }
                 },
@@ -419,12 +419,12 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
         }
 
         // Check Memory Limit
-        if self.active_traces.len() >= self.config.max_traces_in_memory as usize {
+        if self.active_traces.len() >= self.config.max_traces_in_memory {
             // Try to free space
             self.sweep();
 
             // If still full, we have to drop to protect memory
-            if self.active_traces.len() >= self.config.max_traces_in_memory as usize {
+            if self.active_traces.len() >= self.config.max_traces_in_memory {
                 self.drop_metrics
                     .dropped_spans_count
                     .fetch_add(1, Ordering::Relaxed);
@@ -437,7 +437,7 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
         let mut trace = ActiveTrace::new(
             now,
             // Preallocates memory for min of 64 spans
-            std::cmp::min(self.config.max_spans_per_trace as usize, 64),
+            std::cmp::min(self.config.max_spans_per_trace, 64),
         );
         let root_ended_now = trace.add_span(span, now, &self.config, &self.drop_metrics);
 
@@ -512,7 +512,7 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
             // Respect the max_export_batch_size limit
             let batch_len = std::cmp::min(
                 self.export_queue.len(),
-                self.config.max_export_batch_size as usize,
+                self.config.max_export_batch_size,
             );
 
             let start_index = self.export_queue.len() - batch_len;
@@ -532,7 +532,7 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
             // If `max_concurrent_exports` is reached, it waits for a task to finish
             // before spawning a new one (backpressure).
             while !self.export_tasks.is_empty()
-                && self.export_tasks.len() >= self.config.max_concurrent_exports as usize
+                && self.export_tasks.len() >= self.config.max_concurrent_exports
             {
                 self.export_tasks.join_next().await;
             }

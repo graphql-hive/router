@@ -18,7 +18,7 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"introspection":false,"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -134,7 +134,6 @@ telemetry:
       sampling: 1
     exporters: []
     instrumentation:
-      introspection: false
       spans:
         mode: spec_compliant
     propagation:
@@ -1914,7 +1913,7 @@ max_retries: 10
 |[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
 |[**hive**](#telemetryhive)|`object`, `null`|||
 |[**resource**](#telemetryresource)|`object`|Default: `{"attributes":{}}`<br/>||
-|[**tracing**](#telemetrytracing)|`object`|Default: `{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"introspection":false,"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}`<br/>||
+|[**tracing**](#telemetrytracing)|`object`|Default: `{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -1936,7 +1935,6 @@ tracing:
     sampling: 1
   exporters: []
   instrumentation:
-    introspection: false
     spans:
       mode: spec_compliant
   propagation:
@@ -1976,7 +1974,7 @@ version_header: graphql-client-version
 |**endpoint**||Default: `"https://api.graphql-hive.com/otel/v1/traces"`<br/>||
 |**target**||A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
 |**token**||Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
-|[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"},"enabled":true,"grpc":null,"http":null,"protocol":"http"}`<br/>|yes|
+|[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"2s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"500ms"},"enabled":true,"grpc":null,"http":null,"protocol":"http"}`<br/>|yes|
 |[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -1994,7 +1992,7 @@ version_header: graphql-client-version
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**batch\_processor**](#telemetryhivetracingbatch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
+|[**batch\_processor**](#telemetryhivetracingbatch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"2s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"500ms"}`<br/>|no|
 |**enabled**|`boolean`|Default: `true`<br/>|no|
 |[**grpc**](#telemetryhivetracinggrpc)|`object`, `null`||no|
 |[**http**](#telemetryhivetracinghttp)|`object`, `null`||no|
@@ -2006,10 +2004,12 @@ version_header: graphql-client-version
 ```yaml
 batch_processor:
   max_concurrent_exports: 1
-  max_export_batch_size: 512
-  max_export_timeout: 5s
-  max_queue_size: 2048
-  scheduled_delay: 5s
+  max_export_batch_size: 500
+  max_export_timeout: 2s
+  max_queue_size: 20000
+  max_spans_per_trace: 1000
+  max_traces_in_memory: 30000
+  scheduled_delay: 500ms
 enabled: true
 grpc: null
 http: null
@@ -2024,21 +2024,25 @@ protocol: http
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**max\_concurrent\_exports**|`integer`|Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
-|**max\_export\_batch\_size**|`integer`|Default: `512`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
-|**max\_export\_timeout**|`string`|Default: `"5s"`<br/>||
-|**max\_queue\_size**|`integer`|Default: `2048`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
-|**scheduled\_delay**|`string`|Default: `"5s"`<br/>||
+|**max\_concurrent\_exports**|`integer`|Maximum number of export tasks that can run concurrently.<br/>Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_batch\_size**|`integer`|Maximum number of traces (not spans) to include in a single export batch.<br/>Default: `500`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_timeout**|`string`|Maximum time to wait for the exporter to finish a batch export.<br/>Default: `"2s"`<br/>||
+|**max\_queue\_size**|`integer`|Capacity of the input channel (from `on_end` to the worker thread).<br/>Default: `20000`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_spans\_per\_trace**|`integer`|Maximum number of spans to buffer per single trace.<br/><br/>If a trace exceeds this limit, subsequent spans for that trace will be dropped.<br/>Default: `1000`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_traces\_in\_memory**|`integer`|Maximum number of unique traces to keep in memory simultaneously.<br/><br/>If this limit is reached, the processor will attempt to flush ready traces.<br/>If no traces are ready, new spans for new traces will be dropped to preserve memory.<br/>Spans for existing traces will still be accepted.<br/>Default: `30000`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**scheduled\_delay**|`string`|Maximum time to wait before exporting ready traces if the batch size<br/>hasn't been reached.<br/>Default: `"500ms"`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
 max_concurrent_exports: 1
-max_export_batch_size: 512
-max_export_timeout: 5s
-max_queue_size: 2048
-scheduled_delay: 5s
+max_export_batch_size: 500
+max_export_timeout: 2s
+max_queue_size: 20000
+max_spans_per_trace: 1000
+max_traces_in_memory: 30000
+scheduled_delay: 500ms
 
 ```
 
@@ -2196,7 +2200,7 @@ attributes: {}
 |----|----|-----------|--------|
 |[**collect**](#telemetrytracingcollect)|`object`|Default: `{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1}`<br/>||
 |[**exporters**](#telemetrytracingexporters)|`array`|Default: <br/>||
-|[**instrumentation**](#telemetrytracinginstrumentation)|`object`|Default: `{"introspection":false,"spans":{"mode":"spec_compliant"}}`<br/>||
+|[**instrumentation**](#telemetrytracinginstrumentation)|`object`|Default: `{"spans":{"mode":"spec_compliant"}}`<br/>||
 |[**propagation**](#telemetrytracingpropagation)|`object`|Default: `{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -2212,7 +2216,6 @@ collect:
   sampling: 1
 exporters: []
 instrumentation:
-  introspection: false
   spans:
     mode: spec_compliant
 propagation:
@@ -2445,14 +2448,12 @@ scheduled_delay: 5s
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**introspection**|`boolean`|Whether to create spans for pure introspection queries<br/>Default: `false`<br/>||
 |[**spans**](#telemetrytracinginstrumentationspans)|`object`|Default: `{"mode":"spec_compliant"}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-introspection: false
 spans:
   mode: spec_compliant
 

@@ -45,7 +45,7 @@ use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use crate::telemetry::traces::spans::{attributes, kind::HiveSpanKind};
 
 /// Map of attributes to be renamed when normalizing http.server spans to graphql.operation spans.
-const HTTP_SERVER_TO_GRAPHQL_ATTR_MAP: &[(&'static str, &'static str)] = &[
+const HTTP_SERVER_TO_GRAPHQL_ATTR_MAP: &[(&str, &str)] = &[
     (
         attributes::HTTP_RESPONSE_STATUS_CODE,
         attributes::DEPRECATED_HTTP_STATUS_CODE,
@@ -60,7 +60,7 @@ const HTTP_SERVER_TO_GRAPHQL_ATTR_MAP: &[(&'static str, &'static str)] = &[
 ];
 
 /// Map of attributes to be renamed when normalizing http.client spans to graphql.subgraph.operation spans.
-const HTTP_CLIENT_TO_GRAPHQL_ATTR_MAP: &[(&'static str, &'static str)] = &[
+const HTTP_CLIENT_TO_GRAPHQL_ATTR_MAP: &[(&str, &str)] = &[
     (
         attributes::HTTP_RESPONSE_STATUS_CODE,
         attributes::DEPRECATED_HTTP_STATUS_CODE,
@@ -74,7 +74,7 @@ const HTTP_CLIENT_TO_GRAPHQL_ATTR_MAP: &[(&'static str, &'static str)] = &[
     (attributes::URL_FULL, attributes::DEPRECATED_HTTP_URL),
 ];
 
-const GRAPHQL_TO_HIVE_OPERATION_ATTR_RENAMES: &[(&'static str, &'static str)] = &[(
+const GRAPHQL_TO_HIVE_OPERATION_ATTR_RENAMES: &[(&str, &str)] = &[(
     attributes::GRAPHQL_DOCUMENT_TEXT,
     attributes::DEPRECATED_GRAPHQL_DOCUMENT,
 )];
