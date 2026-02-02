@@ -107,7 +107,12 @@ impl ActiveTrace {
         }
 
         let max_spans_per_trace = config.max_spans_per_trace;
-        warn!(name: "TraceBatchingProcessor.SpanDiscarded", %max_spans_per_trace, "Span discarded due to maximum spans per trace limit");
+        warn!(
+            name: "TraceBatchingProcessor.SpanDiscarded",
+            trace_id = %span.span_context.trace_id(),
+            %max_spans_per_trace,
+            "Span discarded due to maximum spans per trace limit"
+        );
 
         counters
             .dropped_spans_per_trace_limit_count
@@ -429,7 +434,12 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
                     .dropped_spans_count
                     .fetch_add(1, Ordering::Relaxed);
                 let max_traces_in_memory = self.config.max_traces_in_memory;
-                warn!(name: "TraceBatchingProcessor.SpanDiscarded", %max_traces_in_memory, "Memory limit reached, dropping span");
+                warn!(
+                    name: "TraceBatchingProcessor.SpanDiscarded",
+                    trace_id = %span.span_context.trace_id(),
+                    %max_traces_in_memory,
+                    "Memory limit reached, dropping span"
+                );
                 return;
             }
         }
@@ -510,10 +520,8 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
     async fn flush_export_queue(&mut self) {
         while !self.export_queue.is_empty() {
             // Respect the max_export_batch_size limit
-            let batch_len = std::cmp::min(
-                self.export_queue.len(),
-                self.config.max_export_batch_size,
-            );
+            let batch_len =
+                std::cmp::min(self.export_queue.len(), self.config.max_export_batch_size);
 
             let start_index = self.export_queue.len() - batch_len;
             let total_spans: usize = self.export_queue[start_index..]
