@@ -13,6 +13,14 @@
 //!                   grouping, lifetime cleanup, and spawns parallel export tasks.
 //!
 //! This separation ensures that heavy work does not block the other threads emitting spans.
+//!
+//! ## Why batch by trace?
+//! The `HiveConsoleExporter` rewrites relationships (promotes `graphql.operation` to root,
+//! moves HTTP attributes/timing from `http.server`, and maps `http.client`/`http.inflight`
+//! to `graphql.subgraph.operation`) and drops traces that are missing those parents or
+//! children. That transformation needs the complete set of spans for a trace available at
+//! once. Emitting spans early (standard batch processing) would fragment traces and cause the
+//! exporter to mis-normalize or discard partial data.
 
 use ahash::AHashMap;
 use hive_router_config::telemetry::hive::TraceBatchProcessorConfig;
