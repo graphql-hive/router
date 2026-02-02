@@ -19,7 +19,7 @@ pub struct SubscriptionsConfig {
 }
 
 /// The selected protocol for the subscriptions towards subgraphs.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SubscriptionProtocol {
     /// Uses any HTTP streaming protocol that the subgraph accepts. Supported protocols are:
