@@ -4,3 +4,6 @@ pub mod attributes;
 pub mod graphql;
 pub mod http_request;
 pub mod kind;
+
+#[cfg(test)]
+mod tests;

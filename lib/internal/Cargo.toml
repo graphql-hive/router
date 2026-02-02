@@ -28,10 +28,6 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
 ahash = { workspace = true }
-crossbeam-channel = "0.5.15"
-futures-channel = "0.3.31"
-futures-executor = "0.3.31"
-futures-util = { version = "0.3.31", default-features = false, features = ["std", "sink", "async-await-macro"] }
 tokio-stream = "0.1.18"
 
 # telemetry

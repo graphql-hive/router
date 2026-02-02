@@ -100,10 +100,6 @@ pub async fn graphql_request_handler(
           client_version,
           &parser_payload.hive_operation_hash
         );
-        // operation_span.record_document(&parser_payload.minified_document);
-        // operation_span.record_operation_identity((&parser_payload).into());
-        // operation_span.record_client_identity(client_name, client_version);
-        // operation_span.record_hive_operation_hash(&parser_payload.hive_operation_hash);
 
         validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload)
             .await?;
