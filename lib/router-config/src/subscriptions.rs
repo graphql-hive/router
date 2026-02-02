@@ -8,7 +8,7 @@ pub struct SubscriptionsConfig {
     /// Enables/disables subscriptions. By default, the subscriptions are disabled.
     ///
     /// You can override this setting by setting the `SUBSCRIPTIONS_ENABLED` environment variable to `true` or `false`.
-    #[serde(default = "default_subscriptions_enabled")]
+    #[serde(default)]
     pub enabled: bool,
     /// The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.
     #[serde(default)]
@@ -16,10 +16,6 @@ pub struct SubscriptionsConfig {
     /// Optional per-subgraph configurations that will override the default configuration for specific subgraphs.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub subgraphs: HashMap<String, SubscriptionsSubgraphConfig>,
-}
-
-fn default_subscriptions_enabled() -> bool {
-    false
 }
 
 /// The selected protocol for the subscriptions towards subgraphs.
@@ -54,5 +50,6 @@ pub struct SubscriptionsSubgraphConfig {
     ///
     /// For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,
     /// the resulting WebSocket URL will be `ws://example.com/ws`.
+    #[serde(default)]
     pub path: Option<String>,
 }
