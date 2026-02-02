@@ -113,7 +113,7 @@ async fn test_hive_http_export() {
     insta::assert_snapshot!(
       operation_span,
       @r"
-    Span: GraphQL Operation
+    Span: graphql.operation
       Kind: Server
       Status: message='' code='0'
       Attributes:
@@ -134,14 +134,13 @@ async fn test_hive_http_export() {
     insta::assert_snapshot!(
       parse_span,
       @r"
-    Span: GraphQL Document Parsing
+    Span: graphql.parse
       Kind: Internal
       Status: message='' code='0'
       Attributes:
         cache.hit: false
         graphql.document.hash: 1237612228098794304
         graphql.operation.type: query
-        hive.graphql: true
         hive.kind: graphql.parse
         target: hive-router
     "
@@ -150,12 +149,11 @@ async fn test_hive_http_export() {
     insta::assert_snapshot!(
       validate_span,
       @r"
-    Span: GraphQL Document Validation
+    Span: graphql.validate
       Kind: Internal
       Status: message='' code='0'
       Attributes:
         cache.hit: false
-        hive.graphql: true
         hive.kind: graphql.validate
         target: hive-router
     "
@@ -164,11 +162,10 @@ async fn test_hive_http_export() {
     insta::assert_snapshot!(
       variable_coercion_span,
       @r"
-    Span: GraphQL Variable Coercion
+    Span: graphql.variable_coercion
       Kind: Internal
       Status: message='' code='0'
       Attributes:
-        hive.graphql: true
         hive.kind: graphql.variable_coercion
         target: hive-router
     "
@@ -177,12 +174,11 @@ async fn test_hive_http_export() {
     insta::assert_snapshot!(
       normalization_span,
       @r"
-    Span: GraphQL Document Normalization
+    Span: graphql.normalize
       Kind: Internal
       Status: message='' code='0'
       Attributes:
         cache.hit: false
-        hive.graphql: true
         hive.kind: graphql.normalize
         target: hive-router
     "
@@ -191,12 +187,11 @@ async fn test_hive_http_export() {
     insta::assert_snapshot!(
       plan_span,
       @r"
-    Span: GraphQL Operation Planning
+    Span: graphql.plan
       Kind: Internal
       Status: message='' code='0'
       Attributes:
         cache.hit: false
-        hive.graphql: true
         hive.kind: graphql.plan
         target: hive-router
     "
@@ -205,11 +200,10 @@ async fn test_hive_http_export() {
     insta::assert_snapshot!(
       execution_span,
       @r"
-    Span: GraphQL Operation Execution
+    Span: graphql.execute
       Kind: Internal
       Status: message='' code='0'
       Attributes:
-        hive.graphql: true
         hive.kind: graphql.execute
         target: hive-router
     "
@@ -218,16 +212,16 @@ async fn test_hive_http_export() {
     insta::assert_snapshot!(
       subgraph_operation_span,
       @r"
-    Span: GraphQL Subgraph Operation
+    Span: graphql.subgraph.operation
       Kind: Client
       Status: message='' code='0'
       Attributes:
         graphql.document: {users{id}}
         graphql.document.hash: 7148583861642513753
         graphql.operation.type: query
-        hive.graphql: true
         hive.graphql.subgraph.name: accounts
         hive.kind: graphql.subgraph.operation
+        http.host: 0.0.0.0
         http.method: POST
         http.route: /accounts
         http.status_code: 200
@@ -243,13 +237,13 @@ async fn test_hive_http_export() {
       Kind: Internal
       Status: message='' code='1'
       Attributes:
-        hive.graphql: true
         hive.inflight.key: 15555024578502296811
         hive.inflight.role: leader
         hive.kind: http.inflight
         http.request.body.size: 23
         http.response.body.size: 86
         network.protocol.version: 1.1
+        server.port: 4200
         target: hive-router
         url.scheme: http
     "
@@ -262,7 +256,6 @@ async fn test_hive_http_export() {
       Kind: Client
       Status: message='' code='1'
       Attributes:
-        hive.graphql: true
         hive.kind: http.client
         http.request.body.size: 23
         http.request.method: POST
@@ -388,7 +381,7 @@ async fn test_hive_grpc_export() {
     insta::assert_snapshot!(
       operation_span,
       @r"
-    Span: GraphQL Operation
+    Span: graphql.operation
       Kind: Server
       Status: message='' code='0'
       Attributes:
@@ -409,14 +402,13 @@ async fn test_hive_grpc_export() {
     insta::assert_snapshot!(
       parse_span,
       @r"
-    Span: GraphQL Document Parsing
+    Span: graphql.parse
       Kind: Internal
       Status: message='' code='0'
       Attributes:
         cache.hit: false
         graphql.document.hash: 1237612228098794304
         graphql.operation.type: query
-        hive.graphql: true
         hive.kind: graphql.parse
         target: hive-router
     "
@@ -425,12 +417,11 @@ async fn test_hive_grpc_export() {
     insta::assert_snapshot!(
       validate_span,
       @r"
-    Span: GraphQL Document Validation
+    Span: graphql.validate
       Kind: Internal
       Status: message='' code='0'
       Attributes:
         cache.hit: false
-        hive.graphql: true
         hive.kind: graphql.validate
         target: hive-router
     "
@@ -439,11 +430,10 @@ async fn test_hive_grpc_export() {
     insta::assert_snapshot!(
       variable_coercion_span,
       @r"
-    Span: GraphQL Variable Coercion
+    Span: graphql.variable_coercion
       Kind: Internal
       Status: message='' code='0'
       Attributes:
-        hive.graphql: true
         hive.kind: graphql.variable_coercion
         target: hive-router
     "
@@ -452,12 +442,11 @@ async fn test_hive_grpc_export() {
     insta::assert_snapshot!(
       normalization_span,
       @r"
-    Span: GraphQL Document Normalization
+    Span: graphql.normalize
       Kind: Internal
       Status: message='' code='0'
       Attributes:
         cache.hit: false
-        hive.graphql: true
         hive.kind: graphql.normalize
         target: hive-router
     "
@@ -466,12 +455,11 @@ async fn test_hive_grpc_export() {
     insta::assert_snapshot!(
       plan_span,
       @r"
-    Span: GraphQL Operation Planning
+    Span: graphql.plan
       Kind: Internal
       Status: message='' code='0'
       Attributes:
         cache.hit: false
-        hive.graphql: true
         hive.kind: graphql.plan
         target: hive-router
     "
@@ -480,11 +468,10 @@ async fn test_hive_grpc_export() {
     insta::assert_snapshot!(
       execution_span,
       @r"
-    Span: GraphQL Operation Execution
+    Span: graphql.execute
       Kind: Internal
       Status: message='' code='0'
       Attributes:
-        hive.graphql: true
         hive.kind: graphql.execute
         target: hive-router
     "
@@ -493,16 +480,16 @@ async fn test_hive_grpc_export() {
     insta::assert_snapshot!(
       subgraph_operation_span,
       @r"
-    Span: GraphQL Subgraph Operation
+    Span: graphql.subgraph.operation
       Kind: Client
       Status: message='' code='0'
       Attributes:
         graphql.document: {users{id}}
         graphql.document.hash: 7148583861642513753
         graphql.operation.type: query
-        hive.graphql: true
         hive.graphql.subgraph.name: accounts
         hive.kind: graphql.subgraph.operation
+        http.host: 0.0.0.0
         http.method: POST
         http.route: /accounts
         http.status_code: 200
@@ -518,13 +505,13 @@ async fn test_hive_grpc_export() {
       Kind: Internal
       Status: message='' code='1'
       Attributes:
-        hive.graphql: true
         hive.inflight.key: 15555024578502296811
         hive.inflight.role: leader
         hive.kind: http.inflight
         http.request.body.size: 23
         http.response.body.size: 86
         network.protocol.version: 1.1
+        server.port: 4200
         target: hive-router
         url.scheme: http
     "
@@ -537,7 +524,6 @@ async fn test_hive_grpc_export() {
       Kind: Client
       Status: message='' code='1'
       Attributes:
-        hive.graphql: true
         hive.kind: http.client
         http.request.body.size: 23
         http.request.method: POST

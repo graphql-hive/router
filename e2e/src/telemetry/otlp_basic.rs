@@ -1,4 +1,4 @@
-use ntex::web::test;
+use ntex::{util::join_all, web::test};
 use std::time::Duration;
 
 use crate::testkit::{
@@ -89,7 +89,7 @@ async fn test_otlp_http_export_with_graphql_request() {
     insta::assert_snapshot!(
       operation_span,
       @r"
-    Span: GraphQL Operation
+    Span: graphql.operation
       Kind: Server
       Status: message='' code='0'
       Attributes:
@@ -105,7 +105,7 @@ async fn test_otlp_http_export_with_graphql_request() {
     insta::assert_snapshot!(
       parse_span,
       @r"
-    Span: GraphQL Document Parsing
+    Span: graphql.parse
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -120,7 +120,7 @@ async fn test_otlp_http_export_with_graphql_request() {
     insta::assert_snapshot!(
       validate_span,
       @r"
-    Span: GraphQL Document Validation
+    Span: graphql.validate
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -133,7 +133,7 @@ async fn test_otlp_http_export_with_graphql_request() {
     insta::assert_snapshot!(
       variable_coercion_span,
       @r"
-    Span: GraphQL Variable Coercion
+    Span: graphql.variable_coercion
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -145,7 +145,7 @@ async fn test_otlp_http_export_with_graphql_request() {
     insta::assert_snapshot!(
       normalization_span,
       @r"
-    Span: GraphQL Document Normalization
+    Span: graphql.normalize
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -158,7 +158,7 @@ async fn test_otlp_http_export_with_graphql_request() {
     insta::assert_snapshot!(
       plan_span,
       @r"
-    Span: GraphQL Operation Planning
+    Span: graphql.plan
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -171,7 +171,7 @@ async fn test_otlp_http_export_with_graphql_request() {
     insta::assert_snapshot!(
       execution_span,
       @r"
-    Span: GraphQL Operation Execution
+    Span: graphql.execute
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -183,7 +183,7 @@ async fn test_otlp_http_export_with_graphql_request() {
     insta::assert_snapshot!(
       subgraph_operation_span,
       @r"
-    Span: GraphQL Subgraph Operation
+    Span: graphql.subgraph.operation
       Kind: Client
       Status: message='' code='0'
       Attributes:
@@ -211,6 +211,8 @@ async fn test_otlp_http_export_with_graphql_request() {
         http.response.body.size: 86
         http.response.status_code: 200
         network.protocol.version: 1.1
+        server.address: 0.0.0.0
+        server.port: 4200
         target: hive-router
         url.full: http://0.0.0.0:4200/accounts
         url.path: /accounts
@@ -325,7 +327,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     insta::assert_snapshot!(
       operation_span,
       @r"
-    Span: GraphQL Operation
+    Span: graphql.operation
       Kind: Server
       Status: message='' code='0'
       Attributes:
@@ -341,7 +343,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     insta::assert_snapshot!(
       parse_span,
       @r"
-    Span: GraphQL Document Parsing
+    Span: graphql.parse
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -356,7 +358,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     insta::assert_snapshot!(
       validate_span,
       @r"
-    Span: GraphQL Document Validation
+    Span: graphql.validate
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -369,7 +371,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     insta::assert_snapshot!(
       variable_coercion_span,
       @r"
-    Span: GraphQL Variable Coercion
+    Span: graphql.variable_coercion
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -381,7 +383,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     insta::assert_snapshot!(
       normalization_span,
       @r"
-    Span: GraphQL Document Normalization
+    Span: graphql.normalize
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -394,7 +396,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     insta::assert_snapshot!(
       plan_span,
       @r"
-    Span: GraphQL Operation Planning
+    Span: graphql.plan
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -407,7 +409,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     insta::assert_snapshot!(
       execution_span,
       @r"
-    Span: GraphQL Operation Execution
+    Span: graphql.execute
       Kind: Internal
       Status: message='' code='0'
       Attributes:
@@ -419,7 +421,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     insta::assert_snapshot!(
       subgraph_operation_span,
       @r"
-    Span: GraphQL Subgraph Operation
+    Span: graphql.subgraph.operation
       Kind: Client
       Status: message='' code='0'
       Attributes:
@@ -447,6 +449,8 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         http.response.body.size: 86
         http.response.status_code: 200
         network.protocol.version: 1.1
+        server.address: 0.0.0.0
+        server.port: 4200
         target: hive-router
         url.full: http://0.0.0.0:4200/accounts
         url.path: /accounts
@@ -756,6 +760,78 @@ async fn test_otlp_cache_hits() {
     assert_cache_hit(second_validate_span);
     assert_cache_hit(second_normalization_span);
     assert_cache_hit(second_plan_span);
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
+}
+
+/// Verify cache.hit attributes are reported correctly
+#[ntex::test]
+async fn test_otlp_no_trace_id_collision() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let mut app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    join_all(vec![
+        test::call_service(
+            &app.app,
+            init_graphql_request("{ users { id } }", None).to_request(),
+        ),
+        test::call_service(
+            &app.app,
+            init_graphql_request("{ users { id } }", None).to_request(),
+        ),
+        test::call_service(
+            &app.app,
+            init_graphql_request("{ users { id } }", None).to_request(),
+        ),
+    ])
+    .await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let all_traces = otlp_collector.traces().await;
+    println!("all_traces: {}", all_traces.len());
+    let first_trace = all_traces.first().expect("Failed to get first trace");
+    let second_trace = all_traces.get(1).expect("Failed to get second trace");
+    let third_trace = all_traces.get(2).expect("Failed to get third trace");
+
+    assert_ne!(first_trace.id, second_trace.id);
+    assert_ne!(second_trace.id, third_trace.id);
+    assert_ne!(first_trace.id, third_trace.id);
 
     app.hold_until_shutdown(Box::new(otlp_collector));
 }

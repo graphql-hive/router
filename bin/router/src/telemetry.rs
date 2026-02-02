@@ -10,7 +10,7 @@ use hive_router_internal::telemetry::{
     traces::set_tracing_enabled,
     TelemetryContext,
 };
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{filter::filter_fn, util::SubscriberInitExt, Layer};
 use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, Registry};
 use tracing_subscriber::{
     fmt::{self},
@@ -107,7 +107,18 @@ impl Telemetry {
         let tracer = self.provider.clone();
         let shutdown_tracer = spawn_blocking(|| {
             if let Some(provider) = tracer {
+                tracing::info!(
+                    component = "telemetry",
+                    layer = "provider",
+                    "shutdown scheduled"
+                );
+                let _ = provider.force_flush();
                 let _ = provider.shutdown();
+                tracing::info!(
+                    component = "telemetry",
+                    layer = "provider",
+                    "shutdown completed"
+                );
             }
         });
 
@@ -127,6 +138,8 @@ where
         .unwrap_or_else(|e| panic!("failed to initialize env-filter logger: {}", e));
     let is_terminal = std::io::stdout().is_terminal();
 
+    let events_only = filter_fn(|m| !m.is_span());
+
     match config.log.format {
         LogFormat::PrettyTree => {
             registry
@@ -140,14 +153,20 @@ where
                         .with_timer(tracing_tree::time::Uptime::default())
                         .with_thread_names(false)
                         .with_thread_ids(false)
-                        .with_targets(false),
+                        .with_targets(false)
+                        .with_filter(events_only),
                 )
                 .with(filter)
                 .init();
         }
         LogFormat::Json => {
             registry
-                .with(fmt::layer().json().with_timer(timer))
+                .with(
+                    fmt::layer()
+                        .json()
+                        .with_timer(timer)
+                        .with_filter(events_only),
+                )
                 .with(filter)
                 .init();
         }
@@ -157,7 +176,8 @@ where
                     fmt::layer()
                         .compact()
                         .with_ansi(is_terminal)
-                        .with_timer(timer),
+                        .with_timer(timer)
+                        .with_filter(events_only),
                 )
                 .with(filter)
                 .init();

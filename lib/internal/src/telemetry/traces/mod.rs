@@ -1,3 +1,18 @@
+//! This module builds the `SdkTracerProvider` from config and attaches the appropriate
+//! span processors/exporters.
+//!
+//! Standard OTLP and stdout exporters use the SDK's `BatchSpanProcessor`,
+//! while Hive tracing routes through a custom pipeline:
+//! -> `TraceBatchSpanProcessor` buffers spans per trace
+//! -> `HiveConsoleExporter` normalizes
+//! -> OTLP exporter
+//!
+//! `HttpCompatibilityExporter` sits in front of exporters to enforce the configured
+//! HTTP semantic conventions mode (spec, deprecated, or both) without adding overhead
+//! to the request hot path.
+//!
+//! Public helpers like `TracerLayer` and tracing control functions are re-exported here
+//! for the rest of the codebase to use.
 use std::collections::HashMap;
 
 use hive_router_config::{
@@ -21,7 +36,6 @@ use opentelemetry_sdk::{
 use tracing_opentelemetry::OpenTelemetryLayer;
 
 use self::compatibility::HttpCompatibilityExporter;
-use self::filtering_exporter::FilteringSpanExporter;
 use crate::telemetry::{
     error::TelemetryError,
     resolve_value_or_expression,
@@ -33,10 +47,12 @@ pub use control::{disabled_span, is_level_enabled, is_tracing_enabled, set_traci
 
 pub mod compatibility;
 pub mod control;
-pub mod filtering_exporter;
 pub mod hive_console_exporter;
+mod noop_exporter;
 pub mod spans;
-pub mod stdout_exporter;
+pub mod trace_batch_span_processor;
+
+use crate::telemetry::traces::trace_batch_span_processor::TraceBatchSpanProcessor;
 
 pub type TracerLayer<Subscriber> = OpenTelemetryLayer<Subscriber, trace::Tracer>;
 
@@ -153,7 +169,7 @@ fn setup_exporters(
                         &stdout_config.batch_processor,
                         &resource,
                         HttpCompatibilityExporter::new(
-                            stdout_exporter::StdoutExporter::new(),
+                            opentelemetry_stdout::SpanExporter::default(),
                             sem_conv_mode,
                         ),
                     ));
@@ -176,7 +192,7 @@ fn build_batched_span_processor(
     resource: &Resource,
     exporter: impl trace::SpanExporter + 'static,
 ) -> BatchSpanProcessor {
-    let mut processor = BatchSpanProcessor::builder(FilteringSpanExporter::new(exporter))
+    let mut processor = BatchSpanProcessor::builder(exporter)
         .with_batch_config(
             BatchConfigBuilder::default()
                 .with_max_concurrent_exports(config.max_concurrent_exports as usize)
@@ -280,13 +296,13 @@ fn setup_hive_exporter(
     }
     .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
 
-    Ok(
-        tracer_provider_builder.with_span_processor(build_batched_span_processor(
-            &config.tracing.batch_processor,
-            resource,
-            HiveConsoleExporter::new(exporter),
-        )),
-    )
+    let hive_exporter = HiveConsoleExporter::new(exporter);
+    let mut trace_batching_processor =
+        TraceBatchSpanProcessor::new(hive_exporter, &config.tracing.batch_processor)?;
+
+    trace_batching_processor.set_resource(resource);
+
+    Ok(tracer_provider_builder.with_span_processor(trace_batching_processor))
 }
 
 pub(crate) fn resolve_string_map(

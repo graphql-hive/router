@@ -79,7 +79,6 @@ impl SupergraphTestData {
                 operation_type: "query".to_string(),
                 client_document_hash: "".to_string(),
             },
-            is_introspection_only: false,
         };
 
         let jwt = if let Some(scopes) = scopes {

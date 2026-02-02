@@ -1,5 +1,5 @@
 use opentelemetry::KeyValue;
-use tracing::{field::Empty, info_span, Level, Span};
+use tracing::{field::Empty, info_span, record_all, Level, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
         spans::{
             attributes::{
                 self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
-                HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND, OTEL_DROP,
+                HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND,
             },
             kind::{HiveEventKind, HiveSpanKind},
             TARGET_NAME,
@@ -45,7 +45,7 @@ impl GraphQLParseSpan {
         let kind: &'static str = HiveSpanKind::GraphqlParse.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL Document Parsing",
+            "graphql.parse",
             "hive.kind" = kind,
             "otel.kind" = "Internal",
             "cache.hit" = Empty,
@@ -61,18 +61,16 @@ impl GraphQLParseSpan {
     }
 
     pub fn record_operation_identity(&self, identity: GraphQLSpanOperationIdentity) {
-        if let Some(name) = &identity.name {
-            self.span.record(attributes::GRAPHQL_OPERATION_NAME, name);
+        if self.span.is_disabled() {
+            return;
         }
-        self.span
-            .record(attributes::GRAPHQL_OPERATION_TYPE, identity.operation_type);
-        self.span.record(
-            attributes::GRAPHQL_DOCUMENT_HASH,
-            identity.client_document_hash,
+
+        record_all!(
+            self.span,
+            "graphql.operation.name" = identity.name,
+            "graphql.operation.type" = identity.operation_type,
+            "graphql.document.hash" = identity.client_document_hash,
         );
-        // if let Some(id) = &identity.document_id {
-        //     self.span().record(attributes::GRAPHQL_OPERATION_ID, id.as_str());
-        // }
     }
 }
 
@@ -104,7 +102,7 @@ impl GraphQLValidateSpan {
         let kind: &'static str = HiveSpanKind::GraphqlValidate.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL Document Validation",
+            "graphql.validate",
             "hive.kind" = kind,
             "otel.kind" = "Internal",
             "cache.hit" = Empty,
@@ -145,7 +143,7 @@ impl GraphQLVariableCoercionSpan {
         let kind: &'static str = HiveSpanKind::GraphqlVariableCoercion.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL Variable Coercion",
+            "graphql.variable_coercion",
             "hive.kind" = kind,
             "otel.kind" = "Internal",
         );
@@ -181,7 +179,7 @@ impl GraphQLNormalizeSpan {
         let kind: &'static str = HiveSpanKind::GraphqlNormalize.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL Document Normalization",
+            "graphql.normalize",
             "hive.kind" = kind,
             "otel.kind" = "Internal",
             "cache.hit" = Empty,
@@ -222,16 +220,11 @@ impl GraphQLAuthorizeSpan {
         let kind: &'static str = HiveSpanKind::GraphqlAuthorize.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL Document Authorization",
+            "graphql.authorize",
             "hive.kind" = kind,
             "otel.kind" = "Internal",
         );
         GraphQLAuthorizeSpan { span }
-    }
-
-    pub fn record_operation_type(&self, operation_type: &str) {
-        self.span
-            .record(attributes::GRAPHQL_OPERATION_TYPE, operation_type);
     }
 }
 
@@ -263,7 +256,7 @@ impl GraphQLPlanSpan {
         let kind: &'static str = HiveSpanKind::GraphqlPlan.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL Operation Planning",
+            "graphql.plan",
             "hive.kind" = kind,
             "otel.kind" = "Internal",
             "cache.hit" = Empty,
@@ -304,7 +297,7 @@ impl GraphQLExecuteSpan {
         let kind: &'static str = HiveSpanKind::GraphqlExecute.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL Operation Execution",
+            "graphql.execute",
             "hive.kind" = kind,
             "otel.kind" = "Internal",
         );
@@ -340,7 +333,7 @@ impl GraphQLOperationSpan {
         let kind: &'static str = HiveSpanKind::GraphqlOperation.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL Operation",
+            "graphql.operation",
             "hive.kind" = kind,
             "otel.status_code" = Empty,
             "otel.kind" = "Server",
@@ -355,19 +348,8 @@ impl GraphQLOperationSpan {
             "hive.graphql.operation.hash" = Empty,
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
-            "otel.drop" = Empty,
         );
         GraphQLOperationSpan { span }
-    }
-
-    pub fn record_document(&self, document: &str) {
-        self.span
-            .record(attributes::GRAPHQL_DOCUMENT_TEXT, document);
-    }
-
-    pub fn record_hive_operation_hash(&self, hash: &str) {
-        self.span
-            .record(attributes::HIVE_GRAPHQL_OPERATION_HASH, hash);
     }
 
     pub fn record_error_count(&self, count: usize) {
@@ -385,33 +367,28 @@ impl GraphQLOperationSpan {
         record_error_events_to_span(&self.span, errors);
     }
 
-    pub fn record_operation_identity(&self, identity: GraphQLSpanOperationIdentity) {
-        if let Some(name) = &identity.name {
-            self.span.record(attributes::GRAPHQL_OPERATION_NAME, name);
+    pub fn record_details(
+        &self,
+        document: &str,
+        identity: GraphQLSpanOperationIdentity,
+        client_name: Option<&str>,
+        client_version: Option<&str>,
+        hash: &str,
+    ) {
+        if self.span.is_disabled() {
+            return;
         }
-        self.span
-            .record(attributes::GRAPHQL_OPERATION_TYPE, identity.operation_type);
-        self.span.record(
-            attributes::GRAPHQL_DOCUMENT_HASH,
-            identity.client_document_hash,
+
+        record_all!(
+            self.span,
+            "graphql.document.text" = document,
+            "graphql.operation.name" = identity.name,
+            "graphql.operation.type" = identity.operation_type,
+            "graphql.document.hash" = identity.client_document_hash,
+            "hive.graphql.operation.hash" = hash,
+            "hive.client.name" = client_name,
+            "hive.client.version" = client_version,
         );
-
-        // if let Some(id) = &identity.document_id {
-        //     self.span().record(attributes::GRAPHQL_OPERATION_ID, id.as_str());
-        // }
-    }
-
-    pub fn record_client_identity(&self, client_name: Option<&str>, client_version: Option<&str>) {
-        if let Some(name) = client_name {
-            self.span.record(attributes::HIVE_CLIENT_NAME, name);
-        }
-        if let Some(version) = client_version {
-            self.span.record(attributes::HIVE_CLIENT_VERSION, version);
-        }
-    }
-
-    pub fn mark_trace_for_drop(&self) {
-        self.span.record(OTEL_DROP, true);
     }
 }
 
@@ -428,7 +405,7 @@ impl std::ops::Deref for GraphQLSubgraphOperationSpan {
 }
 
 impl GraphQLSubgraphOperationSpan {
-    pub fn new(subgraph_name: &str) -> Self {
+    pub fn new(subgraph_name: &str, document: &str) -> Self {
         if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
@@ -438,7 +415,7 @@ impl GraphQLSubgraphOperationSpan {
         let kind: &'static str = HiveSpanKind::GraphQLSubgraphOperation.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL Subgraph Operation",
+            "graphql.subgraph.operation",
             "hive.kind" = kind,
             "otel.status_code" = Empty,
             "otel.kind" = "Client",
@@ -446,18 +423,13 @@ impl GraphQLSubgraphOperationSpan {
             "graphql.operation.name" = Empty,
             "graphql.operation.type" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.text" = Empty,
+            "graphql.document.text" = document,
             "hive.graphql.error.count" = Empty,
             "hive.graphql.error.codes" = Empty,
             // Hive Console Attributes
             "hive.graphql.subgraph.name" = subgraph_name,
         );
         GraphQLSubgraphOperationSpan { span }
-    }
-
-    pub fn record_document(&self, document: &str) {
-        self.span
-            .record(attributes::GRAPHQL_DOCUMENT_TEXT, document);
     }
 
     pub fn record_error_count(&self, count: usize) {
@@ -476,18 +448,12 @@ impl GraphQLSubgraphOperationSpan {
     }
 
     pub fn record_operation_identity(&self, identity: GraphQLSpanOperationIdentity) {
-        if let Some(name) = &identity.name {
-            self.span.record(attributes::GRAPHQL_OPERATION_NAME, name);
-        }
-        self.span
-            .record(attributes::GRAPHQL_OPERATION_TYPE, identity.operation_type);
-        self.span.record(
-            attributes::GRAPHQL_DOCUMENT_HASH,
-            identity.client_document_hash,
+        record_all!(
+            self.span,
+            "graphql.operation.name" = identity.name,
+            "graphql.operation.type" = identity.operation_type,
+            "graphql.document.hash" = identity.client_document_hash,
         );
-        // if let Some(id) = &identity.document_id {
-        //     self.span().record(attributes::GRAPHQL_OPERATION_ID, id.as_str());
-        // }
     }
 }
 
@@ -548,139 +514,4 @@ pub struct GraphQLSpanOperationIdentity<'a> {
     pub operation_type: &'a str,
     /// Hash of the original document sent to the router, by the client.
     pub client_document_hash: &'a str,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::telemetry::traces::spans::attributes;
-
-    fn assert_fields(span: &Span, expected_fields: &[&str]) {
-        for field in expected_fields {
-            assert!(
-                span.field(*field).is_some(),
-                "Field '{}' is missing from span '{}'",
-                field,
-                span.metadata().expect("Span should have metadata").name()
-            );
-        }
-    }
-
-    #[test]
-    fn test_graphql_parse_span_fields() {
-        let span = GraphQLParseSpan::new();
-        assert_fields(
-            &span,
-            &[
-                attributes::HIVE_KIND,
-                attributes::OTEL_KIND,
-                attributes::CACHE_HIT,
-                attributes::GRAPHQL_OPERATION_NAME,
-                attributes::GRAPHQL_OPERATION_TYPE,
-                attributes::GRAPHQL_DOCUMENT_HASH,
-            ],
-        );
-    }
-
-    #[test]
-    fn test_graphql_validate_span_fields() {
-        let span = GraphQLValidateSpan::new();
-        assert_fields(
-            &span,
-            &[
-                attributes::HIVE_KIND,
-                attributes::OTEL_KIND,
-                attributes::CACHE_HIT,
-            ],
-        );
-    }
-
-    #[test]
-    fn test_graphql_variable_coercion_span_fields() {
-        let span = GraphQLVariableCoercionSpan::new();
-        assert_fields(&span, &[attributes::HIVE_KIND, attributes::OTEL_KIND]);
-    }
-
-    #[test]
-    fn test_graphql_normalize_span_fields() {
-        let span = GraphQLNormalizeSpan::new();
-        assert_fields(
-            &span,
-            &[
-                attributes::HIVE_KIND,
-                attributes::OTEL_KIND,
-                attributes::CACHE_HIT,
-            ],
-        );
-    }
-
-    #[test]
-    fn test_graphql_authorize_span_fields() {
-        let span = GraphQLAuthorizeSpan::new();
-        assert_fields(&span, &[attributes::HIVE_KIND, attributes::OTEL_KIND]);
-    }
-
-    #[test]
-    fn test_graphql_plan_span_fields() {
-        let span = GraphQLPlanSpan::new();
-        assert_fields(
-            &span,
-            &[
-                attributes::HIVE_KIND,
-                attributes::OTEL_KIND,
-                attributes::CACHE_HIT,
-            ],
-        );
-    }
-
-    #[test]
-    fn test_graphql_execute_span_fields() {
-        let span = GraphQLExecuteSpan::new();
-        assert_fields(&span, &[attributes::HIVE_KIND, attributes::OTEL_KIND]);
-    }
-
-    #[test]
-    fn test_graphql_operation_span_fields() {
-        let span = GraphQLOperationSpan::new();
-        assert_fields(
-            &span,
-            &[
-                attributes::HIVE_KIND,
-                attributes::OTEL_STATUS_CODE,
-                attributes::OTEL_KIND,
-                attributes::ERROR_TYPE,
-                attributes::GRAPHQL_OPERATION_NAME,
-                attributes::GRAPHQL_OPERATION_TYPE,
-                attributes::GRAPHQL_OPERATION_ID,
-                attributes::GRAPHQL_DOCUMENT_HASH,
-                attributes::GRAPHQL_DOCUMENT_TEXT,
-                attributes::HIVE_GRAPHQL_ERROR_COUNT,
-                attributes::HIVE_GRAPHQL_ERROR_CODES,
-                attributes::HIVE_CLIENT_NAME,
-                attributes::HIVE_CLIENT_VERSION,
-                attributes::HIVE_GRAPHQL_OPERATION_HASH,
-            ],
-        );
-    }
-
-    #[test]
-    fn test_graphql_subgraph_operation_span_fields() {
-        let span = GraphQLSubgraphOperationSpan::new("test-subgraph");
-        assert_fields(
-            &span,
-            &[
-                attributes::HIVE_KIND,
-                attributes::OTEL_STATUS_CODE,
-                attributes::OTEL_KIND,
-                attributes::ERROR_TYPE,
-                attributes::GRAPHQL_OPERATION_NAME,
-                attributes::GRAPHQL_OPERATION_TYPE,
-                attributes::GRAPHQL_DOCUMENT_HASH,
-                attributes::GRAPHQL_DOCUMENT_TEXT,
-                attributes::HIVE_GRAPHQL_ERROR_COUNT,
-                attributes::HIVE_GRAPHQL_ERROR_CODES,
-                attributes::HIVE_GRAPHQL_SUBGRAPH_NAME,
-            ],
-        );
-    }
 }

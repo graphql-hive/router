@@ -156,6 +156,7 @@ pub struct TestRouterApp<T> {
     pub _shared_state: Arc<RouterSharedState>,
     pub schema_state: Arc<SchemaState>,
     pub bg_tasks_manager: BackgroundTasksManager,
+    pub telemetry: Telemetry,
     // List of dependencies to hold until shutdown of the router
     pub _dependencies: Vec<Box<dyn Any>>,
 }
@@ -216,6 +217,7 @@ pub async fn init_router_from_config(
         _shared_state: shared_state,
         schema_state,
         bg_tasks_manager,
+        telemetry,
         _dependencies: vec![Box::new(subscription_guard)],
     })
 }
@@ -258,5 +260,31 @@ impl Drop for EnvVarGuard {
 impl<T> Drop for TestRouterApp<T> {
     fn drop(&mut self) {
         self.bg_tasks_manager.shutdown();
+        shutdown_telemetry_sync(&self.telemetry);
     }
+}
+
+fn shutdown_telemetry_sync(telemetry: &Telemetry) {
+    let Some(provider) = telemetry.provider.clone() else {
+        return;
+    };
+
+    let dispatch = tracing::dispatcher::get_default(|current| current.clone());
+    let handle = std::thread::spawn(move || {
+        tracing::dispatcher::with_default(&dispatch, || {
+            tracing::info!(
+                component = "telemetry",
+                layer = "provider",
+                "shutdown scheduled"
+            );
+            let _ = provider.force_flush();
+            let _ = provider.shutdown();
+            tracing::info!(
+                component = "telemetry",
+                layer = "provider",
+                "shutdown completed"
+            );
+        });
+    });
+    let _ = handle.join();
 }

@@ -35,13 +35,6 @@ impl TracingConfig {
 pub struct TracingInstrumentationConfig {
     #[serde(default)]
     pub spans: TracingSpansInstrumentationConfig,
-    /// Whether to create spans for pure introspection queries
-    #[serde(default = "default_introspection_instrumentation")]
-    pub introspection: bool,
-}
-
-fn default_introspection_instrumentation() -> bool {
-    false
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

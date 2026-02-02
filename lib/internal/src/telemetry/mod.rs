@@ -1,3 +1,8 @@
+//! This module owns the public tracing setup API (`build_otel_layer_from_config`) and
+//! a lightweight `TelemetryContext` for explicit propagation without relying on global
+//! OpenTelemetry state.
+//!
+//! It also re-exports the OTEL types used across crates to avoid deep dependency chains.
 use hive_router_config::telemetry::TelemetryConfig;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::{InstrumentationScope, KeyValue};
@@ -95,72 +100,6 @@ impl TelemetryContext {
     /// Returns true if this context has a propagator configured
     pub fn is_enabled(&self) -> bool {
         self.propagator.is_some()
-    }
-}
-
-pub struct OpenTelemetry<Subscriber> {
-    pub tracer: Option<traces::Tracer<Subscriber>>,
-    // logs and metrics can be added here later
-}
-
-impl<S> OpenTelemetry<S> {
-    pub fn new_noop() -> OpenTelemetry<S>
-    where
-        S: Subscriber + for<'span> LookupSpan<'span> + Send + Sync,
-    {
-        OpenTelemetry { tracer: None }
-    }
-
-    pub fn from_config<I>(
-        config: &TelemetryConfig,
-        id_generator: I,
-    ) -> Result<OpenTelemetry<S>, error::TelemetryError>
-    where
-        S: Subscriber + for<'span> LookupSpan<'span> + Send + Sync,
-        I: IdGenerator + 'static,
-    {
-        if !config.is_tracing_enabled() {
-            return Ok(OpenTelemetry::new_noop());
-        }
-
-        let resolved_attributes =
-            traces::resolve_string_map(&config.resource.attributes, "resource attribute")?;
-
-        let mut resource_attributes: Vec<_> = resolved_attributes
-            .into_iter()
-            .map(|(k, v)| KeyValue::new(k, v))
-            .collect();
-
-        if !resource_attributes
-            .iter()
-            .any(|kv| kv.key.as_str() == "service.name")
-        {
-            resource_attributes.push(KeyValue::new("service.name", "hive-router"));
-        }
-
-        let resource = Resource::builder()
-            .with_attributes(resource_attributes)
-            .build();
-
-        let traces_provider = build_trace_provider(config, id_generator, resource.clone())?;
-
-        let scope = InstrumentationScope::builder("graphql-hive.router")
-            .with_version(env!("CARGO_PKG_VERSION"))
-            .build();
-
-        let tracer = traces_provider.tracer_with_scope(scope);
-        let traces_layer = tracing_opentelemetry::layer()
-            .with_tracer(tracer)
-            .with_tracked_inactivity(false)
-            .with_location(false)
-            .with_threads(false);
-
-        Ok(OpenTelemetry {
-            tracer: Some(traces::Tracer {
-                layer: traces_layer,
-                provider: traces_provider,
-            }),
-        })
     }
 }
 
