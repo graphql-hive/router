@@ -1,3 +1,8 @@
+//! This module owns the public tracing setup API (`build_otel_layer_from_config`) and
+//! a lightweight `TelemetryContext` for explicit propagation without relying on global
+//! OpenTelemetry state.
+//!
+//! It also re-exports the OTEL types used across crates to avoid deep dependency chains.
 use hive_router_config::telemetry::TelemetryConfig;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::{InstrumentationScope, KeyValue};

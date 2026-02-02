@@ -1,3 +1,18 @@
+//! This module builds the `SdkTracerProvider` from config and attaches the appropriate
+//! span processors/exporters.
+//!
+//! Standard OTLP and stdout exporters use the SDK's `BatchSpanProcessor`,
+//! while Hive tracing routes through a custom pipeline:
+//! -> `TraceBatchSpanProcessor` buffers spans per trace
+//! -> `HiveConsoleExporter` normalizes
+//! -> OTLP exporter
+//!
+//! `HttpCompatibilityExporter` sits in front of exporters to enforce the configured
+//! HTTP semantic conventions mode (spec, deprecated, or both) without adding overhead
+//! to the request hot path.
+//!
+//! Public helpers like `TracerLayer` and tracing control functions are re-exported here
+//! for the rest of the codebase to use.
 use std::collections::HashMap;
 
 use hive_router_config::{
