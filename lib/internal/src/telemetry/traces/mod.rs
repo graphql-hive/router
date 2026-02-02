@@ -7,9 +7,9 @@
 //! -> `HiveConsoleExporter` normalizes
 //! -> OTLP exporter
 //!
-//! `HttpCompatibilityExporter` sits in front of exporters to enforce the configured
-//! HTTP semantic conventions mode (spec, deprecated, or both) without adding overhead
-//! to the request hot path.
+//! `StandardPipelineExporter` wraps the standard OTLP/stdout pipeline, applying
+//! HTTP semantic convention compatibility and pipeline-level redactions/filters
+//! without adding overhead to the request hot path.
 //!
 //! Public helpers like `TracerLayer` and tracing control functions are re-exported here
 //! for the rest of the codebase to use.
@@ -35,7 +35,7 @@ use opentelemetry_sdk::{
 };
 use tracing_opentelemetry::OpenTelemetryLayer;
 
-use self::compatibility::HttpCompatibilityExporter;
+use self::standard_pipeline_exporter::StandardPipelineExporter;
 use crate::telemetry::{
     error::TelemetryError,
     resolve_value_or_expression,
@@ -50,6 +50,7 @@ pub mod control;
 pub mod hive_console_exporter;
 mod noop_exporter;
 pub mod spans;
+pub mod standard_pipeline_exporter;
 pub mod trace_batch_span_processor;
 
 use crate::telemetry::traces::trace_batch_span_processor::TraceBatchSpanProcessor;
@@ -156,7 +157,7 @@ fn setup_exporters(
                     tracer_provider_builder.with_span_processor(build_batched_span_processor(
                         &otlp_config.batch_processor,
                         &resource,
-                        HttpCompatibilityExporter::new(exporter, sem_conv_mode),
+                        StandardPipelineExporter::new(exporter, sem_conv_mode),
                     ));
             }
             TracingExporterConfig::Stdout(stdout_config) => {
@@ -168,7 +169,7 @@ fn setup_exporters(
                     tracer_provider_builder.with_span_processor(build_batched_span_processor(
                         &stdout_config.batch_processor,
                         &resource,
-                        HttpCompatibilityExporter::new(
+                        StandardPipelineExporter::new(
                             opentelemetry_stdout::SpanExporter::default(),
                             sem_conv_mode,
                         ),

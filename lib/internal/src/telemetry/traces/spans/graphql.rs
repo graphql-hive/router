@@ -342,7 +342,7 @@ impl GraphQLOperationSpan {
             "graphql.operation.type" = Empty,
             "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.text" = Empty,
+            "graphql.document" = Empty,
             "hive.graphql.error.count" = Empty,
             "hive.graphql.error.codes" = Empty,
             "hive.graphql.operation.hash" = Empty,
@@ -381,7 +381,7 @@ impl GraphQLOperationSpan {
 
         record_all!(
             self.span,
-            "graphql.document.text" = document,
+            "graphql.document" = document,
             "graphql.operation.name" = identity.name,
             "graphql.operation.type" = identity.operation_type,
             "graphql.document.hash" = identity.client_document_hash,
@@ -423,7 +423,7 @@ impl GraphQLSubgraphOperationSpan {
             "graphql.operation.name" = Empty,
             "graphql.operation.type" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.text" = document,
+            "graphql.document" = document,
             "hive.graphql.error.count" = Empty,
             "hive.graphql.error.codes" = Empty,
             // Hive Console Attributes

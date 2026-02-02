@@ -25,7 +25,7 @@ pub const GRAPHQL_OPERATION_NAME: &str = "graphql.operation.name";
 pub const GRAPHQL_OPERATION_TYPE: &str = "graphql.operation.type";
 pub const GRAPHQL_OPERATION_ID: &str = "graphql.operation.id";
 pub const GRAPHQL_DOCUMENT_HASH: &str = "graphql.document.hash";
-pub const GRAPHQL_DOCUMENT_TEXT: &str = "graphql.document.text";
+pub const GRAPHQL_DOCUMENT: &str = "graphql.document";
 
 /// Hive-specific attributes
 pub const HIVE_KIND: &str = "hive.kind";

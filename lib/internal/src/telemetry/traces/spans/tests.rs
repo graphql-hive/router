@@ -441,7 +441,7 @@ fn test_graphql_operation_span() {
                 attributes::GRAPHQL_OPERATION_TYPE,
                 attributes::GRAPHQL_OPERATION_ID,
                 attributes::GRAPHQL_DOCUMENT_HASH,
-                attributes::GRAPHQL_DOCUMENT_TEXT,
+                attributes::GRAPHQL_DOCUMENT,
                 attributes::HIVE_GRAPHQL_ERROR_COUNT,
                 attributes::HIVE_GRAPHQL_ERROR_CODES,
                 attributes::HIVE_CLIENT_NAME,
@@ -492,11 +492,7 @@ fn test_graphql_operation_span() {
             Some("1.0.0"),
             "op-hash",
         );
-        layer.assert_recorded_value(
-            &span,
-            attributes::GRAPHQL_DOCUMENT_TEXT,
-            "query GetMe { me }",
-        );
+        layer.assert_recorded_value(&span, attributes::GRAPHQL_DOCUMENT, "query GetMe { me }");
         layer.assert_recorded_value(&span, attributes::GRAPHQL_OPERATION_NAME, "GetMe");
         layer.assert_recorded_value(&span, attributes::GRAPHQL_OPERATION_TYPE, "query");
         layer.assert_recorded_value(&span, attributes::GRAPHQL_DOCUMENT_HASH, "doc-hash");
@@ -523,7 +519,7 @@ fn test_graphql_subgraph_operation_span() {
                 attributes::GRAPHQL_OPERATION_NAME,
                 attributes::GRAPHQL_OPERATION_TYPE,
                 attributes::GRAPHQL_DOCUMENT_HASH,
-                attributes::GRAPHQL_DOCUMENT_TEXT,
+                attributes::GRAPHQL_DOCUMENT,
                 attributes::HIVE_GRAPHQL_ERROR_COUNT,
                 attributes::HIVE_GRAPHQL_ERROR_CODES,
                 attributes::HIVE_GRAPHQL_SUBGRAPH_NAME,

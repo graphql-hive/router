@@ -94,7 +94,6 @@ async fn test_otlp_http_export_with_graphql_request() {
       Status: message='' code='0'
       Attributes:
         graphql.document.hash: 1237612228098794304
-        graphql.document.text: {users{id}}
         graphql.operation.type: query
         hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
         hive.kind: graphql.operation
@@ -188,7 +187,6 @@ async fn test_otlp_http_export_with_graphql_request() {
       Status: message='' code='0'
       Attributes:
         graphql.document.hash: 7148583861642513753
-        graphql.document.text: {users{id}}
         graphql.operation.type: query
         hive.graphql.subgraph.name: accounts
         hive.kind: graphql.subgraph.operation
@@ -332,7 +330,6 @@ async fn test_otlp_grpc_export_with_graphql_request() {
       Status: message='' code='0'
       Attributes:
         graphql.document.hash: 1237612228098794304
-        graphql.document.text: {users{id}}
         graphql.operation.type: query
         hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
         hive.kind: graphql.operation
@@ -426,7 +423,6 @@ async fn test_otlp_grpc_export_with_graphql_request() {
       Status: message='' code='0'
       Attributes:
         graphql.document.hash: 7148583861642513753
-        graphql.document.text: {users{id}}
         graphql.operation.type: query
         hive.graphql.subgraph.name: accounts
         hive.kind: graphql.subgraph.operation

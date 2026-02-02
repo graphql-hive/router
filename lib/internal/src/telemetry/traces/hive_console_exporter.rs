@@ -75,7 +75,7 @@ const HTTP_CLIENT_TO_GRAPHQL_ATTR_MAP: &[(&str, &str)] = &[
 ];
 
 const GRAPHQL_TO_HIVE_OPERATION_ATTR_RENAMES: &[(&str, &str)] = &[(
-    attributes::GRAPHQL_DOCUMENT_TEXT,
+    attributes::GRAPHQL_DOCUMENT,
     attributes::DEPRECATED_GRAPHQL_DOCUMENT,
 )];
 
