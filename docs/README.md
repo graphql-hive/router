@@ -17,10 +17,11 @@
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
-|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"enabled":false}`<br/>||
+|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"all":{"path":null,"protocol":"http"},"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
 |[**usage\_reporting**](#usage_reporting)|`object`|Configuration for usage reporting to GraphQL Hive.<br/>Default: `{"accept_invalid_certs":false,"access_token":null,"buffer_size":1000,"client_name_header":"graphql-client-name","client_version_header":"graphql-client-version","connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%","target_id":null}`<br/>||
+|[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers_in_connection_init_payload":false,"headers_in_operation_extensions":false,"merge_connection_init_payload_with_operation_extensions_headers":false,"path":null}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -118,6 +119,9 @@ query_planner:
   allow_expose: false
   timeout: 10s
 subscriptions:
+  all:
+    path: null
+    protocol: http
   enabled: false
 supergraph: {}
 traffic_shaping:
@@ -140,6 +144,12 @@ usage_reporting:
   request_timeout: 15s
   sample_rate: 100%
   target_id: null
+websocket:
+  enabled: false
+  headers_in_connection_init_payload: false
+  headers_in_operation_extensions: false
+  merge_connection_init_payload_with_operation_extensions_headers: false
+  path: null
 
 ```
 
@@ -1823,13 +1833,74 @@ Configuration for subscriptions.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**all**](#subscriptionsall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"path":null,"protocol":"http"}`<br/>||
 |**enabled**|`boolean`|Enables/disables subscriptions. By default, the subscriptions are disabled.<br/><br/>You can override this setting by setting the `SUBSCRIPTIONS_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
+|[**subgraphs**](#subscriptionssubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
+all:
+  path: null
+  protocol: http
 enabled: false
+
+```
+
+<a name="subscriptionsall"></a>
+### subscriptions\.all: object
+
+The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>||
+|**protocol**||The selected protocol for the subscriptions towards the subgraph(s).<br/>Default: `"http"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+path: null
+protocol: http
+
+```
+
+<a name="subscriptionssubgraphs"></a>
+### subscriptions\.subgraphs: object
+
+Optional per-subgraph configurations that will override the default configuration for specific subgraphs.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**Additional Properties**](#subscriptionssubgraphsadditionalproperties)|`object`|Configuration for subscription connections to subgraphs.<br/>||
+
+<a name="subscriptionssubgraphsadditionalproperties"></a>
+#### subscriptions\.subgraphs\.additionalProperties: object
+
+Configuration for subscription connections to subgraphs.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>||
+|**protocol**||The selected protocol for the subscriptions towards the subgraph(s).<br/>Default: `"http"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+path: null
+protocol: http
 
 ```
 
@@ -2044,4 +2115,32 @@ Example: ["IntrospectionQuery", "MeQuery"]
 **Items**
 
 **Item Type:** `string`  
+<a name="websocket"></a>
+## websocket: object
+
+Configuration of router's WebSocket server.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Enables/disables WebSocket connections.<br/><br/>By default, WebSockets are disabled.<br/><br/>You can override this setting by setting the `WEBSOCKET_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
+|**headers\_in\_connection\_init\_payload**|`boolean`|Whether to accept headers in the connection init payload of WebSocket connections.<br/><br/>Defaults to `true`.<br/><br/>For example, if the client sends a connection init message like:<br/><br/>```json<br/>{<br/>  "type": "connection_init",<br/>  "payload": {<br/>    "Authorization": "Bearer abc123"<br/>  }<br/>}<br/>```<br/><br/>The headers will be extracted and considered for the WebSocket connection to the subgraph<br/>respecting the header propagation rules as well as validating against any<br/>JWT rules defined in the configuration.<br/><br/>Note that there is no `headers` field in the payload, so all fields in the payload<br/>will be treated as headers when this option is enabled.<br/>Default: `true`<br/>||
+|**headers\_in\_operation\_extensions**|`boolean`|Whether to accept headers in the `extensions` field of the GraphQL operation inside WebSocket connections.<br/><br/>Defaults to `false`.<br/><br/>For example, if the client sends a GraphQL operation like:<br/><br/>```json<br/>{<br/>  "query": "subscription { greetings }",<br/>  "extensions": {<br/>    "headers": {<br/>      "Authorization": "Bearer abc123"<br/>    }<br/>  }<br/>}<br/>```<br/><br/>The headers will be extracted and considered for the WebSocket connection to the subgraph<br/>respecting the header propagation rules as well as validating against any<br/>JWT rules defined in the configuration.<br/><br/>Note that the connection init message payload can also contain headers, and those will be<br/>considered as well if `headers_in_connection_init_payload` is enabled. If the same header<br/>is defined both in the connection init message and in the operation extensions, the value<br/>from the operation extensions will take precedence<br/>Default: `false`<br/>||
+|**merge\_connection\_init\_payload\_with\_operation\_extensions\_headers**|`boolean`|Whether to merge and store headers for the duration of the WebSocket connection from both<br/>the connection init payload and the operation extensions on each operation.<br/><br/>Defaults to `false`.<br/><br/>Needs both `headers_in_connection_init_payload` and `headers_in_operation_extensions`<br/>to be enabled to have any effect.<br/><br/>This is useful when dealing with authentication using tokens that expire, where the<br/>initial connection might use one token, but subsequent operations might need to<br/>provide updated tokens in the operation extensions and then use that for further authentication.<br/><br/>Headers from the operation extensions will take precedence over those from the connection init<br/>payload when merging.<br/>Default: `false`<br/>||
+|**path**|`string`, `null`|The path to use for the WebSocket endpoint on the router.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>By default, the WebSocket endpoint will be available at the `http.graphql_endpoint` (defaults to `/graphql`)<br/>if no path is specified and the clients will connect using `ws://<router-url>/<graphql_endpoint>`.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+enabled: false
+headers_in_connection_init_payload: false
+headers_in_operation_extensions: false
+merge_connection_init_payload_with_operation_extensions_headers: false
+path: null
+
+```
+
 
