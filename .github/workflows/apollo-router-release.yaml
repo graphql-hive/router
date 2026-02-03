@@ -307,12 +307,12 @@ jobs:
           - os: ubuntu-latest
             file: router
             target: x86_64-unknown-linux-gnu
-            binary_name: linux_amd64
+            binary_name: linux
             runner_os: Linux
           - os: hive-linux-arm64-ubuntu2204
             file: router
             target: aarch64-unknown-linux-gnu
-            binary_name: linux
+            binary_name: linux_arm64
             runner_os: Linux-arm64
           - os: windows-latest
             file: router.exe
