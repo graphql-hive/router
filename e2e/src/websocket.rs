@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod websocket_e2e_tests {
     use futures::StreamExt;
-    use serde_json::json;
     use std::collections::HashMap;
 
     use crate::testkit_v2::TestRouterBuilder;
@@ -251,7 +250,7 @@ mod websocket_e2e_tests {
             wsconn,
             Some(ConnectionInitPayload::new(HashMap::from([(
                 "x-context".to_string(),
-                json!("my-context-value"),
+                serde_json::json!("my-init_payload-value"),
             )]))),
         )
         .await
@@ -288,7 +287,7 @@ mod websocket_e2e_tests {
                 .headers
                 .get("x-context")
                 .expect("expected x-context header to be present"),
-            "my-context-value",
+            "my-init_payload-value",
         )
     }
 }
