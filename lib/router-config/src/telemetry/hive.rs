@@ -155,7 +155,7 @@ fn default_max_spans_per_trace() -> u32 {
 }
 
 fn default_max_export_timeout() -> Duration {
-    Duration::from_millis(2000)
+    Duration::from_secs(5)
 }
 
 fn default_max_queue_size() -> u32 {
@@ -167,7 +167,7 @@ fn default_max_export_batch_size() -> u32 {
 }
 
 fn default_scheduled_delay() -> Duration {
-    Duration::from_millis(500)
+    Duration::from_secs(5)
 }
 
 fn default_max_concurrent_exports() -> u32 {
