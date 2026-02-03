@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod websocket_e2e_tests {
     use futures::StreamExt;
-    use serde_json::json;
+    use sonic_rs::json;
     use std::collections::HashMap;
 
     use crate::testkit_v2::TestRouterBuilder;

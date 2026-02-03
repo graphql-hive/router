@@ -4,7 +4,7 @@ use hive_router_plan_executor::execution::client_request_details::{
 };
 use hive_router_plan_executor::execution::plan::QueryPlanExecutionResult;
 use hive_router_plan_executor::executors::graphql_transport_ws::{
-    serde_to_sonic, ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
+    ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
 };
 use hive_router_plan_executor::executors::websocket_common::{
     handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
@@ -17,6 +17,7 @@ use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
+use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
@@ -244,7 +245,7 @@ async fn handle_text_frame(
                         if let Ok(val_str) = value.to_str() {
                             init_payload
                                 .fields
-                                .insert(key.as_str().to_string(), serde_json::Value::from(val_str));
+                                .insert(key.to_string(), Value::from(val_str));
                         }
                     }
                 }
@@ -253,17 +254,8 @@ async fn handle_text_frame(
             let mut payload = ExecutionRequest {
                 query: payload.query,
                 operation_name: payload.operation_name,
-                variables: payload
-                    .variables
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(k, v)| (k, serde_to_sonic(v)))
-                    .collect(),
-                extensions: payload.extensions.map(|ext| {
-                    ext.into_iter()
-                        .map(|(k, v)| (k, serde_to_sonic(v)))
-                        .collect()
-                }),
+                variables: payload.variables.unwrap_or_default(),
+                extensions: payload.extensions,
             };
 
             let parser_payload = match parse_operation_with_cache(shared_state, &payload).await {
@@ -470,25 +462,27 @@ async fn handle_text_frame(
     }
 }
 
-/// Parses headers from a serde_json::Map into a HeaderMap. Only stringifiable
+/// Parses headers from a sonic_rs::Object into a HeaderMap. Only stringifiable
 /// values are included; nulls, arrays, objects and other non-primitive values
 /// are ignored.
-fn parse_headers_from_object(
-    headers_obj: &serde_json::Map<String, serde_json::Value>,
-) -> HeaderMap {
+fn parse_headers_from_object(headers_obj: &sonic_rs::Object) -> HeaderMap {
     let mut header_map = HeaderMap::new();
 
-    for (key, value) in headers_obj {
-        let value_str = match value {
-            serde_json::Value::String(s) => Some(s.to_string()),
-            serde_json::Value::Bool(b) => Some(b.to_string()),
-            serde_json::Value::Number(n) => Some(n.to_string()),
-            _ => None, // ignore nulls, arrays, objects
+    for (key, value) in headers_obj.iter() {
+        let value_str = if let Some(s) = value.as_str() {
+            Some(s.to_string())
+        } else if let Some(b) = value.as_bool() {
+            Some(b.to_string())
+        } else if value.is_number() {
+            Some(value.to_string())
+        } else {
+            None // ignore nulls, arrays, objects
         };
 
         if let Some(val_str) = value_str {
+            let key_str: &str = key;
             if let (Ok(name), Ok(val)) = (
-                HeaderName::try_from(key.as_str()),
+                HeaderName::try_from(key_str),
                 HeaderValue::try_from(val_str),
             ) {
                 header_map.insert(name, val);
@@ -513,20 +507,17 @@ fn parse_headers_from_connection_init_payload(
         }
 
         // If no nested "headers" object, treat all top-level fields as potential headers
-        // Convert the entire fields HashMap to a serde_json::Map
-        let json_map: serde_json::Map<String, serde_json::Value> = payload
-            .fields
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        header_map = parse_headers_from_object(&json_map);
+        // Convert the entire fields HashMap to a sonic_rs::Object
+        let mut obj = sonic_rs::Object::new();
+        for (k, v) in payload.fields.iter() {
+            obj.insert(k, v.clone());
+        }
+        header_map = parse_headers_from_object(&obj);
     }
     header_map
 }
 
-fn parse_headers_from_extensions(
-    extensions: Option<&HashMap<String, serde_json::Value>>,
-) -> HeaderMap {
+fn parse_headers_from_extensions(extensions: Option<&HashMap<String, Value>>) -> HeaderMap {
     let mut header_map = HeaderMap::new();
     if let Some(ext) = extensions {
         if let Some(headers_value) = ext.get("headers") {
@@ -571,7 +562,7 @@ impl JwtError {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use sonic_rs::json;
 
     use super::*;
 
@@ -587,7 +578,7 @@ mod tests {
 
         let headers_obj = headers_json.as_object().expect("Failed to get object");
 
-        let headers = parse_headers_from_object(headers_obj);
+        let headers = parse_headers_from_object(&headers_obj);
 
         assert_eq!(
             headers.get("authorization").unwrap().to_str().unwrap(),

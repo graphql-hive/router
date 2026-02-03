@@ -8,6 +8,7 @@ use ntex::{
     rt,
     ws::{self, error::WsError, WsClient as NtexWsClient, WsConnection, WsSink},
 };
+use sonic_rs::Value;
 use tracing::{debug, error, trace};
 
 use crate::{
@@ -262,8 +263,8 @@ impl WsClient {
         &mut self,
         query: String,
         operation_name: Option<String>,
-        variables: Option<HashMap<String, serde_json::Value>>,
-        extensions: Option<HashMap<String, serde_json::Value>>,
+        variables: Option<HashMap<String, Value>>,
+        extensions: Option<HashMap<String, Value>>,
     ) -> LocalBoxStream<'static, SubgraphResponse<'static>> {
         let subscribe_id = self.next_subscription_id();
 

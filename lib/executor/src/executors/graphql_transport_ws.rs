@@ -2,6 +2,7 @@
 /// as per the spec: https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md
 use ntex::ws;
 use serde::{Deserialize, Serialize};
+use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 use std::collections::HashMap;
 use tracing::error;
 
@@ -71,23 +72,21 @@ impl From<CloseCode> for ws::Message {
     }
 }
 
-// Using serde_json::Value instead of sonic_rs::Value because sonic_rs::Value has
-// issues with internally-tagged enum deserialization (#[serde(tag = "type")]).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscribePayload {
     pub query: String,
     pub operation_name: Option<String>,
-    pub variables: Option<HashMap<String, serde_json::Value>>,
-    pub extensions: Option<HashMap<String, serde_json::Value>>,
+    pub variables: Option<HashMap<String, Value>>,
+    pub extensions: Option<HashMap<String, Value>>,
 }
 
 impl SubscribePayload {
     pub fn new(
         query: String,
         operation_name: Option<String>,
-        variables: Option<HashMap<String, serde_json::Value>>,
-        extensions: Option<HashMap<String, serde_json::Value>>,
+        variables: Option<HashMap<String, Value>>,
+        extensions: Option<HashMap<String, Value>>,
     ) -> Self {
         Self {
             query,
@@ -98,7 +97,7 @@ impl SubscribePayload {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     ConnectionInit {
@@ -113,6 +112,71 @@ pub enum ClientMessage {
     Complete {
         id: String,
     },
+}
+
+// using a custom deserializer due to compatibility issues
+// with internally-tagged enum deserialization #[serde(tag = "type")]
+impl<'de> Deserialize<'de> for ClientMessage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("expected object"))?;
+
+        let type_key = "type".to_string();
+        let msg_type = obj
+            .get(&type_key)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| serde::de::Error::missing_field("type"))?;
+
+        match msg_type {
+            "connection_init" => {
+                let payload_key = "payload".to_string();
+                let payload = obj
+                    .get(&payload_key)
+                    .filter(|v| !v.is_null())
+                    .map(|v| {
+                        sonic_rs::from_str(&v.to_string())
+                            .map_err(|e| serde::de::Error::custom(e.to_string()))
+                    })
+                    .transpose()?;
+                Ok(ClientMessage::ConnectionInit { payload })
+            }
+            "ping" => Ok(ClientMessage::Ping {}),
+            "pong" => Ok(ClientMessage::Pong {}),
+            "subscribe" => {
+                let id_key = "id".to_string();
+                let payload_key = "payload".to_string();
+                let id = obj
+                    .get(&id_key)
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| serde::de::Error::missing_field("id"))?
+                    .to_string();
+                let payload_value = obj
+                    .get(&payload_key)
+                    .ok_or_else(|| serde::de::Error::missing_field("payload"))?;
+                let payload: SubscribePayload = sonic_rs::from_str(&payload_value.to_string())
+                    .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+                Ok(ClientMessage::Subscribe { id, payload })
+            }
+            "complete" => {
+                let id_key = "id".to_string();
+                let id = obj
+                    .get(&id_key)
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| serde::de::Error::missing_field("id"))?
+                    .to_string();
+                Ok(ClientMessage::Complete { id })
+            }
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["connection_init", "ping", "pong", "subscribe", "complete"],
+            )),
+        }
+    }
 }
 
 impl ClientMessage {
@@ -150,39 +214,54 @@ impl From<ClientMessage> for ws::Message {
 }
 
 /// The connection init message payload MUST be a map of string to arbitrary JSON
-/// values as per the spec. We represent this as a HashMap<String, Value> and use
-/// serde(flatten) to capture all fields for easier parsing to headers later.
-//
-// Using serde_json::Value instead of sonic_rs::Value because sonic_rs::Value has
-// issues with internally-tagged enum deserialization (#[serde(tag = "type")]).
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// values as per the spec. We represent this as a HashMap<String, Value>.
+#[derive(Serialize, Debug, Clone)]
 pub struct ConnectionInitPayload {
     #[serde(flatten)]
-    pub fields: HashMap<String, serde_json::Value>,
+    pub fields: HashMap<String, Value>,
+}
+
+impl<'de> Deserialize<'de> for ConnectionInitPayload {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("expected object"))?;
+
+        let mut fields = HashMap::new();
+        for (k, v) in obj.iter() {
+            fields.insert(k.to_string(), v.clone());
+        }
+
+        Ok(ConnectionInitPayload { fields })
+    }
 }
 
 impl ConnectionInitPayload {
-    pub fn new(fields: HashMap<String, serde_json::Value>) -> Self {
+    pub fn new(fields: HashMap<String, Value>) -> Self {
         Self { fields }
     }
 }
 
 impl From<http::HeaderMap> for ConnectionInitPayload {
     fn from(headers: http::HeaderMap) -> Self {
-        let fields: HashMap<String, serde_json::Value> = headers
+        let fields: HashMap<String, Value> = headers
             .iter()
             .filter_map(|(name, value)| {
                 value
                     .to_str()
                     .ok()
-                    .map(|v| (name.to_string(), serde_json::Value::from(v)))
+                    .map(|v| (name.to_string(), Value::from(v)))
             })
             .collect();
         Self::new(fields)
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     ConnectionAck {
@@ -192,9 +271,7 @@ pub enum ServerMessage {
     Pong {},
     Next {
         id: String,
-        // using serde_json::Value instead of sonic_rs due to compatibility issues
-        // with internally-tagged enum deserialization (#[serde(tag = "type")])
-        payload: serde_json::Value,
+        payload: Value,
     },
     Error {
         id: String,
@@ -203,6 +280,78 @@ pub enum ServerMessage {
     Complete {
         id: String,
     },
+}
+
+// using a custom deserializer due to compatibility issues
+// with internally-tagged enum deserialization #[serde(tag = "type")]
+impl<'de> Deserialize<'de> for ServerMessage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("expected object"))?;
+
+        let type_key = "type".to_string();
+        let msg_type = obj
+            .get(&type_key)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| serde::de::Error::missing_field("type"))?;
+
+        match msg_type {
+            "connection_ack" => Ok(ServerMessage::ConnectionAck {}),
+            "ping" => Ok(ServerMessage::Ping {}),
+            "pong" => Ok(ServerMessage::Pong {}),
+            "next" => {
+                let id_key = "id".to_string();
+                let payload_key = "payload".to_string();
+                let id = obj
+                    .get(&id_key)
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| serde::de::Error::missing_field("id"))?
+                    .to_string();
+                let payload = obj.get(&payload_key).cloned().unwrap_or_else(Value::new);
+                Ok(ServerMessage::Next { id, payload })
+            }
+            "error" => {
+                let id_key = "id".to_string();
+                let payload_key = "payload".to_string();
+                let id = obj
+                    .get(&id_key)
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| serde::de::Error::missing_field("id"))?
+                    .to_string();
+                let payload_value = obj
+                    .get(&payload_key)
+                    .ok_or_else(|| serde::de::Error::missing_field("payload"))?;
+                let payload: Vec<GraphQLError> = sonic_rs::from_str(&payload_value.to_string())
+                    .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+                Ok(ServerMessage::Error { id, payload })
+            }
+            "complete" => {
+                let id_key = "id".to_string();
+                let id = obj
+                    .get(&id_key)
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| serde::de::Error::missing_field("id"))?
+                    .to_string();
+                Ok(ServerMessage::Complete { id })
+            }
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &[
+                    "connection_ack",
+                    "ping",
+                    "pong",
+                    "next",
+                    "error",
+                    "complete",
+                ],
+            )),
+        }
+    }
 }
 
 impl ServerMessage {
@@ -255,70 +404,5 @@ impl From<ServerMessage> for ws::Message {
                 CloseCode::InternalServerError(None).into()
             }
         }
-    }
-}
-
-/// A utility function that helps convert serde_json::Value to sonic_rs::Value.
-// We need this because we use serde_json::Value in some places due to
-// compatibility issues with internally-tagged enum deserialization (#[serde(tag = "type")]).
-pub fn serde_to_sonic(value: serde_json::Value) -> sonic_rs::Value {
-    match value {
-        serde_json::Value::Null => sonic_rs::Value::new(),
-        serde_json::Value::Bool(b) => sonic_rs::Value::from(b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                sonic_rs::Value::from(i)
-            } else if let Some(u) = n.as_u64() {
-                sonic_rs::Value::from(u)
-            } else if let Some(f) = n.as_f64() {
-                sonic_rs::Value::new_f64(f).unwrap_or_default()
-            } else {
-                sonic_rs::Value::new()
-            }
-        }
-        serde_json::Value::String(s) => sonic_rs::Value::from(s.as_str()),
-        serde_json::Value::Array(arr) => {
-            sonic_rs::Value::from(arr.into_iter().map(serde_to_sonic).collect::<Vec<_>>())
-        }
-        serde_json::Value::Object(obj) => {
-            let mut sonic_obj = sonic_rs::Object::new();
-            for (k, v) in obj {
-                sonic_obj.insert(&k, serde_to_sonic(v));
-            }
-            sonic_rs::Value::from(sonic_obj)
-        }
-    }
-}
-
-/// A utility function that helps convert sonic_rs::Value to serde_json::Value.
-// We need this because we use serde_json::Value in some places due to
-// compatibility issues with internally-tagged enum deserialization (#[serde(tag = "type")]).
-pub fn sonic_to_serde(value: sonic_rs::Value) -> serde_json::Value {
-    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
-
-    if value.is_null() {
-        serde_json::Value::Null
-    } else if let Some(b) = value.as_bool() {
-        serde_json::Value::Bool(b)
-    } else if let Some(s) = value.as_str() {
-        serde_json::Value::String(s.to_string())
-    } else if let Some(i) = value.as_i64() {
-        serde_json::Value::Number(serde_json::Number::from(i))
-    } else if let Some(u) = value.as_u64() {
-        serde_json::Value::Number(serde_json::Number::from(u))
-    } else if let Some(f) = value.as_f64() {
-        serde_json::Number::from_f64(f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null)
-    } else if let Some(arr) = value.as_array() {
-        serde_json::Value::Array(arr.iter().map(|v| sonic_to_serde(v.clone())).collect())
-    } else if let Some(obj) = value.as_object() {
-        let mut serde_obj = serde_json::Map::new();
-        for (k, v) in obj.iter() {
-            serde_obj.insert(k.to_string(), sonic_to_serde(v.clone()));
-        }
-        serde_json::Value::Object(serde_obj)
-    } else {
-        serde_json::Value::Null
     }
 }
