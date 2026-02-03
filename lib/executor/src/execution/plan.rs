@@ -1,7 +1,14 @@
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use bytes::{BufMut, Bytes};
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{
+    future::BoxFuture,
+    stream::{BoxStream, FuturesUnordered},
+    StreamExt,
+};
 use hive_router_query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
@@ -12,7 +19,7 @@ use sonic_rs::ValueRef;
 use crate::{
     context::ExecutionContext,
     execution::{
-        client_request_details::ClientRequestDetails,
+        client_request_details::{ClientRequestDetails, OperationDetails},
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
@@ -64,9 +71,170 @@ pub struct PlanExecutionOutput {
     pub error_count: usize,
 }
 
+pub struct PlanSubscriptionOutput {
+    pub body: BoxStream<'static, Vec<u8>>,
+    pub headers: HeaderMap,
+    pub error_count: usize,
+}
+
+pub enum QueryPlanExecutionResult {
+    Single(PlanExecutionOutput),
+    Stream(PlanSubscriptionOutput),
+}
+
 pub async fn execute_query_plan<'exec>(
     ctx: QueryPlanExecutionContext<'exec>,
-) -> Result<PlanExecutionOutput, PlanExecutionError> {
+) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
+    let (subscription_node, remaining_nodes) = match &ctx.query_plan.node {
+        // a subscription to a subgraph that contains all data and doesn't need entity resolution
+        Some(PlanNode::Subscription(sub)) => (Some(sub), None),
+        // a subscription that needs entity resolution. after emitting, it needs to execute the
+        // remaining plan nodes in the sequence
+        Some(PlanNode::Sequence(seq)) => match seq.nodes.first() {
+            Some(PlanNode::Subscription(sub)) => {
+                let remaining = if seq.nodes.len() > 1 {
+                    // TODO: why to_vec()? is it wasteful? it's actually a slice, we dont need it as Vec
+                    Some(seq.nodes[1..].to_vec())
+                } else {
+                    None
+                };
+                (Some(sub), remaining)
+            }
+            _ => (None, None),
+        },
+        _ => (None, None),
+    };
+
+    if let Some(sub) = subscription_node {
+        // subscription
+
+        // the primary (fetch node) of the subscription is the
+        // subscription destination, we execute it first and it
+        // would give us back a stream of results
+        let fetch_node = sub.primary.clone();
+
+        // we perform a regular subgraph request to the subscription subgraph
+        // the only difference is that we get back a stream of results
+        // TODO: should we instead assemble an executor and use it?
+        let mut headers_map = HeaderMap::new();
+        modify_subgraph_request_headers(
+            ctx.headers_plan,
+            &fetch_node.service_name,
+            ctx.client_request,
+            &mut headers_map,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || Some(fetch_node.service_name.clone()),
+            affected_path: || None,
+        })?;
+        let variable_refs =
+            select_fetch_variables(ctx.variable_values, fetch_node.variable_usages.as_ref());
+        let request = SubgraphExecutionRequest {
+            query: fetch_node.operation.document_str.as_str(),
+            dedupe: false,
+            operation_name: fetch_node.operation_name.as_deref(),
+            variables: variable_refs,
+            representations: None,
+            headers: headers_map,
+            extensions: None,
+        };
+        let response_stream = ctx
+            .executors
+            .subscribe(&fetch_node.service_name, request, ctx.client_request)
+            .await;
+
+        // we assemble a synthetic query plan for entity resolution from remaining nodes
+        // because we might need entity resolution after receiving each subscription event
+        let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan {
+            kind: "QueryPlan".to_string(),
+            node: remaining_nodes.map(|nodes| {
+                if nodes.len() == 1 {
+                    nodes.into_iter().next().unwrap()
+                } else {
+                    PlanNode::Sequence(SequenceNode { nodes })
+                }
+            }),
+        });
+
+        // clone all necessary data from the context for usage in the stream.
+        // the stream will move all of these values inside its closure
+        let projection_plan: Arc<[FieldProjectionPlan]> = ctx.projection_plan.into();
+        let headers_plan: Arc<HeaderRulesPlan> = ctx.headers_plan.clone().into();
+        let variable_values: Option<HashMap<String, sonic_rs::Value>> = ctx.variable_values.clone();
+        let extensions: Option<HashMap<String, sonic_rs::Value>> = ctx.extensions.clone();
+        let schema_metadata: Arc<SchemaMetadata> =
+            Arc::new(ctx.introspection_context.metadata.clone());
+        let operation_type_name: String = ctx.operation_type_name.to_string();
+        let executors: Arc<SubgraphExecutorMap> = ctx.executors.clone().into();
+        let jwt_auth_forwarding: Option<JwtAuthForwardingPlan> = ctx.jwt_auth_forwarding.clone();
+        let initial_errors: Vec<GraphQLError> = ctx.initial_errors.clone();
+
+        let client_method = ctx.client_request.method.clone();
+        let client_url = ctx.client_request.url.clone();
+        let client_headers = ctx.client_request.headers.clone();
+        let client_operation_name = ctx.client_request.operation.name.map(|s| s.to_string());
+        let client_operation_query = ctx.client_request.operation.query.to_string();
+        let client_operation_kind = ctx.client_request.operation.kind;
+        let client_jwt = ctx.client_request.jwt.clone();
+
+        let body_stream = Box::pin(async_stream::stream! {
+            let mut response_stream = response_stream;
+            while let Some(response) = response_stream.next().await {
+                let mut errors: Vec<GraphQLError> = initial_errors.clone();
+                if let Some(resp_errors) = response.errors {
+                    errors.extend(resp_errors);
+                }
+
+                // entity resolution or not, we will execute the plan with
+                // the necessary data from the subscription event and the
+                // plan executor will decide what to do in the most optimal way
+                let client_request = ClientRequestDetails {
+                    method: &client_method,
+                    url: &client_url,
+                    headers: &client_headers,
+                    operation: OperationDetails {
+                        name: client_operation_name.as_deref(),
+                        query: &client_operation_query,
+                        kind: client_operation_kind,
+                    },
+                    jwt: &client_jwt,
+                };
+                yield match execute_plan_with_initial_data(
+                    &query_plan,
+                    &projection_plan,
+                    &headers_plan,
+                    &variable_values,
+                    &extensions,
+                    &client_request,
+                    &schema_metadata,
+                    &operation_type_name,
+                    &executors,
+                    &jwt_auth_forwarding,
+                    errors,
+                    response.data,
+                )
+                .await
+                {
+                    Ok(output) => output.body,
+                    Err(_e) => {
+                        todo!();
+                    },
+                };
+            }
+        });
+
+        // TODO: Extract headers from response and aggregate them as you would with single responses
+        let headers = HeaderMap::new();
+
+        return Ok(QueryPlanExecutionResult::Stream(PlanSubscriptionOutput {
+            body: body_stream,
+            headers,
+            error_count: 0, // TODO: errors can only happen before streaming started
+        }));
+    }
+
+    // query/mutation
+
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
     } else if ctx.projection_plan.is_empty() {
@@ -75,21 +243,58 @@ pub async fn execute_query_plan<'exec>(
         Value::Object(Vec::new())
     };
 
-    let mut exec_ctx = ExecutionContext::new(ctx.query_plan, init_value, ctx.initial_errors);
-    let executor = Executor::new(
-        ctx.variable_values,
-        ctx.executors,
-        ctx.introspection_context.metadata,
-        ctx.client_request,
+    execute_plan_with_initial_data(
+        ctx.query_plan,
+        ctx.projection_plan,
         ctx.headers_plan,
+        ctx.variable_values,
+        &ctx.extensions,
+        ctx.client_request,
+        ctx.introspection_context.metadata,
+        ctx.operation_type_name,
+        ctx.executors,
         ctx.jwt_auth_forwarding,
+        ctx.initial_errors,
+        init_value,
+    )
+    .await
+    .map(QueryPlanExecutionResult::Single)
+}
+
+/// Core execution logic shared between regular plan execution and subscription event processing.
+/// Executes the plan nodes and projects the final response.
+#[allow(clippy::too_many_arguments)]
+async fn execute_plan_with_initial_data<'exec>(
+    query_plan: &'exec QueryPlan,
+    projection_plan: &[FieldProjectionPlan],
+    headers_plan: &'exec HeaderRulesPlan,
+    variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+    extensions: &Option<HashMap<String, sonic_rs::Value>>,
+    client_request: &'exec ClientRequestDetails<'exec>,
+    schema_metadata: &'exec SchemaMetadata,
+    operation_type_name: &str,
+    executors: &'exec SubgraphExecutorMap,
+    jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
+    initial_errors: Vec<GraphQLError>,
+    // extra arguments compared to QueryPlanExecutionContext
+    initial_data: Value<'_>,
+) -> Result<PlanExecutionOutput, PlanExecutionError> {
+    let mut exec_ctx = ExecutionContext::new(query_plan, initial_data, initial_errors);
+
+    let executor = Executor::new(
+        variable_values,
+        executors,
+        schema_metadata,
+        client_request,
+        headers_plan,
+        jwt_auth_forwarding,
         // Deduplicate subgraph requests only if the operation type is a query
-        ctx.operation_type_name == "Query",
+        operation_type_name == "Query",
     );
 
-    if ctx.query_plan.node.is_some() {
+    if query_plan.node.is_some() {
         executor
-            .execute(&mut exec_ctx, ctx.query_plan.node.as_ref())
+            .execute(&mut exec_ctx, query_plan.node.as_ref())
             .await?;
     }
 
@@ -105,12 +310,12 @@ pub async fn execute_query_plan<'exec>(
     let body = project_by_operation(
         final_response,
         exec_ctx.errors,
-        &ctx.extensions,
-        ctx.operation_type_name,
-        ctx.projection_plan,
-        ctx.variable_values,
+        extensions,
+        operation_type_name,
+        projection_plan,
+        variable_values,
         exec_ctx.response_storage.estimate_final_response_size(),
-        ctx.introspection_context.metadata,
+        schema_metadata,
     )
     .with_plan_context(LazyPlanContext {
         subgraph_name: || None,
@@ -123,7 +328,6 @@ pub async fn execute_query_plan<'exec>(
         error_count,
     })
 }
-
 pub struct Executor<'exec> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
@@ -215,6 +419,12 @@ impl<'exec> Executor<'exec> {
             Some(PlanNode::Fetch(node)) => self.execute_fetch_wave(ctx, node).await,
             Some(PlanNode::Parallel(node)) => self.execute_parallel_wave(ctx, node).await,
             Some(PlanNode::Sequence(node)) => self.execute_sequence_wave(ctx, node).await,
+            // When doing subscription entity resolution, we execute a query plan with the
+            // remainder of the nodes after the SubscriptionNode. In that case, the root
+            // can be a Flatten node and we need to start executing from there.
+            // TODO: is there a nicer way to do this?
+            // NOTE: this wont work `Some(PlanNode::Flatten(node)) => self.execute_plan_node(ctx, &node.node).await`
+            Some(PlanNode::Flatten(_)) => self.execute_plan_node(ctx, plan.unwrap()).await,
             // Plans produced by our Query Planner can only start with: Fetch, Sequence or Parallel.
             // Any other node type at the root is not supported, do nothing
             Some(_) => Ok(()),

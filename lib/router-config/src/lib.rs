@@ -13,6 +13,7 @@ pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
+pub mod subscriptions;
 pub mod supergraph;
 pub mod traffic_shaping;
 pub mod usage_reporting;
@@ -111,6 +112,10 @@ pub struct HiveRouterConfig {
     /// Configuration to enable or disable introspection queries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub introspection: Option<IntrospectionPermissionConfig>,
+
+    /// Configuration for subscriptions.
+    #[serde(default)]
+    pub subscriptions: subscriptions::SubscriptionsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

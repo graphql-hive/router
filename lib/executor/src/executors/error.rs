@@ -30,6 +30,10 @@ pub enum SubgraphExecutorError {
     ResponseDeserializationFailure(String),
     #[error("Failed to initialize or load native TLS root certificates: {0}")]
     NativeTlsCertificatesError(String),
+    #[error("Unsupported content-type {0} for subgraph '{1}'")]
+    UnsupportedContentTypeError(String, String),
+    #[error("Failed to handle subscription stream from '{0}': {1}")]
+    SubscriptionStreamError(String, String),
 }
 
 impl From<SubgraphExecutorError> for GraphQLError {
@@ -77,6 +81,12 @@ impl SubgraphExecutorError {
                 "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE"
             }
             SubgraphExecutorError::NativeTlsCertificatesError(_) => "SUBGRAPH_HTTPS_CERTS_FAILURE",
+            SubgraphExecutorError::UnsupportedContentTypeError(_, _) => {
+                "SUBGRAPH_UNSUPPORTED_CONTENT_TYPE"
+            }
+            SubgraphExecutorError::SubscriptionStreamError(_, _) => {
+                "SUBGRAPH_SUBSCRIPTION_STREAM_ERROR"
+            }
         }
     }
 }
