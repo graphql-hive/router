@@ -1,4 +1,4 @@
-name: apollo-router-release
+name: apollo-router plugin
 on:
   # For PRs, this pipeline will use the commit ID as Docker image tag and R2 artifact prefix.
   pull_request:
@@ -30,6 +30,7 @@ jobs:
   # 2. Check if there are changes in the Cargo.toml file in the current commit
   # 3. If there are changes, check if the image tag exists in the GitHub Container Registry
   find-changes:
+    name: find changes for apollo-router release
     runs-on: ubuntu-22.04
     if: ${{ !github.event.pull_request.head.repo.fork }}
     outputs:
@@ -85,7 +86,7 @@ jobs:
 
   # Builds Rust crates, and creates Docker images
   dockerize:
-    name: image-build-and-dockerize (${{ matrix.platform }})
+    name: image build and dockerize apollo-router (${{ matrix.platform }})
     needs:
       - find-changes
       - publish-rust
@@ -248,31 +249,10 @@ jobs:
           fi
 
   # Build and publish Rust crates and binaries
-
-  detect-changes:
-    if: ${{ needs.find-changes.outputs.should_release == 'true' }}
-    needs:
-      - find-changes
-    runs-on: ubuntu-22.04
-    outputs:
-      rust_changed: ${{ steps.rust_changed.outputs.rust_changed }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          fetch-depth: 2
-      - name: Look for changes
-        id: rust_changed
-        run: |
-          lines=$( git diff HEAD~ HEAD --name-only -- 'bin/router' 'Cargo.toml' 'Cargo.lock' | wc -l )
-          if [ $lines -gt 0 ]; then
-              echo 'rust_changed=true' >> $GITHUB_OUTPUT
-          fi
-
   test-rust:
+    name: test apollo-router plugin
     needs: 
-      - detect-changes
       - find-changes
-    if: needs.detect-changes.outputs.rust_changed == 'true'
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -310,8 +290,7 @@ jobs:
         run: cargo test
 
   publish-rust:
-    needs: [find-changes, detect-changes, test-rust]
-    if: needs.detect-changes.outputs.rust_changed == 'true'
+    needs: [find-changes, test-rust]
     strategy:
       fail-fast: false
       matrix:
@@ -320,18 +299,23 @@ jobs:
             file: router
             target: x86_64-unknown-linux-gnu
             os_name: linux
+            runner_os: Linux
           - os: hive-linux-arm64-ubuntu2204
             file: router
             target: aarch64-unknown-linux-gnu
             os_name: linux-arm64
+            runner_os: Linux-arm64
           - os: windows-latest
             file: router.exe
             target: x86_64-pc-windows-msvc
             os_name: win
+            runner_os: Windows
           - os: macos-latest
             file: router
             target: x86_64-apple-darwin
             os_name: macos
+            runner_os: macOS
+    name: publish apollo-router binary (${{ matrix.runner_os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
 
@@ -361,11 +345,11 @@ jobs:
         uses: actions/cache@v3
         with:
           path: apollo-router-workspace/target
-          key: apollo-router-target-${{ runner.os }}-build-${{ hashFiles('**/Cargo.lock') }}
+          key: apollo-router-target-${{ matrix.runner_os }}-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            apollo-router-target-${{ runner.os }}-build-${{ hashFiles('**/Cargo.lock') }}
-            apollo-router-target-${{ runner.os }}-build-
-            apollo-router-target-${{ runner.os }}-
+            apollo-router-target-${{ matrix.runner_os }}-build-${{ hashFiles('**/Cargo.lock') }}
+            apollo-router-target-${{ matrix.runner_os }}-build-
+            apollo-router-target-${{ matrix.runner_os }}-
             apollo-router-target-
 
       - name: Build
@@ -373,7 +357,7 @@ jobs:
           cargo build --release --target ${{ matrix.target }}
 
       - name: Strip binary from debug symbols
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        if: ${{ runner.os == 'Linux' }}
         run: strip ./target/${{ matrix.target }}/release/router
 
       - name: Compress
