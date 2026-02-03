@@ -17,6 +17,7 @@ pub mod subscriptions;
 pub mod supergraph;
 pub mod traffic_shaping;
 pub mod usage_reporting;
+pub mod websocket;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
@@ -116,6 +117,10 @@ pub struct HiveRouterConfig {
     /// Configuration for subscriptions.
     #[serde(default)]
     pub subscriptions: subscriptions::SubscriptionsConfig,
+
+    /// Configuration of router's WebSocket server.
+    #[serde(default)]
+    pub websocket: websocket::WebSocketConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
