@@ -3,13 +3,14 @@ FROM debian:bookworm-slim AS runtime
 ARG DEBUG_IMAGE=false
 ARG REPO_URL=https://github.com/graphql-hive/router
 ARG BASE_VERSION
+ARG TARGETARCH
 
 # Add a user to run the router as
 RUN useradd -m router
 
 WORKDIR /dist
 
-COPY --from=config --chown=root:root router.tar.gz /dist
+COPY --from=config --chown=root:root --chmod=755 ./target/linux/${TARGETARCH}/router /dist
 
 # Update apt and install ca-certificates
 RUN \
@@ -34,6 +35,8 @@ RUN mkdir config schema
 # Copy configuration for docker image
 COPY --from=router_pkg router.yaml /dist/config/router.yaml
 
+LABEL org.opencontainers.image.title="graphql-hive/apollo-router"
+LABEL org.opencontainers.image.description="Apollo Router for GraphQL Hive."
 LABEL org.opencontainers.image.authors="The Guild ${REPO_URL}"
 LABEL org.opencontainers.image.source="${REPO_URL}"
 LABEL org.opencontainers.image.version="${BASE_VERSION}"

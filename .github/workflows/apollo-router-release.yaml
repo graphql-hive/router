@@ -24,6 +24,14 @@ defaults:
   run:
     working-directory: ./apollo-router-workspace
 
+env:
+  DOCKER_IMAGE_NAME: ghcr.io/graphql-hive/router
+  DOCKER_LICENSE: MIT
+  DOCKER_VENDOR: theguild
+  DOCKER_PLATFORMS: linux/amd64,linux/arm64
+  ZIG_VERSION: 0.15.1
+  BINARY_NAME: hive_router
+  
 jobs:
   # This script is doing the following:
   # 1. Get the version of the apollo-router and the plugin from the Cargo.toml file
@@ -91,19 +99,7 @@ jobs:
       - find-changes
       - publish-rust
     if: ${{ needs.find-changes.outputs.should_release == 'true' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - builder: hive-linux-x64-ubuntu2204
-            platform: linux/amd64
-            binary_name: linux
-            suffix: '-amd64'
-          - builder: hive-linux-arm64-ubuntu2204
-            platform: linux/arm64
-            binary_name: linux-arm64
-            suffix: '-arm64'
-    runs-on: ${{ matrix.builder }}
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
       packages: write
@@ -143,15 +139,25 @@ jobs:
           replace-with: '_'
 
       - name: Download artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: router-${{ matrix.binary_name }}
-          path: ./apollo-router-workspace/router.tar.gz
+          path: artifacts
+          pattern: apollo_router_*
+
+      - name: prepare artifacts
+        run: |
+          mkdir -p ./target/linux/arm64
+          mkdir -p ./target/linux/amd64
+
+          mv ./artifacts/apollo_router_linux_arm64/router ./target/linux/arm64/router
+          mv ./artifacts/apollo_router_linux_amd64/router ./target/linux/amd64/router
+          ls -ltra ./target/linux/arm64/
+          ls -ltra ./target/linux/amd64/
           
-      - name: build docker images (${{ matrix.platform }})
+      - name: build docker images
         timeout-minutes: 60
         id: docker-bake
-        uses: docker/bake-action@5ca506d06f70338a4968df87fd8bfee5cbfb84c7 # v6.0.0
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         env:
           DOCKER_REGISTRY: ghcr.io/${{ github.repository_owner }}/
           COMMIT_SHA: ${{ needs.find-changes.outputs.release_version }}
@@ -166,7 +172,8 @@ jobs:
           # See https://github.com/docker/buildx/issues/1533
           provenance: false
           push: true
-          files: ./apollo-router-workspace/docker/docker.hcl
+          file: ${{ github.workspace }}/apollo-router-workspace/docker/router.Dockerfile
+          platforms: ${{ env.DOCKER_PLATFORMS }}
           targets: apollo-router-hive-build
           source: .
           set: |
@@ -298,17 +305,18 @@ jobs:
           - os: ubuntu-latest
             file: router
             target: x86_64-unknown-linux-gnu
-            os_name: linux
+            os_name: linux_amd64
             runner_os: Linux
           - os: hive-linux-arm64-ubuntu2204
             file: router
             target: aarch64-unknown-linux-gnu
-            os_name: linux-arm64
+            os_name: linux_arm64
             runner_os: Linux-arm64
           - os: windows-latest
             file: router.exe
             target: x86_64-pc-windows-msvc
             os_name: win
+            arch: amd64
             runner_os: Windows
           - os: macos-latest
             file: router
@@ -363,11 +371,13 @@ jobs:
       - name: Compress
         run: tar -czvf ./router.tar.gz -C ./target/${{ matrix.target }}/release ${{ matrix.file }}
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        name: upload router artifact
         with:
-          name: router-${{ matrix.os_name }}
-          path: ./apollo-router-workspace/router.tar.gz
+          name: apollo_router_${{ matrix.os_name }}
+          path: |
+            target/${{ matrix.target }}/release/${{ matrix.file }}
+          if-no-files-found: error
 
       - name: Upload to R2 (${{ needs.find-changes.outputs.release_version }})
         uses: randomairborne/r2-release@9cbc35a2039ee2ef453a6988cd2a85bb2d7ba8af # v1.0.2
