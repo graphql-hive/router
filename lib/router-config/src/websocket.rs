@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct WebSocketConfig {
-    /// Enables/disables WebSocket connections. By default, WebSockets are disabled.
+    /// Enables/disables WebSocket connections.
+    ///
+    /// By default, WebSockets are disabled.
     ///
     /// You can override this setting by setting the `WEBSOCKET_ENABLED` environment variable to `true` or `false`.
     #[serde(default)]
@@ -45,6 +47,8 @@ pub struct WebSocketConfig {
 
     /// Whether to accept headers in the `extensions` field of the GraphQL operation inside WebSocket connections.
     ///
+    /// Defaults to `false`.
+    ///
     /// For example, if the client sends a GraphQL operation like:
     ///
     /// ```json
@@ -63,15 +67,14 @@ pub struct WebSocketConfig {
     /// JWT rules defined in the configuration.
     ///
     /// Note that the connection init message payload can also contain headers, and those will be
-    /// considered as well. If the same header is defined both in the connection init message
-    /// and in the operation extensions, the value from the operation extensions will take precedence
-    /// if this option is enabled.
+    /// considered as well if `headers_in_connection_init_payload` is enabled. If the same header
+    /// is defined both in the connection init message and in the operation extensions, the value
+    /// from the operation extensions will take precedence
     #[serde(default)]
     pub headers_in_operation_extensions: bool,
 
-    /// Whether to merge headers from both connection init payload and operation extensions for WebSocket
-    /// connections. Meaning, headers from both sources will be combined, with operation extensions
-    /// taking precedence in case of conflicts.
+    /// Whether to merge and store headers for the duration of the WebSocket connection from both
+    /// the connection init payload and the operation extensions on each operation.
     ///
     /// Defaults to `false`.
     ///
@@ -81,8 +84,11 @@ pub struct WebSocketConfig {
     /// This is useful when dealing with authentication using tokens that expire, where the
     /// initial connection might use one token, but subsequent operations might need to
     /// provide updated tokens in the operation extensions and then use that for further authentication.
+    ///
+    /// Headers from the operation extensions will take precedence over those from the connection init
+    /// payload when merging.
     #[serde(default)]
-    pub merge_connection_init_payload_and_operation_extensions_headers: bool,
+    pub merge_connection_init_payload_with_operation_extensions_headers: bool,
 }
 
 fn default_headers_in_connection_init_payload() -> bool {
