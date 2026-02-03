@@ -88,7 +88,7 @@ target "target-publish" {
 target "apollo-router" {
   inherits = ["router-base", get_target()]
   contexts = {
-    router_pkg = "${PWD}/bin/router"
+    router_pkg = "${PWD}"
     config = "${PWD}"
     root_dir = "${PWD}/.."
     router_binary_dir = "${ROUTER_BINARY_DIR}"

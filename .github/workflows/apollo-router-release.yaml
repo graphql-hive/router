@@ -5,18 +5,12 @@ on:
     branches:
       - main
     paths:
-      - 'apollo-router-workspace/bin/router/**'
-      - 'apollo-router-workspace/docker/router.dockerfile'
-      - 'apollo-router-workspace/Cargo.lock'
-      - 'apollo-router-workspace/Cargo.toml'
+      - 'apollo-router-workspace/**'
   # For `main` changes, this pipeline will look for changes in Rust crates or plugin versioning, and
   # publish them only if changes are found and image does not exists in GH Packages.
   push:
     paths:
-      - 'apollo-router-workspace/bin/router/**'
-      - 'apollo-router-workspace/docker/router.dockerfile'
-      - 'apollo-router-workspace/Cargo.lock'
-      - 'apollo-router-workspace/Cargo.toml'
+      - 'apollo-router-workspace/**'
     branches:
       - main
 
@@ -64,8 +58,8 @@ jobs:
           image_name="apollo-router"
           github_org="graphql-hive"
           router_version=$(cargo tree -i apollo-router --quiet | head -n 1 | awk -F" v" '{print $2}')
-          plugin_version=$(grep '^version' bin/router/Cargo.toml | sed 's/version *= *"\(.*\)"/\1/')
-          has_changes=$(git diff HEAD~ HEAD --name-only -- 'bin/router/Cargo.toml' 'Cargo.lock')
+          plugin_version=$(grep '^version' Cargo.toml | sed 's/version *= *"\(.*\)"/\1/')
+          has_changes=$(git diff HEAD~ HEAD --name-only -- 'Cargo.toml' 'Cargo.lock')
 
           if [ "$has_changes" ]; then
             image_tag_version="router${router_version}-plugin${plugin_version}"
