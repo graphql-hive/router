@@ -176,7 +176,7 @@ async fn handle_text_frame(
             state.borrow_mut().init_payload = payload;
             state.borrow_mut().complete_handshake();
 
-            let _ = sink.send(ServerMessage::ack().into()).await;
+            let _ = sink.send(ServerMessage::ack()).await;
 
             debug!("Connection acknowledged");
 
@@ -208,7 +208,7 @@ async fn handle_text_frame(
                     );
                     return Some(ServerMessage::error(
                         &id,
-                        &vec![GraphQLError::from_message_and_extensions(
+                        &[GraphQLError::from_message_and_extensions(
                             "No supergraph available yet".to_string(),
                             GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
                         )],
@@ -560,7 +560,7 @@ impl PipelineError {
             GraphQLErrorExtensions::new_from_code(code),
         );
 
-        ServerMessage::error(id, &vec![graphql_error])
+        ServerMessage::error(id, &[graphql_error])
     }
 }
 
@@ -569,7 +569,7 @@ impl JwtError {
     fn into_server_message(&self, id: &str) -> ws::Message {
         ServerMessage::error(
             id,
-            &vec![GraphQLError::from_message_and_code(
+            &[GraphQLError::from_message_and_code(
                 self.to_string(),
                 self.error_code(),
             )],

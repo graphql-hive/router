@@ -267,13 +267,10 @@ impl WsClient {
 
         let _ = self
             .sink
-            .send(
-                ClientMessage::subscribe(
-                    subscribe_id.clone(),
-                    SubscribePayload::new(query, operation_name, variables, extensions),
-                )
-                .into(),
-            )
+            .send(ClientMessage::subscribe(
+                subscribe_id.clone(),
+                SubscribePayload::new(query, operation_name, variables, extensions),
+            ))
             .await;
 
         trace!(id = %subscribe_id, "Subscribe message sent");
@@ -351,7 +348,7 @@ impl Drop for SubscriptionGuard {
 
             // sending is async, so spawn a task to do it
             rt::spawn(async move {
-                let _ = sink.send(ClientMessage::complete(id.clone()).into()).await;
+                let _ = sink.send(ClientMessage::complete(id.clone())).await;
             });
         }
     }
@@ -418,7 +415,7 @@ impl Drop for DispatcherGuard {
 async fn send_and_is_closed(sink: WsSink, msg: ws::Message) -> bool {
     let is_close = matches!(msg, ws::Message::Close(_));
     let _ = sink.send(msg).await;
-    return is_close;
+    is_close
 }
 
 fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {

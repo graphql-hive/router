@@ -154,14 +154,14 @@ pub fn parse_frame_to_text<T>(
                 Ok(s) => Ok(s),
                 Err(e) => {
                     error!("Invalid UTF-8 in WebSocket message: {}", e);
-                    return Err(FrameNotParsedToText::Message(ws::Message::Close(Some(
+                    Err(FrameNotParsedToText::Message(ws::Message::Close(Some(
                         // this one is not in the CloseCode enum because it's an internal WebSocket
                         // transport error that has nothing to do with GraphQL over WebSockets
                         ws::CloseReason {
                             code: ws::CloseCode::Unsupported,
                             description: Some("Invalid UTF-8 in message".into()),
                         },
-                    ))));
+                    ))))
                 }
             }
         }
