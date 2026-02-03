@@ -27,9 +27,10 @@ use opentelemetry_otlp::{
     Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig,
 };
 use opentelemetry_sdk::{
+    runtime,
     trace::{
-        self, BatchConfigBuilder, BatchSpanProcessor, IdGenerator, Sampler, SdkTracerProvider,
-        SpanProcessor, TracerProviderBuilder,
+        self, span_processor_with_async_runtime, BatchConfigBuilder, IdGenerator, Sampler,
+        SdkTracerProvider, SpanProcessor, TracerProviderBuilder,
     },
     Resource,
 };
@@ -192,18 +193,27 @@ fn build_batched_span_processor(
     config: &BatchProcessorConfig,
     resource: &Resource,
     exporter: impl trace::SpanExporter + 'static,
-) -> BatchSpanProcessor {
-    let mut processor = BatchSpanProcessor::builder(exporter)
-        .with_batch_config(
-            BatchConfigBuilder::default()
-                .with_max_concurrent_exports(config.max_concurrent_exports as usize)
-                .with_max_export_batch_size(config.max_export_batch_size as usize)
-                .with_max_export_timeout(config.max_export_timeout)
-                .with_max_queue_size(config.max_queue_size as usize)
-                .with_scheduled_delay(config.scheduled_delay)
-                .build(),
-        )
-        .build();
+) -> impl SpanProcessor {
+    // In order to use non-blocking reqwest client,
+    // we need to use BatchSpanProcessor from the span_processor_with_async_runtime module,
+    // and also pass a current-thread runtime.
+    // Otherwise it will panic and if we switch to blocking reqwest client,
+    // then we will break the hive-console export pipeline.
+    // Yeah, fun stuff. Very fun. Yeah.
+    let mut processor = span_processor_with_async_runtime::BatchSpanProcessor::builder(
+        exporter,
+        runtime::TokioCurrentThread,
+    )
+    .with_batch_config(
+        BatchConfigBuilder::default()
+            .with_max_concurrent_exports(config.max_concurrent_exports as usize)
+            .with_max_export_batch_size(config.max_export_batch_size as usize)
+            .with_max_export_timeout(config.max_export_timeout)
+            .with_max_queue_size(config.max_queue_size as usize)
+            .with_scheduled_delay(config.scheduled_delay)
+            .build(),
+    )
+    .build();
 
     processor.set_resource(resource);
 
