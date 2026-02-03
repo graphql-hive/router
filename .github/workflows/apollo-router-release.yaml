@@ -222,7 +222,7 @@ jobs:
 
             **Targets**: `apollo-router-hive-build`
 
-            **Platforms**: `${{ env.DOCKER_PLATFORMS }}`
+            **Platform**: `${{ matrix.platform }}`
 
             **Image Tag**: `${{ needs.find-changes.outputs.release_version }}`
 
