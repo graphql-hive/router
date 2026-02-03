@@ -12,6 +12,10 @@ impl Function for Env {
         "env"
     }
 
+    fn usage(&self) -> &'static str {
+        "env(name, default)"
+    }
+
     fn parameters(&self) -> &'static [Parameter] {
         &[
             Parameter {
