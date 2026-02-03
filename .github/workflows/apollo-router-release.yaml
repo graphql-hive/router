@@ -88,6 +88,7 @@ jobs:
     name: image-build-and-dockerize (${{ matrix.platform }})
     needs:
       - find-changes
+      - publish-rust
     if: ${{ needs.find-changes.outputs.should_release == 'true' }}
     strategy:
       fail-fast: false
@@ -95,9 +96,11 @@ jobs:
         include:
           - builder: hive-linux-x64-ubuntu2204
             platform: linux/amd64
+            binary_name: linux
             suffix: '-amd64'
           - builder: hive-linux-arm64-ubuntu2204
             platform: linux/arm64
+            binary_name: linux-arm64
             suffix: '-arm64'
     runs-on: ${{ matrix.builder }}
     permissions:
@@ -137,6 +140,12 @@ jobs:
           flags: 'g'
           string: ${{ github.ref }}-apollo-router-hive-build-${{ matrix.platform }}
           replace-with: '_'
+
+      - name: Download artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: router-${{ matrix.binary_name }}
+          path: ./apollo-router-workspace/router.tar.gz
           
       - name: build docker images (${{ matrix.platform }})
         timeout-minutes: 60
@@ -311,6 +320,10 @@ jobs:
             file: router
             target: x86_64-unknown-linux-gnu
             os_name: linux
+          - os: hive-linux-arm64-ubuntu2204
+            file: router
+            target: aarch64-unknown-linux-gnu
+            os_name: linux-arm64
           - os: windows-latest
             file: router.exe
             target: x86_64-pc-windows-msvc

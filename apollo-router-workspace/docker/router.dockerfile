@@ -1,48 +1,3 @@
-# syntax=docker/dockerfile:1
-FROM scratch AS router_pkg
-FROM scratch AS config
-
-FROM rust:1.91.1-slim-bookworm AS build
-
-# Required by Apollo Router
-RUN apt-get update
-RUN apt-get -y install npm protobuf-compiler cmake
-RUN rm -rf /var/lib/apt/lists/*
-RUN update-ca-certificates
-RUN rustup component add rustfmt
-
-# Move root files and the root Cargo files (Not only lib because the root workspace has all of them)
-# At the end, it will only copy `build` so we don't bloat the image with unnecessary files
-COPY --from=root_dir lib /lib
-COPY --from=root_dir bin/dev-cli /bin/dev-cli
-COPY --from=root_dir bin/router /bin/router
-COPY --from=root_dir e2e /e2e
-COPY --from=root_dir bench/subgraphs /bench/subgraphs
-COPY --from=root_dir Cargo.toml /
-COPY --from=root_dir Cargo.lock /
-
-WORKDIR /usr/src
-# Create blank projects
-RUN USER=root cargo new router
-
-# Copy Cargo files
-COPY --from=router_pkg Cargo.toml /usr/src/router/
-COPY --from=config Cargo.lock /usr/src/router/
-
-WORKDIR /usr/src/router
-# Get the dependencies cached, so we can use dummy input files so Cargo wont fail
-RUN echo 'fn main() { println!(""); }' > ./src/main.rs
-RUN echo 'fn main() { println!(""); }' > ./src/lib.rs
-RUN cargo build --release --target-dir /usr/src/router/target
-
-# Copy in the actual source code
-COPY --from=router_pkg src ./src
-RUN touch ./src/main.rs
-RUN touch ./src/lib.rs
-
-# Real build this time
-RUN cargo build --release --target-dir /usr/src/router/target
-
 # Runtime -> https://github.com/apollographql/router/blob/dev/dockerfiles/Dockerfile.router#L23
 FROM debian:bookworm-slim AS runtime
 
@@ -62,8 +17,12 @@ RUN mkdir -p /dist/config
 RUN mkdir /dist/schema
 
 # Copy in the required files from our build image
-COPY --from=build --chown=root:root /usr/src/router/target/release/router /dist
+COPY --from=config --chown=root:root router.tar.gz /dist
 COPY --from=router_pkg router.yaml /dist/config/router.yaml
+
+# Extract the router binary
+RUN tar -xvf /dist/router.tar.gz -C /dist
+RUN rm /dist/router.tar.gz
 
 WORKDIR /dist
 
