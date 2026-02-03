@@ -26,21 +26,31 @@ impl SupergraphFetcher<SupergraphFetcherAsyncState> {
                 req = req.header(IF_NONE_MATCH, etag);
             }
             let resp_fut = async {
-                let mut resp = req.send().await.map_err(SupergraphFetcherError::Network);
-                // Server errors (5xx) are considered errors
-                if let Ok(ok_res) = resp {
-                    resp = if ok_res.status().is_server_error() {
-                        return Err(SupergraphFetcherError::Network(
-                            reqwest_middleware::Error::Middleware(anyhow::anyhow!(
-                                "Server error: {}",
-                                ok_res.status()
-                            )),
-                        ));
-                    } else {
-                        Ok(ok_res)
-                    }
-                }
-                resp
+                req.send()
+                    .await
+                    .map_err(SupergraphFetcherError::Network)
+                    .and_then(|resp| {
+                        // Server 5xx and Client 4xx errors are considered errors
+                        if resp.status().is_server_error() {
+                            return Err(SupergraphFetcherError::Network(
+                                reqwest_middleware::Error::Middleware(anyhow::anyhow!(
+                                    "Server error: {}",
+                                    resp.status()
+                                )),
+                            ));
+                        }
+
+                        if resp.status().is_client_error() {
+                            return Err(SupergraphFetcherError::Network(
+                                reqwest_middleware::Error::Middleware(anyhow::anyhow!(
+                                    "Server error: {}",
+                                    resp.status()
+                                )),
+                            ));
+                        }
+
+                        Ok(resp)
+                    })
             };
             let resp = circuit_breaker
                 .call(resp_fut)
@@ -50,6 +60,7 @@ impl SupergraphFetcher<SupergraphFetcherAsyncState> {
                     recloser::Error::Rejected => SupergraphFetcherError::RejectedByCircuitBreaker,
                 })
                 .await;
+
             match resp {
                 Err(err) => {
                     last_error = Some(err);

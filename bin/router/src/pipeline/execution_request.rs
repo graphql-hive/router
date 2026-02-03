@@ -95,9 +95,7 @@ pub async fn get_execution_request_from_http_request(
                 .uri()
                 .query()
                 .ok_or_else(|| PipelineError::GetInvalidQueryParams)?;
-            let query_params = Query::<GETQueryParams>::from_query(query_params_str)
-                .map_err(PipelineError::GetUnprocessableQueryParams)?
-                .0;
+            let query_params = Query::<GETQueryParams>::from_query(query_params_str)?.0;
 
             trace!("parsed GET query params: {:?}", query_params);
 

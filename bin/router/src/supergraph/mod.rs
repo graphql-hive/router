@@ -44,7 +44,7 @@ pub fn resolve_from_config(
             let key = key.as_ref().ok_or(LoadSupergraphError::MissingHiveCDNKey)?;
 
             Ok(SupergraphHiveConsoleLoader::try_new(
-                endpoint.clone(),
+                endpoint.clone().into(),
                 key,
                 *poll_interval,
                 *connect_timeout,

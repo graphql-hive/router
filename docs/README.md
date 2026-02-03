@@ -1874,7 +1874,7 @@ Loads a supergraph from Hive Console CDN.
 |----|----|-----------|--------|
 |**accept\_invalid\_certs**|`boolean`|Whether to accept invalid TLS certificates when connecting to the Hive Console CDN.<br/>Default: `false`<br/>|no|
 |**connect\_timeout**|`string`|Connect timeout for the Hive Console CDN requests.<br/>Default: `"10s"`<br/>|no|
-|**endpoint**|`string`, `null`|The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|no|
+|**endpoint**||The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|no|
 |**key**|`string`, `null`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|no|
 |**poll\_interval**|`string`|Interval at which the Hive Console should be polled for changes.<br/><br/>Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.<br/>Default: `"10s"`<br/>|no|
 |**request\_timeout**|`string`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|no|

@@ -2077,7 +2077,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "anyhow",
  "async-dropper-simple",
@@ -2107,7 +2107,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.33"
+version = "0.0.35"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2164,7 +2164,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-config"
-version = "0.0.18"
+version = "0.0.20"
 dependencies = [
  "config",
  "envconfig",
@@ -2181,7 +2181,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-internal"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2200,7 +2200,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "6.3.5"
+version = "6.3.6"
 dependencies = [
  "ahash",
  "async-stream",
@@ -3615,9 +3615,9 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
 name = "oneshot"
-version = "0.1.11"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ce411919553d3f9fa53a0880544cda985a112117a0444d5ff1e870a893d6ea"
+checksum = "269bca4c2591a28585d6bf10d9ed0332b7d76900a1b02bec41bdc3a2cdcda107"
 
 [[package]]
 name = "onig"

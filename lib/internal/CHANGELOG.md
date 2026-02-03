@@ -1,3 +1,9 @@
+## 0.0.8 (2026-01-27)
+
+### Fixes
+
+- Bump version to fix release and dependencies issues
+
 ## 0.0.7 (2026-01-22)
 
 ### Fixes

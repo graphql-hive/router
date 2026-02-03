@@ -53,7 +53,7 @@ pub enum PipelineError {
     MutationNotAllowedOverHttpGet,
     #[error("Failed to parse query parameters")]
     #[strum(serialize = "UNPROCESSABLE_QUERY_PARAMS")]
-    GetUnprocessableQueryParams(QueryPayloadError),
+    GetUnprocessableQueryParams(#[from] QueryPayloadError),
 
     // GraphQL-specific errors
     #[error("Failed to parse GraphQL request payload")]
@@ -67,10 +67,10 @@ pub enum PipelineError {
     FailedToParseExtensions(sonic_rs::Error),
     #[error("Failed to parse GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_FAILED")]
-    FailedToParseOperation(graphql_tools::parser::query::ParseError),
+    FailedToParseOperation(#[from] graphql_tools::parser::query::ParseError),
     #[error("Failed to normalize GraphQL operation")]
     #[strum(serialize = "OPERATION_RESOLUTION_FAILURE")]
-    NormalizationError(NormalizationError),
+    NormalizationError(#[from] NormalizationError),
     #[error("Failed to collect GraphQL variables: {0}")]
     #[strum(serialize = "BAD_USER_INPUT")]
     VariablesCoercionError(String),
@@ -82,13 +82,13 @@ pub enum PipelineError {
     AuthorizationFailed(Vec<AuthorizationError>),
     #[error("Failed to execute a plan: {0}")]
     #[strum(serialize = "PLAN_EXECUTION_FAILED")]
-    PlanExecutionError(PlanExecutionError),
+    PlanExecutionError(#[from] PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
     #[strum(serialize = "QUERY_PLAN_BUILD_FAILED")]
-    PlannerError(Arc<PlannerError>),
+    PlannerError(#[from] Arc<PlannerError>),
     #[error(transparent)]
     #[strum(serialize = "OVERRIDE_LABEL_EVALUATION_FAILED")]
-    LabelEvaluationError(LabelEvaluationError),
+    LabelEvaluationError(#[from] LabelEvaluationError),
 
     // HTTP Security-related errors
     #[error("Required CSRF header(s) not present")]
@@ -98,10 +98,10 @@ pub enum PipelineError {
     // JWT-auth plugin errors
     #[error(transparent)]
     #[strum(serialize = "JWT_ERROR")]
-    JwtError(JwtError),
+    JwtError(#[from] JwtError),
     #[error("Failed to forward jwt: {0}")]
     #[strum(serialize = "JWT_FORWARDING_ERROR")]
-    JwtForwardingError(JwtForwardingError),
+    JwtForwardingError(#[from] JwtForwardingError),
 
     // Introspection permission errors
     #[error("Failed to evaluate introspection expression: {0}")]

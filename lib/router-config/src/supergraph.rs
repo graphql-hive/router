@@ -3,7 +3,9 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::{file_path::FilePath, retry_policy::RetryPolicyConfig};
+use crate::primitives::{
+    file_path::FilePath, retry_policy::RetryPolicyConfig, single_or_multiple::SingleOrMultiple,
+};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, tag = "source")]
@@ -32,7 +34,7 @@ pub enum SupergraphSource {
         /// The CDN endpoint from Hive Console target.
         ///
         /// Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.
-        endpoint: Option<String>,
+        endpoint: Option<SingleOrMultiple<String>>,
         /// The CDN Access Token with from the Hive Console target.
         ///
         /// Can also be set using the `HIVE_CDN_KEY` environment variable.

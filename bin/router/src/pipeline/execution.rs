@@ -79,13 +79,6 @@ pub async fn execute_plan(
         .with_plan_context(LazyPlanContext {
             subgraph_name: || None,
             affected_path: || None,
-        })
-        .map_err(|err| {
-            tracing::error!(
-                "Failed to project query plan to extensions during dry-run: {}",
-                err
-            );
-            PipelineError::PlanExecutionError(err)
         })?;
 
         return Ok(QueryPlanExecutionResult::Single(PlanExecutionOutput {
@@ -109,13 +102,12 @@ pub async fn execute_plan(
                     .jwt
                     .forward_claims_to_upstream_extensions
                     .field_name,
-            )
-            .map_err(PipelineError::JwtForwardingError)?
+            )?
     } else {
         None
     };
 
-    execute_query_plan(QueryPlanExecutionContext {
+    let result = execute_query_plan(QueryPlanExecutionContext {
         query_plan: planned_request.query_plan_payload,
         projection_plan: &planned_request.normalized_payload.projection_plan,
         headers_plan: &app_state.headers_plan,
@@ -132,9 +124,7 @@ pub async fn execute_plan(
             .map(|e| e.into())
             .collect(),
     })
-    .await
-    .map_err(|err| {
-        tracing::error!("Failed to execute query plan: {}", err);
-        PipelineError::PlanExecutionError(err)
-    })
+    .await?;
+
+    Ok(result)
 }

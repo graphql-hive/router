@@ -66,6 +66,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.20 (2026-01-27)
+
+### Fixes
+
+- Bump version to fix release and dependencies issues
+
+#### Support multiple endpoints in Hive CDN Supergraph config
+
+In order to support a Secondary CDN endpoint for better reliability, the Hive CDN Supergraph configuration has been updated to allow specifying either a single endpoint or multiple endpoints.
+This change enables users to provide a list of CDN endpoints, enhancing the robustness of their supergraph setup.
+
+[Learn more about it in the relevant Hive Console documentation here](https://the-guild.dev/graphql/hive/docs/schema-registry/high-availability-resilence).
+
+```diff
+supergraph:
+    source: hive
+-    endpoint: https://cdn-primary.example.com/supergraph
++    endpoint:
++       - https://cdn-primary.example.com/supergraph
++       - https://cdn-secondary.example.com/supergraph
+```
+
+## 0.0.19 (2026-01-26)
+
+### Fixes
+
+#### Better error handling for configuration loading
+
+- In case of an invalid environment variables, do not crash with `panic` but provide a clear error message with a proper error type.
+- In case of failing to get the current working directory, provide a clear error message instead of crashing with `panic`.
+- In case of failing to parse the configuration file path, provide a clear error message instead of crashing with `panic`.
+
 ## 0.0.18 (2026-01-22)
 
 ### Features

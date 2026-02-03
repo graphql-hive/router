@@ -22,8 +22,8 @@ use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
+use std::{collections::HashMap, convert::Infallible};
 
 use crate::{
     env_overrides::{EnvVarOverrides, EnvVarOverridesError},
@@ -124,6 +124,12 @@ pub enum RouterConfigError {
     ConfigLoadError(#[from] config::ConfigError),
     #[error("Failed to apply configuration overrides: {0}")]
     EnvVarOverridesError(#[from] EnvVarOverridesError),
+    #[error("Failed to load the environment variables: {0}")]
+    EnvVarLoadError(#[from] envconfig::Error),
+    #[error("Failed to get the current directory: {0}")]
+    CurrentDirError(std::io::Error),
+    #[error("Failed to parse the configuration file path: {0}")]
+    ConfigPathParseError(Infallible),
 }
 
 static DEFAULT_FILE_NAMES: &[&str] = &[
@@ -133,23 +139,27 @@ static DEFAULT_FILE_NAMES: &[&str] = &[
     "router.config.json5",
 ];
 
+fn get_current_dir() -> Result<PathBuf, RouterConfigError> {
+    std::env::current_dir().map_err(RouterConfigError::CurrentDirError)
+}
+
 pub fn load_config(
     overide_config_path: Option<String>,
 ) -> Result<HiveRouterConfig, RouterConfigError> {
-    let env_overrides = EnvVarOverrides::init_from_env().expect("failed to init env overrides");
+    let env_overrides = EnvVarOverrides::init_from_env()?;
     let mut config = Config::builder();
-    let mut config_root_path = std::env::current_dir().expect("failed to get current directory");
+    let mut config_root_path = get_current_dir()?;
 
     if let Some(path_str) = overide_config_path {
         let path_buf = path_str
             .parse::<std::path::PathBuf>()
-            .expect("failed to parse config file path");
+            .map_err(RouterConfigError::ConfigPathParseError)?;
         let path_dupe = path_buf.clone();
         let parent_dir = path_dupe.parent().unwrap();
         let as_file: File<FileSourceFile, _> = path_buf.into();
 
         config = config.add_source(as_file.required(true));
-        config_root_path = config_root_path.clone().join(parent_dir);
+        config_root_path = config_root_path.join(parent_dir);
     } else {
         for name in DEFAULT_FILE_NAMES {
             config = config.add_source(File::with_name(name).required(false));
@@ -167,8 +177,8 @@ pub fn load_config(
     Ok(base_cfg)
 }
 
-pub fn parse_yaml_config(config_raw: String) -> Result<HiveRouterConfig, config::ConfigError> {
-    let config_root_path = std::env::current_dir().expect("failed to get current directory");
+pub fn parse_yaml_config(config_raw: String) -> Result<HiveRouterConfig, RouterConfigError> {
+    let config_root_path = get_current_dir()?;
     let config = Config::builder();
 
     with_start_path(&config_root_path, || {
@@ -177,4 +187,5 @@ pub fn parse_yaml_config(config_raw: String) -> Result<HiveRouterConfig, config:
             .build()?
             .try_deserialize::<HiveRouterConfig>()
     })
+    .map_err(RouterConfigError::ConfigLoadError)
 }

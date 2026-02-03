@@ -49,6 +49,13 @@ impl SupergraphFetcher<SupergraphFetcherSyncState> {
                                             ok_res.status()
                                         )),
                                     ))
+                                } else if ok_res.status().is_client_error() {
+                                    return Err(SupergraphFetcherError::Network(
+                                        reqwest_middleware::Error::Middleware(anyhow::anyhow!(
+                                            "Client error: {}",
+                                            ok_res.status()
+                                        )),
+                                    ));
                                 } else {
                                     Ok(ok_res)
                                 }

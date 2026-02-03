@@ -105,14 +105,11 @@ pub async fn graphql_request_handler(
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
             .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
-            .await
-            .map_err(PipelineError::JwtError)?
+            .await?
         {
             Some(jwt_context) => JwtRequestDetails::Authenticated {
                 scopes: jwt_context.extract_scopes(),
-                claims: jwt_context
-                    .get_claims_value()
-                    .map_err(PipelineError::JwtForwardingError)?,
+                claims: jwt_context.get_claims_value()?,
                 token: jwt_context.token_raw,
                 prefix: jwt_context.token_prefix,
             },
@@ -279,8 +276,7 @@ pub async fn execute_pipeline<'exec>(
     let progressive_override_ctx = request_override_context(
         &shared_state.override_labels_evaluator,
         client_request_details,
-    )
-    .map_err(PipelineError::LabelEvaluationError)?;
+    )?;
 
     let decision = enforce_operation_authorization(
         &shared_state.router_config,

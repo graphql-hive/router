@@ -1,12 +1,17 @@
 #[cfg(test)]
 mod supergraph_e2e_tests {
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
+    use mockito::Mock;
     use ntex::{time, web::test};
-    use sonic_rs::{from_slice, JsonValueTrait, Value};
+    use sonic_rs::{from_slice, to_string_pretty, JsonValueTrait, Value};
 
     use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
+        init_graphql_request, init_router_from_config_inline, wait_for_readiness, EnvVarGuard,
+        SubgraphsServer,
     };
 
     #[ntex::test]
@@ -86,7 +91,7 @@ mod supergraph_e2e_tests {
     /// 6. New request should use the new supergraph and new state, so running the same query should fail now with a validation error.
     #[ntex::test]
     async fn should_not_change_supergraph_for_in_flight_requests() {
-        std::env::set_var("SUBGRAPH_DELAY_MS", "500");
+        let _delay_guard = EnvVarGuard::new("SUBGRAPH_DELAY_MS", "500");
         let _subgraphs_server = SubgraphsServer::start().await;
 
         let mut server = mockito::Server::new_async().await;
@@ -232,5 +237,151 @@ mod supergraph_e2e_tests {
 
         assert!(json_body["data"].is_null());
         assert!(json_body["errors"].is_array());
+    }
+
+    #[ntex::test]
+    async fn should_be_resilient_to_supergraph_polling_errors() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        // We want: Initial (200) -> Error (429) -> Error (404) -> Final (200)
+        let mock_initial = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("type Query { initial: String }")
+            .create();
+
+        let test_app = init_router_from_config_inline(&format!(
+            r#"supergraph:
+              source: hive
+              endpoint: http://{host}/supergraph
+              key: dummy_key
+              poll_interval: 50ms
+        "#,
+        ))
+        .await
+        .expect("failed to start router");
+
+        wait_for_readiness(&test_app.app).await;
+        mock_initial.assert();
+
+        // Check if initial supergraph is working
+        let resp = test::call_service(
+            &test_app.app,
+            init_graphql_request(r#"{ __type(name: "Query") { fields { name } } }"#, None)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(resp.status(), 200);
+        let body = test::read_body(resp).await;
+        let json: Value = from_slice(&body).unwrap();
+        insta::assert_snapshot!(to_string_pretty(&json).unwrap(), @r#"
+        {
+          "data": {
+            "__type": {
+              "fields": [
+                {
+                  "name": "initial"
+                }
+              ]
+            }
+          }
+        }
+        "#);
+        mock_initial.remove();
+
+        let mock_404 = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(404)
+            .create();
+
+        wait_until_mock_matched(&mock_404, Duration::from_millis(200))
+            .await
+            .expect("Expected to match 404 mock");
+
+        // Give it some time to process it
+        time::sleep(Duration::from_millis(50)).await;
+
+        // Router should still be using the initial supergraph
+        let resp = test::call_service(
+            &test_app.app,
+            init_graphql_request(r#"{ __type(name: "Query") { fields { name } } }"#, None)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(resp.status(), 200);
+        let body = test::read_body(resp).await;
+        let json: Value = from_slice(&body).unwrap();
+        insta::assert_snapshot!(to_string_pretty(&json).unwrap(), @r#"
+        {
+          "data": {
+            "__type": {
+              "fields": [
+                {
+                  "name": "initial"
+                }
+              ]
+            }
+          }
+        }
+        "#);
+
+        mock_404.remove();
+
+        let mock_final = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("type Query { updated: String }")
+            .create();
+
+        wait_until_mock_matched(&mock_final, Duration::from_millis(120))
+            .await
+            .expect("Expected to match final mock");
+        mock_final.assert();
+        // Give it some time to process it
+        time::sleep(Duration::from_millis(200)).await;
+
+        // Check if final supergraph is working
+        let resp = test::call_service(
+            &test_app.app,
+            init_graphql_request(r#"{ __type(name: "Query") { fields { name } } }"#, None)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(resp.status(), 200);
+        let body = test::read_body(resp).await;
+        let json: Value = from_slice(&body).unwrap();
+        insta::assert_snapshot!(to_string_pretty(&json).unwrap(), @r#"
+        {
+          "data": {
+            "__type": {
+              "fields": [
+                {
+                  "name": "updated"
+                }
+              ]
+            }
+          }
+        }
+        "#);
+    }
+
+    async fn wait_until_mock_matched(mock: &Mock, timeout: Duration) -> Result<(), String> {
+        let now = Instant::now();
+        loop {
+            if mock.matched_async().await {
+                return Ok(());
+            }
+            time::sleep(Duration::from_millis(10)).await;
+
+            if now.elapsed() > timeout {
+                return Err(format!("timeout after {:?}", now.elapsed()));
+            }
+        }
     }
 }

@@ -32,7 +32,7 @@ jobs:
   config:
     name: check / config
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router/v'))
     steps:
       - name: checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -72,7 +72,7 @@ jobs:
       github.event_name == 'push' || github.event_name == 'pull_request' || (
         github.event_name == 'release' &&
         (
-          startsWith(github.event.release.tag_name, 'router/v') ||
+          startsWith(github.event.release.tag_name, 'hive-router/v') ||
           startsWith(github.event.release.tag_name, 'node-addon/v')
         )
       )
@@ -156,7 +156,7 @@ jobs:
 
       - name: Upload binaries to router release
         uses: svenstaro/upload-release-action@6b7fa9f267e90b50a19fef07b3596790bb941741 # v2
-        if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v')
+        if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router/v')
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
@@ -247,7 +247,7 @@ jobs:
           mv ./artifacts/${{ env.BINARY_NAME }}_linux_amd64/${{ env.BINARY_NAME }} ./target/linux/amd64/${{ env.BINARY_NAME }}
           ls -ltra ./target/linux/arm64/
           ls -ltra ./target/linux/amd64/
-      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
