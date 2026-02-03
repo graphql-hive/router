@@ -1431,6 +1431,7 @@ dependencies = [
  "mockito",
  "ntex",
  "reqwest",
+ "serde_json",
  "sonic-rs",
  "subgraphs",
  "tempfile",

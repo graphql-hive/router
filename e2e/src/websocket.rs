@@ -1,10 +1,13 @@
 #[cfg(test)]
 mod websocket_e2e_tests {
     use futures::StreamExt;
+    use serde_json::json;
     use std::collections::HashMap;
 
     use crate::testkit_v2::TestRouterBuilder;
-    use hive_router_plan_executor::executors::websocket_client::WsClient;
+    use hive_router_plan_executor::executors::{
+        graphql_transport_ws::ConnectionInitPayload, websocket_client::WsClient,
+    };
 
     #[ntex::test]
     async fn query_over_websocket() {
@@ -34,7 +37,7 @@ mod websocket_e2e_tests {
             .subscribe(
                 r#"
                 query {
-                    topProducts(first: 2) {
+                    topProducts {
                         name
                         upc
                     }
@@ -216,5 +219,76 @@ mod websocket_e2e_tests {
             count2 > 0,
             "Expected to receive at least one event from stream2"
         );
+    }
+
+    #[ntex::test]
+    async fn header_propagation_from_connection_init_payload() {
+        let router = TestRouterBuilder::new()
+            .with_subgraphs()
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                headers:
+                    all:
+                        request:
+                            - propagate:
+                                named: x-context
+                websocket:
+                    enabled: true
+                    # default headers_in_connection_init_payload: true
+                "#,
+            )
+            .build()
+            .start()
+            .await
+            .expect("Failed to start test router");
+
+        let wsconn = router.ws().await;
+
+        let mut client = WsClient::init(
+            wsconn,
+            Some(ConnectionInitPayload::new(HashMap::from([(
+                "x-context".to_string(),
+                json!("my-context-value"),
+            )]))),
+        )
+        .await
+        .expect("Failed to init WsClient");
+
+        let mut stream = client
+            .subscribe(
+                r#"
+                query {
+                    topProducts {
+                        name
+                        upc
+                    }
+                }
+                "#
+                .to_string(),
+                None,
+                HashMap::new(),
+                None,
+            )
+            .await;
+
+        stream.next().await.expect("Expected a response");
+
+        let products_requests = router
+            .get_subgraph_requests_log("products")
+            .await
+            .expect("expected requests sent to products subgraph");
+        let last_products_request = products_requests
+            .last()
+            .expect("expected at least one request to products subgraph");
+        assert_eq!(
+            last_products_request
+                .headers
+                .get("x-context")
+                .expect("expected x-context header to be present"),
+            "my-context-value",
+        )
     }
 }

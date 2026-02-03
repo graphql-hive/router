@@ -13,6 +13,7 @@ ntex = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
 sonic-rs = { workspace = true }
+serde_json = { workspace = true }
 lazy_static = { workspace = true }
 jsonwebtoken = { workspace = true }
 insta = { workspace = true }

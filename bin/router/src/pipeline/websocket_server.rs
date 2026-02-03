@@ -17,7 +17,7 @@ use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
-use sonic_rs::{JsonContainerTrait, JsonValueTrait};
+use sonic_rs::JsonContainerTrait;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
@@ -246,7 +246,7 @@ async fn handle_text_frame(
                         if let Ok(val_str) = value.to_str() {
                             init_payload
                                 .fields
-                                .insert(key.as_str().to_string(), sonic_rs::Value::from(val_str));
+                                .insert(key.as_str().to_string(), serde_json::Value::from(val_str));
                         }
                     }
                 }
@@ -465,28 +465,27 @@ async fn handle_text_frame(
     }
 }
 
-/// Parses headers from a sonic_rs::Object into a HeaderMap. Only stringifiable
+/// Parses headers from a serde_json::Map into a HeaderMap. Only stringifiable
 /// values are included; nulls, arrays, objects and other non-primitive values
 /// are ignored.
-fn parse_headers_from_object(headers_obj: &sonic_rs::Object) -> HeaderMap {
+fn parse_headers_from_object(
+    headers_obj: &serde_json::Map<String, serde_json::Value>,
+) -> HeaderMap {
     let mut header_map = HeaderMap::new();
 
     for (key, value) in headers_obj {
-        let value_str = if let Some(s) = value.as_str() {
-            Some(s.to_string())
-        } else if let Some(b) = value.as_bool() {
-            Some(b.to_string())
-        } else if let Some(i) = value.as_i64() {
-            Some(i.to_string())
-        } else if let Some(f) = value.as_f64() {
-            Some(f.to_string())
-        } else {
-            None // ignore nulls, arrays, objects and whatever else
+        let value_str = match value {
+            serde_json::Value::String(s) => Some(s.to_string()),
+            serde_json::Value::Bool(b) => Some(b.to_string()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None, // ignore nulls, arrays, objects
         };
 
         if let Some(val_str) = value_str {
-            if let (Ok(name), Ok(val)) = (HeaderName::try_from(key), HeaderValue::try_from(val_str))
-            {
+            if let (Ok(name), Ok(val)) = (
+                HeaderName::try_from(key.as_str()),
+                HeaderValue::try_from(val_str),
+            ) {
                 header_map.insert(name, val);
             }
         }
@@ -500,11 +499,22 @@ fn parse_headers_from_connection_init_payload(
 ) -> HeaderMap {
     let mut header_map = HeaderMap::new();
     if let Some(payload) = payload {
+        // First check if there's a nested "headers" object
         if let Some(headers_prop) = payload.fields.get("headers") {
             if let Some(headers_obj) = headers_prop.as_object() {
                 header_map = parse_headers_from_object(headers_obj);
+                return header_map;
             }
         }
+
+        // If no nested "headers" object, treat all top-level fields as potential headers
+        // Convert the entire fields HashMap to a serde_json::Map
+        let json_map: serde_json::Map<String, serde_json::Value> = payload
+            .fields
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        header_map = parse_headers_from_object(&json_map);
     }
     header_map
 }
@@ -516,7 +526,18 @@ fn parse_headers_from_extensions(
     if let Some(ext) = extensions {
         if let Some(headers_value) = ext.get("headers") {
             if let Some(headers_obj) = headers_value.as_object() {
-                header_map = parse_headers_from_object(headers_obj);
+                // convert sonic_rs::Object to serde_json::Map for processing
+                let json_map: serde_json::Map<String, serde_json::Value> = headers_obj
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        // convert sonic_rs::Value to serde_json::Value via JSON string
+                        sonic_rs::to_string(v)
+                            .ok()
+                            .and_then(|s| serde_json::from_str(&s).ok())
+                            .map(|json_val| (k.to_string(), json_val))
+                    })
+                    .collect();
+                header_map = parse_headers_from_object(&json_map);
             }
         }
     }
@@ -556,7 +577,7 @@ impl JwtError {
 
 #[cfg(test)]
 mod tests {
-    use sonic_rs::json;
+    use serde_json::json;
 
     use super::*;
 

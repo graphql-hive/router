@@ -125,27 +125,30 @@ impl From<ClientMessage> for ws::Message {
 /// The connection init message payload MUST be a map of string to arbitrary JSON
 /// values as per the spec. We represent this as a HashMap<String, Value> and use
 /// serde(flatten) to capture all fields for easier parsing to headers later.
+///
+/// Using serde_json::Value instead of sonic_rs::Value because sonic_rs::Value has
+/// issues with flattened HashMap deserialization.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectionInitPayload {
     #[serde(flatten)]
-    pub fields: HashMap<String, sonic_rs::Value>,
+    pub fields: HashMap<String, serde_json::Value>,
 }
 
 impl ConnectionInitPayload {
-    pub fn new(fields: HashMap<String, sonic_rs::Value>) -> Self {
+    pub fn new(fields: HashMap<String, serde_json::Value>) -> Self {
         Self { fields }
     }
 }
 
 impl From<http::HeaderMap> for ConnectionInitPayload {
     fn from(headers: http::HeaderMap) -> Self {
-        let fields: HashMap<String, sonic_rs::Value> = headers
+        let fields: HashMap<String, serde_json::Value> = headers
             .iter()
             .filter_map(|(name, value)| {
                 value
                     .to_str()
                     .ok()
-                    .map(|v| (name.to_string(), sonic_rs::Value::from(v)))
+                    .map(|v| (name.to_string(), serde_json::Value::from(v)))
             })
             .collect();
         Self::new(fields)
