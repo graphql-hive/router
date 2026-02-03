@@ -116,14 +116,6 @@ jobs:
         if: ${{ matrix.zigbuild }}
         with:
           version: ${{ env.ZIG_VERSION }}
-        # openssl headers are required for building the websocket client (websocket_client.rs)
-        # which depends on openssl-sys. zigbuild needs these headers to be present on the build
-        # host even when cross-compiling. pkg-config is needed because the openssl-sys build script
-        # uses it to locate the OpenSSL installation and headers. Without pkg-config, even if
-        # libssl-dev is installed, the build script won't be able to find it automatically
-      - name: install openssl dependencies
-        if: ${{ matrix.zigbuild }}
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
       - run: cargo install cargo-zigbuild
         name: install zigbuild
         if: ${{ matrix.zigbuild }}
