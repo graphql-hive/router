@@ -1,7 +1,7 @@
 # Based on https://github.com/apollographql/router/blob/dev/dockerfiles/Dockerfile.router#L23
 FROM debian:bookworm-slim AS runtime
 ARG DEBUG_IMAGE=false
-ARG REPO_URL=https://github.com/graphql-hive/router
+ARG REPO_URL=https://github.com/graphql-hive/router/blob/main/apollo-router-workspace
 ARG BASE_VERSION
 
 # Add a user to run the router as
