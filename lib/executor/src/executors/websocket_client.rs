@@ -293,17 +293,9 @@ impl WsClient {
                 id: subscribe_id,
             };
 
-            loop {
-                match rx.next().await {
-                    Some(response) => {
-                        // the response specific to THIS subscription (matching by id)
-                        yield response;
-                    }
-                    None => {
-                        // channel closed
-                        break;
-                    }
-                }
+            while let Some(response) = rx.next().await {
+                // the response specific to THIS subscription (matching by id)
+                yield response;
             }
         })
     }

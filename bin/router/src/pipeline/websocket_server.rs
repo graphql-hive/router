@@ -531,18 +531,7 @@ fn parse_headers_from_extensions(
     if let Some(ext) = extensions {
         if let Some(headers_value) = ext.get("headers") {
             if let Some(headers_obj) = headers_value.as_object() {
-                // convert sonic_rs::Object to serde_json::Map for processing
-                let json_map: serde_json::Map<String, serde_json::Value> = headers_obj
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        // convert sonic_rs::Value to serde_json::Value via JSON string
-                        sonic_rs::to_string(v)
-                            .ok()
-                            .and_then(|s| serde_json::from_str(&s).ok())
-                            .map(|json_val| (k.to_string(), json_val))
-                    })
-                    .collect();
-                header_map = parse_headers_from_object(&json_map);
+                header_map = parse_headers_from_object(headers_obj);
             }
         }
     }
