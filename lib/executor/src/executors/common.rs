@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use http::HeaderMap;
 use sonic_rs::Value;
 
-use crate::response::subgraph_response::SubgraphResponse;
+use crate::{
+    executors::error::SubgraphExecutorError, response::subgraph_response::SubgraphResponse,
+};
 
 #[async_trait]
 pub trait SubgraphExecutor {
@@ -12,7 +14,7 @@ pub trait SubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> SubgraphResponse<'a>;
+    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError>;
 
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
     where
