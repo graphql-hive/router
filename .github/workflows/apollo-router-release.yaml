@@ -23,14 +23,6 @@ on:
 defaults:
   run:
     working-directory: ./apollo-router-workspace
-
-env:
-  DOCKER_IMAGE_NAME: ghcr.io/graphql-hive/router
-  DOCKER_LICENSE: MIT
-  DOCKER_VENDOR: theguild
-  DOCKER_PLATFORMS: linux/amd64,linux/arm64
-  ZIG_VERSION: 0.15.1
-  BINARY_NAME: hive_router
   
 jobs:
   # This script is doing the following:
@@ -95,8 +87,7 @@ jobs:
   # Builds Rust crates, and creates Docker images
   dockerize:
     name: image build and dockerize apollo-router (${{ matrix.platform }})
-    needs:
-      - find-changes
+    needs: find-changes
     if: ${{ needs.find-changes.outputs.should_release == 'true' }}
     strategy:
       fail-fast: false
@@ -229,9 +220,7 @@ jobs:
   # Test the Docker image, if it was published
   test-image:
     name: test apollo-router docker image
-    needs:
-      - dockerize
-      - find-changes
+    needs: dockerize
     runs-on: ubuntu-22.04
     env:
       HIVE_TOKEN: ${{ secrets.HIVE_TOKEN }}
@@ -289,8 +278,7 @@ jobs:
   # Build and publish Rust crates and binaries
   test-rust:
     name: test apollo-router plugin
-    needs: 
-      - find-changes
+    needs: find-changes
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -328,7 +316,7 @@ jobs:
         run: cargo test
 
   publish-rust:
-    needs: [find-changes, test-rust]
+    needs: find-changes
     strategy:
       fail-fast: false
       matrix:

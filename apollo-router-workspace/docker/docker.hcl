@@ -36,6 +36,10 @@ variable "BUILD_PLATFORM" {
   default = "linux/amd64,linux/arm64"
 }
 
+variable "ROUTER_BINARY_DIR" {
+  default = env("ROUTER_BINARY_DIR")
+}
+
 function "get_target" {
   params = []
   result = notequal("", BUILD_TYPE) ? notequal("ci", BUILD_TYPE) ? "target-publish" : "target-ci" : "target-dev"
