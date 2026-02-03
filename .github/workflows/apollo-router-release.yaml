@@ -366,7 +366,7 @@ jobs:
 
       - name: Strip binary from debug symbols
         if: ${{ runner.os == 'Linux' }}
-        run: strip ./target/${{ matrix.target }}/release/router
+        run: strip ./target/${{ matrix.target }}/release/${{ matrix.file }}
 
       - name: Compress
         run: tar -czvf ./router.tar.gz -C ./target/${{ matrix.target }}/release ${{ matrix.file }}
@@ -376,7 +376,7 @@ jobs:
         with:
           name: apollo_router_${{ matrix.os_name }}
           path: |
-            target/${{ matrix.target }}/release/${{ matrix.file }}
+            ./apollo-router-workspace/target/${{ matrix.target }}/release/${{ matrix.file }}
           if-no-files-found: error
 
       - name: Upload to R2 (${{ needs.find-changes.outputs.release_version }})
