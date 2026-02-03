@@ -68,14 +68,14 @@ strum = { version = "0.27.2", features = ["derive"] }
 opentelemetry = "0.31.0"
 opentelemetry_sdk = "0.31.0"
 opentelemetry-prometheus = "0.29.1"
-opentelemetry-http = { version = "0.31.0", default-features = false, features = ["internal-logs", "reqwest-blocking", "reqwest-rustls"]}
-opentelemetry-otlp = { version = "0.31.0", default-features = false, features = ["reqwest-blocking-client", "reqwest-rustls", "http-proto", "internal-logs", "logs", "metrics", "trace"] }
+opentelemetry-http = { version = "0.31.0", default-features = false, features = ["internal-logs", "reqwest", "reqwest-rustls"]}
+opentelemetry-otlp = { version = "0.31.0", default-features = false, features = ["reqwest-client", "reqwest-rustls", "http-proto", "internal-logs", "logs", "metrics", "trace"] }
 opentelemetry-proto = "0.31.0"
 prost = "0.14.2"
 opentelemetry-stdout = "0.31.0"
 opentelemetry-appender-tracing = "0.31.1"
 opentelemetry-jaeger-propagator = "0.31.0"
-opentelemetry-zipkin = { version = "0.31.0", default-features = false, features=["reqwest-rustls", "reqwest-blocking-client"] }
+opentelemetry-zipkin = { version = "0.31.0", default-features = false, features=["reqwest-rustls", "reqwest-client"] }
 tracing = "0.1.44"
 tracing-opentelemetry = "0.32.0"
 tracing-subscriber = { version = "0.3.22", features = [
