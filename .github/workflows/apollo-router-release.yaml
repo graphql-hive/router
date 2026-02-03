@@ -97,7 +97,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - builder: hive-linux-x64-ubuntu2204
+          - builder: ubuntu-22.04
             platform: linux/amd64
             suffix: '-amd64'
             cache_key: Linux
@@ -224,7 +224,9 @@ jobs:
   # Test the Docker image, if it was published
   test-image:
     name: test apollo-router docker image
-    needs: dockerize
+    needs: 
+      - find-changes
+      - dockerize
     runs-on: ubuntu-22.04
     env:
       HIVE_TOKEN: ${{ secrets.HIVE_TOKEN }}
@@ -325,7 +327,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: hive-linux-x64-ubuntu2204
+          - os: ubuntu-22.04
             file: router
             target: x86_64-unknown-linux-gnu
             binary_name: linux
