@@ -43,7 +43,7 @@ RUN touch ./src/lib.rs
 # Real build this time
 RUN cargo build --release --target-dir /usr/src/router/target
 
-# Runtime
+# Runtime -> https://github.com/apollographql/router/blob/dev/dockerfiles/Dockerfile.router#L23
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update
