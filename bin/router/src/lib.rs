@@ -123,7 +123,7 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let (shared_state, schema_state) =
         configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
 
-    let maybe_error = web::HttpServer::new(move || {
+    let maybe_error = web::HttpServer::new(async move || {
         let lp_gql_path = http_config.graphql_endpoint().to_string();
         web::App::new()
             .state(shared_state.clone())
