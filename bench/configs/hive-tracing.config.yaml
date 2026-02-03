@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ./bench/supergraph.graphql
+log:
+  level: info
+telemetry:
+  hive:
+    token: "hvo1/NWRl="
+    target: "organization/project/target"
+    tracing:
+      enabled: false
+      protocol: http
