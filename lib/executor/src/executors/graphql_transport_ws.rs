@@ -271,7 +271,7 @@ pub fn serde_to_sonic(value: serde_json::Value) -> sonic_rs::Value {
             } else if let Some(u) = n.as_u64() {
                 sonic_rs::Value::from(u)
             } else if let Some(f) = n.as_f64() {
-                sonic_rs::Value::new_f64(f).unwrap_or_else(sonic_rs::Value::new)
+                sonic_rs::Value::new_f64(f).unwrap_or_default()
             } else {
                 sonic_rs::Value::new()
             }

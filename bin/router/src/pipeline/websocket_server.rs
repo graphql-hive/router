@@ -317,7 +317,7 @@ async fn handle_text_frame(
                     // the JwtError conversion here to respond with proper error message
                     // close with Forbidden.
                     Err(e) => {
-                        let _ = sink.send(e.into_server_message(&id)).await;
+                        let _ = sink.send(e.clone().into_server_message(&id)).await;
                         // we report error as graphql error, but we also close the
                         // connection since we're dealing with auth so let's be safe
                         return Some(e.into_close_message());
@@ -551,7 +551,7 @@ fn parse_headers_from_extensions(
 
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl PipelineError {
-    fn into_server_message(&self, id: &str) -> ws::Message {
+    fn into_server_message(self, id: &str) -> ws::Message {
         let code = self.graphql_error_code();
         let message = self.graphql_error_message();
 
@@ -566,7 +566,7 @@ impl PipelineError {
 
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl JwtError {
-    fn into_server_message(&self, id: &str) -> ws::Message {
+    fn into_server_message(self, id: &str) -> ws::Message {
         ServerMessage::error(
             id,
             &[GraphQLError::from_message_and_code(
@@ -575,7 +575,7 @@ impl JwtError {
             )],
         )
     }
-    fn into_close_message(&self) -> ws::Message {
+    fn into_close_message(self) -> ws::Message {
         CloseCode::Forbidden(self.error_code().to_string()).into()
     }
 }
