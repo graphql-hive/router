@@ -1,7 +1,7 @@
 /// Common types and messages for the GraphQL over WebSocket Transport Protocol
 /// as per the spec: https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md
 use ntex::ws;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::error;
 
@@ -71,6 +71,33 @@ impl From<CloseCode> for ws::Message {
     }
 }
 
+// Using serde_json::Value instead of sonic_rs::Value because sonic_rs::Value has
+// issues with internally-tagged enum deserialization (#[serde(tag = "type")]).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscribePayload {
+    pub query: String,
+    pub operation_name: Option<String>,
+    pub variables: Option<HashMap<String, serde_json::Value>>,
+    pub extensions: Option<HashMap<String, serde_json::Value>>,
+}
+
+impl SubscribePayload {
+    pub fn new(
+        query: String,
+        operation_name: Option<String>,
+        variables: Option<HashMap<String, serde_json::Value>>,
+        extensions: Option<HashMap<String, serde_json::Value>>,
+    ) -> Self {
+        Self {
+            query,
+            operation_name,
+            variables,
+            extensions,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
@@ -81,7 +108,7 @@ pub enum ClientMessage {
     Pong {},
     Subscribe {
         id: String,
-        payload: ExecutionRequest,
+        payload: SubscribePayload,
     },
     Complete {
         id: String,
@@ -101,7 +128,7 @@ impl ClientMessage {
         ServerMessage::Pong {}.into()
     }
 
-    pub fn subscribe(id: String, payload: ExecutionRequest) -> ws::Message {
+    pub fn subscribe(id: String, payload: SubscribePayload) -> ws::Message {
         ClientMessage::Subscribe { id, payload }.into()
     }
 
@@ -125,9 +152,9 @@ impl From<ClientMessage> for ws::Message {
 /// The connection init message payload MUST be a map of string to arbitrary JSON
 /// values as per the spec. We represent this as a HashMap<String, Value> and use
 /// serde(flatten) to capture all fields for easier parsing to headers later.
-///
-/// Using serde_json::Value instead of sonic_rs::Value because sonic_rs::Value has
-/// issues with flattened HashMap deserialization.
+//
+// Using serde_json::Value instead of sonic_rs::Value because sonic_rs::Value has
+// issues with internally-tagged enum deserialization (#[serde(tag = "type")]).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectionInitPayload {
     #[serde(flatten)]
@@ -230,29 +257,3 @@ impl From<ServerMessage> for ws::Message {
         }
     }
 }
-
-// copied from bin/router/src/pipeline/execution_request.rs
-
-// we cant import it directly due to cyclic dependency issues
-// TODO: refactor to share the execution request accordingly
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecutionRequest {
-    pub query: String,
-    pub operation_name: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_null_default")]
-    pub variables: HashMap<String, sonic_rs::Value>,
-    pub extensions: Option<HashMap<String, sonic_rs::Value>>,
-}
-
-fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    T: Default + Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    let opt = Option::<T>::deserialize(deserializer)?;
-    Ok(opt.unwrap_or_default())
-}
-
-// end copy from bin/router/src/pipeline/execution_request.rs

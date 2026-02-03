@@ -1,5 +1,6 @@
 use bytes::Bytes;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use tls_openssl::version::version;
 
 use futures::{stream::LocalBoxStream, StreamExt};
 use ntex::{
@@ -11,13 +12,12 @@ use ntex::{
 use tracing::{debug, error, trace};
 
 use crate::{
-    executors::graphql_transport_ws::WS_SUBPROTOCOL, response::subgraph_response::SubgraphResponse,
+    executors::graphql_transport_ws::{SubscribePayload, WS_SUBPROTOCOL},
+    response::subgraph_response::SubgraphResponse,
 };
 use crate::{
     executors::{
-        graphql_transport_ws::{
-            ClientMessage, CloseCode, ConnectionInitPayload, ExecutionRequest, ServerMessage,
-        },
+        graphql_transport_ws::{ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage},
         websocket_common::{
             handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
         },
@@ -261,21 +261,20 @@ impl WsClient {
         &mut self,
         query: String,
         operation_name: Option<String>,
-        variables: std::collections::HashMap<String, sonic_rs::Value>,
-        extensions: Option<std::collections::HashMap<String, sonic_rs::Value>>,
+        variables: Option<HashMap<String, serde_json::Value>>,
+        extensions: Option<HashMap<String, serde_json::Value>>,
     ) -> LocalBoxStream<'static, SubgraphResponse<'static>> {
         let subscribe_id = self.next_subscription_id();
 
-        let execution_request = ExecutionRequest {
-            query,
-            operation_name,
-            variables,
-            extensions,
-        };
-
         let _ = self
             .sink
-            .send(ClientMessage::subscribe(subscribe_id.clone(), execution_request).into())
+            .send(
+                ClientMessage::subscribe(
+                    subscribe_id.clone(),
+                    SubscribePayload::new(query, operation_name, variables, extensions),
+                )
+                .into(),
+            )
             .await;
 
         trace!(id = %subscribe_id, "Subscribe message sent");

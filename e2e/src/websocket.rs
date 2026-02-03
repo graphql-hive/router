@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod websocket_e2e_tests {
     use futures::StreamExt;
+    use serde_json::json;
     use std::collections::HashMap;
 
     use crate::testkit_v2::TestRouterBuilder;
@@ -44,7 +45,7 @@ mod websocket_e2e_tests {
                 "#
                 .to_string(),
                 None,
-                HashMap::new(),
+                None,
                 None,
             )
             .await;
@@ -96,7 +97,7 @@ mod websocket_e2e_tests {
                 "#
                 .to_string(),
                 None,
-                HashMap::new(),
+                None,
                 None,
             )
             .await;
@@ -151,7 +152,7 @@ mod websocket_e2e_tests {
                 "#
                 .to_string(),
                 None,
-                HashMap::new(),
+                None,
                 None,
             )
             .await;
@@ -167,7 +168,7 @@ mod websocket_e2e_tests {
                 "#
                 .to_string(),
                 None,
-                HashMap::new(),
+                None,
                 None,
             )
             .await;
@@ -250,7 +251,7 @@ mod websocket_e2e_tests {
             wsconn,
             Some(ConnectionInitPayload::new(HashMap::from([(
                 "x-context".to_string(),
-                serde_json::json!("my-init_payload-value"),
+                json!("my-init_payload-value"),
             )]))),
         )
         .await
@@ -268,7 +269,7 @@ mod websocket_e2e_tests {
                 "#
                 .to_string(),
                 None,
-                HashMap::new(),
+                None,
                 None,
             )
             .await;
@@ -288,6 +289,74 @@ mod websocket_e2e_tests {
                 .get("x-context")
                 .expect("expected x-context header to be present"),
             "my-init_payload-value",
+        )
+    }
+
+    #[ntex::test]
+    async fn header_propagation_from_operation_extensions() {
+        let router = TestRouterBuilder::new()
+            .with_subgraphs()
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                headers:
+                    all:
+                        request:
+                            - propagate:
+                                named: x-context
+                websocket:
+                    enabled: true
+                    headers_in_operation_extensions: true
+                "#,
+            )
+            .build()
+            .start()
+            .await
+            .expect("Failed to start test router");
+
+        let wsconn = router.ws().await;
+
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+
+        let mut stream = client
+            .subscribe(
+                r#"
+                query {
+                    topProducts {
+                        name
+                        upc
+                    }
+                }
+                "#
+                .to_string(),
+                None,
+                None,
+                Some(HashMap::from([(
+                    "x-context".to_string(),
+                    json!("my-extensions-value"),
+                )])),
+            )
+            .await;
+
+        stream.next().await.expect("Expected a response");
+
+        let products_requests = router
+            .get_subgraph_requests_log("products")
+            .await
+            .expect("expected requests sent to products subgraph");
+        let last_products_request = products_requests
+            .last()
+            .expect("expected at least one request to products subgraph");
+        assert_eq!(
+            last_products_request
+                .headers
+                .get("x-context")
+                .expect("expected x-context header to be present"),
+            "my-extensions-value",
         )
     }
 }
