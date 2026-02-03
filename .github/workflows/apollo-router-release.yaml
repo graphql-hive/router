@@ -322,11 +322,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
             binary_name: linux
             cache_key: Linux
-          - os: hive-linux-arm64-ubuntu2204
-            file: router
-            target: aarch64-unknown-linux-gnu
-            binary_name: linux_arm64
-            cache_key: Linux-arm64
           - os: windows-latest
             file: router.exe
             target: x86_64-pc-windows-msvc
