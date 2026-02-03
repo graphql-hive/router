@@ -336,8 +336,8 @@ mod websocket_e2e_tests {
                 None,
                 None,
                 Some(HashMap::from([(
-                    "x-context".to_string(),
-                    json!("my-extensions-value"),
+                    "headers".to_string(),
+                    json!({"x-context": "my-extensions-value"}),
                 )])),
             )
             .await;
