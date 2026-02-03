@@ -35,7 +35,7 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router/v'))
     steps:
       - name: checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
@@ -99,7 +99,7 @@ jobs:
             rust_target: x86_64-apple-darwin
             action_runner: macos-15
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         name: checkout
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         name: rust toolchain (${{ matrix.rust_target }})
@@ -172,7 +172,7 @@ jobs:
     if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'node-addon/v')
     steps:
       - name: checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1
         with:
@@ -214,7 +214,7 @@ jobs:
       docker_image_digest: ${{ steps.docker.outputs.digest }}
     steps:
       - name: checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup qemu
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: setup buildx
@@ -292,7 +292,7 @@ jobs:
       - docker
     steps:
       - name: checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: run router image in background
         run: |
           echo "Docker image: ${{ env.DOCKER_IMAGE_NAME }}@${{ needs.docker.outputs.docker_image_digest }}"
