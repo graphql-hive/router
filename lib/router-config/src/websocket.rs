@@ -45,7 +45,7 @@ pub struct WebSocketConfig {
     #[serde(default = "default_headers_in_connection_init_payload")]
     pub headers_in_connection_init_payload: bool,
 
-    /// Whether to accept headers in the `extensions` field of the GraphQL operation inside WebSocket connections.
+    /// Whether to accept the `headers` field from the GraphQL operation extensions inside WebSocket connections.
     ///
     /// Defaults to `false`.
     ///
