@@ -3,14 +3,13 @@ FROM debian:bookworm-slim AS runtime
 ARG DEBUG_IMAGE=false
 ARG REPO_URL=https://github.com/graphql-hive/router
 ARG BASE_VERSION
-ARG TARGETARCH
 
 # Add a user to run the router as
 RUN useradd -m router
 
 WORKDIR /dist
 
-COPY --from=config --chown=root:root --chmod=755 ./target/linux/${TARGETARCH}/router /dist
+COPY --from=config --chown=root:root --chmod=755 ./target/release/router /dist
 
 # Update apt and install ca-certificates
 RUN \

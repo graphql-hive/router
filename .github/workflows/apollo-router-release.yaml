@@ -99,7 +99,19 @@ jobs:
       - find-changes
       - publish-rust
     if: ${{ needs.find-changes.outputs.should_release == 'true' }}
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - builder: hive-linux-x64-ubuntu2204
+            platform: linux/amd64
+            suffix: '-amd64'
+            binary_name: linux
+          - builder: hive-linux-arm64-ubuntu2204
+            platform: linux/arm64
+            suffix: '-arm64'
+            binary_name: linux_arm64
+    runs-on: ${{ matrix.builder }}
     permissions:
       contents: read
       packages: write
@@ -141,23 +153,14 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          path: artifacts
-          pattern: apollo_router_*
-
-      - name: prepare artifacts
-        run: |
-          mkdir -p ./target/linux/arm64
-          mkdir -p ./target/linux/amd64
-
-          mv ./artifacts/apollo_router_linux_arm64/router ./target/linux/arm64/router
-          mv ./artifacts/apollo_router_linux_amd64/router ./target/linux/amd64/router
-          ls -ltra ./target/linux/arm64/
-          ls -ltra ./target/linux/amd64/
+          name: apollo_router_${{ matrix.binary_name }}
+          path: |
+            ./apollo-router-workspace/target/release
           
       - name: build docker images
         timeout-minutes: 60
         id: docker-bake
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        uses: docker/bake-action@5ca506d06f70338a4968df87fd8bfee5cbfb84c7 # v6.0.0
         env:
           DOCKER_REGISTRY: ghcr.io/${{ github.repository_owner }}/
           COMMIT_SHA: ${{ needs.find-changes.outputs.release_version }}
@@ -172,8 +175,7 @@ jobs:
           # See https://github.com/docker/buildx/issues/1533
           provenance: false
           push: true
-          file: ${{ github.workspace }}/apollo-router-workspace/docker/router.Dockerfile
-          platforms: ${{ env.DOCKER_PLATFORMS }}
+          files: ./apollo-router-workspace/docker/docker.hcl
           targets: apollo-router-hive-build
           source: .
           set: |
@@ -191,7 +193,7 @@ jobs:
 
             **Targets**: `apollo-router-hive-build`
 
-            **Platforms**: `${{ matrix.platform }}`
+            **Platforms**: `${{ env.DOCKER_PLATFORMS }}`
 
             **Image Tag**: `${{ needs.find-changes.outputs.release_version }}`
 
@@ -305,23 +307,23 @@ jobs:
           - os: ubuntu-latest
             file: router
             target: x86_64-unknown-linux-gnu
-            os_name: linux_amd64
+            binary_name: linux_amd64
             runner_os: Linux
           - os: hive-linux-arm64-ubuntu2204
             file: router
             target: aarch64-unknown-linux-gnu
-            os_name: linux_arm64
+            binary_name: linux
             runner_os: Linux-arm64
           - os: windows-latest
             file: router.exe
             target: x86_64-pc-windows-msvc
-            os_name: win
+            binary_name: win
             arch: amd64
             runner_os: Windows
           - os: macos-latest
             file: router
             target: x86_64-apple-darwin
-            os_name: macos
+            binary_name: macos
             runner_os: macOS
     name: publish apollo-router binary (${{ matrix.runner_os }})
     runs-on: ${{ matrix.os }}
@@ -374,7 +376,7 @@ jobs:
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         name: upload router artifact
         with:
-          name: apollo_router_${{ matrix.os_name }}
+          name: apollo_router_${{ matrix.binary_name }}
           path: |
             ./apollo-router-workspace/target/${{ matrix.target }}/release/${{ matrix.file }}
           if-no-files-found: error
@@ -387,7 +389,7 @@ jobs:
           secretaccesskey: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           bucket: apollo-router
           file: ./apollo-router-workspace/router.tar.gz
-          destination: ${{ needs.find-changes.outputs.release_version }}/${{ matrix.os_name }}/router.tar.gz
+          destination: ${{ needs.find-changes.outputs.release_version }}/${{ matrix.binary_name }}/router.tar.gz
 
       - name: Upload to R2 (latest)
         if: ${{ needs.find-changes.outputs.release_latest == 'true' }}
@@ -398,4 +400,4 @@ jobs:
           secretaccesskey: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           bucket: apollo-router
           file: ./apollo-router-workspace/router.tar.gz
-          destination: latest/${{ matrix.os_name }}/router.tar.gz
+          destination: latest/${{ matrix.binary_name }}/router.tar.gz
