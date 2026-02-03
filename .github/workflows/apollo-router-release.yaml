@@ -24,6 +24,10 @@ defaults:
   run:
     working-directory: ./apollo-router-workspace
   
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # This script is doing the following:
   # 1. Get the version of the apollo-router and the plugin from the Cargo.toml file
