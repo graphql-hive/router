@@ -97,7 +97,6 @@ jobs:
     name: image build and dockerize apollo-router (${{ matrix.platform }})
     needs:
       - find-changes
-      - publish-rust
     if: ${{ needs.find-changes.outputs.should_release == 'true' }}
     strategy:
       fail-fast: false
@@ -106,11 +105,12 @@ jobs:
           - builder: hive-linux-x64-ubuntu2204
             platform: linux/amd64
             suffix: '-amd64'
-            binary_name: linux
+            rust_target: aarch64-unknown-linux-gnu
+            cache_key: Linux
           - builder: hive-linux-arm64-ubuntu2204
             platform: linux/arm64
             suffix: '-arm64'
-            binary_name: linux_arm64
+            rust_target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.builder }}
     permissions:
       contents: read
@@ -121,6 +121,41 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 2
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1
+        with:
+          toolchain: '1.91.1'
+          target: ${{ matrix.rust_target }}
+          default: true
+          override: true
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: apollo-router-workspace/target
+          key: apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
+            apollo-router-target-${{ matrix.cache_key }}-build-
+            apollo-router-target-${{ matrix.cache_key }}-
+            apollo-router-target-
+
+      - name: Build
+        run:
+          cargo build --release --target ${{ matrix.rust_target }}
+
+      - name: Strip binary from debug symbols
+        if: ${{ runner.os == 'Linux' }}
+        run: strip ./target/${{ matrix.rust_target }}/release/router
           
       - name: configure docker buildx
         uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
@@ -149,13 +184,6 @@ jobs:
           flags: 'g'
           string: ${{ github.ref }}-apollo-router-hive-build-${{ matrix.platform }}
           replace-with: '_'
-
-      - name: Download artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: apollo_router_${{ matrix.binary_name }}
-          path: |
-            ./apollo-router-workspace/target/release
           
       - name: build docker images
         timeout-minutes: 60
@@ -171,6 +199,7 @@ jobs:
           BUILD_STABLE: ${{ needs.find-changes.outputs.release_latest == 'true' && '1' || '' }}
           BUILD_PLATFORM: ${{ matrix.platform }}
           IMAGE_SUFFIX: ${{ matrix.suffix }}
+          ROUTER_BINARY_DIR: ${{ github.workspace }}/apollo-router-workspace/target/${{ matrix.rust_target }}/release
         with:
           # See https://github.com/docker/buildx/issues/1533
           provenance: false
@@ -304,28 +333,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: hive-linux-x64-ubuntu2204
             file: router
             target: x86_64-unknown-linux-gnu
             binary_name: linux
-            runner_os: Linux
+            cache_key: Linux
           - os: hive-linux-arm64-ubuntu2204
             file: router
             target: aarch64-unknown-linux-gnu
             binary_name: linux_arm64
-            runner_os: Linux-arm64
+            cache_key: Linux-arm64
           - os: windows-latest
             file: router.exe
             target: x86_64-pc-windows-msvc
             binary_name: win
-            arch: amd64
-            runner_os: Windows
+            cache_key: Windows
           - os: macos-latest
             file: router
             target: x86_64-apple-darwin
             binary_name: macos
-            runner_os: macOS
-    name: publish apollo-router binary (${{ matrix.runner_os }})
+            cache_key: macOS
+    name: publish apollo-router binary (${{ matrix.cache_key }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
 
@@ -355,11 +383,11 @@ jobs:
         uses: actions/cache@v3
         with:
           path: apollo-router-workspace/target
-          key: apollo-router-target-${{ matrix.runner_os }}-build-${{ hashFiles('**/Cargo.lock') }}
+          key: apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            apollo-router-target-${{ matrix.runner_os }}-build-${{ hashFiles('**/Cargo.lock') }}
-            apollo-router-target-${{ matrix.runner_os }}-build-
-            apollo-router-target-${{ matrix.runner_os }}-
+            apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
+            apollo-router-target-${{ matrix.cache_key }}-build-
+            apollo-router-target-${{ matrix.cache_key }}-
             apollo-router-target-
 
       - name: Build
@@ -370,9 +398,6 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: strip ./target/${{ matrix.target }}/release/${{ matrix.file }}
 
-      - name: Compress
-        run: tar -czvf ./router.tar.gz -C ./target/${{ matrix.target }}/release ${{ matrix.file }}
-
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         name: upload router artifact
         with:
@@ -380,6 +405,9 @@ jobs:
           path: |
             ./apollo-router-workspace/target/${{ matrix.target }}/release/${{ matrix.file }}
           if-no-files-found: error
+
+      - name: Compress
+        run: tar -czvf ./router.tar.gz -C ./target/${{ matrix.target }}/release ${{ matrix.file }}
 
       - name: Upload to R2 (${{ needs.find-changes.outputs.release_version }})
         uses: randomairborne/r2-release@9cbc35a2039ee2ef453a6988cd2a85bb2d7ba8af # v1.0.2

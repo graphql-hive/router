@@ -9,7 +9,7 @@ RUN useradd -m router
 
 WORKDIR /dist
 
-COPY --from=config --chown=root:root --chmod=755 ./target/release/router /dist
+COPY --from=router_binary_dir --chown=root:root --chmod=755 ./router /dist
 
 # Update apt and install ca-certificates
 RUN \

@@ -87,6 +87,7 @@ target "apollo-router" {
     router_pkg = "${PWD}/bin/router"
     config = "${PWD}"
     root_dir = "${PWD}/.."
+    router_binary_dir = "${ROUTER_BINARY_DIR}"
   }
   args = {
     IMAGE_TITLE = "graphql-hive/apollo-router"
