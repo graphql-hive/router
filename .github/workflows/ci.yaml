@@ -142,7 +142,21 @@ jobs:
           path: ${{matrix.package}}/target/criterion
 
   router-benchmark:
-    name: benchmark / router
+    strategy:
+      matrix:
+        include:
+          - name: "default"
+            args: ""
+            config: bench/configs/default.config.yaml
+          - name: "hive-tracing"
+            # turns otlp http/grpc to noop
+            args: "--features noop_otlp_exporter"
+            config: bench/configs/hive-tracing.config.yaml
+          - name: "otlp-tracing"
+            # turns otlp http/grpc to noop
+            args: "--features noop_otlp_exporter"
+            config: bench/configs/otlp-tracing.config.yaml
+    name: benchmark / router / ${{ matrix.name }}
     runs-on: ubuntu-latest
     env:
       NODE_NO_WARNINGS: true
@@ -166,14 +180,14 @@ jobs:
       - name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
       - name: Build router
-        run: cargo build --release -p hive-router
+        run: cargo build --release -p hive-router ${{matrix.args}}
       - name: Run router
         run: |
           ./target/release/hive_router &
           echo "$!" > router.pid
           sleep 5
         env:
-          SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
+          ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
       # run only on main
       - name: Run k6 benchmark for Pull Request
         if: github.event_name == 'push'
@@ -190,7 +204,7 @@ jobs:
           path: main-branch
       - name: Build router
         if: github.event_name == 'pull_request'
-        run: cargo build --release -p hive-router
+        run: cargo build --release -p hive-router ${{matrix.args}}
         working-directory: main-branch
       - name: Run router
         if: github.event_name == 'pull_request'
@@ -199,7 +213,7 @@ jobs:
           ./main-branch/target/release/hive_router &
           sleep 5
         env:
-          SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
+          ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
       - name: Run k6 benchmark for main
         if: github.event_name == 'pull_request'
         run: k6 run -e SUMMARY_PATH=./bench/results/main -e NO_GITHUB_COMMENT=true bench/k6.js

@@ -37,6 +37,8 @@ use opentelemetry_sdk::{
 use tracing_opentelemetry::OpenTelemetryLayer;
 
 use self::standard_pipeline_exporter::StandardPipelineExporter;
+#[cfg(feature = "noop_otlp_exporter")]
+use self::noop_exporter::NoopExporter;
 use crate::telemetry::{
     error::TelemetryError,
     resolve_value_or_expression,
@@ -154,6 +156,12 @@ fn setup_exporters(
                 }
                 .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
 
+                #[cfg(feature = "noop_otlp_exporter")]
+                let exporter = {
+                    let _ = exporter;
+                    NoopExporter::new()
+                };
+
                 tracer_provider_builder =
                     tracer_provider_builder.with_span_processor(build_batched_span_processor(
                         &otlp_config.batch_processor,
@@ -263,6 +271,12 @@ fn setup_hive_exporter(
         .with_protocol(Protocol::HttpBinary)
         .build()
         .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
+
+    #[cfg(feature = "noop_otlp_exporter")]
+    let exporter = {
+        let _ = exporter;
+        NoopExporter::new()
+    };
 
     let hive_exporter = HiveConsoleExporter::new(exporter);
     let mut trace_batching_processor =
