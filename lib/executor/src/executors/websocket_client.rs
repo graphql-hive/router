@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
-use tls_openssl::version::version;
 
 use futures::{stream::LocalBoxStream, StreamExt};
 use ntex::{

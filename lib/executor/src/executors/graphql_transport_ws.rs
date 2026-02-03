@@ -257,3 +257,68 @@ impl From<ServerMessage> for ws::Message {
         }
     }
 }
+
+/// A utility function that helps convert serde_json::Value to sonic_rs::Value.
+// We need this because we use serde_json::Value in some places due to
+// compatibility issues with internally-tagged enum deserialization (#[serde(tag = "type")]).
+pub fn serde_to_sonic(value: serde_json::Value) -> sonic_rs::Value {
+    match value {
+        serde_json::Value::Null => sonic_rs::Value::new(),
+        serde_json::Value::Bool(b) => sonic_rs::Value::from(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                sonic_rs::Value::from(i)
+            } else if let Some(u) = n.as_u64() {
+                sonic_rs::Value::from(u)
+            } else if let Some(f) = n.as_f64() {
+                sonic_rs::Value::new_f64(f).unwrap_or_else(|| sonic_rs::Value::new())
+            } else {
+                sonic_rs::Value::new()
+            }
+        }
+        serde_json::Value::String(s) => sonic_rs::Value::from(s.as_str()),
+        serde_json::Value::Array(arr) => {
+            sonic_rs::Value::from(arr.into_iter().map(serde_to_sonic).collect::<Vec<_>>())
+        }
+        serde_json::Value::Object(obj) => {
+            let mut sonic_obj = sonic_rs::Object::new();
+            for (k, v) in obj {
+                sonic_obj.insert(&k, serde_to_sonic(v));
+            }
+            sonic_rs::Value::from(sonic_obj)
+        }
+    }
+}
+
+/// A utility function that helps convert sonic_rs::Value to serde_json::Value.
+// We need this because we use serde_json::Value in some places due to
+// compatibility issues with internally-tagged enum deserialization (#[serde(tag = "type")]).
+pub fn sonic_to_serde(value: sonic_rs::Value) -> serde_json::Value {
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
+
+    if value.is_null() {
+        serde_json::Value::Null
+    } else if let Some(b) = value.as_bool() {
+        serde_json::Value::Bool(b)
+    } else if let Some(s) = value.as_str() {
+        serde_json::Value::String(s.to_string())
+    } else if let Some(i) = value.as_i64() {
+        serde_json::Value::Number(serde_json::Number::from(i))
+    } else if let Some(u) = value.as_u64() {
+        serde_json::Value::Number(serde_json::Number::from(u))
+    } else if let Some(f) = value.as_f64() {
+        serde_json::Number::from_f64(f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null)
+    } else if let Some(arr) = value.as_array() {
+        serde_json::Value::Array(arr.iter().map(|v| sonic_to_serde(v.clone())).collect())
+    } else if let Some(obj) = value.as_object() {
+        let mut serde_obj = serde_json::Map::new();
+        for (k, v) in obj.iter() {
+            serde_obj.insert(k.to_string(), sonic_to_serde(v.clone()));
+        }
+        serde_json::Value::Object(serde_obj)
+    } else {
+        serde_json::Value::Null
+    }
+}

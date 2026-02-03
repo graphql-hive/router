@@ -4,7 +4,7 @@ use hive_router_plan_executor::execution::client_request_details::{
 };
 use hive_router_plan_executor::execution::plan::QueryPlanExecutionResult;
 use hive_router_plan_executor::executors::graphql_transport_ws::{
-    ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
+    serde_to_sonic, ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
 };
 use hive_router_plan_executor::executors::websocket_common::{
     handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
@@ -17,7 +17,6 @@ use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
-use sonic_rs::JsonContainerTrait;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
@@ -227,8 +226,7 @@ async fn handle_text_frame(
             };
 
             let extensions_headers = if config.headers_in_operation_extensions {
-                let extensions = payload.extensions.as_ref();
-                parse_headers_from_extensions(extensions)
+                parse_headers_from_extensions(payload.extensions.as_ref())
             } else {
                 HeaderMap::new()
             };
@@ -252,13 +250,20 @@ async fn handle_text_frame(
                 }
             }
 
-            // TODO: ExecutionRequest from pipeline is different from ExecutionRequest from
-            //       graphql_transport_ws. see comment there to understand why.
             let mut payload = ExecutionRequest {
                 query: payload.query,
                 operation_name: payload.operation_name,
-                variables: payload.variables,
-                extensions: payload.extensions,
+                variables: payload
+                    .variables
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(k, v)| (k, serde_to_sonic(v)))
+                    .collect(),
+                extensions: payload.extensions.map(|ext| {
+                    ext.into_iter()
+                        .map(|(k, v)| (k, serde_to_sonic(v)))
+                        .collect()
+                }),
             };
 
             let parser_payload = match parse_operation_with_cache(shared_state, &payload).await {
@@ -520,7 +525,7 @@ fn parse_headers_from_connection_init_payload(
 }
 
 fn parse_headers_from_extensions(
-    extensions: Option<&HashMap<String, sonic_rs::Value>>,
+    extensions: Option<&HashMap<String, serde_json::Value>>,
 ) -> HeaderMap {
     let mut header_map = HeaderMap::new();
     if let Some(ext) = extensions {

@@ -11,6 +11,7 @@ use tracing::debug;
 
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
+use crate::executors::graphql_transport_ws::sonic_to_serde;
 use crate::executors::websocket_client::{connect, WsClient};
 use crate::response::subgraph_response::SubgraphResponse;
 
@@ -126,7 +127,21 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 );
 
                 let mut stream = client
-                    .subscribe(query, operation_name, variables, extensions)
+                    .subscribe(
+                        query,
+                        operation_name,
+                        Some(
+                            variables
+                                .into_iter()
+                                .map(|(k, v)| (k, sonic_to_serde(v)))
+                                .collect(),
+                        ),
+                        extensions.map(|ext| {
+                            ext.into_iter()
+                                .map(|(k, v)| (k, sonic_to_serde(v)))
+                                .collect()
+                        }),
+                    )
                     .await;
 
                 match stream.next().await {
@@ -231,8 +246,25 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 subgraph_name, endpoint
             );
 
+            let variables_serde = if variables.is_empty() {
+                None
+            } else {
+                Some(
+                    variables
+                        .into_iter()
+                        .map(|(k, v)| (k, sonic_to_serde(v)))
+                        .collect(),
+                )
+            };
+
+            let extensions_serde = extensions.map(|ext| {
+                ext.into_iter()
+                    .map(|(k, v)| (k, sonic_to_serde(v)))
+                    .collect()
+            });
+
             let mut stream = client
-                .subscribe(query, operation_name, variables, extensions)
+                .subscribe(query, operation_name, variables_serde, extensions_serde)
                 .await;
 
             while let Some(response) = stream.next().await {
