@@ -37,7 +37,7 @@ variable "BUILD_PLATFORM" {
 }
 
 variable "ROUTER_BINARY_DIR" {
-  default = env("ROUTER_BINARY_DIR")
+  default = ""
 }
 
 function "get_target" {
