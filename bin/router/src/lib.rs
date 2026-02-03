@@ -118,18 +118,18 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let router_config = load_config(config_path)?;
     configure_logging(&router_config.log);
     info!("hive-router@{} starting...", ROUTER_VERSION);
-    let http_config = router_config.http.clone();
-    let addr = router_config.http.address();
+    let addr = router_config.address();
+    let gql_path = router_config.graphql_path().to_string();
+    let websocket_path = router_config.websocket_path().map(|p| p.to_string());
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let (shared_state, schema_state) =
         configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
-
     let maybe_error = web::HttpServer::new(move || {
-        let lp_gql_path = http_config.graphql_endpoint().to_string();
+        let lp_gql_path = gql_path.clone();
         web::App::new()
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(|m| configure_ntex_app(m, http_config.graphql_endpoint()))
+            .configure(|m| configure_ntex_app(m, gql_path.as_ref(), websocket_path.as_deref()))
             .default_service(web::to(move || landing_page_handler(lp_gql_path.clone())))
     })
     .bind(&addr)
@@ -186,9 +186,15 @@ pub async fn configure_app_from_config(
     Ok((shared_state, schema_state_arc))
 }
 
-pub fn configure_ntex_app(cfg: &mut web::ServiceConfig, graphql_path: &str) {
+pub fn configure_ntex_app(
+    cfg: &mut web::ServiceConfig,
+    graphql_path: &str,
+    websocket_path: Option<&str>,
+) {
+    if let Some(websocket_path) = websocket_path {
+        cfg.route(websocket_path, web::get().to(ws_index));
+    }
     cfg.route(graphql_path, web::to(graphql_endpoint_handler))
-        .route("/ws", web::get().to(ws_index))
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }

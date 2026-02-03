@@ -15,6 +15,8 @@ mod websocket_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                websocket:
+                    enabled: true
                 "#,
             )
             .build()
@@ -63,6 +65,8 @@ mod websocket_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                websocket:
+                    enabled: true
                 subscriptions:
                     enabled: true
                 "#,
@@ -117,6 +121,8 @@ mod websocket_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                websocket:
+                    enabled: true
                 subscriptions:
                     enabled: true
                 "#,

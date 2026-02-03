@@ -123,6 +123,28 @@ pub struct HiveRouterConfig {
     pub websocket: websocket::WebSocketConfig,
 }
 
+impl HiveRouterConfig {
+    pub fn address(&self) -> String {
+        format!("{}:{}", self.http.host, self.http.port)
+    }
+
+    pub fn graphql_path(&self) -> &str {
+        &self.http.graphql_endpoint
+    }
+
+    pub fn websocket_path(&self) -> Option<&str> {
+        if !self.websocket.enabled {
+            return None;
+        }
+        Some(
+            self.websocket
+                .path
+                .as_deref()
+                .unwrap_or_else(|| self.graphql_path()),
+        )
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RouterConfigError {
     #[error("Failed to load configuration: {0}")]

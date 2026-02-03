@@ -46,8 +46,11 @@ impl TestRouterBuilder {
     }
 
     pub fn build(self) -> TestRouter<Built> {
+        let config = self.config.expect("config is required");
         TestRouter {
-            config: Some(self.config.expect("config is required")),
+            graphql_path: config.graphql_path().to_string(),
+            websocket_path: config.websocket_path().map(|p| p.to_string()),
+            config: Some(config),
             start_subgraphs: self.start_subgraphs,
             handle: None,
             _state: PhantomData,
@@ -118,6 +121,8 @@ impl Drop for TestRouterHandle {
 }
 
 pub struct TestRouter<State> {
+    graphql_path: String,
+    websocket_path: Option<String>,
     config: Option<HiveRouterConfig>,
     start_subgraphs: bool,
     handle: Option<TestRouterHandle>,
@@ -136,17 +141,22 @@ impl TestRouter<Built> {
 
         let mut bg_tasks_manager = BackgroundTasksManager::new();
         let config = self.config.take().unwrap();
-        let http_config = config.http.clone();
-        let graphql_path = http_config.graphql_endpoint().to_string();
-
         let (shared_state, schema_state) =
             configure_app_from_config(config, &mut bg_tasks_manager).await?;
 
+        let serv_graphql_path = self.graphql_path.clone();
+        let serv_websocket_path = self.websocket_path.clone();
         let serv = test::server(move || {
             web::App::new()
                 .state(shared_state.clone())
                 .state(schema_state.clone())
-                .configure(|m| configure_ntex_app(m, &graphql_path))
+                .configure(|m| {
+                    configure_ntex_app(
+                        m,
+                        serv_graphql_path.as_ref(),
+                        serv_websocket_path.as_deref(),
+                    )
+                })
         });
 
         info!("Waiting for health check to pass...");
@@ -182,6 +192,8 @@ impl TestRouter<Built> {
         }
 
         Ok(TestRouter {
+            graphql_path: self.graphql_path,
+            websocket_path: self.websocket_path,
             handle: Some(TestRouterHandle {
                 serv,
                 bg_tasks_manager,
@@ -206,7 +218,7 @@ impl TestRouter<Started> {
             .as_ref()
             .unwrap()
             .serv
-            .post("/graphql")
+            .post(self.graphql_path.as_str())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/graphql-response+json");
 
@@ -219,7 +231,11 @@ impl TestRouter<Started> {
     }
 
     pub async fn ws(&self) -> WsConnection<Sealed> {
-        let url = self.handle.as_ref().unwrap().serv.url("/ws");
+        let url = self.handle.as_ref().unwrap().serv.url(
+            self.websocket_path
+                .as_ref()
+                .expect("Websocket path not set"),
+        );
         let ws_url = url.as_str().replace("http://", "ws://");
         let ws_uri = http::Uri::from_str(&ws_url).expect("Failed to parse ws url");
         websocket_client::connect(&ws_uri)
