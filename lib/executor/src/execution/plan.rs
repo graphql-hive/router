@@ -245,14 +245,18 @@ impl<'exec> Executor<'exec> {
                 Ok(())
             }
             PlanNode::Flatten(node) => {
-                let Some(job) = self
+                match self
                     .execute_flatten_fetch_node(node, &ctx.final_response)
-                    .await?
-                else {
-                    return Ok(());
-                };
-
-                self.process_job_result(ctx, job)
+                    .await
+                {
+                    Ok(Some(result)) => self.process_job_result(ctx, result),
+                    Ok(None) => Ok(()),
+                    Err(err) => {
+                        self.log_error(&err);
+                        ctx.errors.push(err.into());
+                        Ok(())
+                    }
+                }
             }
             PlanNode::Condition(node) => {
                 let Some(node) = condition_node_by_variables(node, self.variable_values) else {
