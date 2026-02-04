@@ -23,6 +23,13 @@ pub struct LimitsConfig {
     /// It is used to prevent too large queries that could lead to overfetching or DOS attacks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<MaxTokensRuleConfig>,
+
+    /// Configuration of limiting the number of aliases in the incoming GraphQL operations.
+    /// If not specified, alias limiting is disabled.
+    ///
+    /// It is used to prevent too many aliases that could lead to overfetching or DOS attacks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_aliases: Option<MaxAliasesRuleConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -56,5 +63,11 @@ pub struct MaxDirectivesRuleConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MaxTokensRuleConfig {
     /// Tokens threshold
+    pub n: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct MaxAliasesRuleConfig {
+    /// Aliases threshold
     pub n: usize,
 }
