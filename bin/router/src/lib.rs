@@ -26,10 +26,7 @@ use crate::{
         graphql_request_handler,
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         usage_reporting::init_hive_user_agent,
-        validation::{
-            max_aliases_rule::MaxAliasesRule, max_depth_rule::MaxDepthRule,
-            max_directives_rule::MaxDirectivesRule,
-        },
+        validation::{max_depth_rule::MaxDepthRule, max_directives_rule::MaxDirectivesRule},
     },
 };
 
@@ -176,11 +173,6 @@ pub async fn configure_app_from_config(
     if let Some(max_directives_config) = &router_config_arc.limits.max_directives {
         validation_plan.add_rule(Box::new(MaxDirectivesRule {
             config: max_directives_config.clone(),
-        }));
-    }
-    if let Some(max_aliases_config) = &router_config_arc.limits.max_aliases {
-        validation_plan.add_rule(Box::new(MaxAliasesRule {
-            config: max_aliases_config.clone(),
         }));
     }
     let shared_state = Arc::new(RouterSharedState::new(
