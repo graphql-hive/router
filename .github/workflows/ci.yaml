@@ -144,18 +144,24 @@ jobs:
   router-benchmark:
     name: benchmark / router
     runs-on: ubuntu-latest
+    # Run only on Pull Requests
+    if: github.event_name == 'pull_request'
     env:
       NODE_NO_WARNINGS: true
       NODE_ENV: production
       GITHUB_PR: ${{ github.event.number }}
       GITHUB_SHA: ${{ github.sha }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Share build outputs between `PR` and `main` builds
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          env-vars: CARGO_TARGET_DIR
       - name: Setup K6
         run: |
           wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
@@ -165,7 +171,7 @@ jobs:
         run: cargo build --release -p subgraphs
       - name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
-      - name: Build router
+      - name: Build router (PR)
         run: cargo build --release -p hive-router
       - name: Run router
         run: |
@@ -174,26 +180,17 @@ jobs:
           sleep 5
         env:
           SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
-      # run only on main
-      - name: Run k6 benchmark for Pull Request
-        if: github.event_name == 'push'
-        run: k6 run bench/k6.js
-      # run only on PR
-      - name: Run k6 benchmark for Pull Request
-        if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./bench/results/pr bench/k6.js
+      - name: Run k6 benchmark for PR
+        run: k6 run -e SUMMARY_PATH=./bench/results/pr -e NO_GITHUB_COMMENT=true bench/k6.js
       - name: Checkout main branch in a separate directory
-        if: github.event_name == 'pull_request'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: main
           path: main-branch
-      - name: Build router
-        if: github.event_name == 'pull_request'
+      - name: Build router (main)
         run: cargo build --release -p hive-router
         working-directory: main-branch
-      - name: Run router
-        if: github.event_name == 'pull_request'
+      - name: Run router (main)
         run: |
           kill $(cat router.pid)
           ./main-branch/target/release/hive_router &
@@ -201,10 +198,8 @@ jobs:
         env:
           SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
       - name: Run k6 benchmark for main
-        if: github.event_name == 'pull_request'
         run: k6 run -e SUMMARY_PATH=./bench/results/main -e NO_GITHUB_COMMENT=true bench/k6.js
       - name: Compare benchmark results
-        if: github.event_name == 'pull_request'
         run: |
           chmod +x ./bench/ci-detect-regression.sh
           ./bench/ci-detect-regression.sh
