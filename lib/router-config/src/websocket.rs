@@ -21,9 +21,17 @@ pub struct WebSocketConfig {
     #[serde(default)]
     pub path: Option<String>,
 
-    /// Whether to accept headers in the connection init payload of WebSocket connections.
-    ///
-    /// Defaults to `true`.
+    /// Configuration for handling headers for WebSocket connections.
+    #[serde(default)]
+    pub headers: WebSocketHeadersConfig,
+}
+
+#[derive(Default, Deserialize, Serialize, JsonSchema, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum WebSocketHeadersSource {
+    /// Do not accept headers from any source inside WebSocket connections.
+    None,
+    /// Accept headers from the connection init payload. This is the default.
     ///
     /// For example, if the client sends a connection init message like:
     ///
@@ -42,18 +50,15 @@ pub struct WebSocketConfig {
     ///
     /// Note that there is no `headers` field in the payload, so all fields in the payload
     /// will be treated as headers when this option is enabled.
-    #[serde(default = "default_headers_in_connection_init_payload")]
-    pub headers_in_connection_init_payload: bool,
-
-    /// Whether to accept the `headers` field from the GraphQL operation extensions inside WebSocket connections.
+    #[default]
+    Connection,
+    /// Accept headers from the `headers` field from the GraphQL operation extensions.
     ///
-    /// Defaults to `false`.
-    ///
-    /// For example, if the client sends a GraphQL operation like:
+    /// For example, if the connected client sends a GraphQL operation like:
     ///
     /// ```json
     /// {
-    ///   "query": "subscription { greetings }",
+    ///   "query": "{ topProducts { name } }",
     ///   "extensions": {
     ///     "headers": {
     ///       "Authorization": "Bearer abc123"
@@ -62,35 +67,50 @@ pub struct WebSocketConfig {
     /// }
     /// ```
     ///
-    /// The headers will be extracted and considered for the WebSocket connection to the subgraph
-    /// respecting the header propagation rules as well as validating against any
-    /// JWT rules defined in the configuration.
+    /// The headers will be extracted and considered for the subgraph respecting the header
+    /// propagation rules as well as validating against any JWT rules defined in the configuration.
+    Operation,
+    /// Accept headers from both the connection init payload and the operation extensions.
     ///
-    /// Note that the connection init message payload can also contain headers, and those will be
-    /// considered as well if `headers_in_connection_init_payload` is enabled. If the same header
-    /// is defined both in the connection init message and in the operation extensions, the value
-    /// from the operation extensions will take precedence
-    #[serde(default)]
-    pub headers_in_operation_extensions: bool,
+    /// Headers from the operation extensions will take precedence over those from the connection init
+    /// payload when both are provided.
+    Both,
+}
 
-    /// Whether to merge and store headers for the duration of the WebSocket connection from both
-    /// the connection init payload and the operation extensions on each operation.
+#[derive(Default, Deserialize, Serialize, JsonSchema, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct WebSocketHeadersConfig {
+    /// The source(s) from which to accept headers for WebSocket connections.
+    pub source: WebSocketHeadersSource,
+    /// Whether to persist merged headers for the duration of the WebSocket connection
+    /// when using the `both` source (headers are accepted from multiple sources).
     ///
-    /// Defaults to `false`.
-    ///
-    /// Needs both `headers_in_connection_init_payload` and `headers_in_operation_extensions`
-    /// to be enabled to have any effect.
+    /// Only has effect when `source` is set to `both`.
     ///
     /// This is useful when dealing with authentication using tokens that expire, where the
     /// initial connection might use one token, but subsequent operations might need to
     /// provide updated tokens in the operation extensions and then use that for further authentication.
     ///
-    /// Headers from the operation extensions will take precedence over those from the connection init
-    /// payload when merging.
+    /// For example:
+    ///
+    /// 1. Client connects with connection init payload containing an Authorization header with a token.
+    /// 2. Client sends a subscription operation with an updated Authorization header in the operation extensions.
+    /// 3. If `persist` is enabled, the updated Authorization header will be stored and used for subsequent operations.
     #[serde(default)]
-    pub merge_connection_init_payload_with_operation_extensions_headers: bool,
+    pub persist: bool,
 }
 
-fn default_headers_in_connection_init_payload() -> bool {
-    true
+impl WebSocketHeadersConfig {
+    pub fn accepts_connection_headers(&self) -> bool {
+        matches!(
+            self.source,
+            WebSocketHeadersSource::Connection | WebSocketHeadersSource::Both
+        )
+    }
+    pub fn accepts_operation_headers(&self) -> bool {
+        matches!(
+            self.source,
+            WebSocketHeadersSource::Operation | WebSocketHeadersSource::Both
+        )
+    }
 }

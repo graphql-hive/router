@@ -237,7 +237,7 @@ mod websocket_e2e_tests {
                                 named: x-context
                 websocket:
                     enabled: true
-                    # default headers_in_connection_init_payload: true
+                    # default headers.source: connection
                 "#,
             )
             .build()
@@ -308,7 +308,8 @@ mod websocket_e2e_tests {
                                 named: x-context
                 websocket:
                     enabled: true
-                    headers_in_operation_extensions: true
+                    headers:
+                        source: operation
                 "#,
             )
             .build()
@@ -377,8 +378,9 @@ mod websocket_e2e_tests {
                                 named: x-context
                 websocket:
                     enabled: true
-                    headers_in_operation_extensions: true
-                    merge_connection_init_payload_with_operation_extensions_headers: true
+                    headers:
+                        source: both
+                        persist: true
                 "#,
             )
             .build()

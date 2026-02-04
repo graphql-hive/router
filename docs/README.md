@@ -21,7 +21,7 @@
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
 |[**usage\_reporting**](#usage_reporting)|`object`|Configuration for usage reporting to GraphQL Hive.<br/>Default: `{"accept_invalid_certs":false,"access_token":null,"buffer_size":1000,"client_name_header":"graphql-client-name","client_version_header":"graphql-client-version","connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%","target_id":null}`<br/>||
-|[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers_in_connection_init_payload":false,"headers_in_operation_extensions":false,"merge_connection_init_payload_with_operation_extensions_headers":false,"path":null}`<br/>||
+|[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -146,9 +146,9 @@ usage_reporting:
   target_id: null
 websocket:
   enabled: false
-  headers_in_connection_init_payload: false
-  headers_in_operation_extensions: false
-  merge_connection_init_payload_with_operation_extensions_headers: false
+  headers:
+    persist: false
+    source: connection
   path: null
 
 ```
@@ -2126,9 +2126,7 @@ Configuration of router's WebSocket server.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Enables/disables WebSocket connections.<br/><br/>By default, WebSockets are disabled.<br/><br/>You can override this setting by setting the `WEBSOCKET_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
-|**headers\_in\_connection\_init\_payload**|`boolean`|Whether to accept headers in the connection init payload of WebSocket connections.<br/><br/>Defaults to `true`.<br/><br/>For example, if the client sends a connection init message like:<br/><br/>```json<br/>{<br/>  "type": "connection_init",<br/>  "payload": {<br/>    "Authorization": "Bearer abc123"<br/>  }<br/>}<br/>```<br/><br/>The headers will be extracted and considered for the WebSocket connection to the subgraph<br/>respecting the header propagation rules as well as validating against any<br/>JWT rules defined in the configuration.<br/><br/>Note that there is no `headers` field in the payload, so all fields in the payload<br/>will be treated as headers when this option is enabled.<br/>Default: `true`<br/>||
-|**headers\_in\_operation\_extensions**|`boolean`|Whether to accept the `headers` field from the GraphQL operation extensions inside WebSocket connections.<br/><br/>Defaults to `false`.<br/><br/>For example, if the client sends a GraphQL operation like:<br/><br/>```json<br/>{<br/>  "query": "subscription { greetings }",<br/>  "extensions": {<br/>    "headers": {<br/>      "Authorization": "Bearer abc123"<br/>    }<br/>  }<br/>}<br/>```<br/><br/>The headers will be extracted and considered for the WebSocket connection to the subgraph<br/>respecting the header propagation rules as well as validating against any<br/>JWT rules defined in the configuration.<br/><br/>Note that the connection init message payload can also contain headers, and those will be<br/>considered as well if `headers_in_connection_init_payload` is enabled. If the same header<br/>is defined both in the connection init message and in the operation extensions, the value<br/>from the operation extensions will take precedence<br/>Default: `false`<br/>||
-|**merge\_connection\_init\_payload\_with\_operation\_extensions\_headers**|`boolean`|Whether to merge and store headers for the duration of the WebSocket connection from both<br/>the connection init payload and the operation extensions on each operation.<br/><br/>Defaults to `false`.<br/><br/>Needs both `headers_in_connection_init_payload` and `headers_in_operation_extensions`<br/>to be enabled to have any effect.<br/><br/>This is useful when dealing with authentication using tokens that expire, where the<br/>initial connection might use one token, but subsequent operations might need to<br/>provide updated tokens in the operation extensions and then use that for further authentication.<br/><br/>Headers from the operation extensions will take precedence over those from the connection init<br/>payload when merging.<br/>Default: `false`<br/>||
+|[**headers**](#websocketheaders)|`object`|Configuration for handling headers for WebSocket connections.<br/>Default: `{"persist":false,"source":"connection"}`<br/>|yes|
 |**path**|`string`, `null`|The path to use for the WebSocket endpoint on the router.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>By default, the WebSocket endpoint will be available at the `http.graphql_endpoint` (defaults to `/graphql`)<br/>if no path is specified and the clients will connect using `ws://<router-url>/<graphql_endpoint>`.<br/>||
 
 **Additional Properties:** not allowed  
@@ -2136,10 +2134,32 @@ Configuration of router's WebSocket server.
 
 ```yaml
 enabled: false
-headers_in_connection_init_payload: false
-headers_in_operation_extensions: false
-merge_connection_init_payload_with_operation_extensions_headers: false
+headers:
+  persist: false
+  source: connection
 path: null
+
+```
+
+<a name="websocketheaders"></a>
+### websocket\.headers: object
+
+Configuration for handling headers for WebSocket connections.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**persist**|`boolean`|Whether to persist merged headers for the duration of the WebSocket connection<br/>when using the `both` source (headers are accepted from multiple sources).<br/><br/>Only has effect when `source` is set to `both`.<br/><br/>This is useful when dealing with authentication using tokens that expire, where the<br/>initial connection might use one token, but subsequent operations might need to<br/>provide updated tokens in the operation extensions and then use that for further authentication.<br/><br/>For example:<br/><br/>1. Client connects with connection init payload containing an Authorization header with a token.<br/>2. Client sends a subscription operation with an updated Authorization header in the operation extensions.<br/>3. If `persist` is enabled, the updated Authorization header will be stored and used for subsequent operations.<br/>Default: `false`<br/>|no|
+|**source**||The source(s) from which to accept headers for WebSocket connections.<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+persist: false
+source: connection
 
 ```
 

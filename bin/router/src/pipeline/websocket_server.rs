@@ -219,14 +219,14 @@ async fn handle_text_frame(
 
             let config = &shared_state.router_config.websocket;
 
-            let connection_init_headers = if config.headers_in_connection_init_payload {
+            let connection_init_headers = if config.headers.accepts_connection_headers() {
                 let state_borrow = state.borrow();
                 parse_headers_from_connection_init_payload(state_borrow.init_payload.as_ref())
             } else {
                 HeaderMap::new()
             };
 
-            let extensions_headers = if config.headers_in_operation_extensions {
+            let extensions_headers = if config.headers.accepts_operation_headers() {
                 parse_headers_from_extensions(payload.extensions.as_ref())
             } else {
                 HeaderMap::new()
@@ -239,7 +239,7 @@ async fn handle_text_frame(
             }
 
             // store the merged headers back to init_payload if configured to do so
-            if config.merge_connection_init_payload_with_operation_extensions_headers {
+            if config.headers.persist {
                 if let Some(ref mut init_payload) = state.borrow_mut().init_payload {
                     for (key, value) in headers.iter() {
                         if let Ok(val_str) = value.to_str() {
