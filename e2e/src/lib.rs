@@ -19,8 +19,6 @@ mod http;
 #[cfg(test)]
 mod jwt;
 #[cfg(test)]
-mod max_aliases;
-#[cfg(test)]
 mod max_depth;
 #[cfg(test)]
 mod max_directives;
