@@ -8,7 +8,7 @@ mod max_aliases_e2e_tests {
     };
 
     #[ntex::test]
-    async fn allows_query_within_max_aliases() {
+    async fn allows_query_within_max_aliases() -> Result<(), Box<dyn std::error::Error>> {
         let _subgraphs = SubgraphsServer::start().await;
         let app = init_router_from_config_inline(
             r#"
@@ -17,8 +17,7 @@ mod max_aliases_e2e_tests {
                 n: 3
         "#,
         )
-        .await
-        .unwrap();
+        .await?;
         wait_for_readiness(&app.app).await;
         let req = init_graphql_request(
             "query { 
@@ -32,8 +31,8 @@ mod max_aliases_e2e_tests {
         assert!(resp.status().is_success(), "Expected 200 OK");
 
         let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        let json_body: Value = from_slice(&body)?;
+        insta::assert_snapshot!(to_string_pretty(&json_body)?, @r###"
         {
           "data": {
             "myInfo": {
@@ -42,10 +41,11 @@ mod max_aliases_e2e_tests {
           }
         }
         "###);
+        Ok(())
     }
 
     #[ntex::test]
-    async fn rejects_query_exceeding_max_aliases() {
+    async fn rejects_query_exceeding_max_aliases() -> Result<(), Box<dyn std::error::Error>> {
         let _subgraphs = SubgraphsServer::start().await;
         let app = init_router_from_config_inline(
             r#"
@@ -54,8 +54,7 @@ mod max_aliases_e2e_tests {
                 n: 3
         "#,
         )
-        .await
-        .unwrap();
+        .await?;
         wait_for_readiness(&app.app).await;
 
         let req = init_graphql_request(
@@ -73,9 +72,9 @@ mod max_aliases_e2e_tests {
         let resp = test::call_service(&app.app, req.to_request()).await;
 
         let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let json_body: Value = from_slice(&body)?;
 
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        insta::assert_snapshot!(to_string_pretty(&json_body)?, @r###"
         {
           "errors": [
             {
@@ -87,5 +86,7 @@ mod max_aliases_e2e_tests {
           ]
         }
         "###);
+
+        Ok(())
     }
 }
