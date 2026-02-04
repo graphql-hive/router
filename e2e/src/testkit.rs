@@ -189,7 +189,7 @@ pub async fn init_router_from_config(
     Box<dyn std::error::Error>,
 > {
     init_rustls_crypto_provider();
-    let (telemetry, subscriber) = Telemetry::init_subscriber(&router_config);
+    let (telemetry, subscriber) = Telemetry::init_subscriber(&router_config)?;
     let subscription_guard = tracing::subscriber::set_default(subscriber);
 
     let mut bg_tasks_manager = BackgroundTasksManager::new();

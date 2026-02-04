@@ -132,7 +132,7 @@ async fn graphql_endpoint_handler(
 pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
-    let telemetry = telemetry::Telemetry::init_global(&router_config);
+    let telemetry = telemetry::Telemetry::init_global(&router_config)?;
     info!("hive-router@{} starting...", ROUTER_VERSION);
     let http_config = router_config.http.clone();
     let addr = router_config.http.address();

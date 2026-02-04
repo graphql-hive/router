@@ -3,6 +3,7 @@ use std::{io::IsTerminal, str::FromStr};
 use hive_router_config::{log::LogFormat, HiveRouterConfig};
 use hive_router_internal::telemetry::{
     build_otel_layer_from_config,
+    error::TelemetryError,
     otel::{
         opentelemetry::{global::set_tracer_provider, propagation::Extractor},
         opentelemetry_sdk::trace::{RandomIdGenerator, SdkTracerProvider},
@@ -10,8 +11,8 @@ use hive_router_internal::telemetry::{
     traces::set_tracing_enabled,
     TelemetryContext,
 };
-use tracing_subscriber::{filter::filter_fn, util::SubscriberInitExt, Layer};
-use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, Registry};
+use tracing_subscriber::{filter::filter_fn, util::SubscriberInitExt};
+use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, Layer, Registry};
 use tracing_subscriber::{
     fmt::{self},
     layer::SubscriberExt,
@@ -37,12 +38,19 @@ pub struct Telemetry {
     pub context: TelemetryContext,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum TelemetryInitError {
+    #[error(transparent)]
+    TelemetryError(#[from] TelemetryError),
+    #[error("failed to initialize env-filter logger: {0}")]
+    EnvFilter(#[from] tracing_subscriber::filter::ParseError),
+}
+
 impl Telemetry {
     /// Sets up the global tracing subscriber including logging and OpenTelemetry.
-    pub fn init_global(config: &HiveRouterConfig) -> Self {
+    pub fn init_global(config: &HiveRouterConfig) -> Result<Self, TelemetryInitError> {
         let id_generator = RandomIdGenerator::default();
-        let otel_layer_result =
-            build_otel_layer_from_config(&config.telemetry, id_generator).unwrap();
+        let otel_layer_result = build_otel_layer_from_config(&config.telemetry, id_generator)?;
 
         let (otel_layer, tracer_provider) = if let Some((layer, provider)) = otel_layer_result {
             set_tracing_enabled(true);
@@ -54,21 +62,23 @@ impl Telemetry {
         };
 
         let registry = tracing_subscriber::registry().with(otel_layer);
-        init_logging(config, registry);
+        init_logging(config, registry)?;
 
         let context =
             TelemetryContext::from_propagation_config(&config.telemetry.tracing.propagation);
 
-        Self {
+        Ok(Self {
             provider: tracer_provider,
             context,
-        }
+        })
     }
 
     /// Initializes telemetry for cases where the subscriber should not be set globally
-    pub fn init_subscriber(config: &HiveRouterConfig) -> (Self, impl tracing::Subscriber) {
+    pub fn init_subscriber(
+        config: &HiveRouterConfig,
+    ) -> Result<(Self, impl tracing::Subscriber), TelemetryInitError> {
         let otel_layer_result =
-            build_otel_layer_from_config(&config.telemetry, RandomIdGenerator::default()).unwrap();
+            build_otel_layer_from_config(&config.telemetry, RandomIdGenerator::default())?;
 
         let (otel_layer, tracer_provider) = match otel_layer_result {
             Some((layer, provider)) => {
@@ -84,21 +94,20 @@ impl Telemetry {
         let context =
             TelemetryContext::from_propagation_config(&config.telemetry.tracing.propagation);
 
-        let filter = EnvFilter::from_str(config.log.env_filter_str())
-            .unwrap_or_else(|e| panic!("failed to initialize env-filter logger: {}", e));
+        let filter = EnvFilter::from_str(config.log.env_filter_str())?;
 
         let subscriber = Registry::default()
             .with(filter)
             .with(otel_layer)
             .with(fmt::layer().with_test_writer());
 
-        (
+        Ok((
             Self {
                 provider: tracer_provider,
                 context,
             },
             subscriber,
-        )
+        ))
     }
 
     pub async fn graceful_shutdown(&self) {
@@ -126,7 +135,7 @@ impl Telemetry {
     }
 }
 
-pub fn init_logging<S>(config: &HiveRouterConfig, registry: S)
+pub fn init_logging<S>(config: &HiveRouterConfig, registry: S) -> Result<(), TelemetryInitError>
 where
     S: tracing::Subscriber
         + for<'span> tracing_subscriber::registry::LookupSpan<'span>
@@ -134,8 +143,7 @@ where
         + Sync,
 {
     let timer = UtcTime::rfc_3339();
-    let filter = EnvFilter::from_str(config.log.env_filter_str())
-        .unwrap_or_else(|e| panic!("failed to initialize env-filter logger: {}", e));
+    let filter = EnvFilter::from_str(config.log.env_filter_str())?;
     let is_terminal = std::io::stdout().is_terminal();
 
     let events_only = filter_fn(|m| !m.is_span());
@@ -183,4 +191,6 @@ where
                 .init();
         }
     };
+
+    Ok(())
 }
