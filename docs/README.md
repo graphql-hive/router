@@ -1658,9 +1658,25 @@ Configuration for checking the limits such as query depth, complexity, etc.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**max\_aliases**](#limitsmax_aliases)|`object`, `null`|Configuration of limiting the number of aliases in the incoming GraphQL operations.<br/>|yes|
 |[**max\_depth**](#limitsmax_depth)|`object`, `null`|Configuration of limiting the depth of the incoming GraphQL operations.<br/>|yes|
 |[**max\_directives**](#limitsmax_directives)|`object`, `null`|Configuration of limiting the number of directives in the incoming GraphQL operations.<br/>|yes|
 |[**max\_tokens**](#limitsmax_tokens)|`object`, `null`|Configuration of limiting the number of tokens in the incoming GraphQL operations.<br/>|yes|
+
+<a name="limitsmax_aliases"></a>
+### limits\.max\_aliases: object,null
+
+Configuration of limiting the number of aliases in the incoming GraphQL operations.
+If not specified, alias limiting is disabled.
+
+It is used to prevent too many aliases that could lead to overfetching or DOS attacks.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**n**|`integer`|Aliases threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
 
 <a name="limitsmax_depth"></a>
 ### limits\.max\_depth: object,null
