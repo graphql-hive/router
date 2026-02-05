@@ -6,6 +6,7 @@ use crate::schema_state::{SchemaState, SupergraphData};
 use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
 use tracing::{error, trace};
+pub mod max_aliases_rule;
 pub mod max_depth_rule;
 pub mod max_directives_rule;
 mod shared;
