@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.2.0 (2026-02-06)
+
+### Features
+
+- Operation Complexity - Limit Aliases (#746)
+- Operation Complexity - Limit Aliases (#749)
+
 ## 2.1.7 (2026-01-22)
 
 ### Fixes

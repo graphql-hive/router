@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-internal"
-version = "0.0.8"
+version = "0.0.9"
 edition = "2021"
 description = "GraphQL Hive Router internal crate"
 license = "MIT"
@@ -12,7 +12,7 @@ authors = ["The Guild"]
 [lib]
 
 [dependencies]
-hive-router-config = { path = "../router-config", version = "0.0.20" }
+hive-router-config = { path = "../router-config", version = "0.0.21" }
 tracing = { workspace = true }
 
 sonic-rs = { workspace = true }
