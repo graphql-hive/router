@@ -1665,6 +1665,13 @@ Configuration for checking the limits such as query depth, complexity, etc.
 |**max\_request\_body\_size**|`string`|Default: `"2 MB"`<br/>||
 |[**max\_tokens**](#limitsmax_tokens)|`object`, `null`|Configuration of limiting the number of tokens in the incoming GraphQL operations.<br/>|yes|
 
+**Example**
+
+```yaml
+max_request_body_size: 2 MB
+
+```
+
 <a name="limitsmax_aliases"></a>
 ### limits\.max\_aliases: object,null
 
@@ -1679,12 +1686,6 @@ It is used to prevent too many aliases that could lead to overfetching or DOS at
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**n**|`integer`|Aliases threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
-**Example**
-
-```yaml
-max_request_body_size: 2 MB
-
-```
 
 <a name="limitsmax_depth"></a>
 ### limits\.max\_depth: object,null

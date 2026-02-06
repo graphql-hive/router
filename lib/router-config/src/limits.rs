@@ -31,7 +31,7 @@ pub struct LimitsConfig {
     /// It is used to prevent too many aliases that could lead to overfetching or DOS attacks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_aliases: Option<MaxAliasesRuleConfig>,
-    
+
     #[serde(default = "default_max_request_body_size")]
     #[schemars(with = "String")]
     pub max_request_body_size: Size,
