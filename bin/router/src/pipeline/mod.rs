@@ -17,6 +17,7 @@ use ntex::{
 use crate::{
     pipeline::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
+        body_read::read_body_stream,
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
         error::PipelineError,
@@ -35,6 +36,7 @@ use crate::{
 };
 
 pub mod authorization;
+pub mod body_read;
 pub mod coerce_variables;
 pub mod cors;
 pub mod csrf_prevention;
@@ -53,7 +55,7 @@ pub mod validation;
 #[inline]
 pub async fn graphql_request_handler(
     req: &HttpRequest,
-    body_bytes: Bytes,
+    body_stream: web::types::Payload,
     response_mode: &ResponseMode,
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
@@ -63,8 +65,18 @@ pub async fn graphql_request_handler(
 
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
-    let mut execution_request =
-        get_execution_request_from_http_request(req, body_bytes.clone()).await?;
+    let body_bytes = read_body_stream(
+        req,
+        body_stream,
+        shared_state
+            .router_config
+            .limits
+            .max_request_body_size
+            .to_bytes() as usize,
+    )
+    .await?;
+
+    let mut execution_request = get_execution_request_from_http_request(req, body_bytes).await?;
 
     let parser_payload = parse_operation_with_cache(shared_state, &execution_request).await?;
     validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload).await?;

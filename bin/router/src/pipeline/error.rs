@@ -20,6 +20,7 @@ use crate::{
     jwt::errors::JwtError,
     pipeline::{
         authorization::AuthorizationError,
+        body_read::ReadBodyStreamError,
         header::{ResponseMode, SingleContentType},
         progressive_override::LabelEvaluationError,
     },
@@ -118,6 +119,10 @@ pub enum PipelineError {
     #[error("Subscriptions are not supported over accepted transport(s)")]
     #[strum(serialize = "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED")]
     SubscriptionsTransportNotSupported,
+
+    #[error(transparent)]
+    #[strum(serialize = "READ_BODY_STREAM_ERROR")]
+    ReadBodyStreamError(#[from] ReadBodyStreamError),
 }
 
 impl PipelineError {
@@ -125,6 +130,7 @@ impl PipelineError {
         match self {
             Self::JwtError(err) => err.error_code(),
             Self::PlanExecutionError(err) => err.error_code(),
+            Self::ReadBodyStreamError(err) => err.error_code(),
             _ => self.into(),
         }
     }
@@ -169,6 +175,7 @@ impl PipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::ReadBodyStreamError(err), _) => err.status_code(),
         }
     }
 
