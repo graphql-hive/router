@@ -127,6 +127,10 @@ pub enum PipelineError {
     #[error(transparent)]
     #[strum(serialize = "READ_BODY_STREAM_ERROR")]
     ReadBodyStreamError(#[from] ReadBodyStreamError),
+
+    #[error("Request timed out")]
+    #[strum(serialize = "GATEWAY_TIMEOUT")]
+    TimeoutError,
 }
 
 impl PipelineError {
@@ -182,6 +186,7 @@ impl PipelineError {
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::ReadBodyStreamError(err), _) => err.status_code(),
+            (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
         }
     }
 
