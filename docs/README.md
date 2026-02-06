@@ -19,7 +19,7 @@
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"request_timeout":"1m"}}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -148,6 +148,8 @@ traffic_shaping:
     pool_idle_timeout: 50s
     request_timeout: 30s
   max_connections_per_host: 100
+  router:
+    request_timeout: 1m
 
 ```
 
@@ -2454,6 +2456,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 |----|----|-----------|--------|
 |[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"request_timeout":"1m"}`<br/>||
 |[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
 
 **Additional Properties:** not allowed  
@@ -2465,6 +2468,8 @@ all:
   pool_idle_timeout: 50s
   request_timeout: 30s
 max_connections_per_host: 100
+router:
+  request_timeout: 1m
 
 ```
 
@@ -2489,6 +2494,26 @@ The default configuration that will be applied to all subgraphs, unless overridd
 dedupe_enabled: true
 pool_idle_timeout: 50s
 request_timeout: 30s
+
+```
+
+<a name="traffic_shapingrouter"></a>
+### traffic\_shaping\.router: object
+
+Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**request\_timeout**|`string`|Optional timeout configuration for incoming requests to the router.<br/>It starts from the moment the request is received by the router,<br/>and includes the entire processing of the request (validation, execution, etc.) until a response is sent back to the client.<br/>If a request takes longer than the specified duration, it will be aborted and a timeout error will be returned to the client.<br/>Default: `"1m"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+request_timeout: 1m
 
 ```
 
