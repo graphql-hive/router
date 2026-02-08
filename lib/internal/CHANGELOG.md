@@ -1,3 +1,10 @@
+## 0.0.9 (2026-02-06)
+
+### Features
+
+- Operation Complexity - Limit Aliases (#746)
+- Operation Complexity - Limit Aliases (#749)
+
 ## 0.0.8 (2026-01-27)
 
 ### Fixes

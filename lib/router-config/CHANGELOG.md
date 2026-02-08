@@ -66,6 +66,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.21 (2026-02-06)
+
+### Features
+
+- Operation Complexity - Limit Aliases (#746)
+- Operation Complexity - Limit Aliases (#749)
+
+### Fixes
+
+#### New Operation Complexity Option: Max Aliases
+
+We've introduced a new configuration option, `max_aliases` that allows you to limit the number of aliases in the incoming GraphQL operations. This helps to prevent overly complex queries that could impact performance, or any potential DOS attack or heap overflow via excessive aliases.
+
+```yaml
+limits:
+  max_aliases:
+    n: 3  # Set the maximum number of aliases allowed in a query
+```
+
+#### New configuration flag to limit the incoming HTTP request body size in the router before parsing the request(JSON etc).
+
+```yaml
+limits:
+  max_request_body_size: 2MB # Human readable size format
+```
+
+By default, this limit is set to 2MB.
+
 ## 0.0.20 (2026-01-27)
 
 ### Fixes
