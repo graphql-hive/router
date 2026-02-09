@@ -67,7 +67,7 @@ strum = { version = "0.27.2", features = ["derive"] }
 # Telemetry
 opentelemetry = "0.31.0"
 opentelemetry_sdk = "0.31.0"
-opentelemetry-prometheus = "0.29.1"
+opentelemetry-prometheus = "0.31.0"
 opentelemetry-http = { version = "0.31.0", default-features = false, features = ["internal-logs", "reqwest", "reqwest-rustls"]}
 opentelemetry-otlp = { version = "0.31.0", default-features = false, features = ["reqwest-client", "reqwest-rustls", "http-proto", "internal-logs", "logs", "metrics", "trace"] }
 opentelemetry-proto = "0.31.0"
