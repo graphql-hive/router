@@ -38,9 +38,9 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "HIVE_TARGET")]
     pub hive_target: Option<String>,
     #[envconfig(from = "HIVE_TRACING_ENABLED")]
-    pub hive_tracing_enabled: Option<String>,
+    pub hive_tracing_enabled: Option<bool>,
     #[envconfig(from = "HIVE_USAGE_REPORTING_ENABLED")]
-    pub hive_usage_reporting_enabled: Option<String>,
+    pub hive_usage_reporting_enabled: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
