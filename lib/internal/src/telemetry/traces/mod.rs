@@ -250,62 +250,19 @@ fn setup_hive_exporter(
         )));
     }
 
-    ensure_single_protocol_config(
-        "Hive Tracing",
-        &config.tracing.protocol,
-        config.tracing.http.is_some(),
-        config.tracing.grpc.is_some(),
-    )?;
+    let headers: HashMap<String, String> = HashMap::from_iter(vec![
+        ("authorization".to_string(), format!("Bearer {}", token)),
+        ("x-hive-target-ref".to_string(), target),
+    ]);
 
-    let exporter = match &config.tracing.protocol {
-        OtlpProtocol::Grpc => {
-            let mut metadata = config
-                .tracing
-                .grpc
-                .as_ref()
-                .map(|grpc_config| {
-                    resolve_string_map(&grpc_config.metadata, "Hive Tracing grpc metadata key")
-                })
-                .transpose()?
-                .unwrap_or_default();
-
-            metadata.insert("authorization".to_string(), format!("Bearer {}", token));
-            metadata.insert("x-hive-target-ref".to_string(), target);
-
-            SpanExporter::builder()
-                .with_tonic()
-                .with_endpoint(endpoint)
-                .with_timeout(config.tracing.batch_processor.max_export_timeout)
-                .with_metadata(build_metadata(metadata)?)
-                .with_tls_config(build_tls_config(
-                    config.tracing.grpc.as_ref().map(|g| &g.tls),
-                )?)
-                .build()
-        }
-        OtlpProtocol::Http => {
-            let mut headers = config
-                .tracing
-                .http
-                .as_ref()
-                .map(|http_config| {
-                    resolve_string_map(&http_config.headers, "Hive Tracing http header key")
-                })
-                .transpose()?
-                .unwrap_or_default();
-
-            headers.insert("authorization".to_string(), format!("Bearer {}", token));
-            headers.insert("x-hive-target-ref".to_string(), target);
-
-            SpanExporter::builder()
-                .with_http()
-                .with_endpoint(endpoint)
-                .with_timeout(config.tracing.batch_processor.max_export_timeout)
-                .with_headers(headers)
-                .with_protocol(Protocol::HttpBinary)
-                .build()
-        }
-    }
-    .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
+    let exporter = SpanExporter::builder()
+        .with_http()
+        .with_endpoint(endpoint)
+        .with_timeout(config.tracing.batch_processor.max_export_timeout)
+        .with_headers(headers)
+        .with_protocol(Protocol::HttpBinary)
+        .build()
+        .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
 
     let hive_exporter = HiveConsoleExporter::new(exporter);
     let mut trace_batching_processor =

@@ -1999,7 +1999,7 @@ version_header: graphql-client-version
 |**endpoint**||Default: `"https://api.graphql-hive.com/otel/v1/traces"`<br/>||
 |**target**||A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
 |**token**||Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
-|[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":true,"grpc":null,"http":null,"protocol":"http"}`<br/>|yes|
+|[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":true}`<br/>||
 |[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -2017,11 +2017,8 @@ version_header: graphql-client-version
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**batch\_processor**](#telemetryhivetracingbatch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"}`<br/>|no|
-|**enabled**|`boolean`|Default: `true`<br/>|no|
-|[**grpc**](#telemetryhivetracinggrpc)|`object`, `null`||no|
-|[**http**](#telemetryhivetracinghttp)|`object`, `null`||no|
-|**protocol**|`string`|Enum: `"grpc"`, `"http"`<br/>|yes|
+|[**batch\_processor**](#telemetryhivetracingbatch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"}`<br/>||
+|**enabled**|`boolean`|Default: `true`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2036,9 +2033,6 @@ batch_processor:
   max_traces_in_memory: 30000
   scheduled_delay: 5s
 enabled: true
-grpc: null
-http: null
-protocol: http
 
 ```
 
@@ -2070,82 +2064,6 @@ max_traces_in_memory: 30000
 scheduled_delay: 5s
 
 ```
-
-<a name="telemetryhivetracinggrpc"></a>
-##### telemetry\.hive\.tracing\.grpc: object,null
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**metadata**](#telemetryhivetracinggrpcmetadata)|`object`|Default: `{}`<br/>||
-|[**tls**](#telemetryhivetracinggrpctls)|`object`|Default: `{"ca":null,"cert":null,"domain_name":null,"key":null}`<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-{}
-
-```
-
-<a name="telemetryhivetracinggrpcmetadata"></a>
-###### telemetry\.hive\.tracing\.grpc\.metadata: object
-
-**Additional Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**Additional Properties**||||
-
-<a name="telemetryhivetracinggrpctls"></a>
-###### telemetry\.hive\.tracing\.grpc\.tls: object
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**ca**|`string`, `null`|The path to the Certificate Authority (CA) certificate file (PEM format) used to verify the server's certificate.<br/>||
-|**cert**|`string`, `null`|The path to the client's certificate file (PEM format).<br/>||
-|**domain\_name**|`string`, `null`|The domain name used to verify the server's TLS certificate.<br/>||
-|**key**|`string`, `null`|The path to the client's private key file.<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-ca: null
-cert: null
-domain_name: null
-key: null
-
-```
-
-<a name="telemetryhivetracinghttp"></a>
-##### telemetry\.hive\.tracing\.http: object,null
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**headers**](#telemetryhivetracinghttpheaders)|`object`|Default: `{}`<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-{}
-
-```
-
-<a name="telemetryhivetracinghttpheaders"></a>
-###### telemetry\.hive\.tracing\.http\.headers: object
-
-**Additional Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**Additional Properties**||||
 
 <a name="telemetryhiveusage_reporting"></a>
 #### telemetry\.hive\.usage\_reporting: object

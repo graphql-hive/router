@@ -5,9 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    primitives::value_or_expression::ValueOrExpression,
-    telemetry::tracing::{OtlpGrpcConfig, OtlpHttpConfig, OtlpProtocol},
-    usage_reporting::UsageReportingConfig,
+    primitives::value_or_expression::ValueOrExpression, usage_reporting::UsageReportingConfig,
 };
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -58,9 +56,6 @@ impl Default for TracingConfig {
         Self {
             enabled: default_tracing_enabled(),
             batch_processor: TraceBatchProcessorConfig::default(),
-            protocol: OtlpProtocol::Http,
-            http: None,
-            grpc: None,
         }
     }
 }
@@ -72,11 +67,6 @@ pub struct TracingConfig {
     pub enabled: bool,
     #[serde(default)]
     pub batch_processor: TraceBatchProcessorConfig,
-    pub protocol: OtlpProtocol,
-    #[serde(default)]
-    pub http: Option<OtlpHttpConfig>,
-    #[serde(default)]
-    pub grpc: Option<OtlpGrpcConfig>,
 }
 
 fn default_tracing_enabled() -> bool {
