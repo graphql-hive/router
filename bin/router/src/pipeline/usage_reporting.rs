@@ -16,7 +16,7 @@ use hive_router_plan_executor::execution::{
     client_request_details::ClientRequestDetails, plan::PlanExecutionOutput,
 };
 
-use rand::Rng;
+use rand::RngExt as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
