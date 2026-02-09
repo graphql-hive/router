@@ -7,7 +7,7 @@ use hive_router_query_planner::{
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
     state::supergraph_state::SupergraphState,
 };
-use rand::Rng;
+use rand::RngExt;
 use vrl::{
     compiler::Program as VrlProgram,
     compiler::TargetValue as VrlTargetValue,

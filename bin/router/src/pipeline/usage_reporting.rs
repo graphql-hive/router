@@ -16,7 +16,7 @@ use hive_router_internal::{
     telemetry::resolve_value_or_expression,
 };
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
-use rand::Rng;
+use rand::RngExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::consts::ROUTER_VERSION;
