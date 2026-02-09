@@ -35,6 +35,7 @@ async fn test_hive_http_export() {
               token: {}
               target: {}
               tracing:
+                enabled: true
                 batch_processor:
                   scheduled_delay: 50ms
                   max_export_timeout: 50ms

@@ -70,7 +70,7 @@ pub struct TracingConfig {
 }
 
 fn default_tracing_enabled() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

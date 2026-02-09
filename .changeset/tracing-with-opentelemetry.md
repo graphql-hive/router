@@ -1,9 +1,9 @@
 ---
-internal: minor
-router: minor
-config: minor
-executor: minor
-query-planner: minor
+hive-router-config: patch
+hive-router-internal: patch
+hive-router-plan-executor: patch
+hive-router-query-planner: patch
+hive-router: patch
 ---
 
 # Tracing with OpenTelemetry

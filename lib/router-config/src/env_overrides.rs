@@ -37,6 +37,10 @@ pub struct EnvVarOverrides {
     pub hive_access_token: Option<String>,
     #[envconfig(from = "HIVE_TARGET")]
     pub hive_target: Option<String>,
+    #[envconfig(from = "HIVE_TRACING_ENABLED")]
+    pub hive_tracing_enabled: Option<bool>,
+    #[envconfig(from = "HIVE_USAGE_REPORTING_ENABLED")]
+    pub hive_usage_reporting_enabled: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -103,9 +107,12 @@ impl EnvVarOverrides {
             }
         }
 
-        if self.hive_access_token.is_some() && self.hive_target.is_some() {
-            config = config.set_override("telemetry.hive.usage_reporting.enabled", true)?;
-            config = config.set_override("telemetry.hive.tracing.enabled", true)?;
+        if let Some(enabled) = self.hive_tracing_enabled.take() {
+            config = config.set_override("telemetry.hive.tracing.enabled", enabled)?;
+        }
+
+        if let Some(enabled) = self.hive_usage_reporting_enabled.take() {
+            config = config.set_override("telemetry.hive.usage_reporting.enabled", enabled)?;
         }
 
         if let Some(hive_access_token) = self.hive_access_token.take() {

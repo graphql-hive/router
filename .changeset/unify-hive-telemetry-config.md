@@ -1,7 +1,8 @@
 ---
-config: minor
-router: minor
-internal: minor
+hive-router-config: patch
+hive-router-internal: patch
+hive-router-plan-executor: patch
+hive-router: patch
 ---
 
 # Unified Hive Telemetry Configuration
