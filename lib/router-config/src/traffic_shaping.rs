@@ -15,6 +15,10 @@ pub struct TrafficShapingConfig {
     /// Limits the concurrent amount of requests/connections per host/subgraph.
     #[serde(default = "default_max_connections_per_host")]
     pub max_connections_per_host: usize,
+
+    #[serde(default)]
+    /// Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.
+    pub router: TrafficShapingRouterConfig,
 }
 
 impl Default for TrafficShapingConfig {
@@ -23,6 +27,7 @@ impl Default for TrafficShapingConfig {
             all: TrafficShapingExecutorGlobalConfig::default(),
             subgraphs: HashMap::new(),
             max_connections_per_host: default_max_connections_per_host(),
+            router: TrafficShapingRouterConfig::default(),
         }
     }
 }
@@ -148,6 +153,34 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             pool_idle_timeout: default_pool_idle_timeout(),
             dedupe_enabled: default_dedupe_enabled(),
             request_timeout: default_request_timeout(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingRouterConfig {
+    /// Optional timeout configuration for incoming requests to the router.
+    /// It starts from the moment the request is received by the router,
+    /// and includes the entire processing of the request (validation, execution, etc.) until a response is sent back to the client.
+    /// If a request takes longer than the specified duration, it will be aborted and a timeout error will be returned to the client.
+    #[serde(
+        default = "default_router_request_timeout",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub request_timeout: Duration,
+}
+
+fn default_router_request_timeout() -> Duration {
+    Duration::from_secs(60)
+}
+
+impl Default for TrafficShapingRouterConfig {
+    fn default() -> Self {
+        Self {
+            request_timeout: default_router_request_timeout(),
         }
     }
 }

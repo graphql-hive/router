@@ -22,6 +22,7 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     pipeline::{
+        error::PipelineError,
         graphql_request_handler,
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         usage_reporting::init_hive_usage_agent,
@@ -42,7 +43,11 @@ use hive_router_internal::telemetry::{
     traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
 };
 use http::header::{CONTENT_TYPE, RETRY_AFTER};
-use ntex::web::{self, HttpRequest};
+use ntex::util::{select, Either};
+use ntex::{
+    time::sleep,
+    web::{self, HttpRequest},
+};
 use tracing::{info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
@@ -53,9 +58,7 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
-    let maybe_supergraph = schema_state.current_supergraph();
-
-    if let Some(supergraph) = maybe_supergraph.as_ref() {
+    if let Some(supergraph) = schema_state.current_supergraph().as_ref() {
         // If an early CORS response is needed, return it immediately.
         if let Some(early_response) = app_state
             .cors_runtime
@@ -89,7 +92,14 @@ async fn graphql_endpoint_handler(
         let _ = root_http_request_span.set_parent(parent_ctx);
 
         async {
-            let mut res = match graphql_request_handler(
+            let timeout_fut = sleep(
+                app_state
+                    .router_config
+                    .traffic_shaping
+                    .router
+                    .request_timeout,
+            );
+            let req_handler_fut = graphql_request_handler(
                 &request,
                 body_stream,
                 &response_mode,
@@ -97,11 +107,20 @@ async fn graphql_endpoint_handler(
                 app_state.get_ref(),
                 schema_state.get_ref(),
                 &root_http_request_span,
-            )
-            .await
-            {
-                Ok(response) => response,
-                Err(err) => {
+            );
+            let mut res = match select(timeout_fut, req_handler_fut).await {
+                // If the timeout future completes first, return a timeout error response.
+                Either::Left(_) => {
+                    let err = PipelineError::TimeoutError;
+                    return {
+                        tracing::error!("{}", err);
+                        err.into_response(Some(response_mode))
+                    };
+                }
+                // If the request handler future completes first, return its response.
+                Either::Right(Ok(response)) => response,
+                // If the request handler future completes first with an error, return the error response.
+                Either::Right(Err(err)) => {
                     return {
                         tracing::error!("{}", err);
                         err.into_response(Some(response_mode))
