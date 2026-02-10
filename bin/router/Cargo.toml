@@ -1,6 +1,6 @@
 [package]
 name = "hive-router"
-version = "0.0.36"
+version = "0.0.37"
 edition = "2021"
 description = "GraphQL router/gateway for Federation"
 license = "MIT"
@@ -16,10 +16,10 @@ name = "hive_router"
 path = "src/main.rs"
 
 [dependencies]
-hive-router-query-planner = { path = "../../lib/query-planner", version = "2.2.0" }
-hive-router-plan-executor = { path = "../../lib/executor", version = "6.4.0" }
-hive-router-config = { path = "../../lib/router-config", version = "0.0.21" }
-hive-router-internal = { path = "../../lib/internal", version = "0.0.9" }
+hive-router-query-planner = { path = "../../lib/query-planner", version = "2.2.1" }
+hive-router-plan-executor = { path = "../../lib/executor", version = "6.4.1" }
+hive-router-config = { path = "../../lib/router-config", version = "0.0.22" }
+hive-router-internal = { path = "../../lib/internal", version = "0.0.10" }
 hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.6" }
 graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.1" }
 
