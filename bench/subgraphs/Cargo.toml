@@ -24,6 +24,8 @@ serde_json = { workspace = true }
 # TODO: can this be a workspace = true?
 hive-router = { path = "../../bin/router" }
 
+serde = { workspace = true }
+reqwest = { workspace = true }
 bytes = "1.10.1"
 async-graphql = "7.0.17"
 async-graphql-axum = "7.0.17"
