@@ -68,6 +68,8 @@ async-stream = "0.3.6"
 futures-util = "0.3.31"
 futures-timer = "3.0.3"
 const-str = "1.0.0"
+bytes = { workspace = true }
+dashmap = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

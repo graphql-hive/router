@@ -2147,10 +2147,12 @@ dependencies = [
  "arc-swap",
  "async-stream",
  "async-trait",
+ "bytes",
  "combine",
  "const-str",
  "cookie",
  "criterion",
+ "dashmap",
  "futures",
  "futures-timer",
  "futures-util",
@@ -2269,6 +2271,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "uuid",
  "xxhash-rust",
 ]
 

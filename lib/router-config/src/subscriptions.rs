@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
@@ -10,9 +11,50 @@ pub struct SubscriptionsConfig {
     /// You can override this setting by setting the `SUBSCRIPTIONS_ENABLED` environment variable to `true` or `false`.
     #[serde(default)]
     pub enabled: bool,
+    /// Configuration for subgraphs using the HTTP Callback protocol.
+    #[serde(default)]
+    pub callback: Option<CallbackConfig>,
     /// Configuration for subgraphs using WebSocket protocol.
     #[serde(default)]
     pub websocket: Option<WebSocketConfig>,
+}
+
+/// Configuration for the HTTP Callback subscription mode.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct CallbackConfig {
+    /// The public URL that subgraphs will use to send callback messages to this router.
+    ///
+    /// Your public_url must match the server address combined with the router's path.
+    /// Meaning, if your server is `http://localhost:4000` and the path is `/callback`,
+    /// your `public_url` should be `http://localhost:4000/callback`.
+    ///
+    /// Example: `https://example.com:4000/callback`
+    pub public_url: String,
+    /// The path of the router's callback endpoint.
+    /// Defaults to `/callback`.
+    #[serde(default = "default_callback_path")]
+    pub path: String,
+    /// The interval at which the subgraph must send heartbeat messages.
+    /// If set to 0, heartbeats are disabled. Defaults to 5 seconds.
+    #[serde(
+        default = "default_heartbeat_interval",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub heartbeat_interval: Duration,
+    /// The list of subgraph names that use the HTTP callback protocol.
+    #[serde(default)]
+    pub subgraphs: HashSet<String>,
+}
+
+fn default_callback_path() -> String {
+    "/callback".to_string()
+}
+
+fn default_heartbeat_interval() -> Duration {
+    Duration::from_secs(5)
 }
 
 /// Configuration for the WebSocket subscription mode.
@@ -21,6 +63,8 @@ pub struct SubscriptionsConfig {
 pub struct WebSocketConfig {
     /// The default configuration that will be applied to all subgraphs using
     /// WebSocket protocol, unless overridden by a specific subgraph configuration.
+    ///
+    /// When specified, all subgraphs (not claimed by `callback`) will use the WebSocket protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all: Option<WebSocketSubgraphConfig>,
     /// Optional per-subgraph configurations that will override the default configuration for specific subgraphs.
@@ -50,6 +94,11 @@ impl SubscriptionsConfig {
     /// Returns the subscription protocol for the given subgraph.
     /// Returns HTTP (streaming) as the default if no specific mode is configured.
     pub fn get_protocol_for_subgraph(&self, subgraph_name: &str) -> SubscriptionProtocol {
+        if let Some(ref callback) = self.callback {
+            if callback.subgraphs.contains(subgraph_name) {
+                return SubscriptionProtocol::HTTPCallback;
+            }
+        }
         if let Some(ref websocket) = self.websocket {
             if websocket.all.is_some() || websocket.subgraphs.contains_key(subgraph_name) {
                 return SubscriptionProtocol::WebSocket;
@@ -81,4 +130,7 @@ pub enum SubscriptionProtocol {
     HTTP,
     /// Uses GraphQL over WebSocket (graphql-transport-ws subprotocol).
     WebSocket,
+    /// Uses the HTTP Callback protocol for subscriptions.
+    /// See: https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/callback-protocol
+    HTTPCallback,
 }

@@ -54,6 +54,7 @@ sonic-simd = "0.1.2"
 async-stream = "0.3.6"
 futures-util = "0.3.31"
 openssl = { version = "0.10", features = ["vendored"] }
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 subgraphs = { path = "../../bench/subgraphs" }
