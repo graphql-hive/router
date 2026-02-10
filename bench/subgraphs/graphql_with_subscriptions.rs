@@ -25,10 +25,6 @@ use tower_service::Service;
 
 use crate::HTTPStreamingSubscriptionProtocol;
 
-const CALLBACK_SPEC_ACCEPT: &str = "application/json;callbackSpec=1.0";
-const SUBSCRIPTION_PROTOCOL_HEADER: &str = "subscription-protocol";
-const CALLBACK_PROTOCOL_VERSION: &str = "callback/1.0";
-
 #[derive(Clone)]
 pub struct GraphQL<E> {
     executor: E,
@@ -95,18 +91,21 @@ where
             .headers()
             .get("accept")
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|accept| accept.contains(CALLBACK_SPEC_ACCEPT));
+            // we dont handle spaces, we dont handle q weights, we dont care atm
+            .is_some_and(|accept| accept.contains("application/json;callbackSpec=1.0"));
 
         let does_accept_multipart_mixed = req
             .headers()
             .get("accept")
             .and_then(|value| value.to_str().ok())
+            // we dont handle spaces, we dont handle q weights, we dont care atm
             .is_some_and(|accept| accept.contains(r#"multipart/mixed;subscriptionSpec="1.0""#));
 
         let does_accept_event_stream = req
             .headers()
             .get("accept")
             .and_then(|value| value.to_str().ok())
+            // we dont handle spaces, we dont handle q weights, we dont care atm
             .is_some_and(|accept| accept.contains(SSE_HEADER));
 
         let break_after_count = req
@@ -167,7 +166,7 @@ where
                 };
                 let check_resp = client
                     .post(&sub_ext.callback_url)
-                    .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+                    .header("subscription-protocol", "callback/1.0")
                     .json(&check_msg)
                     .send()
                     .await;
@@ -363,7 +362,7 @@ async fn send_callback(
 ) -> Result<reqwest::StatusCode, reqwest::Error> {
     let resp = client
         .post(url)
-        .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+        .header("subscription-protocol", "callback/1.0")
         .json(msg)
         .send()
         .await?;
