@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-query-planner"
-version = "2.2.0"
+version = "2.2.1"
 edition = "2021"
 description = "GraphQL query planner for Federation specification"
 license = "MIT"
