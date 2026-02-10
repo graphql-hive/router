@@ -290,11 +290,11 @@ async fn emit_subscription_events(
     loop {
         let next_event = if let Some(ref mut interval) = heartbeat_interval {
             tokio::select! {
-                item = stream.next() => item.map(CallbackEvent::Next),
+                item = stream.next() => item.map(|r| CallbackEvent::Next(Box::new(r))),
                 _ = interval.tick() => Some(CallbackEvent::Heartbeat),
             }
         } else {
-            stream.next().await.map(CallbackEvent::Next)
+            stream.next().await.map(|r| CallbackEvent::Next(Box::new(r)))
         };
 
         match next_event {
@@ -351,7 +351,7 @@ async fn emit_subscription_events(
 }
 
 enum CallbackEvent {
-    Next(GraphQLResponse),
+    Next(Box<GraphQLResponse>),
     Heartbeat,
 }
 
