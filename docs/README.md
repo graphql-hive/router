@@ -1998,10 +1998,9 @@ version_header: graphql-client-version
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**endpoint**||Default: `"https://api.graphql-hive.com/otel/v1/traces"`<br/>||
 |**target**||A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
 |**token**||Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
-|[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":false}`<br/>||
+|[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":false,"endpoint":"https://api.graphql-hive.com/otel/v1/traces"}`<br/>||
 |[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -2021,6 +2020,7 @@ version_header: graphql-client-version
 |----|----|-----------|--------|
 |[**batch\_processor**](#telemetryhivetracingbatch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"}`<br/>||
 |**enabled**|`boolean`|Default: `false`<br/>||
+|**endpoint**||Default: `"https://api.graphql-hive.com/otel/v1/traces"`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2035,6 +2035,7 @@ batch_processor:
   max_traces_in_memory: 30000
   scheduled_delay: 5s
 enabled: false
+endpoint: https://api.graphql-hive.com/otel/v1/traces
 
 ```
 
