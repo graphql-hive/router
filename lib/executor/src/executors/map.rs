@@ -30,6 +30,7 @@ use crate::{
         dedupe::ABuildHasher,
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, SubgraphHttpResponse},
+        http_callback::{ActiveSubscriptionsMap, HttpCallbackSubgraphExecutor},
         ws::WsSubgraphExecutor,
     },
     hooks::on_subgraph_execute::{
@@ -75,6 +76,8 @@ pub struct SubgraphExecutorMap {
     max_connections_per_host: usize,
     in_flight_requests: InflightRequestsMap,
     telemetry_context: Arc<TelemetryContext>,
+    /// Shared map of active HTTP callback subscriptions
+    active_callback_subscriptions: ActiveSubscriptionsMap,
 }
 
 fn build_https_executor() -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
@@ -111,6 +114,7 @@ impl SubgraphExecutorMap {
             timeouts_by_subgraph: Default::default(),
             global_timeout,
             telemetry_context,
+            active_callback_subscriptions: Arc::new(DashMap::new()),
         })
     }
 
@@ -118,6 +122,7 @@ impl SubgraphExecutorMap {
         subgraph_endpoint_map: &HashMap<SubgraphName, String>,
         config: Arc<HiveRouterConfig>,
         telemetry_context: Arc<TelemetryContext>,
+        active_callback_subscriptions: ActiveSubscriptionsMap,
     ) -> Result<Self, SubgraphExecutorError> {
         let global_timeout = DurationOrProgram::compile(
             &config.traffic_shaping.all.request_timeout,
@@ -128,6 +133,7 @@ impl SubgraphExecutorMap {
         })?;
         let mut subgraph_executor_map =
             SubgraphExecutorMap::new(config.clone(), global_timeout, telemetry_context)?;
+        subgraph_executor_map.active_callback_subscriptions = active_callback_subscriptions;
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.iter() {
             let endpoint_config = config
@@ -150,6 +156,11 @@ impl SubgraphExecutorMap {
         }
 
         Ok(subgraph_executor_map)
+    }
+
+    /// Returns the shared active callback subscriptions map for use by callback handlers.
+    pub fn active_callback_subscriptions(&self) -> ActiveSubscriptionsMap {
+        self.active_callback_subscriptions.clone()
     }
 
     pub async fn execute<'exec>(
@@ -371,6 +382,7 @@ impl SubgraphExecutorMap {
         let endpoint_uri = endpoint_str.parse::<Uri>().map_err(|e| {
             SubgraphExecutorError::EndpointParseFailure(endpoint_str.to_string(), e)
         })?;
+
         let origin = format!(
             "{}://{}:{}",
             endpoint_uri.scheme_str().unwrap_or("http"),
@@ -382,6 +394,7 @@ impl SubgraphExecutorMap {
                 }
             })
         );
+
         let semaphore = self
             .semaphores_by_origin
             .entry(origin)
@@ -474,6 +487,33 @@ impl SubgraphExecutorMap {
                     .insert(endpoint_str.to_string(), ws_executor.clone());
 
                 Ok(ws_executor)
+            }
+            SubscriptionProtocol::HTTPCallback => {
+                let callback_config = self
+                    .config
+                    .subscriptions
+                    .callback
+                    .as_ref()
+                    .ok_or_else(|| SubgraphExecutorError::HttpCallbackNotConfigured)?;
+
+                let heartbeat_interval_ms = callback_config.heartbeat_interval.as_millis() as u64;
+
+                let callback_executor = HttpCallbackSubgraphExecutor::new(
+                    subgraph_name.to_string(),
+                    endpoint_uri,
+                    self.client.clone(),
+                    callback_config.public_url.clone(),
+                    heartbeat_interval_ms,
+                    self.active_callback_subscriptions.clone(),
+                )
+                .to_boxed_arc();
+
+                self.subscription_executors_by_subgraph
+                    .entry(subgraph_name.to_string())
+                    .or_default()
+                    .insert(endpoint_str.to_string(), callback_executor.clone());
+
+                Ok(callback_executor)
             }
         }
     }

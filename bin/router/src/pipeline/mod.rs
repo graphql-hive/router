@@ -46,6 +46,7 @@ use crate::{
 
 pub mod authorization;
 pub mod body_read;
+pub mod callback_handler;
 pub mod coerce_variables;
 pub mod cors;
 pub mod csrf_prevention;
