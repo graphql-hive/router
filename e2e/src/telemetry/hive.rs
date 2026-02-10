@@ -31,10 +31,10 @@ async fn test_hive_http_export() {
 
           telemetry:
             hive:
-              endpoint: {}
               token: {}
               target: {}
               tracing:
+                endpoint: {}
                 enabled: true
                 batch_processor:
                   scheduled_delay: 50ms
