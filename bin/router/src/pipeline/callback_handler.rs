@@ -1,6 +1,7 @@
 use bytes::Bytes as BytesLib;
 use hive_router_plan_executor::executors::http_callback::{
-    ActiveSubscriptionsMap, CallbackMessage, CALLBACK_PROTOCOL_VERSION, SUBSCRIPTION_PROTOCOL_HEADER,
+    ActiveSubscriptionsMap, CallbackMessage, CALLBACK_PROTOCOL_VERSION,
+    SUBSCRIPTION_PROTOCOL_HEADER,
 };
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use ntex::util::Bytes;
@@ -50,7 +51,10 @@ pub async fn callback_handler(
     };
 
     if payload.kind != "subscription" {
-        warn!("Invalid callback kind: {}, expected 'subscription'", payload.kind);
+        warn!(
+            "Invalid callback kind: {}, expected 'subscription'",
+            payload.kind
+        );
         return HttpResponse::BadRequest().finish();
     }
 
@@ -110,7 +114,11 @@ pub async fn callback_handler(
                 }
             };
 
-            if subscription.sender.send(CallbackMessage::Next { payload: data }).is_err() {
+            if subscription
+                .sender
+                .send(CallbackMessage::Next { payload: data })
+                .is_err()
+            {
                 debug!(
                     subscription_id = %payload.id,
                     "Subscription receiver dropped"

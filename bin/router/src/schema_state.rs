@@ -1,5 +1,6 @@
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
+use dashmap::DashMap;
 use graphql_tools::parser::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
@@ -15,7 +16,6 @@ use hive_router_query_planner::{
     state::supergraph_state::SupergraphState,
     utils::parsing::parse_schema,
 };
-use dashmap::DashMap;
 use moka::future::Cache;
 use std::sync::Arc;
 use tokio::sync::mpsc;

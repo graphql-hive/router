@@ -124,7 +124,6 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
     let callback_path = router_config
         .subscriptions
-        .mode
         .callback
         .as_ref()
         .map(|c| c.path.clone());
