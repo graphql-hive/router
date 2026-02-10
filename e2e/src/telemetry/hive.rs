@@ -43,9 +43,9 @@ async fn test_hive_http_export() {
                 enabled: false
       "#,
             supergraph_path.to_str().unwrap(),
-            otlp_endpoint,
             token,
             target,
+            otlp_endpoint,
         )
         .as_str(),
     )
