@@ -162,8 +162,12 @@ pub struct SubgraphsServiceState {
     pub health_check_url: String,
 }
 
+/// The protocol to use for GraphQL subscriptions over HTTP streaming.
+/// It is purely the streaming HTTP protocol, other subscription protocols
+/// are handled automatically through HTTP negotiation (like websocket upgrades
+/// or http callbacks).
 #[derive(Clone)]
-pub enum SubscriptionProtocol {
+pub enum HTTPStreamingSubscriptionProtocol {
     Auto, // prefers multipart
     SseOnly,
     MultipartOnly,
@@ -171,7 +175,7 @@ pub enum SubscriptionProtocol {
 
 pub fn start_subgraphs_server(
     port: Option<u16>,
-    subscriptions_protocol: SubscriptionProtocol,
+    subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
     request_interceptor: Option<RequestInterceptor>,
 ) -> (JoinHandle<()>, Sender<()>, Arc<SubgraphsServiceState>) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();

@@ -23,7 +23,7 @@ use hive_router::pipeline::{multipart_subscribe, sse};
 use serde::{Deserialize, Serialize};
 use tower_service::Service;
 
-use crate::SubscriptionProtocol;
+use crate::HTTPStreamingSubscriptionProtocol;
 
 const CALLBACK_SPEC_ACCEPT: &str = "application/json;callbackSpec=1.0";
 const SUBSCRIPTION_PROTOCOL_HEADER: &str = "subscription-protocol";
@@ -32,14 +32,14 @@ const CALLBACK_PROTOCOL_VERSION: &str = "callback/1.0";
 #[derive(Clone)]
 pub struct GraphQL<E> {
     executor: E,
-    subscriptions_protocol: SubscriptionProtocol,
+    subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
 }
 
 impl<E> GraphQL<E>
 where
     E: Clone,
 {
-    pub fn new(executor: E, subscriptions_protocol: SubscriptionProtocol) -> Self {
+    pub fn new(executor: E, subscriptions_protocol: HTTPStreamingSubscriptionProtocol) -> Self {
         Self {
             executor,
             subscriptions_protocol,
@@ -222,9 +222,9 @@ where
             let stream = executor.execute_stream(req.0, None);
 
             let use_sse = match sub_prot {
-                SubscriptionProtocol::Auto => does_accept_event_stream,
-                SubscriptionProtocol::SseOnly => true,
-                SubscriptionProtocol::MultipartOnly => false,
+                HTTPStreamingSubscriptionProtocol::Auto => does_accept_event_stream,
+                HTTPStreamingSubscriptionProtocol::SseOnly => true,
+                HTTPStreamingSubscriptionProtocol::MultipartOnly => false,
             };
 
             if use_sse {

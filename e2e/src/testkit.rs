@@ -16,8 +16,8 @@ use ntex::{
 };
 use sonic_rs::json;
 use subgraphs::{
-    start_subgraphs_server, RequestInterceptor, RequestLog, SubgraphsServiceState,
-    SubscriptionProtocol,
+    start_subgraphs_server, HTTPStreamingSubscriptionProtocol, RequestInterceptor, RequestLog,
+    SubgraphsServiceState,
 };
 use tracing::{info, warn};
 
@@ -95,22 +95,27 @@ impl SubgraphsServer {
     }
 
     pub async fn start_with_port(port: u16) -> Self {
-        Self::start_subgraphs(port, SubscriptionProtocol::Auto, None).await
+        Self::start_subgraphs(port, HTTPStreamingSubscriptionProtocol::Auto, None).await
     }
 
     pub async fn start_with_subscriptions_protocol(
-        subscriptions_protocol: SubscriptionProtocol,
+        subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
     ) -> Self {
         Self::start_subgraphs(4200, subscriptions_protocol, None).await
     }
 
     pub async fn start_with_interceptor(interceptor: RequestInterceptor) -> Self {
-        Self::start_subgraphs(4200, SubscriptionProtocol::Auto, Some(interceptor)).await
+        Self::start_subgraphs(
+            4200,
+            HTTPStreamingSubscriptionProtocol::Auto,
+            Some(interceptor),
+        )
+        .await
     }
 
     async fn start_subgraphs(
         port: u16,
-        subscriptions_protocol: SubscriptionProtocol,
+        subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
         request_interceptor: Option<RequestInterceptor>,
     ) -> Self {
         let (_server_handle, shutdown_tx, subgraph_shared_state) =

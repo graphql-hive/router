@@ -14,7 +14,9 @@ use ntex::{
 };
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
-use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState, SubscriptionProtocol};
+use subgraphs::{
+    start_subgraphs_server, HTTPStreamingSubscriptionProtocol, RequestLog, SubgraphsServiceState,
+};
 use tokio::sync::oneshot::Sender;
 use tracing::{info, warn};
 
@@ -76,7 +78,7 @@ impl SubgraphsHandle {
             // TODO: should auto-allocate free port
             Some(4200),
             // TODO: make configurable
-            SubscriptionProtocol::Auto,
+            HTTPStreamingSubscriptionProtocol::Auto,
             None,
         );
 
