@@ -5,6 +5,7 @@ use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
+    executors::http_callback::ActiveSubscriptionsMap,
     introspection::schema::{SchemaMetadata, SchemaWithMetadata},
     SubgraphExecutorMap,
 };
@@ -14,6 +15,7 @@ use hive_router_query_planner::{
     state::supergraph_state::SupergraphState,
     utils::parsing::parse_schema,
 };
+use dashmap::DashMap;
 use moka::future::Cache;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -37,6 +39,7 @@ pub struct SchemaState {
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
+    pub active_callback_subscriptions: ActiveSubscriptionsMap,
 }
 
 pub struct SupergraphData {
@@ -84,17 +87,19 @@ impl SchemaState {
         let plan_cache = Cache::new(1000);
         let validate_cache = Cache::new(1000);
         let normalize_cache = Cache::new(1000);
+        let active_callback_subscriptions: ActiveSubscriptionsMap = Arc::new(DashMap::new());
 
         // This is cheap clone, as Cache is thread-safe and can be cloned without any performance penalty.
         let task_plan_cache = plan_cache.clone();
         let validate_cache_cache = validate_cache.clone();
         let normalize_cache_cache = normalize_cache.clone();
+        let active_subs_clone = active_callback_subscriptions.clone();
 
         bg_tasks_manager.register_handle(async move {
             while let Some(new_sdl) = rx.recv().await {
                 debug!("Received new supergraph SDL, building new supergraph state...");
 
-                match Self::build_data(router_config.clone(), &new_sdl) {
+                match Self::build_data(router_config.clone(), &new_sdl, active_subs_clone.clone()) {
                     Ok(new_data) => {
                         swappable_data_spawn_clone.store(Arc::new(Some(new_data)));
                         debug!("Supergraph updated successfully");
@@ -116,12 +121,14 @@ impl SchemaState {
             plan_cache,
             validate_cache,
             normalize_cache,
+            active_callback_subscriptions,
         })
     }
 
     fn build_data(
         router_config: Arc<HiveRouterConfig>,
         supergraph_sdl: &str,
+        active_callback_subscriptions: ActiveSubscriptionsMap,
     ) -> Result<SupergraphData, SupergraphManagerError> {
         let parsed_supergraph_sdl = parse_schema(supergraph_sdl);
         let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
@@ -131,6 +138,7 @@ impl SchemaState {
         let subgraph_executor_map = Arc::new(SubgraphExecutorMap::from_http_endpoint_map(
             &supergraph_state.subgraph_endpoint_map,
             router_config,
+            active_callback_subscriptions,
         )?);
 
         Ok(SupergraphData {
