@@ -160,6 +160,7 @@ impl TestRouter<Built> {
                             m,
                             serv_graphql_path.as_ref(),
                             serv_websocket_path.as_deref(),
+                            None,
                         )
                     })
             }

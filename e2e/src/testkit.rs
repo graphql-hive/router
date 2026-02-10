@@ -210,7 +210,7 @@ pub async fn init_router_from_config(
         web::App::new()
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(|m| configure_ntex_app(m, graphql_path.as_str(), None)),
+            .configure(|m| configure_ntex_app(m, graphql_path.as_str(), None, None)),
     )
     .await;
 
