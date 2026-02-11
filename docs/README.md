@@ -17,11 +17,10 @@
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
-|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"all":{"path":null,"protocol":"http"},"enabled":false}`<br/>||
+|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"all":{"path":null,"protocol":"hTTP"},"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
 |[**usage\_reporting**](#usage_reporting)|`object`|Configuration for usage reporting to GraphQL Hive.<br/>Default: `{"accept_invalid_certs":false,"access_token":null,"buffer_size":1000,"client_name_header":"graphql-client-name","client_version_header":"graphql-client-version","connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%","target_id":null}`<br/>||
-|[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -121,7 +120,7 @@ query_planner:
 subscriptions:
   all:
     path: null
-    protocol: http
+    protocol: hTTP
   enabled: false
 supergraph: {}
 traffic_shaping:
@@ -144,12 +143,6 @@ usage_reporting:
   request_timeout: 15s
   sample_rate: 100%
   target_id: null
-websocket:
-  enabled: false
-  headers:
-    persist: false
-    source: connection
-  path: null
 
 ```
 
@@ -1833,7 +1826,7 @@ Configuration for subscriptions.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**all**](#subscriptionsall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"path":null,"protocol":"http"}`<br/>||
+|[**all**](#subscriptionsall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"path":null,"protocol":"hTTP"}`<br/>||
 |**enabled**|`boolean`|Enables/disables subscriptions. By default, the subscriptions are disabled.<br/><br/>You can override this setting by setting the `SUBSCRIPTIONS_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
 |[**subgraphs**](#subscriptionssubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
 
@@ -1843,7 +1836,7 @@ Configuration for subscriptions.
 ```yaml
 all:
   path: null
-  protocol: http
+  protocol: hTTP
 enabled: false
 
 ```
@@ -1859,14 +1852,14 @@ The default configuration that will be applied to all subgraphs, unless overridd
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>||
-|**protocol**||The selected protocol for the subscriptions towards the subgraph(s).<br/>Default: `"http"`<br/>||
+|**protocol**||The selected protocol for the subscriptions towards the subgraph(s).<br/>Default: `"hTTP"`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
 path: null
-protocol: http
+protocol: hTTP
 
 ```
 
@@ -1893,14 +1886,14 @@ Configuration for subscription connections to subgraphs.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>||
-|**protocol**||The selected protocol for the subscriptions towards the subgraph(s).<br/>Default: `"http"`<br/>||
+|**protocol**||The selected protocol for the subscriptions towards the subgraph(s).<br/>Default: `"hTTP"`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
 path: null
-protocol: http
+protocol: hTTP
 
 ```
 
@@ -1945,7 +1938,7 @@ Loads a supergraph from Hive Console CDN.
 |----|----|-----------|--------|
 |**accept\_invalid\_certs**|`boolean`|Whether to accept invalid TLS certificates when connecting to the Hive Console CDN.<br/>Default: `false`<br/>|no|
 |**connect\_timeout**|`string`|Connect timeout for the Hive Console CDN requests.<br/>Default: `"10s"`<br/>|no|
-|**endpoint**||The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|no|
+|**endpoint**|`string`, `null`|The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|no|
 |**key**|`string`, `null`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|no|
 |**poll\_interval**|`string`|Interval at which the Hive Console should be polled for changes.<br/><br/>Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.<br/>Default: `"10s"`<br/>|no|
 |**request\_timeout**|`string`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|no|
@@ -2115,52 +2108,4 @@ Example: ["IntrospectionQuery", "MeQuery"]
 **Items**
 
 **Item Type:** `string`  
-<a name="websocket"></a>
-## websocket: object
-
-Configuration of router's WebSocket server.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**enabled**|`boolean`|Enables/disables WebSocket connections.<br/><br/>By default, WebSockets are disabled.<br/><br/>You can override this setting by setting the `WEBSOCKET_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
-|[**headers**](#websocketheaders)|`object`|Configuration for handling headers for WebSocket connections.<br/>Default: `{"persist":false,"source":"connection"}`<br/>|yes|
-|**path**|`string`, `null`|The path to use for the WebSocket endpoint on the router.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>By default, the WebSocket endpoint will be available at the `http.graphql_endpoint` (defaults to `/graphql`)<br/>if no path is specified and the clients will connect using `ws://<router-url>/<graphql_endpoint>`.<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-enabled: false
-headers:
-  persist: false
-  source: connection
-path: null
-
-```
-
-<a name="websocketheaders"></a>
-### websocket\.headers: object
-
-Configuration for handling headers for WebSocket connections.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**persist**|`boolean`|Whether to persist merged headers for the duration of the WebSocket connection<br/>when using the `both` source (headers are accepted from multiple sources).<br/><br/>Only has effect when `source` is set to `both`.<br/><br/>This is useful when dealing with authentication using tokens that expire, where the<br/>initial connection might use one token, but subsequent operations might need to<br/>provide updated tokens in the operation extensions and then use that for further authentication.<br/><br/>For example:<br/><br/>1. Client connects with connection init payload containing an Authorization header with a token.<br/>2. Client sends a subscription operation with an updated Authorization header in the operation extensions.<br/>3. If `persist` is enabled, the updated Authorization header will be stored and used for subsequent operations.<br/>Default: `false`<br/>|no|
-|**source**||The source(s) from which to accept headers for WebSocket connections.<br/>|yes|
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-persist: false
-source: connection
-
-```
-
 
