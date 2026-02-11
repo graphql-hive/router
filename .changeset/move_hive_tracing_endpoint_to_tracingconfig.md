@@ -15,3 +15,4 @@ telemetry:
 -   endpoint: "<value>"
 +   tracing:
 +     endpoint: "<value>"
+```
