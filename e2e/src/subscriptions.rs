@@ -455,10 +455,10 @@ mod subscriptions_e2e_tests {
                 path: supergraph.graphql
             subscriptions:
                 enabled: true
-                subgraphs:
-                    reviews:
-                        protocol: websocket
-                        path: /reviews/ws
+                websocket:
+                    subgraphs:
+                        reviews:
+                            path: /reviews/ws
             "#
         ))
         .await

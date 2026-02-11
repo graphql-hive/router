@@ -7,10 +7,8 @@ use std::{
 use dashmap::DashMap;
 use futures::{stream, stream::BoxStream};
 use hive_router_config::{
-    override_subgraph_urls::UrlOrExpression,
-    subscriptions::{SubscriptionProtocol, SubscriptionsSubgraphConfig},
-    traffic_shaping::DurationOrExpression,
-    HiveRouterConfig,
+    override_subgraph_urls::UrlOrExpression, subscriptions::SubscriptionProtocol,
+    traffic_shaping::DurationOrExpression, HiveRouterConfig,
 };
 use hive_router_internal::expressions::vrl::compiler::Program as VrlProgram;
 use hive_router_internal::expressions::vrl::core::Value as VrlValue;
@@ -360,23 +358,17 @@ impl SubgraphExecutorMap {
             .entry(origin)
             .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
             .clone();
-        let subscription_config = if for_subscription {
-            Some(
-                self.config
-                    .subscriptions
-                    .subgraphs
-                    .get(subgraph_name)
-                    .unwrap_or(&self.config.subscriptions.all),
-            )
+
+        let protocol = if for_subscription {
+            self.config
+                .subscriptions
+                .get_protocol_for_subgraph(subgraph_name)
         } else {
-            None
+            SubscriptionProtocol::HTTP
         };
-        match subscription_config {
-            None
-            | Some(SubscriptionsSubgraphConfig {
-                protocol: SubscriptionProtocol::HTTP,
-                ..
-            }) => {
+
+        match protocol {
+            SubscriptionProtocol::HTTP => {
                 let subgraph_config = self.resolve_subgraph_config(subgraph_name)?;
 
                 let http_executor = HTTPSubgraphExecutor::new(
@@ -396,19 +388,17 @@ impl SubgraphExecutorMap {
 
                 Ok(http_executor)
             }
-            Some(SubscriptionsSubgraphConfig {
-                protocol: SubscriptionProtocol::WebSocket,
-                ref path,
-                ..
-            }) => {
+            SubscriptionProtocol::WebSocket => {
                 let ws_scheme = match endpoint_uri.scheme_str() {
                     Some("https") => "wss",
                     _ => "ws",
                 };
 
                 // take the path from the subscription config or use the one from the endpoint
-                let path_and_query = path
-                    .as_deref()
+                let path_and_query = self
+                    .config
+                    .subscriptions
+                    .get_websocket_path(subgraph_name)
                     .or_else(|| endpoint_uri.path_and_query().map(|pq| pq.as_str()))
                     // fallback to default if neither is set, but this should never happen
                     .unwrap_or_default();
