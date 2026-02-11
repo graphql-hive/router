@@ -7,7 +7,7 @@ use hive_router::{
 use hive_router_config::{parse_yaml_config, HiveRouterConfig};
 use hive_router_plan_executor::executors::websocket_client;
 use ntex::{
-    http::client::ClientResponse,
+    client::ClientResponse,
     io::Sealed,
     web::{self, test},
     ws::WsConnection,
@@ -147,17 +147,24 @@ impl TestRouter<Built> {
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
         let serv = test::server(move || {
-            web::App::new()
-                .state(shared_state.clone())
-                .state(schema_state.clone())
-                .configure(|m| {
-                    configure_ntex_app(
-                        m,
-                        serv_graphql_path.as_ref(),
-                        serv_websocket_path.as_deref(),
-                    )
-                })
-        });
+            let shared_state = shared_state.clone();
+            let schema_state = schema_state.clone();
+            let serv_graphql_path = serv_graphql_path.clone();
+            let serv_websocket_path = serv_websocket_path.clone();
+            async move {
+                web::App::new()
+                    .state(shared_state)
+                    .state(schema_state)
+                    .configure(|m| {
+                        configure_ntex_app(
+                            m,
+                            serv_graphql_path.as_ref(),
+                            serv_websocket_path.as_deref(),
+                        )
+                    })
+            }
+        })
+        .await;
 
         info!("Waiting for health check to pass...");
 
