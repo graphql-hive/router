@@ -445,6 +445,89 @@ mod subscriptions_e2e_tests {
     }
 
     #[ntex::test]
+    async fn subscription_yes_entity_resolution_websocket_subgraph() {
+        let _subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            subscriptions:
+                enabled: true
+                websocket:
+                    subgraphs:
+                        reviews:
+                            path: /reviews/ws
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    id
+                    product {
+                        name
+                    }
+                }
+            }
+            "#,
+            None,
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}
+
+        event: complete
+        "#);
+    }
+
+    #[ntex::test]
     async fn subscription_entity_resolution_with_requires() {
         let _subgraphs_server = SubgraphsServer::start().await;
 

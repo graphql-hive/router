@@ -202,8 +202,7 @@ pub async fn init_router_from_config(
 > {
     init_rustls_crypto_provider();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
-    let http_config = router_config.http.clone();
-    let graphql_path = http_config.graphql_endpoint();
+    let graphql_path = router_config.graphql_path().to_string();
     let (shared_state, schema_state) =
         configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
 
@@ -211,7 +210,7 @@ pub async fn init_router_from_config(
         web::App::new()
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(|m| configure_ntex_app(m, &graphql_path)),
+            .configure(|m| configure_ntex_app(m, graphql_path.as_str(), None)),
     )
     .await;
 
