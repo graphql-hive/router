@@ -82,14 +82,6 @@ async fn ws_service(
     shared_state: Arc<RouterSharedState>,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
-    // stop lingering keep-alive timer from the H1 dispatcher that upgraded
-    // this connection. basically, the H1 dispatcher timer is set on the same IO object
-    // and will fire into the WS dispatcher, causing it to terminate with a http keep-alive
-    // error (close code 1006).
-    //
-    // TODO: fix in ntex instead
-    sink.io().stop_timer();
-
     if !has_accepted_subprotocol {
         debug!("WebSocket connection rejecting due to unacceptable subprotocol");
         let _ = sink.send(CloseCode::SubprotocolNotAcceptable.into()).await;
