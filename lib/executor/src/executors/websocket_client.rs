@@ -419,7 +419,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
         Err(msg) => return Some(msg),
     };
 
-    trace!(msg = ?server_msg, "Received server message");
+    trace!("type" = server_msg.as_ref(), "Received server message");
 
     match server_msg {
         ServerMessage::ConnectionAck {} => {

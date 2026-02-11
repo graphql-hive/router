@@ -4,6 +4,7 @@ use ntex::ws;
 use serde::{Deserialize, Serialize};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 use std::collections::HashMap;
+use strum::AsRefStr;
 use tracing::error;
 
 use crate::response::graphql_error::GraphQLError;
@@ -97,7 +98,11 @@ impl SubscribePayload {
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(
+    Serialize,
+    Debug,
+    AsRefStr, // for logging the enum variant type as a string without the fields
+)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     ConnectionInit {
@@ -261,7 +266,11 @@ impl From<http::HeaderMap> for ConnectionInitPayload {
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(
+    Serialize,
+    Debug,
+    AsRefStr, // for logging the enum variant type as a string without the fields
+)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     ConnectionAck {

@@ -174,7 +174,7 @@ async fn handle_text_frame(
         }
     };
 
-    trace!(msg = ?client_msg, "Received client message");
+    trace!("type" = client_msg.as_ref(), "Received client message");
 
     match client_msg {
         ClientMessage::ConnectionInit { payload } => {
@@ -192,7 +192,7 @@ async fn handle_text_frame(
             let header_map =
                 parse_headers_from_connection_init_payload(state.borrow().init_payload.as_ref());
             if !header_map.is_empty() {
-                trace!(headers = ?header_map, "Connection init message contains headers in the payload");
+                trace!("Connection init message contains headers in the payload");
             } else {
                 trace!("Connection init message does not contain headers in the payload");
             }
