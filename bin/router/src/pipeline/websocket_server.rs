@@ -55,7 +55,7 @@ pub async fn ws_index(
         .find(|p| *p == WS_SUBPROTOCOL)
         .map(|_| WS_SUBPROTOCOL);
 
-    ws::start_using_subprotocol(
+    ws::start(
         req,
         accepted_subprotocol,
         fn_factory_with_config(move |sink: ws::WsSink| {
@@ -129,7 +129,7 @@ async fn ws_service(
         }
     });
 
-    let on_shutdown = fn_shutdown(move || {
+    let on_shutdown = fn_shutdown(async move || {
         // stop heartbeat and handshake timeout tasks on shutdown
         let _ = heartbeat_tx.send(());
         let _ = handshake_timeout_tx.send(());

@@ -7,6 +7,7 @@ use ntex::{
     io::Sealed,
     rt,
     ws::{self, error::WsError, WsClient as NtexWsClient, WsConnection, WsSink},
+    SharedCfg,
 };
 use sonic_rs::Value;
 use tracing::{debug, error, trace};
@@ -34,7 +35,7 @@ pub enum WsConnectError {
     #[error("WebSocket client error: {0}")]
     Client(#[from] ws::error::WsClientError),
     #[error("WebSocket client builder error: {0}")]
-    Builder(#[from] ws::error::WsClientBuilderError),
+    BuilderError(String),
     #[error("TLS error: {0}")]
     Tls(#[from] openssl::error::ErrorStack),
 }
@@ -98,19 +99,23 @@ pub async fn connect(uri: &http::Uri) -> Result<WsConnection<ntex::io::Sealed>, 
             .set_alpn_protos(b"\x08http/1.1")
             .map_err(|e| tracing::error!("Cannot set alpn protocol: {e:?}"));
 
-        let ws_client = NtexWsClient::build(uri)
+        let ws_client = NtexWsClient::builder(uri)
             .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
             .openssl(builder.build())
             .take()
-            .finish()?;
+            .build(SharedCfg::default())
+            .await
+            .map_err(|e| WsConnectError::BuilderError(e.to_string()))?;
 
         Ok(ws_client.connect().await?.seal())
     } else if scheme == "ws" {
-        let ws_client = NtexWsClient::build(uri)
+        let ws_client = NtexWsClient::builder(uri)
             .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
-            .finish()?;
+            .build(SharedCfg::default())
+            .await
+            .map_err(|e| WsConnectError::BuilderError(e.to_string()))?;
 
         Ok(ws_client.connect().await?.seal())
     } else {
