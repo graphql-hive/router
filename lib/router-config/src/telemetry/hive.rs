@@ -12,8 +12,6 @@ use crate::{
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
 pub struct HiveTelemetryConfig {
-    #[serde(default = "default_hive_tracing_endpoint")]
-    pub endpoint: ValueOrExpression<String>,
     /// Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.
     #[serde(default)]
     pub token: Option<ValueOrExpression<String>>,
@@ -55,6 +53,7 @@ impl Default for TracingConfig {
     fn default() -> Self {
         Self {
             enabled: default_tracing_enabled(),
+            endpoint: default_hive_tracing_endpoint(),
             batch_processor: TraceBatchProcessorConfig::default(),
         }
     }
@@ -65,6 +64,8 @@ impl Default for TracingConfig {
 pub struct TracingConfig {
     #[serde(default = "default_tracing_enabled")]
     pub enabled: bool,
+    #[serde(default = "default_hive_tracing_endpoint")]
+    pub endpoint: ValueOrExpression<String>,
     #[serde(default)]
     pub batch_processor: TraceBatchProcessorConfig,
 }

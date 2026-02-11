@@ -225,7 +225,7 @@ fn setup_hive_exporter(
     resource: &Resource,
     tracer_provider_builder: TracerProviderBuilder,
 ) -> Result<TracerProviderBuilder, TelemetryError> {
-    let endpoint = resolve_value_or_expression(&config.endpoint, "Hive Tracing endpoint")?;
+    let endpoint = resolve_value_or_expression(&config.tracing.endpoint, "Hive Tracing endpoint")?;
     let token = match &config.token {
         Some(t) => resolve_value_or_expression(t, "Hive Telemetry token")?,
         None => {
