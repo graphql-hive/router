@@ -66,6 +66,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.23 (2026-02-11)
+
+### Features
+
+#### Move `telemetry.hive.endpoint` to `telemetry.hive.tracing.endpoint`.
+
+The endpoint is tracing-specific, but its current placement at `telemetry.hive.endpoint` suggests it applies globally to all Hive telemetry features. This becomes misleading now that usage reporting also defines its own endpoint configuration (`telemetry.hive.usage_reporting.endpoint`).
+
+```diff
+telemetry:
+  hive:
+-   endpoint: "<value>"
++   tracing:
++     endpoint: "<value>"
+```
+
 ## 0.0.22 (2026-02-10)
 
 ### Features
