@@ -1,12 +1,15 @@
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::parser::GraphQLParserPayload;
-use crate::schema_state::{SchemaState, SupergraphData};
+use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
+use crate::SchemaState;
 use graphql_tools::validation::validate::validate;
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLValidateSpan;
 use tracing::{error, trace, Instrument};
+use xxhash_rust::xxh3::Xxh3;
 pub mod max_aliases_rule;
 pub mod max_depth_rule;
 pub mod max_directives_rule;
@@ -22,17 +25,19 @@ pub async fn validate_operation_with_cache(
     let validate_span = GraphQLValidateSpan::new();
 
     async {
-        let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
+        let cache_key = {
+            let mut hasher = Xxh3::new();
+            supergraph.planner.consumer_schema.hash.hash(&mut hasher);
+            app_state.validation_plan.hash.hash(&mut hasher);
+            parser_payload.cache_key.hash(&mut hasher);
+            hasher.finish()
+        };
 
-        let validation_result = match schema_state
-            .validate_cache
-            .get(&parser_payload.cache_key)
-            .await
-        {
+        let validation_result = match schema_state.validate_cache.get(&cache_key).await {
             Some(cached_validation) => {
                 trace!(
                     "validation result of hash {} has been loaded from cache",
-                    parser_payload.cache_key
+                    cache_key
                 );
                 validate_span.record_cache_hit(true);
                 cached_validation
@@ -40,12 +45,12 @@ pub async fn validate_operation_with_cache(
             None => {
                 trace!(
                     "validation result of hash {} does not exists in cache",
-                    parser_payload.cache_key
+                    cache_key
                 );
                 validate_span.record_cache_hit(false);
 
                 let res = validate(
-                    consumer_schema_ast,
+                    &supergraph.planner.consumer_schema.document,
                     &parser_payload.parsed_operation,
                     &app_state.validation_plan,
                 );
@@ -53,7 +58,7 @@ pub async fn validate_operation_with_cache(
 
                 schema_state
                     .validate_cache
-                    .insert(parser_payload.cache_key, arc_res.clone())
+                    .insert(cache_key, arc_res.clone())
                     .await;
                 arc_res
             }

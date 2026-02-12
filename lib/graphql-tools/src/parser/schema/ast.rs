@@ -388,7 +388,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DirectiveLocation {
     // executable
     Query,
