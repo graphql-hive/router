@@ -3,21 +3,23 @@ use std::time::Duration;
 
 use crate::testkit::{
     init_graphql_request, init_router_from_config_inline, otel::OtlpCollector, wait_for_readiness,
-    SubgraphsServer,
+    SubgraphsServer, SupergraphFile,
 };
 
 /// Verify only deprecated attributes are emitted for deprecated mode
 #[ntex::test]
 async fn test_deprecated_span_attributes() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -41,8 +43,7 @@ async fn test_deprecated_span_attributes() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -64,6 +65,12 @@ async fn test_deprecated_span_attributes() {
     let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
     let http_client_span = trace.span_by_hive_kind_one("http.client");
 
+    insta::with_settings!({filters => vec![
+      (r":\d+\/", ":[port]/"),
+      (r"(server\.port:\s+)\d+", "$1[port]"),
+      (r"(net\.peer\.port:\s+)\d+", "$1[port]"),
+      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
+    ]}, {
     insta::assert_snapshot!(
       http_server_span,
       @r"
@@ -84,9 +91,6 @@ async fn test_deprecated_span_attributes() {
     "
     );
 
-    insta::with_settings!({filters => vec![
-      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
-    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -102,15 +106,14 @@ async fn test_deprecated_span_attributes() {
         http.request_content_length: 23
         http.response_content_length: 86
         http.status_code: 200
-        http.url: http://0.0.0.0:4200/accounts
+        http.url: http://0.0.0.0:[port]/accounts
         net.peer.name: 0.0.0.0
-        net.peer.port: 4200
+        net.peer.port: [port]
         target: hive-router
         url.path: /accounts
         url.scheme: http
     "
     );
-    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -125,14 +128,15 @@ async fn test_deprecated_span_attributes() {
         http.request_content_length: 23
         http.response_content_length: 86
         http.status_code: 200
-        http.url: http://0.0.0.0:4200/accounts
+        http.url: http://0.0.0.0:[port]/accounts
         net.peer.name: 0.0.0.0
-        net.peer.port: 4200
+        net.peer.port: [port]
         target: hive-router
         url.path: /accounts
         url.scheme: http
     "
     );
+    });
 
     app.hold_until_shutdown(Box::new(otlp_collector));
 }
@@ -140,15 +144,17 @@ async fn test_deprecated_span_attributes() {
 /// Verify both spec-compliant and deprecated attributes are emitted for spec_and_deprecated mode
 #[ntex::test]
 async fn test_spec_and_deprecated_span_attributes() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -172,8 +178,7 @@ async fn test_spec_and_deprecated_span_attributes() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -195,6 +200,12 @@ async fn test_spec_and_deprecated_span_attributes() {
     let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
     let http_client_span = trace.span_by_hive_kind_one("http.client");
 
+    insta::with_settings!({filters => vec![
+      (r":\d+\/", ":[port]/"),
+      (r"(server\.port:\s+)\d+", "$1[port]"),
+      (r"(net\.peer\.port:\s+)\d+", "$1[port]"),
+      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
+    ]}, {
     insta::assert_snapshot!(
       http_server_span,
       @r"
@@ -222,9 +233,6 @@ async fn test_spec_and_deprecated_span_attributes() {
     "
     );
 
-    insta::with_settings!({filters => vec![
-      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
-    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -244,19 +252,18 @@ async fn test_spec_and_deprecated_span_attributes() {
         http.response.status_code: 200
         http.response_content_length: 86
         http.status_code: 200
-        http.url: http://0.0.0.0:4200/accounts
+        http.url: http://0.0.0.0:[port]/accounts
         net.peer.name: 0.0.0.0
-        net.peer.port: 4200
+        net.peer.port: [port]
         network.protocol.version: 1.1
         server.address: 0.0.0.0
-        server.port: 4200
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://0.0.0.0:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
-    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -275,18 +282,19 @@ async fn test_spec_and_deprecated_span_attributes() {
         http.response.status_code: 200
         http.response_content_length: 86
         http.status_code: 200
-        http.url: http://0.0.0.0:4200/accounts
+        http.url: http://0.0.0.0:[port]/accounts
         net.peer.name: 0.0.0.0
-        net.peer.port: 4200
+        net.peer.port: [port]
         network.protocol.version: 1.1
         server.address: 0.0.0.0
-        server.port: 4200
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://0.0.0.0:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
+    });
 
     app.hold_until_shutdown(Box::new(otlp_collector));
 }
@@ -294,15 +302,17 @@ async fn test_spec_and_deprecated_span_attributes() {
 /// Verify default client identification
 #[ntex::test]
 async fn test_default_client_identification() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -324,8 +334,7 @@ async fn test_default_client_identification() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -370,15 +379,17 @@ async fn test_default_client_identification() {
 /// Verify custom client identification
 #[ntex::test]
 async fn test_custom_client_identification() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -403,8 +414,7 @@ async fn test_custom_client_identification() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -449,15 +459,17 @@ async fn test_custom_client_identification() {
 /// Verify default resource attributes
 #[ntex::test]
 async fn test_default_resource_attributes() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -476,8 +488,7 @@ async fn test_default_resource_attributes() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -521,15 +532,17 @@ async fn test_default_resource_attributes() {
 /// Verify custom resource attributes
 #[ntex::test]
 async fn test_custom_resource_attributes() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -551,8 +564,7 @@ async fn test_custom_resource_attributes() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )

@@ -4,22 +4,24 @@ use std::time::Duration;
 use crate::testkit::{
     init_graphql_request, init_router_from_config_inline,
     otel::{OtlpCollector, TraceParent},
-    wait_for_readiness, SubgraphsServer,
+    wait_for_readiness, SubgraphsServer, SupergraphFile,
 };
 
 /// Verifies parent-based sampler respects upstream sampling decision.
 /// Spans sampled according to parent's decision.
 #[ntex::test]
 async fn test_otlp_parent_based_sampler() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -41,8 +43,7 @@ async fn test_otlp_parent_based_sampler() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -123,15 +124,17 @@ async fn test_otlp_parent_based_sampler() {
 /// Verify 0.0 sample rate
 #[ntex::test]
 async fn test_otlp_zero_sample_rate() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -152,8 +155,7 @@ async fn test_otlp_zero_sample_rate() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )

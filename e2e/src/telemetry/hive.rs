@@ -3,21 +3,23 @@ use std::time::Duration;
 
 use crate::testkit::{
     init_graphql_request, init_router_from_config_inline, otel::OtlpCollector, wait_for_readiness,
-    SubgraphsServer,
+    SubgraphsServer, SupergraphFile,
 };
 
 /// Verify Hive Console exporter works with HTTP protocol
 #[ntex::test]
 async fn test_hive_http_export() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let token = "your_token_here";
     let target = "my-org/my-project/my-target";
@@ -42,10 +44,7 @@ async fn test_hive_http_export() {
               usage_reporting:
                 enabled: false
       "#,
-            supergraph_path.to_str().unwrap(),
-            token,
-            target,
-            otlp_endpoint,
+            supergraph, token, target, otlp_endpoint,
         )
         .as_str(),
     )
@@ -101,6 +100,11 @@ async fn test_hive_http_export() {
     let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
     let http_client_span = trace.span_by_hive_kind_one("http.client");
 
+    insta::with_settings!({filters => vec![
+      (r":\d+\/", ":[port]/"),
+      (r"(server\.port:\s+)\d+", "$1[port]"),
+      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
+    ]}, {
     insta::assert_snapshot!(
       operation_span,
       @r"
@@ -217,14 +221,11 @@ async fn test_hive_http_export() {
         http.method: POST
         http.route: /accounts
         http.status_code: 200
-        http.url: http://0.0.0.0:4200/accounts
+        http.url: http://0.0.0.0:[port]/accounts
         target: hive-router
     "
     );
 
-    insta::with_settings!({filters => vec![
-      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
-    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -238,12 +239,11 @@ async fn test_hive_http_export() {
         http.request.body.size: 23
         http.response.body.size: 86
         network.protocol.version: 1.1
-        server.port: 4200
+        server.port: [port]
         target: hive-router
         url.scheme: http
     "
     );
-    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -259,13 +259,14 @@ async fn test_hive_http_export() {
         http.response.status_code: 200
         network.protocol.version: 1.1
         server.address: 0.0.0.0
-        server.port: 4200
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://0.0.0.0:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
+    });
 
     app.hold_until_shutdown(Box::new(otlp_collector));
 }

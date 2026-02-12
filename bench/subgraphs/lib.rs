@@ -15,10 +15,10 @@ use axum::{
 };
 use dashmap::DashMap;
 use sonic_rs::Value;
-use std::{env::var, sync::Arc};
+use std::{env::var, net::SocketAddr, sync::Arc};
 use tokio::{
     net::TcpListener,
-    sync::oneshot::{self, Sender},
+    sync::oneshot::{self, Receiver, Sender},
     task::JoinHandle,
 };
 
@@ -93,21 +93,30 @@ pub struct RequestLog {
 #[derive(Clone)]
 pub struct SubgraphsServiceState {
     pub request_log: DashMap<String, Vec<RequestLog>>,
-    pub health_check_url: String,
+    pub health_check_endpoint: String,
 }
 
 pub fn start_subgraphs_server(
     port: Option<u16>,
-) -> (JoinHandle<()>, Sender<()>, Arc<SubgraphsServiceState>) {
+) -> (
+    JoinHandle<()>,
+    Sender<()>,
+    Arc<SubgraphsServiceState>,
+    Receiver<(String, u16)>,
+) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let (addr_tx, addr_rx) = oneshot::channel::<(String, u16)>();
     let host = var("HOST").unwrap_or("0.0.0.0".to_owned());
-    let port = port
-        .map(|v| v.to_string())
-        .unwrap_or(var("PORT").unwrap_or("4200".to_owned()));
+    let port_input = port.unwrap_or_else(|| {
+        var("PORT")
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(4200)
+    });
 
     let shared_state = Arc::new(SubgraphsServiceState {
         request_log: DashMap::new(),
-        health_check_url: format!("http://{}:{}/health", host, port),
+        health_check_endpoint: "health".to_string(),
     });
 
     let app = Router::new()
@@ -135,22 +144,31 @@ pub fn start_subgraphs_server(
         .route_layer(middleware::from_fn(add_subgraph_header))
         .route_layer(middleware::from_fn(delay_middleware));
 
-    println!("Starting server on http://{}:{}", host, port);
-
     let server_handle = tokio::spawn(async move {
-        axum::serve(
-            TcpListener::bind(&format!("{}:{}", host, port))
-                .await
-                .unwrap(),
-            app,
-        )
-        .with_graceful_shutdown(async {
-            shutdown_rx.await.ok();
-            println!("Graceful shutdown signal received.");
-        })
-        .await
-        .expect("failed to start subgraphs server");
+        let listener = TcpListener::bind(&format!("{}:{}", host, port_input))
+            .await
+            .unwrap();
+
+        let assigned_addr: SocketAddr = listener.local_addr().unwrap();
+        let assigned_host = assigned_addr.ip().to_string();
+        let assigned_port = assigned_addr.port();
+
+        println!(
+            "Starting server on http://{}:{}",
+            assigned_host, assigned_port
+        );
+
+        // Send the assigned host and port back to the caller
+        let _ = addr_tx.send((assigned_host, assigned_port));
+
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                shutdown_rx.await.ok();
+                println!("Graceful shutdown signal received.");
+            })
+            .await
+            .expect("failed to start subgraphs server");
     });
 
-    (server_handle, shutdown_tx, shared_state)
+    (server_handle, shutdown_tx, shared_state, addr_rx)
 }

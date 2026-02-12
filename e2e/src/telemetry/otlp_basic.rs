@@ -4,21 +4,23 @@ use std::time::Duration;
 use crate::testkit::{
     init_graphql_request, init_router_from_config_inline,
     otel::{CollectedSpan, OtlpCollector},
-    wait_for_readiness, SubgraphsServer,
+    wait_for_readiness, SubgraphsServer, SupergraphFile,
 };
 
 /// Verify OTLP exporter works with HTTP protocol
 #[ntex::test]
 async fn test_otlp_http_export_with_graphql_request() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -37,8 +39,7 @@ async fn test_otlp_http_export_with_graphql_request() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -68,6 +69,12 @@ async fn test_otlp_http_export_with_graphql_request() {
     let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
     let http_client_span = trace.span_by_hive_kind_one("http.client");
 
+    insta::with_settings!({filters => vec![
+      (r":\d+\/", ":[port]/"),
+      (r"(server\.port:\s+)\d+", "$1[port]"),
+      (r"(net\.peer\.port:\s+)\d+", "$1[port]"),
+      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
+    ]}, {
     insta::assert_snapshot!(
       http_server_span,
       @r"
@@ -196,9 +203,6 @@ async fn test_otlp_http_export_with_graphql_request() {
     "
     );
 
-    insta::with_settings!({filters => vec![
-      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
-    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -215,14 +219,13 @@ async fn test_otlp_http_export_with_graphql_request() {
         http.response.status_code: 200
         network.protocol.version: 1.1
         server.address: 0.0.0.0
-        server.port: 4200
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://0.0.0.0:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
-    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -238,13 +241,14 @@ async fn test_otlp_http_export_with_graphql_request() {
         http.response.status_code: 200
         network.protocol.version: 1.1
         server.address: 0.0.0.0
-        server.port: 4200
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://0.0.0.0:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
+    });
 
     app.hold_until_shutdown(Box::new(otlp_collector));
 }
@@ -252,15 +256,17 @@ async fn test_otlp_http_export_with_graphql_request() {
 /// Verify OTLP exporter works with gRPC protocol
 #[ntex::test]
 async fn test_otlp_grpc_export_with_graphql_request() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -279,8 +285,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -310,6 +315,12 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
     let http_client_span = trace.span_by_hive_kind_one("http.client");
 
+    insta::with_settings!({filters => vec![
+      (r":\d+\/", ":[port]/"),
+      (r"(server\.port:\s+)\d+", "$1[port]"),
+      (r"(net\.peer\.port:\s+)\d+", "$1[port]"),
+      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
+    ]}, {
     insta::assert_snapshot!(
       http_server_span,
       @r"
@@ -438,9 +449,6 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     "
     );
 
-    insta::with_settings!({filters => vec![
-      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
-    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -457,14 +465,13 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         http.response.status_code: 200
         network.protocol.version: 1.1
         server.address: 0.0.0.0
-        server.port: 4200
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://0.0.0.0:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
-    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -480,13 +487,14 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         http.response.status_code: 200
         network.protocol.version: 1.1
         server.address: 0.0.0.0
-        server.port: 4200
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://0.0.0.0:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
+    });
 
     app.hold_until_shutdown(Box::new(otlp_collector));
 }
@@ -494,16 +502,18 @@ async fn test_otlp_grpc_export_with_graphql_request() {
 /// Verify OTLP exporters do not export telemetry when disabled
 #[ntex::test]
 async fn test_otlp_disabled() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_grpc_endpoint = otlp_collector.grpc_endpoint();
     let otlp_http_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -530,9 +540,7 @@ async fn test_otlp_disabled() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_grpc_endpoint,
-            otlp_http_endpoint,
+            supergraph, otlp_grpc_endpoint, otlp_http_endpoint,
         )
         .as_str(),
     )
@@ -559,10 +567,12 @@ async fn test_otlp_disabled() {
 /// Verify custom headers are sent with HTTP OTLP requests
 #[ntex::test]
 async fn test_otlp_http_headers() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
@@ -588,8 +598,7 @@ async fn test_otlp_http_headers() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -622,10 +631,12 @@ async fn test_otlp_http_headers() {
 /// Verify custom metadata is sent with gRPC OTLP requests
 #[ntex::test]
 async fn test_otlp_grpc_metadata() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
@@ -651,8 +662,7 @@ async fn test_otlp_grpc_metadata() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -687,15 +697,17 @@ async fn test_otlp_grpc_metadata() {
 /// Verify cache.hit attributes are reported correctly
 #[ntex::test]
 async fn test_otlp_cache_hits() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -714,8 +726,7 @@ async fn test_otlp_cache_hits() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -775,15 +786,17 @@ async fn test_otlp_cache_hits() {
 /// Verify cache.hit attributes are reported correctly
 #[ntex::test]
 async fn test_otlp_no_trace_id_collision() {
-    let supergraph_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
-
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let mut supergraph =
+        SupergraphFile::from_file("supergraph.graphql").expect("Failed to load supergraph file");
+    let subgraphs = SubgraphsServer::start_on_random_port().await;
+    supergraph
+        .subgraph_port(subgraphs.port)
+        .expect("Failed to set subgraph port");
 
     let mut app = init_router_from_config_inline(
         format!(
@@ -802,8 +815,7 @@ async fn test_otlp_no_trace_id_collision() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+            supergraph, otlp_endpoint
         )
         .as_str(),
     )
@@ -832,7 +844,6 @@ async fn test_otlp_no_trace_id_collision() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let all_traces = otlp_collector.traces().await;
-    println!("all_traces: {}", all_traces.len());
     let first_trace = all_traces.first().expect("Failed to get first trace");
     let second_trace = all_traces.get(1).expect("Failed to get second trace");
     let third_trace = all_traces.get(2).expect("Failed to get third trace");
