@@ -12,9 +12,7 @@ use hive_router_config::telemetry::hive::{
 };
 use hive_router_config::usage_reporting::UsageReportingConfig;
 use hive_router_internal::telemetry::resolve_value_or_expression;
-use hive_router_plan_executor::execution::{
-    client_request_details::ClientRequestDetails, plan::PlanExecutionOutput,
-};
+use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
@@ -94,7 +92,7 @@ pub async fn collect_usage_report<'a>(
     client_request_details: &ClientRequestDetails<'a>,
     hive_usage_agent: &UsageAgent,
     usage_config: &UsageReportingConfig,
-    execution_result: &PlanExecutionOutput,
+    error_count: usize,
 ) {
     let sample_rate = usage_config.sample_rate.as_f64();
     if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
@@ -117,8 +115,8 @@ pub async fn collect_usage_report<'a>(
         client_version: client_version.map(|version| version.to_string()),
         timestamp,
         duration,
-        ok: execution_result.error_count == 0,
-        errors: execution_result.error_count,
+        ok: error_count == 0,
+        errors: error_count,
         operation_body: client_request_details.operation.query.to_owned(),
         operation_name: client_request_details
             .operation

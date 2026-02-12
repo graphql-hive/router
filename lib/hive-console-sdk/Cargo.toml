@@ -36,4 +36,4 @@ lazy_static = { workspace = true }
 async-dropper-simple = { version = "0.2.6", features = ["tokio", "no-default-bound"] }
 
 [dev-dependencies]
-mockito = "1.7.0"
+mockito = { workspace = true }

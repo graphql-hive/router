@@ -4,7 +4,7 @@ use hive_router_query_planner::ast::selection_item::SelectionItem;
 use crate::{
     introspection::schema::PossibleTypes,
     json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
-    projection::error::ProjectionError,
+    projection::response::serialize_value_to_buffer,
     response::value::Value,
     utils::consts::{
         CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, OPEN_BRACE, OPEN_BRACKET, QUOTE, TRUE,
@@ -12,45 +12,29 @@ use crate::{
     },
 };
 
-pub struct RequestProjectionContext<'a> {
-    pub possible_types: &'a PossibleTypes,
-}
-
-impl<'a> RequestProjectionContext<'a> {
-    pub fn new(possible_types: &'a PossibleTypes) -> Self {
-        Self { possible_types }
+fn write_response_key(first: bool, response_key: Option<&str>, buffer: &mut Vec<u8>) {
+    if !first {
+        buffer.put(COMMA);
+    }
+    if let Some(response_key) = response_key {
+        buffer.put(QUOTE);
+        buffer.put(response_key.as_bytes());
+        buffer.put(QUOTE);
+        buffer.put(COLON);
     }
 }
 
 pub fn project_requires(
-    ctx: &RequestProjectionContext,
+    possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
     entity: &Value,
     buffer: &mut Vec<u8>,
     first: bool,
     response_key: Option<&str>,
-) -> Result<bool, ProjectionError> {
-    project_requires_internal(
-        ctx,
-        requires_selections,
-        entity,
-        buffer,
-        first,
-        response_key,
-    )
-}
-
-fn project_requires_internal(
-    ctx: &RequestProjectionContext,
-    requires_selections: &Vec<SelectionItem>,
-    entity: &Value,
-    buffer: &mut Vec<u8>,
-    first: bool,
-    response_key: Option<&str>,
-) -> Result<bool, ProjectionError> {
+) -> bool {
     match entity {
         Value::Null => {
-            return Ok(false);
+            return false;
         }
         Value::Bool(b) => {
             if !first {
@@ -67,75 +51,35 @@ fn project_requires_internal(
             }
         }
         Value::F64(n) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-            }
+            write_response_key(first, response_key, buffer);
             write_f64(buffer, *n);
         }
         Value::I64(n) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-            }
+            write_response_key(first, response_key, buffer);
             write_i64(buffer, *n);
         }
         Value::U64(n) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-            }
+            write_response_key(first, response_key, buffer);
             write_u64(buffer, *n);
         }
         Value::String(s) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-            }
+            write_response_key(first, response_key, buffer);
             write_and_escape_string(buffer, s);
         }
         Value::Array(entity_array) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-            }
+            write_response_key(first, response_key, buffer);
             buffer.put(OPEN_BRACKET);
 
             let mut first = true;
             for entity_item in entity_array {
-                let projected = project_requires_internal(
-                    ctx,
+                let projected = project_requires(
+                    possible_types,
                     requires_selections,
                     entity_item,
                     buffer,
                     first,
                     None,
-                )?;
+                );
                 if projected {
                     // Only update `first` if we actually write something
                     first = false;
@@ -146,48 +90,46 @@ fn project_requires_internal(
         Value::Object(entity_obj) => {
             if requires_selections.is_empty() {
                 // It is probably a scalar with an object value, so we write it directly
-                let vec = sonic_rs::to_vec(entity_obj).map_err(|e| {
-                    ProjectionError::CustomScalarSerializationFailure(e.to_string())
-                })?;
-                buffer.put_slice(&vec);
-                return Ok(true);
+                write_response_key(first, response_key, buffer);
+                serialize_value_to_buffer(entity, buffer);
+                return true;
             }
             if entity_obj.is_empty() {
-                return Ok(false);
+                return false;
             }
 
             let parent_first = first;
             let mut first = true;
             project_requires_map_mut(
-                ctx,
+                possible_types,
                 requires_selections,
                 entity_obj,
                 buffer,
                 &mut first,
                 response_key,
                 parent_first,
-            )?;
+            );
             if first {
                 // If no fields were projected, "first" is still true,
                 // so we skip writing the closing brace
-                return Ok(false);
+                return false;
             } else {
                 buffer.put(CLOSE_BRACE);
             }
         }
     };
-    Ok(true)
+    true
 }
 
 fn project_requires_map_mut(
-    ctx: &RequestProjectionContext,
+    possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
     entity_obj: &Vec<(&str, Value<'_>)>,
     buffer: &mut Vec<u8>,
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,
-) -> Result<(), ProjectionError> {
+) {
     for requires_selection in requires_selections {
         match &requires_selection {
             SelectionItem::Field(requires_selection) => {
@@ -245,14 +187,14 @@ fn project_requires_map_mut(
                     }
                 }
 
-                let projected = project_requires_internal(
-                    ctx,
+                let projected = project_requires(
+                    possible_types,
                     &requires_selection.selections.items,
                     original,
                     buffer,
                     *first,
                     Some(response_key),
-                )?;
+                );
                 if projected {
                     *first = false;
                 }
@@ -269,22 +211,18 @@ fn project_requires_map_mut(
                     _ => type_condition,
                 };
                 // For projection, both sides of the condition are valid
-                if ctx
-                    .possible_types
-                    .entity_satisfies_type_condition(type_name, type_condition)
-                    || ctx
-                        .possible_types
-                        .entity_satisfies_type_condition(type_condition, type_name)
+                if possible_types.entity_satisfies_type_condition(type_name, type_condition)
+                    || possible_types.entity_satisfies_type_condition(type_condition, type_name)
                 {
                     project_requires_map_mut(
-                        ctx,
+                        possible_types,
                         &requires_selection.selections.items,
                         entity_obj,
                         buffer,
                         first,
                         parent_response_key,
                         parent_first,
-                    )?;
+                    );
                 }
             }
             SelectionItem::FragmentSpread(_name_ref) => {
@@ -292,5 +230,4 @@ fn project_requires_map_mut(
             }
         }
     }
-    Ok(())
 }

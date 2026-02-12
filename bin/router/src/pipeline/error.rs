@@ -4,6 +4,7 @@ use graphql_tools::validation::utils::ValidationError;
 use hive_router_internal::graphql::ObservedError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
+    headers::errors::HeaderRuleRuntimeError,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
@@ -131,6 +132,14 @@ pub enum PipelineError {
     #[error("Request timed out")]
     #[strum(serialize = "GATEWAY_TIMEOUT")]
     TimeoutError,
+
+    #[error(transparent)]
+    #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
+    HeaderPropagation(#[from] HeaderRuleRuntimeError),
+
+    #[error("Failed to serialize the query plan: {0}")]
+    #[strum(serialize = "QUERY_PLAN_SERIALIZATION_FAILED")]
+    QueryPlanSerializationFailed(sonic_rs::Error),
 }
 
 impl PipelineError {
@@ -187,6 +196,8 @@ impl PipelineError {
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::ReadBodyStreamError(err), _) => err.status_code(),
             (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
+            (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 

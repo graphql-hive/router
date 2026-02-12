@@ -16,7 +16,7 @@ pub struct ClientRequestDetails<'exec> {
     pub url: &'exec http::Uri,
     pub headers: &'exec NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
-    pub jwt: &'exec JwtRequestDetails,
+    pub jwt: JwtRequestDetails,
 }
 
 pub enum JwtRequestDetails {
@@ -65,7 +65,7 @@ impl From<&ClientRequestDetails<'_>> for Value {
         ]));
 
         // .request.jwt
-        let jwt_value = match details.jwt {
+        let jwt_value = match &details.jwt {
             JwtRequestDetails::Authenticated {
                 token,
                 prefix,
