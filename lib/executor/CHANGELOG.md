@@ -94,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.5.1 (2026-02-12)
+
+### Fixes
+
+- Make `hive.inflight.key` span attribute unique per inflight group, for better identification of the leader and joiners in a distributed system.
+
 ## 6.5.0 (2026-02-11)
 
 ### Features
