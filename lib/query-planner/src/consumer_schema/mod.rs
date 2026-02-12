@@ -1,18 +1,20 @@
 pub(crate) mod prune_inacessible;
 pub(crate) mod strip_schema_internals;
 
+use std::sync::Arc;
+
 use graphql_tools::parser::schema::*;
 use prune_inacessible::PruneInaccessible;
 use strip_schema_internals::StripSchemaInternals;
 
 #[derive(Debug, Clone)]
 pub struct ConsumerSchema {
-    pub document: Document<'static, String>,
+    pub document: Arc<Document<'static, String>>,
 }
 
 impl ConsumerSchema {
     pub fn new_from_supergraph(supergraph: &Document<'static, String>) -> Self {
-        let document = Self::create_consumer_schema(supergraph);
+        let document = Self::create_consumer_schema(supergraph).into();
         Self { document }
     }
 

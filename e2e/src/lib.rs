@@ -41,5 +41,6 @@ mod telemetry;
 
 #[cfg(test)]
 mod timeout_per_subgraph;
+pub use insta;
 pub use mockito;
 pub mod testkit;

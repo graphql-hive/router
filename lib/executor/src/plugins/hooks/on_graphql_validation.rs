@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use graphql_tools::{
     static_graphql::query::Document,
     validation::{
@@ -17,8 +19,8 @@ use crate::{
 pub struct OnGraphQLValidationStartHookPayload<'exec> {
     pub router_http_request: &'exec RouterHttpRequest<'exec>,
     pub context: &'exec PluginContext,
-    pub schema: &'exec SchemaDocument,
-    pub document: &'exec Document,
+    pub schema: Arc<SchemaDocument>,
+    pub document: Arc<Document>,
     default_validation_plan: &'exec ValidationPlan,
     // Override
     new_validation_plan: Option<ValidationPlan>,
@@ -40,8 +42,8 @@ pub type OnGraphQLValidationStartHookResult<'exec> = StartHookResult<
 impl<'exec> OnGraphQLValidationStartHookPayload<'exec> {
     pub fn new(
         plugin_req_state: &'exec PluginRequestState<'exec>,
-        schema: &'exec SchemaDocument,
-        document: &'exec Document,
+        schema: Arc<SchemaDocument>,
+        document: Arc<Document>,
         default_validation_plan: &'exec ValidationPlan,
     ) -> Self {
         OnGraphQLValidationStartHookPayload {

@@ -25,6 +25,7 @@ members = [
   "plugin_examples/usage_reporting",
   "plugin_examples/plugin_template",
   "plugin_examples/jwt_cookie",
+  "plugin_examples/feature_flags",
 ]
 resolver = "2"
 default-members = ["bin/router"]
