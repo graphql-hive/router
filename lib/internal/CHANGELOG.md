@@ -1,3 +1,9 @@
+## 0.0.12 (2026-02-12)
+
+### Fixes
+
+- Make `hive.inflight.key` span attribute unique per inflight group, for better identification of the leader and joiners in a distributed system.
+
 ## 0.0.11 (2026-02-11)
 
 ### Features
