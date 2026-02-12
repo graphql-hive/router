@@ -6,6 +6,7 @@ use hive_router_plan_executor::projection::response::project_by_operation;
 use hive_router_plan_executor::response::value::Value;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::utils::parsing::{parse_operation, parse_schema};
+use std::collections::HashMap;
 use std::hint::black_box;
 pub mod raw_result;
 
@@ -42,7 +43,7 @@ fn project_data_by_operation_test(c: &mut Criterion) {
                 let result = project_by_operation(
                     &data,
                     vec![],
-                    &None,
+                    &HashMap::new(),
                     bb_root_type_name,
                     &bb_projection_plan,
                     &None,

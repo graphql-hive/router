@@ -13,7 +13,6 @@ use hive_router_query_planner::{
 };
 use http::Method;
 use ntex::{
-    util::Bytes,
     web::{self, HttpRequest},
 };
 
@@ -187,7 +186,7 @@ pub async fn graphql_request_handler(
                 },
                 query: &execution_request.query,
             },
-            jwt: &jwt_request_details,
+            jwt: jwt_request_details,
         };
 
         if normalize_payload.operation_for_introspection.is_some() {
@@ -251,24 +250,20 @@ pub async fn graphql_request_handler(
                                                 // Thus, this expect should never panic.
                                                 "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
                                             ),
-                        &response,
+                        response.error_count,
                     )
                     .await;
                 }
 
-        let response_bytes = Bytes::from(response.body);
-        let response_headers = response.headers;
-
         let mut response_builder = web::HttpResponse::Ok();
-        for (header_name, header_value) in response_headers {
-            if let Some(header_name) = header_name {
-                response_builder.header(header_name, header_value);
-            }
+
+        if let Some(response_headers_aggregator) = response.response_headers_aggregator {
+            response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
         }
 
         Ok(response_builder
-            .header(http::header::CONTENT_TYPE, single_content_type.as_ref())
-            .body(response_bytes))
+            .content_type(single_content_type.as_ref())
+            .body(response.body))
     }
     .instrument(operation_span.clone())
     .await
@@ -298,7 +293,7 @@ pub async fn execute_pipeline<'exec>(
         &supergraph.authorization,
         &supergraph.metadata,
         variable_payload,
-        client_request_details.jwt,
+        &client_request_details.jwt,
     )?;
 
     let query_plan_payload = plan_operation_with_cache(

@@ -3,7 +3,7 @@ use hive_router_internal::expressions::vrl::compiler::Program as VrlProgram;
 use http::{HeaderName, HeaderValue};
 use regex_automata::meta::Regex;
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct HeaderRulesPlan {
     pub request: RequestHeaderRules,
     pub response: ResponseHeaderRules,
@@ -129,4 +129,14 @@ type AggregatedHeader = (HeaderAggregationStrategy, Vec<HeaderValue>);
 #[derive(Default)]
 pub struct ResponseHeaderAggregator {
     pub entries: HashMap<HeaderName, AggregatedHeader>,
+}
+
+impl ResponseHeaderAggregator {
+    pub fn none_if_empty(self) -> Option<Self> {
+        if self.entries.is_empty() {
+            None
+        } else {
+            Some(self)
+        }
+    }
 }

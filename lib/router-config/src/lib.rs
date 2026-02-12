@@ -38,7 +38,7 @@ use crate::{
     traffic_shaping::TrafficShapingConfig,
 };
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HiveRouterConfig {
     #[serde(skip)]

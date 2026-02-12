@@ -12,14 +12,12 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
 };
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
-use hive_router_plan_executor::execution::error::{IntoPlanExecutionError, LazyPlanContext};
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
+use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionOpts};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
-use hive_router_plan_executor::projection::response::project_by_operation;
-use hive_router_plan_executor::response::value::Value;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use http::{HeaderMap, HeaderName};
+use http::HeaderName;
+use sonic_rs::json;
 use tracing::Instrument;
 
 pub static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
@@ -58,42 +56,33 @@ pub async fn execute_plan(
             metadata: &supergraph.metadata,
         };
 
-        let extensions = if matches!(
+        let mut extensions = HashMap::new();
+        if matches!(
             expose_query_plan,
             ExposeQueryPlanMode::Yes | ExposeQueryPlanMode::DryRun
         ) {
-            Some(HashMap::from_iter([(
-                "queryPlan".to_string(),
-                sonic_rs::to_value(&planned_request.query_plan_payload).unwrap(),
-            )]))
-        } else {
-            None
-        };
+            extensions.insert(
+                "queryPlan".into(),
+                sonic_rs::to_value(&planned_request.query_plan_payload)
+                    .map_err(PipelineError::QueryPlanSerializationFailed)?,
+            );
+        }
 
         if matches!(expose_query_plan, ExposeQueryPlanMode::DryRun) {
-            let body = project_by_operation(
-                &Value::Null,
-                vec![],
-                &extensions,
-                planned_request.normalized_payload.root_type_name,
-                &[],
-                &None,
-                0,
-                introspection_context.metadata,
+            let body = sonic_rs::to_vec(
+                &json!({
+                    "extensions": extensions,
+                })
             )
-            .with_plan_context(LazyPlanContext {
-                subgraph_name: || None,
-                affected_path: || None,
-            })?;
+                .map_err(PipelineError::QueryPlanSerializationFailed)?;
 
             return Ok(PlanExecutionOutput {
                 body,
-                headers: HeaderMap::new(),
-                error_count: 0,
+                ..Default::default()
             });
         }
 
-        let jwt_forward_plan: Option<JwtAuthForwardingPlan> = if app_state
+        let jwt_auth_forwarding: Option<JwtAuthForwardingPlan> = if app_state
             .router_config
             .jwt
             .is_jwt_extensions_forwarding_enabled()
@@ -112,7 +101,7 @@ pub async fn execute_plan(
             None
         };
 
-        let result = execute_query_plan(QueryPlanExecutionContext {
+        let result = execute_query_plan(QueryPlanExecutionOpts {
             query_plan: planned_request.query_plan_payload,
             projection_plan: &planned_request.normalized_payload.projection_plan,
             headers_plan: &app_state.headers_plan,
@@ -121,7 +110,7 @@ pub async fn execute_plan(
             client_request: planned_request.client_request_details,
             introspection_context: &introspection_context,
             operation_type_name: planned_request.normalized_payload.root_type_name,
-            jwt_auth_forwarding: &jwt_forward_plan,
+            jwt_auth_forwarding,
             executors: &supergraph.subgraph_executor_map,
             initial_errors: planned_request
                 .authorization_errors

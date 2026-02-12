@@ -30,7 +30,7 @@ hive-router-config = { path = "../lib/router-config" }
 hive-router-internal = { path = "../lib/internal" }
 subgraphs = { path = "../bench/subgraphs" }
 
-mockito = "1.7.0"
+mockito = { workspace = true }
 tempfile = "3.23.0"
 hex = "0.4"
 tiny_http = "0.12"
