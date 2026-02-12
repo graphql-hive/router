@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
@@ -19,6 +20,8 @@ pub async fn plan_operation_with_cache(
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
 ) -> Result<Arc<QueryPlan>, PipelineError> {
+    let metrics = &schema_state.telemetry_context.metrics;
+    let plan_cache_capture = metrics.cache.plan.capture_request();
     let plan_span = GraphQLPlanSpan::new();
     async {
         let stable_override_context =
@@ -32,11 +35,10 @@ pub async fn plan_operation_with_cache(
         let contains_introspection = normalized_operation.operation_for_introspection.is_some();
         let is_pure_introspection = is_plan_operation_empty && contains_introspection;
 
-        plan_span.record_cache_hit(true);
-        let plan = schema_state
+        schema_state
             .plan_cache
-            .try_get_with(plan_cache_key, async {
-                plan_span.record_cache_hit(false);
+            .entry(plan_cache_key)
+            .or_try_insert_with(async {
                 if is_pure_introspection {
                     return Ok(Arc::new(QueryPlan {
                         kind: "QueryPlan".to_string(),
@@ -72,9 +74,18 @@ pub async fn plan_operation_with_cache(
                     )
                     .map(Arc::new)
             })
-            .await?;
-
-        Ok(plan)
+            .await
+            .map_err(PipelineError::from)
+            .into_result_with_hit_miss(|hit_miss| match hit_miss {
+                CacheHitMiss::Hit => {
+                    plan_span.record_cache_hit(true);
+                    plan_cache_capture.finish_hit();
+                }
+                CacheHitMiss::Miss | CacheHitMiss::Error => {
+                    plan_span.record_cache_hit(false);
+                    plan_cache_capture.finish_miss();
+                }
+            })
     }
     .instrument(plan_span.clone())
     .await

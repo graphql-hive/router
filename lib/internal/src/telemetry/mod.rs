@@ -4,6 +4,7 @@
 //!
 //! It also re-exports the OTEL types used across crates to avoid deep dependency chains.
 use hive_router_config::telemetry::TelemetryConfig;
+use opentelemetry::metrics::Meter;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::{trace::IdGenerator, Resource};
@@ -14,16 +15,16 @@ use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
+use crate::telemetry::metrics::Metrics;
 use crate::telemetry::traces::build_trace_provider;
 
 pub mod error;
+pub mod metrics;
 pub mod otel;
 pub mod traces;
-mod utils;
+pub mod utils;
 
-use crate::expressions::{CompileExpression, ExecutableProgram};
 use crate::telemetry::error::TelemetryError;
-use vrl::core::Value;
 
 pub use otel::opentelemetry::propagation::{
     Injector, TextMapCompositePropagator, TextMapPropagator,
@@ -31,17 +32,27 @@ pub use otel::opentelemetry::propagation::{
 pub use otel::opentelemetry::trace::TraceContextExt;
 pub use otel::opentelemetry_sdk::trace::{RandomIdGenerator, SdkTracerProvider};
 pub use traces::TracerLayer;
+use utils::resolve_string_map;
 
 /// Context for telemetry operations that doesn't rely on global state.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TelemetryContext {
     propagator: Option<Arc<TextMapCompositePropagator>>,
+    pub metrics: Arc<Metrics>,
+    meter: Option<Meter>,
 }
 
 impl TelemetryContext {
     /// Creates a telemetry context from tracing propagation config
     pub fn from_propagation_config(
         config: &hive_router_config::telemetry::tracing::TracingPropagationConfig,
+    ) -> Self {
+        Self::from_propagation_config_with_meter(config, None)
+    }
+
+    pub fn from_propagation_config_with_meter(
+        config: &hive_router_config::telemetry::tracing::TracingPropagationConfig,
+        meter: Option<Meter>,
     ) -> Self {
         use otel::opentelemetry_jaeger_propagator::Propagator as JaegerPropagator;
         use otel::opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
@@ -65,12 +76,20 @@ impl TelemetryContext {
             propagators.push(Box::new(JaegerPropagator::new()));
         }
 
+        let metrics = Arc::new(Metrics::new(meter.as_ref()));
+
         if propagators.is_empty() {
-            return Self { propagator: None };
+            return Self {
+                propagator: None,
+                metrics,
+                meter,
+            };
         }
 
         Self {
             propagator: Some(Arc::new(TextMapCompositePropagator::new(propagators))),
+            metrics,
+            meter,
         }
     }
 
@@ -101,11 +120,17 @@ impl TelemetryContext {
     pub fn is_enabled(&self) -> bool {
         self.propagator.is_some()
     }
+
+    pub fn meter(&self) -> Option<&Meter> {
+        self.meter.as_ref()
+    }
 }
 
 pub fn build_otel_layer_from_config<S, I>(
     config: &TelemetryConfig,
     id_generator: I,
+    scope: InstrumentationScope,
+    resource: Resource,
 ) -> Result<Option<(impl Layer<S> + Send + Sync + 'static, SdkTracerProvider)>, TelemetryError>
 where
     S: Subscriber + for<'span> LookupSpan<'span> + Send + Sync + 'static,
@@ -115,30 +140,7 @@ where
         return Ok(None);
     }
 
-    let resolved_attributes =
-        traces::resolve_string_map(&config.resource.attributes, "resource attribute")?;
-
-    let mut resource_attributes: Vec<_> = resolved_attributes
-        .into_iter()
-        .map(|(k, v)| KeyValue::new(k, v))
-        .collect();
-
-    if !resource_attributes
-        .iter()
-        .any(|kv| kv.key.as_str() == "service.name")
-    {
-        resource_attributes.push(KeyValue::new("service.name", "hive-router"));
-    }
-
-    let resource = Resource::builder()
-        .with_attributes(resource_attributes)
-        .build();
-
     let traces_provider = build_trace_provider(config, id_generator, resource.clone())?;
-
-    let scope = InstrumentationScope::builder("graphql-hive.router")
-        .with_version(env!("CARGO_PKG_VERSION"))
-        .build();
 
     let tracer = traces_provider.tracer_with_scope(scope);
     let traces_layer = tracing_opentelemetry::layer()
@@ -153,48 +155,29 @@ where
     Ok(Some((traces_layer, traces_provider)))
 }
 
-pub fn evaluate_expression_as_string(
-    expression: &str,
-    context: &str,
-) -> Result<String, TelemetryError> {
-    Ok(expression
-        // compile
-        .compile_expression(None)
-        .map_err(|e| {
-            TelemetryError::TracesExporterSetup(format!(
-                "Failed to compile {} expression: {}",
-                context, e
-            ))
-        })?
-        // execute
-        .execute(Value::Null) // no input context as we are in setup phase
-        .map_err(|e| {
-            TelemetryError::TracesExporterSetup(format!(
-                "Failed to execute {} expression: {}",
-                context, e
-            ))
-        })?
-        // coerce
-        .as_str()
-        .ok_or_else(|| {
-            TelemetryError::TracesExporterSetup(format!(
-                "{} expression must return a string",
-                context
-            ))
-        })?
-        .to_string())
+pub fn build_scope() -> InstrumentationScope {
+    InstrumentationScope::builder("graphql-hive.router")
+        .with_version(env!("CARGO_PKG_VERSION"))
+        .build()
 }
 
-pub fn resolve_value_or_expression(
-    value_or_expr: &hive_router_config::primitives::value_or_expression::ValueOrExpression<String>,
-    context: &str,
-) -> Result<String, TelemetryError> {
-    match value_or_expr {
-        hive_router_config::primitives::value_or_expression::ValueOrExpression::Value(v) => {
-            Ok(v.clone())
-        }
-        hive_router_config::primitives::value_or_expression::ValueOrExpression::Expression {
-            expression,
-        } => evaluate_expression_as_string(expression, context),
+pub fn build_resource(config: &TelemetryConfig) -> Result<Resource, TelemetryError> {
+    let resolved_attributes =
+        resolve_string_map(&config.resource.attributes, "resource attribute")?;
+
+    let mut resource_attributes: Vec<_> = resolved_attributes
+        .into_iter()
+        .map(|(k, v)| KeyValue::new(k, v))
+        .collect();
+
+    if !resource_attributes
+        .iter()
+        .any(|kv| kv.key.as_str() == "service.name")
+    {
+        resource_attributes.push(KeyValue::new("service.name", "hive-router"));
     }
+
+    Ok(Resource::builder()
+        .with_attributes(resource_attributes)
+        .build())
 }

@@ -15,7 +15,7 @@ async fn test_hive_http_export() {
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let _subgraphs = SubgraphsServer::start().await;
 

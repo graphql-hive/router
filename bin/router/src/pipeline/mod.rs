@@ -20,7 +20,7 @@ use ntex::{
 use crate::{
     pipeline::{
         authorization::enforce_operation_authorization,
-        body_read::read_body_stream,
+        body_read::{read_body_stream, write_request_body_size},
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
         error::PipelineError,
@@ -82,9 +82,11 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
+        write_request_body_size(req, body_bytes.len() as u64);
         http_server_request_span.record_body_size(body_bytes.len());
 
-        let mut execution_request = get_execution_request_from_http_request(req, body_bytes).await?;
+        let mut execution_request =
+            get_execution_request_from_http_request(req, body_bytes.clone()).await?;
 
         let client_name = req
             .headers()
