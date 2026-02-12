@@ -47,7 +47,7 @@ struct ResolvedSubgraphConfig<'a> {
     dedupe_enabled: bool,
 }
 
-pub type InflightRequestsMap = Arc<DashMap<u64, Arc<OnceCell<HttpResponse>>, ABuildHasher>>;
+pub type InflightRequestsMap = Arc<DashMap<u64, Arc<OnceCell<(HttpResponse, u64)>>, ABuildHasher>>;
 
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
