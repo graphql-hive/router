@@ -64,13 +64,13 @@ pub enum AuthorizationDecision {
     Reject { errors: Vec<AuthorizationError> },
 }
 
-impl From<AuthorizationError> for GraphQLError {
-    fn from(auth_error: AuthorizationError) -> Self {
+impl From<&AuthorizationError> for GraphQLError {
+    fn from(auth_error: &AuthorizationError) -> Self {
         GraphQLError::from_message_and_code(
             "Unauthorized field or type",
             "UNAUTHORIZED_FIELD_OR_TYPE",
         )
-        .add_affected_path(auth_error.path)
+        .add_affected_path(&auth_error.path)
     }
 }
 
