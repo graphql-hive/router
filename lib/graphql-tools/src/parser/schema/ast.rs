@@ -519,3 +519,16 @@ impl FromStr for DirectiveLocation {
         Ok(val)
     }
 }
+
+impl<'a, T: Text<'a>> TypeDefinition<'a, T> {
+    pub fn directives(&self) -> &[Directive<'a, T>] {
+        match self {
+            TypeDefinition::Scalar(scalar) => &scalar.directives,
+            TypeDefinition::Object(object) => &object.directives,
+            TypeDefinition::Interface(interface) => &interface.directives,
+            TypeDefinition::Union(union) => &union.directives,
+            TypeDefinition::Enum(enum_) => &enum_.directives,
+            TypeDefinition::InputObject(input_object) => &input_object.directives,
+        }
+    }
+}

@@ -29,7 +29,7 @@ pub async fn validate_operation_with_cache(
     let validate_span = GraphQLValidateSpan::new();
 
     async {
-        let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
+        let consumer_schema_ast = supergraph.planner.consumer_schema.document.clone();
 
         let validation_result = match schema_state
             .validate_cache
@@ -53,7 +53,7 @@ pub async fn validate_operation_with_cache(
                 validate_span.record_cache_hit(false);
 
                 let mut on_end_callbacks = vec![];
-                let document = &parser_payload.parsed_operation;
+                let document = parser_payload.parsed_operation.clone();
                 let mut errors = if let Some(plugin_req_state) = plugin_req_state.as_ref() {
                     /* Handle on_graphql_validate hook in the plugins - START */
                     let mut start_payload = OnGraphQLValidationStartHookPayload::new(
@@ -80,13 +80,13 @@ pub async fn validate_operation_with_cache(
                     match start_payload.errors {
                         Some(errors) => errors,
                         None => validate(
-                            consumer_schema_ast,
-                            start_payload.document,
+                            &start_payload.schema,
+                            &start_payload.document,
                             start_payload.get_validation_plan(),
                         ),
                     }
                 } else {
-                    validate(consumer_schema_ast, document, &app_state.validation_plan)
+                    validate(&consumer_schema_ast, &document, &app_state.validation_plan)
                 };
 
                 if !on_end_callbacks.is_empty() {

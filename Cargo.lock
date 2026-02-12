@@ -1838,6 +1838,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "feature-flags-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
+]
+
+[[package]]
 name = "ff"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
