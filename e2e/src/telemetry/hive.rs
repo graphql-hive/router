@@ -222,6 +222,9 @@ async fn test_hive_http_export() {
     "
     );
 
+    insta::with_settings!({filters => vec![
+      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
+    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -229,7 +232,7 @@ async fn test_hive_http_export() {
       Kind: Internal
       Status: message='' code='1'
       Attributes:
-        hive.inflight.key: 15555024578502296811
+        hive.inflight.key: [random]
         hive.inflight.role: leader
         hive.kind: http.inflight
         http.request.body.size: 23
@@ -240,6 +243,7 @@ async fn test_hive_http_export() {
         url.scheme: http
     "
     );
+    });
 
     insta::assert_snapshot!(
       http_client_span,

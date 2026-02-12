@@ -84,6 +84,9 @@ async fn test_deprecated_span_attributes() {
     "
     );
 
+    insta::with_settings!({filters => vec![
+      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
+    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -91,7 +94,7 @@ async fn test_deprecated_span_attributes() {
       Kind: Internal
       Status: message='' code='1'
       Attributes:
-        hive.inflight.key: 15555024578502296811
+        hive.inflight.key: [random]
         hive.inflight.role: leader
         hive.kind: http.inflight
         http.flavor: 1.1
@@ -107,6 +110,7 @@ async fn test_deprecated_span_attributes() {
         url.scheme: http
     "
     );
+    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -218,6 +222,9 @@ async fn test_spec_and_deprecated_span_attributes() {
     "
     );
 
+    insta::with_settings!({filters => vec![
+      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
+    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -225,7 +232,7 @@ async fn test_spec_and_deprecated_span_attributes() {
       Kind: Internal
       Status: message='' code='1'
       Attributes:
-        hive.inflight.key: 15555024578502296811
+        hive.inflight.key: [random]
         hive.inflight.role: leader
         hive.kind: http.inflight
         http.flavor: 1.1
@@ -249,6 +256,7 @@ async fn test_spec_and_deprecated_span_attributes() {
         url.scheme: http
     "
     );
+    });
 
     insta::assert_snapshot!(
       http_client_span,

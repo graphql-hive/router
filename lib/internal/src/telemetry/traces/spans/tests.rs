@@ -255,9 +255,8 @@ fn test_http_inflight_request_span() {
         headers.insert(HOST, HeaderValue::from_static("localhost:8082"));
         headers.insert(USER_AGENT, HeaderValue::from_static("test-agent"));
         let body = b"test body";
-        let fingerprint: u64 = 12345;
 
-        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body, fingerprint);
+        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body);
         assert_fields(
             &span,
             &[
@@ -281,15 +280,17 @@ fn test_http_inflight_request_span() {
             ],
         );
 
-        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body, 1);
-        span.record_as_leader();
+        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body);
+        span.record_as_leader(&1);
         layer.assert_recorded_value(&span, attributes::HIVE_INFLIGHT_ROLE, "leader");
+        layer.assert_recorded_value(&span, attributes::HIVE_INFLIGHT_KEY, &1.to_string());
 
-        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body, 2);
-        span.record_as_joiner();
+        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body);
+        span.record_as_joiner(&2);
         layer.assert_recorded_value(&span, attributes::HIVE_INFLIGHT_ROLE, "joiner");
+        layer.assert_recorded_value(&span, attributes::HIVE_INFLIGHT_KEY, &2.to_string());
 
-        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body, 3);
+        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body);
         span.record_response(&response_body, &StatusCode::OK);
 
         layer.assert_recorded_value(&span, attributes::HTTP_RESPONSE_STATUS_CODE, "200");
@@ -300,7 +301,7 @@ fn test_http_inflight_request_span() {
         );
         layer.assert_recorded_value(&span, attributes::OTEL_STATUS_CODE, "Ok");
 
-        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body, 4);
+        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body);
         span.record_internal_server_error();
 
         layer.assert_recorded_value(&span, attributes::HTTP_RESPONSE_STATUS_CODE, "500");

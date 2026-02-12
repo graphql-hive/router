@@ -246,13 +246,7 @@ impl Borrow<Span> for HttpInflightRequestSpan {
     }
 }
 impl HttpInflightRequestSpan {
-    pub fn new(
-        method: &Method,
-        url: &Uri,
-        headers: &HeaderMap,
-        body_bytes: &[u8],
-        fingerprint: u64,
-    ) -> Self {
+    pub fn new(method: &Method, url: &Uri, headers: &HeaderMap, body_bytes: &[u8]) -> Self {
         if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
@@ -281,7 +275,7 @@ impl HttpInflightRequestSpan {
 
             // Inflight Attributes
             "hive.inflight.role" = Empty,
-            "hive.inflight.key" = fingerprint,
+            "hive.inflight.key" = Empty,
 
             // Stable Attributes
             "server.address" = server_address,
@@ -300,12 +294,20 @@ impl HttpInflightRequestSpan {
         Self { span }
     }
 
-    pub fn record_as_leader(&self) {
-        self.record(attributes::HIVE_INFLIGHT_ROLE, "leader");
+    pub fn record_as_leader(&self, leader_key: &u64) {
+        record_all!(
+            self.span,
+            "hive.inflight.role" = "leader",
+            "hive.inflight.key" = leader_key,
+        );
     }
 
-    pub fn record_as_joiner(&self) {
-        self.record(attributes::HIVE_INFLIGHT_ROLE, "joiner");
+    pub fn record_as_joiner(&self, leader_key: &u64) {
+        record_all!(
+            self.span,
+            "hive.inflight.role" = "joiner",
+            "hive.inflight.key" = leader_key,
+        );
     }
 
     pub fn record_response(&self, body: &Bytes, status: &StatusCode) {

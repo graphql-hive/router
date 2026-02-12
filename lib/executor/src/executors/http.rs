@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::executors::dedupe::request_fingerprint;
+use crate::executors::dedupe::unique_leader_fingerprint;
 use crate::executors::map::InflightRequestsMap;
 use crate::response::subgraph_response::SubgraphResponse;
 use futures::TryFutureExt;
@@ -242,13 +243,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }
 
         let fingerprint = request_fingerprint(&http::Method::POST, &self.endpoint, &headers, &body);
-        let inflight_span = HttpInflightRequestSpan::new(
-            &http::Method::POST,
-            &self.endpoint,
-            &headers,
-            &body,
-            fingerprint,
-        );
+        let inflight_span =
+            HttpInflightRequestSpan::new(&http::Method::POST, &self.endpoint, &headers, &body);
 
         async {
             // Clone the cell from the map, dropping the lock from the DashMap immediately.
@@ -262,7 +258,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
             // Mark it as a joiner span by default.
             let mut is_leader = false;
-            let shared_response = cell
+            let (shared_response, leader_id) = cell
                 .get_or_try_init(|| async {
                     // Override the span to be a leader span for this request.
                     is_leader = true;
@@ -276,14 +272,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     // This ensures that once the OnceCell is set, no future requests can join it.
                     // The cache is for the lifetime of the in-flight request only.
                     self.in_flight_requests.remove(&fingerprint);
-                    res
+                    res.map(|res| (res, unique_leader_fingerprint()))
                 })
                 .await?;
 
             if is_leader {
-                inflight_span.record_as_leader();
+                inflight_span.record_as_leader(leader_id);
             } else {
-                inflight_span.record_as_joiner();
+                inflight_span.record_as_joiner(leader_id);
             }
 
             inflight_span.record_response(&shared_response.body, &shared_response.status);

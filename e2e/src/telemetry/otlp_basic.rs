@@ -196,6 +196,9 @@ async fn test_otlp_http_export_with_graphql_request() {
     "
     );
 
+    insta::with_settings!({filters => vec![
+      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
+    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -203,7 +206,7 @@ async fn test_otlp_http_export_with_graphql_request() {
       Kind: Internal
       Status: message='' code='1'
       Attributes:
-        hive.inflight.key: 15555024578502296811
+        hive.inflight.key: [random]
         hive.inflight.role: leader
         hive.kind: http.inflight
         http.request.body.size: 23
@@ -219,6 +222,7 @@ async fn test_otlp_http_export_with_graphql_request() {
         url.scheme: http
     "
     );
+    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -434,6 +438,9 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     "
     );
 
+    insta::with_settings!({filters => vec![
+      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
+    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -441,7 +448,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
       Kind: Internal
       Status: message='' code='1'
       Attributes:
-        hive.inflight.key: 15555024578502296811
+        hive.inflight.key: [random]
         hive.inflight.role: leader
         hive.kind: http.inflight
         http.request.body.size: 23
@@ -457,6 +464,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         url.scheme: http
     "
     );
+    });
 
     insta::assert_snapshot!(
       http_client_span,
