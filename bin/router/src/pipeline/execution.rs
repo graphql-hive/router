@@ -69,12 +69,10 @@ pub async fn execute_plan(
         }
 
         if matches!(expose_query_plan, ExposeQueryPlanMode::DryRun) {
-            let body = sonic_rs::to_vec(
-                &json!({
-                    "extensions": extensions,
-                })
-            )
-                .map_err(PipelineError::QueryPlanSerializationFailed)?;
+            let body = sonic_rs::to_vec(&json!({
+                "extensions": extensions,
+            }))
+            .map_err(PipelineError::QueryPlanSerializationFailed)?;
 
             return Ok(PlanExecutionOutput {
                 body,

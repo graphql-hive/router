@@ -1,14 +1,15 @@
 use std::collections::{BTreeSet, HashMap};
 
-use bytes::{BufMut};
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
+use bytes::BufMut;
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use hive_router_internal::telemetry::traces::spans::graphql::{
-    GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan
+    GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
 use hive_router_query_planner::{
     planner::plan_nodes::{
         ConditionNode, FetchNode, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
-    }, state::supergraph_state::OperationKind,
+    },
+    state::supergraph_state::OperationKind,
 };
 use http::HeaderMap;
 use sonic_rs::ValueRef;
@@ -33,9 +34,7 @@ use crate::{
         schema::SchemaMetadata,
     },
     projection::{
-        plan::FieldProjectionPlan,
-        request::{project_requires},
-        response::project_by_operation,
+        plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath},
@@ -188,8 +187,8 @@ impl<'exec> ExecutionJob<'exec> {
     }
     fn subgraph_name(&self) -> &'exec str {
         match self {
-            ExecutionJob::Fetch { subgraph_name, .. } => *subgraph_name,
-            ExecutionJob::FlattenFetch { subgraph_name, .. } => *subgraph_name,
+            ExecutionJob::Fetch { subgraph_name, .. } => subgraph_name,
+            ExecutionJob::FlattenFetch { subgraph_name, .. } => subgraph_name,
         }
     }
     fn affected_path(&self) -> Option<&'exec FlattenNodePath> {
@@ -539,8 +538,8 @@ impl<'exec> Executor<'exec> {
                 .execute(&node.service_name, subgraph_request, self.client_request)
                 .await
                 .with_plan_context(LazyPlanContext {
-                    subgraph_name: || Some(node.service_name.clone()),
-                    affected_path: || None,
+                    subgraph_name: subgraph_name_factory,
+                    affected_path: affected_path_factory,
                 })?;
 
             if let Some(errors) = &response.errors {
@@ -624,7 +623,7 @@ mod tests {
     use sonic_rs::Value;
     use std::{
         collections::{BTreeSet, HashMap},
-        sync::{Arc, mpsc::channel},
+        sync::{mpsc::channel, Arc},
         time::Duration,
         vec,
     };
@@ -772,7 +771,9 @@ mod tests {
             executors: &SubgraphExecutorMap::from_http_endpoint_map(
                 &subgraph_endpoint_map,
                 HiveRouterConfig::default().into(),
-                Arc::new(TelemetryContext::from_propagation_config(&Default::default())),
+                Arc::new(TelemetryContext::from_propagation_config(
+                    &Default::default(),
+                )),
             )
             .unwrap(),
             client_request: &ClientRequestDetails {

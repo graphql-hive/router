@@ -3,7 +3,9 @@ use std::sync::Arc;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_internal::graphql::ObservedError;
 use hive_router_plan_executor::{
-    execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError}, headers::errors::HeaderRuleRuntimeError, response::graphql_error::GraphQLError
+    execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
+    headers::errors::HeaderRuleRuntimeError,
+    response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,

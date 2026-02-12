@@ -13,10 +13,8 @@ mod tests {
             ClientRequestDetails, JwtRequestDetails, OperationDetails,
         },
         headers::{
-            compile::compile_headers_plan,
-            plan::ResponseHeaderAggregator,
-            request::modify_subgraph_request_headers,
-            response::{apply_subgraph_response_headers},
+            compile::compile_headers_plan, plan::ResponseHeaderAggregator,
+            request::modify_subgraph_request_headers, response::apply_subgraph_response_headers,
         },
     };
     use hive_router_config::parse_yaml_config;

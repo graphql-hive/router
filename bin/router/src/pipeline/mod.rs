@@ -12,9 +12,7 @@ use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
 use http::Method;
-use ntex::{
-    web::{self, HttpRequest},
-};
+use ntex::web::{self, HttpRequest};
 
 use crate::{
     pipeline::{

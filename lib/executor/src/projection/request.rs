@@ -211,10 +211,8 @@ fn project_requires_map_mut(
                     _ => type_condition,
                 };
                 // For projection, both sides of the condition are valid
-                if possible_types
-                    .entity_satisfies_type_condition(type_name, type_condition)
-                    || possible_types
-                        .entity_satisfies_type_condition(type_condition, type_name)
+                if possible_types.entity_satisfies_type_condition(type_name, type_condition)
+                    || possible_types.entity_satisfies_type_condition(type_condition, type_name)
                 {
                     project_requires_map_mut(
                         possible_types,
