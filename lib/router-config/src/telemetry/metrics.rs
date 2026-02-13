@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use human_size::Size;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -79,9 +80,7 @@ pub enum MetricsHistogramConfig {
         bytes: MetricsExplicitHistogramUnitConfig,
     },
     Exponential {
-        #[serde(default = "default_histogram_max_size")]
         max_size: u32,
-        #[serde(default = "default_histogram_max_scale")]
         max_scale: i8,
         #[serde(default)]
         record_min_max: bool,
@@ -90,10 +89,9 @@ pub enum MetricsHistogramConfig {
 
 impl Default for MetricsHistogramConfig {
     fn default() -> Self {
-        Self::Exponential {
-            max_size: default_histogram_max_size(),
-            max_scale: default_histogram_max_scale(),
-            record_min_max: false,
+        Self::Explicit {
+            seconds: default_explicit_histogram_seconds(),
+            bytes: default_explicit_histogram_bytes(),
         }
     }
 }
@@ -101,17 +99,51 @@ impl Default for MetricsHistogramConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsExplicitHistogramUnitConfig {
-    pub buckets: Vec<f64>,
+    pub buckets: MetricsHistogramBuckets,
     #[serde(default)]
     pub record_min_max: bool,
 }
 
-fn default_histogram_max_size() -> u32 {
-    160
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub enum MetricsHistogramBuckets {
+    Numeric(Vec<f64>),
+    HumanReadable(Vec<String>),
 }
 
-fn default_histogram_max_scale() -> i8 {
-    20
+impl MetricsExplicitHistogramUnitConfig {
+    pub fn resolve_seconds_buckets(&self) -> Result<Vec<f64>, String> {
+        match &self.buckets {
+            MetricsHistogramBuckets::Numeric(values) => Ok(values.clone()),
+            MetricsHistogramBuckets::HumanReadable(values) => values
+                .iter()
+                .map(|value| {
+                    humantime::parse_duration(value)
+                        .map(|duration| duration.as_secs_f64())
+                        .map_err(|err| {
+                            format!("Invalid duration bucket '{value}' in seconds.buckets: {err}")
+                        })
+                })
+                .collect(),
+        }
+    }
+
+    pub fn resolve_bytes_buckets(&self) -> Result<Vec<f64>, String> {
+        match &self.buckets {
+            MetricsHistogramBuckets::Numeric(values) => Ok(values.clone()),
+            MetricsHistogramBuckets::HumanReadable(values) => values
+                .iter()
+                .map(|value| {
+                    value
+                        .parse::<Size>()
+                        .map(|size| size.to_bytes() as f64)
+                        .map_err(|err| {
+                            format!("Invalid byte bucket '{value}' in bytes.buckets: {err}")
+                        })
+                })
+                .collect(),
+        }
+    }
 }
 
 fn default_explicit_histogram_seconds_buckets() -> Vec<f64> {
@@ -129,14 +161,14 @@ fn default_explicit_histogram_bytes_buckets() -> Vec<f64> {
 
 fn default_explicit_histogram_seconds() -> MetricsExplicitHistogramUnitConfig {
     MetricsExplicitHistogramUnitConfig {
-        buckets: default_explicit_histogram_seconds_buckets(),
+        buckets: MetricsHistogramBuckets::Numeric(default_explicit_histogram_seconds_buckets()),
         record_min_max: false,
     }
 }
 
 fn default_explicit_histogram_bytes() -> MetricsExplicitHistogramUnitConfig {
     MetricsExplicitHistogramUnitConfig {
-        buckets: default_explicit_histogram_bytes_buckets(),
+        buckets: MetricsHistogramBuckets::Numeric(default_explicit_histogram_bytes_buckets()),
         record_min_max: false,
     }
 }

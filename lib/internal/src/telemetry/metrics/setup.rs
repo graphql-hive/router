@@ -4,8 +4,8 @@ use hive_router_config::{
     primitives::toggle::ToggleWith,
     telemetry::{
         metrics::{
-            MetricsExplicitHistogramUnitConfig, MetricsExporterConfig, MetricsHistogramConfig,
-            MetricsOtlpConfig, MetricsPrometheusConfig, MetricsTemporality,
+            MetricsExporterConfig, MetricsHistogramConfig, MetricsOtlpConfig,
+            MetricsPrometheusConfig, MetricsTemporality,
         },
         tracing::OtlpProtocol,
         TelemetryConfig,
@@ -202,8 +202,15 @@ fn validate_histogram_config(config: &MetricsHistogramConfig) -> Result<(), Tele
         return Ok(());
     };
 
-    validate_explicit_histogram_buckets("seconds", &seconds.buckets)?;
-    validate_explicit_histogram_buckets("bytes", &bytes.buckets)?;
+    let seconds_buckets = seconds
+        .resolve_seconds_buckets()
+        .map_err(TelemetryError::MetricsExporterSetup)?;
+    let bytes_buckets = bytes
+        .resolve_bytes_buckets()
+        .map_err(TelemetryError::MetricsExporterSetup)?;
+
+    validate_explicit_histogram_buckets("seconds", &seconds_buckets)?;
+    validate_explicit_histogram_buckets("bytes", &bytes_buckets)?;
     Ok(())
 }
 
@@ -261,9 +268,13 @@ fn histogram_aggregation_for_unit(
             record_min_max: *record_min_max,
         }),
         MetricsHistogramConfig::Explicit { seconds, bytes } => {
-            let config = match instrument_unit {
-                "s" => seconds,
-                "By" => bytes,
+            let buckets = match instrument_unit {
+                "s" => seconds
+                    .resolve_seconds_buckets()
+                    .map_err(TelemetryError::MetricsExporterSetup)?,
+                "By" => bytes
+                    .resolve_bytes_buckets()
+                    .map_err(TelemetryError::MetricsExporterSetup)?,
                 _ => {
                     return Err(TelemetryError::MetricsExporterSetup(format!(
                         "Unsupported histogram unit '{instrument_unit}' for instrument '{instrument_name}' in explicit histogram aggregation. Supported units: s, By"
@@ -271,15 +282,22 @@ fn histogram_aggregation_for_unit(
                 }
             };
 
-            Ok(explicit_histogram_aggregation(config))
+            Ok(explicit_histogram_aggregation(
+                buckets,
+                match instrument_unit {
+                    "s" => seconds.record_min_max,
+                    "By" => bytes.record_min_max,
+                    _ => unreachable!("unsupported instrument unit already handled"),
+                },
+            ))
         }
     }
 }
 
-fn explicit_histogram_aggregation(config: &MetricsExplicitHistogramUnitConfig) -> Aggregation {
+fn explicit_histogram_aggregation(buckets: Vec<f64>, record_min_max: bool) -> Aggregation {
     Aggregation::ExplicitBucketHistogram {
-        boundaries: config.buckets.clone(),
-        record_min_max: config.record_min_max,
+        boundaries: buckets,
+        record_min_max,
     }
 }
 
