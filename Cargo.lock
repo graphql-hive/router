@@ -3523,6 +3523,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "non-standard-request-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
+]
+
+[[package]]
 name = "ntex"
 version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
