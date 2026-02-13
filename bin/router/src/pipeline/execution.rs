@@ -112,7 +112,7 @@ pub async fn execute_plan(
             executors: &supergraph.subgraph_executor_map,
             initial_errors: planned_request
                 .authorization_errors
-                .into_iter()
+                .iter()
                 .map(|e| e.into())
                 .collect(),
             span,
