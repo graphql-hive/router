@@ -1,0 +1,408 @@
+name: apollo-router plugin
+on:
+  # For PRs, this pipeline will use the commit ID as Docker image tag and R2 artifact prefix.
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'apollo-router-workspace/**'
+  # For `main` changes, this pipeline will look for changes in Rust crates or plugin versioning, and
+  # publish them only if changes are found and image does not exists in GH Packages.
+  push:
+    paths:
+      - 'apollo-router-workspace/**'
+    branches:
+      - main
+
+defaults:
+  run:
+    working-directory: ./apollo-router-workspace
+  
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # This script is doing the following:
+  # 1. Get the version of the apollo-router and the plugin from the Cargo.toml file
+  # 2. Check if there are changes in the Cargo.toml file in the current commit
+  # 3. If there are changes, check if the image tag exists in the GitHub Container Registry
+  find-changes:
+    name: find changes for apollo-router release
+    runs-on: ubuntu-22.04
+    if: ${{ !github.event.pull_request.head.repo.fork }}
+    outputs:
+      should_release: ${{ steps.find_changes.outputs.should_release }}
+      release_version: ${{ steps.find_changes.outputs.release_version }}
+      release_latest: ${{ steps.find_changes.outputs.release_latest }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 2
+
+      - name: find changes in versions
+        id: find_changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
+            echo "Running in a PR, using commit ID as tag"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "release_latest=false" >> $GITHUB_OUTPUT
+            echo "release_version=$GITHUB_SHA" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Running on push event, looking for changes in Rust crates or plugin versioning"
+
+          image_name="apollo-router"
+          github_org="graphql-hive"
+          router_version=$(cargo tree -i apollo-router --quiet | head -n 1 | awk -F" v" '{print $2}')
+          plugin_version=$(grep '^version' Cargo.toml | sed 's/version *= *"\(.*\)"/\1/')
+          has_changes=$(git diff HEAD~ HEAD --name-only -- 'Cargo.toml' 'Cargo.lock')
+
+          if [ "$has_changes" ]; then
+            image_tag_version="router${router_version}-plugin${plugin_version}"
+
+            response=$(curl -L \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -s \
+              https://api.github.com/orgs/${github_org}/packages/container/${image_name}/versions)
+            tag_exists=$(echo "$response" | jq -r ".[] | .metadata.container.tags[] | select(. | contains(\"${image_tag_version}\"))")
+
+            if [ ! "$tag_exists" ]; then
+              echo "Found changes in version $version_to_publish"
+              echo "release_version=$image_tag_version" >> $GITHUB_OUTPUT
+              echo "should_release=true" >> $GITHUB_OUTPUT
+              echo "release_latest=true" >> $GITHUB_OUTPUT
+            else 
+              echo "No changes found in version $image_tag_version"
+            fi
+          fi
+
+  # Builds Rust crates, and creates Docker images
+  dockerize:
+    name: image build and dockerize apollo-router (${{ matrix.platform }})
+    needs: find-changes
+    if: ${{ needs.find-changes.outputs.should_release == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - builder: ubuntu-22.04
+            platform: linux/amd64
+            suffix: '-amd64'
+            cache_key: Linux
+            rust_target: x86_64-unknown-linux-gnu
+          - builder: hive-linux-arm64-ubuntu2204
+            platform: linux/arm64
+            suffix: '-arm64'
+            rust_target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.builder }}
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 2
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1 # v1
+        with:
+          target: ${{ matrix.rust_target }}
+          rust-src-dir: ./apollo-router-workspace
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: apollo-router-workspace/target
+          key: apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
+            apollo-router-target-${{ matrix.cache_key }}-build-
+            apollo-router-target-${{ matrix.cache_key }}-
+            apollo-router-target-
+
+      - name: Build
+        run:
+          cargo build --release --target ${{ matrix.rust_target }}
+
+      - name: Strip binary from debug symbols
+        if: ${{ runner.os == 'Linux' }}
+        run: strip ./target/${{ matrix.rust_target }}/release/router
+          
+      - name: configure docker buildx
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
+          
+      - name: login to docker registry
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - uses: frabert/replace-string-action@b6828c5a4cb6371753ff873b0d1c4c4fbd9a63cb # v2.5
+        id: branch_name_fix
+        name: sanitize branch name
+        with:
+          pattern: '[+\/><@|-]'
+          flags: 'g'
+          string: ${{ github.head_ref || github.ref_name }}
+          replace-with: '_'
+          
+      - uses: frabert/replace-string-action@b6828c5a4cb6371753ff873b0d1c4c4fbd9a63cb # v2.5
+        id: docker_cache_key
+        name: build cache key
+        with:
+          pattern: '[\/,]'
+          flags: 'g'
+          string: ${{ github.ref }}-apollo-router-hive-build-${{ matrix.platform }}
+          replace-with: '_'
+          
+      - name: build docker images
+        timeout-minutes: 60
+        id: docker-bake
+        uses: docker/bake-action@5ca506d06f70338a4968df87fd8bfee5cbfb84c7 # v6.0.0
+        env:
+          DOCKER_REGISTRY: ghcr.io/${{ github.repository_owner }}/
+          COMMIT_SHA: ${{ needs.find-changes.outputs.release_version }}
+          RELEASE: ${{ needs.find-changes.outputs.release_version }}
+          BRANCH_NAME: ${{ steps.branch_name_fix.outputs.replaced }}
+          BUILD_TYPE: 'publish'
+          PWD: ${{ github.workspace }}/apollo-router-workspace
+          BUILD_STABLE: ${{ needs.find-changes.outputs.release_latest == 'true' && '1' || '' }}
+          BUILD_PLATFORM: ${{ matrix.platform }}
+          IMAGE_SUFFIX: ${{ matrix.suffix }}
+          ROUTER_BINARY_DIR: ${{ github.workspace }}/apollo-router-workspace/target/${{ matrix.rust_target }}/release
+        with:
+          # See https://github.com/docker/buildx/issues/1533
+          provenance: false
+          push: true
+          files: ./apollo-router-workspace/docker/docker.hcl
+          targets: apollo-router-hive-build
+          source: .
+          set: |
+            *.cache-from=type=gha,ignore-error=true,scope=${{ steps.docker_cache_key.outputs.replaced }}
+            *.cache-from=type=gha,ignore-error=true,scope=refs_heads_main-apollo-router-hive-build-${{ matrix.platform == 'linux/amd64' && 'linux_amd64' || 'linux_arm64' }}
+            *.cache-to=type=gha,mode=max,ignore-error=true,scope=${{ steps.docker_cache_key.outputs.replaced }}
+
+      - name: docker details pr comment
+        uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2
+        if: ${{ github.event_name == 'pull_request' }}
+        with:
+          header: ${{ github.workflow }}
+          message: |
+            🐋 This PR was built and pushed to the following [Docker images](https://github.com/graphql-hive?ecosystem=container&tab=packages&visibility=public):
+
+            **Targets**: `apollo-router-hive-build`
+
+            **Platform**: `${{ matrix.platform }}`
+
+            **Image Tag**: `${{ needs.find-changes.outputs.release_version }}`
+
+  # Test the Docker image, if it was published
+  test-image:
+    name: test apollo-router docker image
+    needs: 
+      - find-changes
+      - dockerize
+    runs-on: ubuntu-22.04
+    env:
+      HIVE_TOKEN: ${{ secrets.HIVE_TOKEN }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 2
+      - name: Run Docker image
+        run: |
+          # Create router.yaml
+          cat << EOF > router.yaml
+          supergraph:
+            listen: 0.0.0.0:4000
+          health_check:
+            listen: 0.0.0.0:8088
+            enabled: true
+            path: /health
+          plugins:
+            hive.usage:
+              enabled: false
+          EOF
+
+          # Download supergraph
+          curl -sSL https://supergraph.demo.starstuff.dev/ > ./supergraph.graphql
+
+          # Run Docker image
+          docker run -p 4000:4000 -p 8088:8088 --name apollo_router_test -d \
+            --env HIVE_TOKEN="fake" \
+            --mount "type=bind,source=/$(pwd)/router.yaml,target=/dist/config/router.yaml" \
+            --mount "type=bind,source=/$(pwd)/supergraph.graphql,target=/dist/config/supergraph.graphql" \
+            ghcr.io/graphql-hive/apollo-router:${{ needs.find-changes.outputs.release_version }}-amd64 \
+            --log debug \
+            --supergraph /dist/config/supergraph.graphql \
+            --config /dist/config/router.yaml
+
+          # Wait for the container to be ready
+          echo "Waiting for the container to be ready..."
+          sleep 20
+          HTTP_RESPONSE=$(curl --retry 5 --retry-delay 5 --max-time 30 --write-out "%{http_code}" --silent --output /dev/null "http://127.0.0.1:8088/health")
+
+          # Check if the HTTP response code is 200 (OK)
+          if [ $HTTP_RESPONSE -eq 200 ]; then
+            echo "Health check successful."
+            docker stop apollo_router_test
+            docker rm apollo_router_test
+            exit 0
+          else
+            echo "Health check failed with HTTP status code $HTTP_RESPONSE."
+            docker stop apollo_router_test
+            docker rm apollo_router_test
+            exit 1
+          fi
+
+  # Build and publish Rust crates and binaries
+  test-rust:
+    name: test apollo-router plugin
+    needs: find-changes
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 2
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1 # v1
+        with:
+          rust-src-dir: ./apollo-router-workspace
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: apollo-router-workspace/target
+          key: apollo-router-target-${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            apollo-router-target-${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
+            apollo-router-target-${{ runner.os }}-test-
+            apollo-router-target-${{ runner.os }}-
+            apollo-router-target-
+      
+      - name: Run tests
+        run: cargo test
+
+  publish-rust:
+    needs: find-changes
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            file: router
+            target: x86_64-unknown-linux-gnu
+            binary_name: linux
+            cache_key: Linux
+          - os: windows-latest
+            file: router.exe
+            target: x86_64-pc-windows-msvc
+            binary_name: win
+            cache_key: Windows
+          - os: macos-latest
+            file: router
+            target: x86_64-apple-darwin
+            binary_name: macos
+            cache_key: macOS
+    name: publish apollo-router binary (${{ matrix.cache_key }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 2
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1 # v1
+        with:
+          target: ${{ matrix.target }}
+          rust-src-dir: ./apollo-router-workspace
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+
+      - name: Cache target
+        uses: actions/cache@v3
+        with:
+          path: apollo-router-workspace/target
+          key: apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
+            apollo-router-target-${{ matrix.cache_key }}-build-
+            apollo-router-target-${{ matrix.cache_key }}-
+            apollo-router-target-
+
+      - name: Build
+        run:
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary from debug symbols
+        if: ${{ runner.os == 'Linux' }}
+        run: strip ./target/${{ matrix.target }}/release/${{ matrix.file }}
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        name: upload router artifact
+        with:
+          name: apollo_router_${{ matrix.binary_name }}
+          path: |
+            ./apollo-router-workspace/target/${{ matrix.target }}/release/${{ matrix.file }}
+          if-no-files-found: error
+
+      - name: Compress
+        run: tar -czvf ./router.tar.gz -C ./target/${{ matrix.target }}/release ${{ matrix.file }}
+
+      - name: Upload to R2 (${{ needs.find-changes.outputs.release_version }})
+        uses: randomairborne/r2-release@9cbc35a2039ee2ef453a6988cd2a85bb2d7ba8af # v1.0.2
+        with:
+          endpoint: https://6d5bc18cd8d13babe7ed321adba3d8ae.r2.cloudflarestorage.com
+          accesskeyid: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secretaccesskey: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          bucket: apollo-router
+          file: ./apollo-router-workspace/router.tar.gz
+          destination: ${{ needs.find-changes.outputs.release_version }}/${{ matrix.binary_name }}/router.tar.gz
+
+      - name: Upload to R2 (latest)
+        if: ${{ needs.find-changes.outputs.release_latest == 'true' }}
+        uses: randomairborne/r2-release@9cbc35a2039ee2ef453a6988cd2a85bb2d7ba8af # v1.0.2
+        with:
+          endpoint: https://6d5bc18cd8d13babe7ed321adba3d8ae.r2.cloudflarestorage.com
+          accesskeyid: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secretaccesskey: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          bucket: apollo-router
+          file: ./apollo-router-workspace/router.tar.gz
+          destination: latest/${{ matrix.binary_name }}/router.tar.gz
