@@ -8,12 +8,14 @@ use strip_schema_internals::StripSchemaInternals;
 #[derive(Debug, Clone)]
 pub struct ConsumerSchema {
     pub document: Document<'static, String>,
+    pub sdl: String,
 }
 
 impl ConsumerSchema {
     pub fn new_from_supergraph(supergraph: &Document<'static, String>) -> Self {
         let document = Self::create_consumer_schema(supergraph);
-        Self { document }
+        let sdl = document.to_string();
+        Self { document, sdl }
     }
 
     fn create_consumer_schema(supergraph: &Document<'static, String>) -> Document<'static, String> {
