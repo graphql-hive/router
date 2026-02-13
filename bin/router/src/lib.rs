@@ -23,10 +23,10 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     pipeline::{
-        body_read::read_request_body_size,
         error::PipelineError,
         graphql_request_handler,
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
+        request_extensions::{read_graphql_operation_metric_identity, read_request_body_size},
         usage_reporting::init_hive_usage_agent,
         validation::{
             max_aliases_rule::MaxAliasesRule, max_depth_rule::MaxDepthRule,
@@ -71,7 +71,20 @@ async fn graphql_endpoint_handler(
     let response =
         graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone()).await;
 
-    http_request_capture.finish(&response, read_request_body_size(&request));
+    let graphql_operation = read_graphql_operation_metric_identity(&request);
+    let graphql_operation_name = graphql_operation
+        .as_ref()
+        .and_then(|operation| operation.operation_name.as_deref());
+    let graphql_operation_type = graphql_operation
+        .as_ref()
+        .and_then(|operation| operation.operation_type.as_deref());
+
+    http_request_capture.finish(
+        &response,
+        read_request_body_size(&request),
+        graphql_operation_name,
+        graphql_operation_type,
+    );
 
     response
 }

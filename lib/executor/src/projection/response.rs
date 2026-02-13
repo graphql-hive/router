@@ -592,7 +592,7 @@ mod tests {
             })
             .unwrap();
         let normalized_operation: NormalizedDocument =
-            create_normalized_document(operation_ast.clone(), Some("GetMetadata"));
+            create_normalized_document(operation_ast.clone(), Some("GetMetadata".into()));
         let (operation_type_name, selections) =
             FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
         let data_json = json!({
@@ -699,7 +699,7 @@ mod tests {
             .unwrap();
 
         let normalized_operation: NormalizedDocument =
-            create_normalized_document(operation_ast.clone(), Some("SearchQuery"));
+            create_normalized_document(operation_ast.clone(), Some("SearchQuery".into()));
         let (operation_type_name, selections) =
             FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
 

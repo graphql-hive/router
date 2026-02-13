@@ -63,6 +63,8 @@ pub mod labels {
     pub const NETWORK_PROTOCOL_VERSION: &str = "network.protocol.version";
     pub const SERVER_ADDRESS: &str = "server.address";
     pub const SERVER_PORT: &str = "server.port";
+    pub const GRAPHQL_OPERATION_TYPE: &str = "graphql.operation.type";
+    pub const GRAPHQL_OPERATION_NAME: &str = "graphql.operation.name";
 }
 
 pub mod names {
@@ -104,6 +106,8 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
             labels::NETWORK_PROTOCOL_VERSION,
             labels::URL_SCHEME,
             labels::ERROR_TYPE,
+            labels::GRAPHQL_OPERATION_NAME,
+            labels::GRAPHQL_OPERATION_TYPE,
         ],
     ),
     (
@@ -116,6 +120,8 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
             labels::NETWORK_PROTOCOL_VERSION,
             labels::URL_SCHEME,
             labels::ERROR_TYPE,
+            labels::GRAPHQL_OPERATION_NAME,
+            labels::GRAPHQL_OPERATION_TYPE,
         ],
     ),
     (
@@ -128,6 +134,8 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
             labels::NETWORK_PROTOCOL_VERSION,
             labels::URL_SCHEME,
             labels::ERROR_TYPE,
+            labels::GRAPHQL_OPERATION_NAME,
+            labels::GRAPHQL_OPERATION_TYPE,
         ],
     ),
     (

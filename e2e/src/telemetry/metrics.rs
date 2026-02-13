@@ -241,7 +241,7 @@ async fn test_otlp_http_server_semconv_metrics_for_graphql_handler() {
 
     wait_for_readiness(&app.app).await;
 
-    let req = init_graphql_request("{ users { id } }", None);
+    let req = init_graphql_request("query UsersQuery { users { id } }", None);
     test::call_service(&app.app, req.to_request()).await;
 
     wait_for_metrics_export().await;
@@ -251,6 +251,8 @@ async fn test_otlp_http_server_semconv_metrics_for_graphql_handler() {
         (labels::HTTP_REQUEST_METHOD, "POST"),
         (labels::HTTP_ROUTE, "/graphql"),
         (labels::HTTP_RESPONSE_STATUS_CODE, "200"),
+        (labels::GRAPHQL_OPERATION_NAME, "UsersQuery"),
+        (labels::GRAPHQL_OPERATION_TYPE, "query"),
     ];
 
     assert_histogram_count(&metrics, names::HTTP_SERVER_REQUEST_DURATION, &attrs, 1);

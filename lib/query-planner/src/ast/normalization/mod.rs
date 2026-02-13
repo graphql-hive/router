@@ -1,4 +1,4 @@
-use graphql_tools::parser::query::{self as query_ast, Definition};
+use graphql_tools::parser::query::{self as query_ast, Definition, OperationDefinition};
 
 pub mod context;
 pub mod error;
@@ -65,6 +65,19 @@ pub fn normalize_operation(
 
     let op_def = operation.ok_or(NormalizationError::ExpectedTransformedOperationNotFound)?;
 
+    // Use the operation name from the operation definition if available,
+    // as a fallback if the user did not provide an operation name.
+    let operation_name = operation_name
+        .or(match op_def {
+            OperationDefinition::Query(query) => query.name.as_ref().map(|n| n.as_str()),
+            OperationDefinition::Mutation(mutation) => mutation.name.as_ref().map(|n| n.as_str()),
+            OperationDefinition::Subscription(subscription) => {
+                subscription.name.as_ref().map(|n| n.as_str())
+            }
+            _ => None,
+        })
+        .map(|n| n.to_string());
+
     Ok(create_normalized_document(
         op_def.to_owned(),
         operation_name,
@@ -74,11 +87,11 @@ pub fn normalize_operation(
 #[inline]
 pub fn create_normalized_document<'a, 'd>(
     operation_ast: query_ast::OperationDefinition<'d, String>,
-    operation_name: Option<&'a str>,
+    operation_name: Option<String>,
 ) -> NormalizedDocument {
     NormalizedDocument {
         operation: operation_ast.into(),
-        operation_name: operation_name.map(|n| n.to_string()),
+        operation_name,
     }
 }
 

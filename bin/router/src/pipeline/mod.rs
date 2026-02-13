@@ -20,7 +20,7 @@ use ntex::{
 use crate::{
     pipeline::{
         authorization::enforce_operation_authorization,
-        body_read::{read_body_stream, write_request_body_size},
+        body_read::read_body_stream,
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
         error::PipelineError,
@@ -32,6 +32,7 @@ use crate::{
         parser::parse_operation_with_cache,
         progressive_override::request_override_context,
         query_plan::plan_operation_with_cache,
+        request_extensions::{write_graphql_operation_metric_identity, write_request_body_size},
         validation::validate_operation_with_cache,
     },
     schema_state::{SchemaState, SupergraphData},
@@ -52,6 +53,7 @@ pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
+pub mod request_extensions;
 pub mod usage_reporting;
 pub mod validation;
 
@@ -87,6 +89,8 @@ pub async fn graphql_request_handler(
 
         let mut execution_request =
             get_execution_request_from_http_request(req, body_bytes.clone()).await?;
+
+        write_graphql_operation_metric_identity(req, execution_request.operation_name.clone(), None);
 
         let client_name = req
             .headers()
@@ -128,6 +132,12 @@ pub async fn graphql_request_handler(
             &parser_payload,
         )
         .await?;
+
+        write_graphql_operation_metric_identity(
+            req,
+            normalize_payload.operation_indentity.name.clone(),
+            Some(normalize_payload.operation_indentity.operation_type.clone()),
+        );
 
         if req.method() == Method::GET {
             if let Some(OperationKind::Mutation) =

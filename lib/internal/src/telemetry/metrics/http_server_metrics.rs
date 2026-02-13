@@ -9,7 +9,7 @@ use crate::http::{HttpMethodAsStr, HttpUriAsStr, HttpVersionAsStr};
 use crate::telemetry::metrics::capture::Capture;
 #[cfg(debug_assertions)]
 use crate::telemetry::metrics::catalog::debug_assert_attrs;
-use crate::telemetry::metrics::catalog::{labels, names};
+use crate::telemetry::metrics::catalog::{labels, names, values};
 
 struct HttpServerInstruments {
     request_duration: Option<Histogram<f64>>,
@@ -131,7 +131,13 @@ impl HttpServerMetrics {
 }
 
 impl Capture<HttpServerRequestState<'_>> {
-    pub fn finish(self, response: &HttpResponse, body_size: Option<u64>) {
+    pub fn finish(
+        self,
+        response: &HttpResponse,
+        body_size: Option<u64>,
+        graphql_operation_name: Option<&str>,
+        graphql_operation_type: Option<&str>,
+    ) {
         let Some(state) = self.take() else {
             return;
         };
@@ -146,7 +152,20 @@ impl Capture<HttpServerRequestState<'_>> {
             KeyValue::new(labels::NETWORK_PROTOCOL_NAME, "http"),
             KeyValue::new(labels::NETWORK_PROTOCOL_VERSION, state.protocol_version),
             KeyValue::new(labels::URL_SCHEME, state.scheme),
+            KeyValue::new(
+                labels::GRAPHQL_OPERATION_NAME,
+                graphql_operation_name
+                    .map(str::to_string)
+                    .unwrap_or_else(|| values::UNKNOWN.to_string()),
+            ),
         ];
+
+        if let Some(graphql_operation_type) = graphql_operation_type {
+            attributes.push(KeyValue::new(
+                labels::GRAPHQL_OPERATION_TYPE,
+                graphql_operation_type.to_string(),
+            ));
+        }
 
         let status_code = response.status().as_u16();
         if status_code >= 400 {
