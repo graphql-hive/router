@@ -4,8 +4,8 @@ use hive_router_config::{
     primitives::toggle::ToggleWith,
     telemetry::{
         metrics::{
-            MetricsExporterConfig, MetricsHistogramConfig, MetricsOtlpConfig,
-            MetricsPrometheusConfig, MetricsTemporality,
+            MetricsExplicitHistogramUnitConfig, MetricsExporterConfig, MetricsHistogramConfig,
+            MetricsOtlpConfig, MetricsPrometheusConfig, MetricsTemporality,
         },
         tracing::OtlpProtocol,
         TelemetryConfig,
@@ -155,24 +155,8 @@ fn setup_view(
     config: &TelemetryConfig,
 ) -> Result<MeterProviderBuilder, TelemetryError> {
     let instrument_rules = build_instrument_rules(config)?;
-    let histogram_agg = match config.metrics.instrumentation.common.histogram.clone() {
-        MetricsHistogramConfig::Exponential {
-            max_size,
-            max_scale,
-            record_min_max,
-        } => Aggregation::Base2ExponentialHistogram {
-            max_size,
-            max_scale,
-            record_min_max,
-        },
-        MetricsHistogramConfig::Explicit {
-            boundaries,
-            record_min_max,
-        } => Aggregation::ExplicitBucketHistogram {
-            record_min_max,
-            boundaries,
-        },
-    };
+    let histogram_config = config.metrics.instrumentation.common.histogram.clone();
+    validate_histogram_config(&histogram_config)?;
 
     Ok(builder.with_view(move |inst| {
         let kind = inst.kind();
@@ -197,7 +181,10 @@ fn setup_view(
                     stream = stream.with_aggregation(Aggregation::LastValue);
                 }
                 InstrumentKind::Histogram => {
-                    stream = stream.with_aggregation(histogram_agg.clone());
+                    let histogram_agg =
+                        histogram_aggregation_for_unit(&histogram_config, inst.name(), inst.unit())
+                            .unwrap_or_else(|err| panic!("{err}"));
+                    stream = stream.with_aggregation(histogram_agg);
                 }
             }
         }
@@ -208,6 +195,92 @@ fn setup_view(
 
         Some(stream.build().expect("Failed to build stream"))
     }))
+}
+
+fn validate_histogram_config(config: &MetricsHistogramConfig) -> Result<(), TelemetryError> {
+    let MetricsHistogramConfig::Explicit { seconds, bytes } = config else {
+        return Ok(());
+    };
+
+    validate_explicit_histogram_buckets("seconds", &seconds.buckets)?;
+    validate_explicit_histogram_buckets("bytes", &bytes.buckets)?;
+    Ok(())
+}
+
+fn validate_explicit_histogram_buckets(
+    bucket_set_name: &str,
+    buckets: &[f64],
+) -> Result<(), TelemetryError> {
+    if buckets.is_empty() {
+        return Err(TelemetryError::MetricsExporterSetup(format!(
+            "telemetry.metrics.instrumentation.common.histogram.{bucket_set_name}.buckets must not be empty"
+        )));
+    }
+
+    let mut previous: Option<f64> = None;
+    for value in buckets {
+        if !value.is_finite() {
+            return Err(TelemetryError::MetricsExporterSetup(format!(
+                "telemetry.metrics.instrumentation.common.histogram.{bucket_set_name}.buckets must contain only finite values"
+            )));
+        }
+
+        if *value < 0.0 {
+            return Err(TelemetryError::MetricsExporterSetup(format!(
+                "telemetry.metrics.instrumentation.common.histogram.{bucket_set_name}.buckets must contain only non-negative values"
+            )));
+        }
+
+        if let Some(previous) = previous {
+            if *value <= previous {
+                return Err(TelemetryError::MetricsExporterSetup(format!(
+                    "telemetry.metrics.instrumentation.common.histogram.{bucket_set_name}.buckets must be strictly increasing"
+                )));
+            }
+        }
+
+        previous = Some(*value);
+    }
+
+    Ok(())
+}
+
+fn histogram_aggregation_for_unit(
+    histogram_config: &MetricsHistogramConfig,
+    instrument_name: &str,
+    instrument_unit: &str,
+) -> Result<Aggregation, TelemetryError> {
+    match histogram_config {
+        MetricsHistogramConfig::Exponential {
+            max_size,
+            max_scale,
+            record_min_max,
+        } => Ok(Aggregation::Base2ExponentialHistogram {
+            max_size: *max_size,
+            max_scale: *max_scale,
+            record_min_max: *record_min_max,
+        }),
+        MetricsHistogramConfig::Explicit { seconds, bytes } => {
+            let config = match instrument_unit {
+                "s" => seconds,
+                "By" => bytes,
+                _ => {
+                    return Err(TelemetryError::MetricsExporterSetup(format!(
+                        "Unsupported histogram unit '{instrument_unit}' for instrument '{instrument_name}' in explicit histogram aggregation. Supported units: s, By"
+                    )));
+                }
+            };
+
+            Ok(explicit_histogram_aggregation(config))
+        }
+    }
+}
+
+fn explicit_histogram_aggregation(config: &MetricsExplicitHistogramUnitConfig) -> Aggregation {
+    Aggregation::ExplicitBucketHistogram {
+        boundaries: config.buckets.clone(),
+        record_min_max: config.record_min_max,
+    }
 }
 
 fn setup_otlp_readers(

@@ -73,9 +73,10 @@ pub struct MetricsCommonConfig {
 #[serde(deny_unknown_fields, tag = "aggregation", rename_all = "snake_case")]
 pub enum MetricsHistogramConfig {
     Explicit {
-        boundaries: Vec<f64>,
-        #[serde(default)]
-        record_min_max: bool,
+        #[serde(default = "default_explicit_histogram_seconds")]
+        seconds: MetricsExplicitHistogramUnitConfig,
+        #[serde(default = "default_explicit_histogram_bytes")]
+        bytes: MetricsExplicitHistogramUnitConfig,
     },
     Exponential {
         #[serde(default = "default_histogram_max_size")]
@@ -97,12 +98,47 @@ impl Default for MetricsHistogramConfig {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsExplicitHistogramUnitConfig {
+    pub buckets: Vec<f64>,
+    #[serde(default)]
+    pub record_min_max: bool,
+}
+
 fn default_histogram_max_size() -> u32 {
     160
 }
 
 fn default_histogram_max_scale() -> i8 {
     20
+}
+
+fn default_explicit_histogram_seconds_buckets() -> Vec<f64> {
+    vec![
+        0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0,
+    ]
+}
+
+fn default_explicit_histogram_bytes_buckets() -> Vec<f64> {
+    vec![
+        128.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0, 65536.0, 131072.0,
+        262144.0, 524288.0, 1048576.0, 2097152.0, 3145728.0, 4194304.0, 5242880.0,
+    ]
+}
+
+fn default_explicit_histogram_seconds() -> MetricsExplicitHistogramUnitConfig {
+    MetricsExplicitHistogramUnitConfig {
+        buckets: default_explicit_histogram_seconds_buckets(),
+        record_min_max: false,
+    }
+}
+
+fn default_explicit_histogram_bytes() -> MetricsExplicitHistogramUnitConfig {
+    MetricsExplicitHistogramUnitConfig {
+        buckets: default_explicit_histogram_bytes_buckets(),
+        record_min_max: false,
+    }
 }
 
 pub type MetricsInstrumentsConfig = HashMap<String, ToggleWith<InstrumentConfig>>;
