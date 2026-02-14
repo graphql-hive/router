@@ -5,15 +5,21 @@ mod tests {
 
     use e2e::mockito::{self, ServerOpts};
     use e2e::testkit::{
-        TestRouterApp, init_graphql_request, init_router_from_config_file_with_plugins, wait_for_readiness
+        init_graphql_request, init_router_from_config_file_with_plugins, wait_for_readiness,
+        TestRouterApp,
     };
     use futures::stream::FuturesUnordered;
     use futures::StreamExt;
     use hive_router::http::StatusCode;
-    use hive_router::ntex::web::{WebResponse, test};
+    use hive_router::ntex::web::{test, WebResponse};
     use hive_router::sonic_rs::{json, Value};
     use hive_router::{ntex, sonic_rs, PluginRegistry};
-    async fn test_parallel_requests<T: ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>>(app: &TestRouterApp<T>, number_of_parallel_requests: usize) {
+    async fn test_parallel_requests<
+        T: ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
+    >(
+        app: &TestRouterApp<T>,
+        number_of_parallel_requests: usize,
+    ) {
         // There should be 2 requests to accounts subgraph: 1 for the first request, and 1 for the second request that comes in after the first one completes and removes the fingerprint from in-flight requests
         let mut requests = FuturesUnordered::new();
         for _ in 0..number_of_parallel_requests {
@@ -72,7 +78,7 @@ mod tests {
         }
 
         // Number of parallel requests don't matter
-        // As long as the plugin correctly deduplicates in-flight requests, 
+        // As long as the plugin correctly deduplicates in-flight requests,
         // there should be only 1 request to accounts subgraph for each test iteration, regardless of the number of parallel requests
 
         // Assert that only 1 request was sent to accounts subgraph

@@ -98,7 +98,7 @@ impl RouterPlugin for IncomingRequestDeduplicationPlugin {
 
         if self.in_flight_requests.contains_key(&fingerprint) {
             let receiver = self.receiver.clone();
-            // Clonne 
+            // Clonne
             receiver.subscribe(fingerprint);
             let (fingerprint, shared_response) = receiver.recv().await.unwrap();
             // Remove from in-flight requests to allow future identical requests to proceed
