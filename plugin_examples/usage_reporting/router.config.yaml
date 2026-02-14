@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+plugins:
+  usage_reporting:
+    enabled: true
+    config:
+      endpoint: http://0.0.0.0:9876/usage_report

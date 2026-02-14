@@ -9,13 +9,19 @@ use hive_console_sdk::agent::utils::normalize_operation as hive_sdk_normalize_op
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLParseSpan, GraphQLSpanOperationIdentity,
 };
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
+use hive_router_plan_executor::hooks::on_graphql_parse::{
+    OnGraphQLParseEndHookPayload, OnGraphQLParseStartHookPayload,
+};
+use hive_router_plan_executor::plugin_context::PluginRequestState;
+use hive_router_plan_executor::plugin_trait::{EndControlFlow, StartControlFlow};
 use hive_router_query_planner::utils::parsing::{
     safe_parse_operation, safe_parse_operation_with_token_limit,
 };
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::execution_request::ExecutionRequest;
+use crate::pipeline::execution_request::GetQueryStr;
 use crate::shared_state::RouterSharedState;
 use tracing::{error, trace, Instrument};
 
@@ -47,17 +53,23 @@ impl<'a> From<&'a GraphQLParserPayload> for GraphQLSpanOperationIdentity<'a> {
     }
 }
 
+pub enum ParseResult {
+    Payload(GraphQLParserPayload),
+    EarlyResponse(ntex::http::Response),
+}
+
 #[inline]
 pub async fn parse_operation_with_cache(
     app_state: &RouterSharedState,
-    execution_params: &ExecutionRequest,
-) -> Result<GraphQLParserPayload, PipelineError> {
+    graphql_params: &GraphQLParams,
+    plugin_req_state: &Option<PluginRequestState<'_>>,
+) -> Result<ParseResult, PipelineError> {
     let parse_span = GraphQLParseSpan::new();
 
     async {
         let cache_key = {
             let mut hasher = Xxh3::new();
-            execution_params.query.hash(&mut hasher);
+            graphql_params.query.hash(&mut hasher);
             hasher.finish()
         };
 
@@ -67,37 +79,88 @@ pub async fn parse_operation_with_cache(
             cached
         } else {
             parse_span.record_cache_hit(false);
-            let parsed = match app_state.router_config.limits.max_tokens.as_ref() {
-                Some(cfg) => safe_parse_operation_with_token_limit(&execution_params.query, cfg.n),
-                _ => safe_parse_operation(&execution_params.query),
-            }
-            .map_err(|err| {
-                if let Some(combine::stream::easy::Error::Message(Info::Static(msg))) =
-                    err.0.errors.first()
-                {
-                    if *msg == "Token limit exceeded" {
-                        return PipelineError::ValidationErrors(
-                            vec![ValidationError {
-                                locations: vec![err.0.position],
-                                message: "Token limit exceeded.".to_string(),
-                                error_code: "TOKEN_LIMIT_EXCEEDED",
-                            }]
-                            .into(),
-                        );
+            let mut document = None;
+            let mut on_end_callbacks = vec![];
+            if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+                /* Handle on_graphql_parse hook in the plugins - START */
+                let mut start_payload = OnGraphQLParseStartHookPayload {
+                    router_http_request: &plugin_req_state.router_http_request,
+                    context: &plugin_req_state.context,
+                    graphql_params,
+                    document,
+                };
+                for plugin in plugin_req_state.plugins.as_ref() {
+                    let result = plugin.on_graphql_parse(start_payload).await;
+                    start_payload = result.payload;
+                    match result.control_flow {
+                        StartControlFlow::Proceed => {
+                            // continue to next plugin
+                        }
+                        StartControlFlow::EndWithResponse(response) => {
+                            return Ok(ParseResult::EarlyResponse(response));
+                        }
+                        StartControlFlow::OnEnd(callback) => {
+                            // store the callback to be called later
+                            on_end_callbacks.push(callback);
+                        }
                     }
                 }
-                error!("Failed to parse GraphQL operation: {}", err);
-                PipelineError::FailedToParseOperation(err)
-            })?;
-            trace!("successfully parsed GraphQL operation");
-            let parsed_arc = Arc::new(parsed);
+                // Give the ownership back to variables
+                document = start_payload.document;
+            }
+
+            let mut document = match document {
+                Some(document) => document,
+                None => {
+                    let query_str = graphql_params.get_query()?;
+                    match app_state.router_config.limits.max_tokens.as_ref() {
+                        Some(cfg) => safe_parse_operation_with_token_limit(query_str, cfg.n),
+                        _ => safe_parse_operation(query_str),
+                    }
+                    .map_err(|err| {
+                        if let Some(combine::stream::easy::Error::Message(Info::Static(msg))) =
+                            err.0.errors.first()
+                        {
+                            if *msg == "Token limit exceeded" {
+                                return PipelineError::ValidationErrors(
+                                    vec![ValidationError {
+                                        locations: vec![err.0.position],
+                                        message: "Token limit exceeded.".to_string(),
+                                        error_code: "TOKEN_LIMIT_EXCEEDED",
+                                    }]
+                                    .into(),
+                                );
+                            }
+                        }
+                        error!("Failed to parse GraphQL operation: {}", err);
+                        PipelineError::FailedToParseOperation(err)
+                    })?
+                }
+            };
+            if !on_end_callbacks.is_empty() {
+                let mut end_payload = OnGraphQLParseEndHookPayload { document };
+                for callback in on_end_callbacks {
+                    let result = callback(end_payload);
+                    end_payload = result.payload;
+                    match result.control_flow {
+                        EndControlFlow::Proceed => {
+                            // continue to next callback
+                        }
+                        EndControlFlow::EndWithResponse(response) => {
+                            return Ok(ParseResult::EarlyResponse(response));
+                        }
+                    }
+                }
+                // Give the ownership back to variables
+                document = end_payload.document;
+            }
+            /* Handle on_graphql_parse hook in the plugins - END */
+            let parsed_arc = Arc::new(document);
             let minified_arc = {
-                Arc::new(
-                    minify_query(execution_params.query.as_str()).map_err(|err| {
-                        error!("Failed to minify parsed GraphQL operation: {}", err);
-                        PipelineError::FailedToMinifyParsedOperation(err.to_string())
-                    })?,
-                )
+                Arc::new(minify_query(graphql_params.get_query()?).map_err(|err| {
+                    error!("Failed to minify parsed GraphQL operation: {}", err);
+                    PipelineError::FailedToMinifyParsedOperation(err.to_string())
+                })?)
             };
             let hive_normalized_operation = hive_sdk_normalize_operation(&parsed_arc);
             let hive_minified = minify_query(hive_normalized_operation.to_string().as_ref())
@@ -161,7 +224,7 @@ pub async fn parse_operation_with_cache(
 
         parse_span.record_operation_identity((&payload).into());
 
-        Ok(payload)
+        Ok(ParseResult::Payload(payload))
     }
     .instrument(parse_span.clone())
     .await

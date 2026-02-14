@@ -29,6 +29,7 @@ thiserror = { workspace = true }
 xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
+serde_json = { workspace = true }
 
 regex-automata = { workspace = true }
 bytes = { workspace = true }

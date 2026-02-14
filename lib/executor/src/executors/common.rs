@@ -1,19 +1,22 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use http::HeaderMap;
+use http::{HeaderMap, Uri};
 use sonic_rs::Value;
 
 use crate::{
-    executors::error::SubgraphExecutorError, response::subgraph_response::SubgraphResponse,
+    executors::error::SubgraphExecutorError, plugin_context::PluginRequestState,
+    response::subgraph_response::SubgraphResponse,
 };
 
 #[async_trait]
 pub trait SubgraphExecutor {
+    fn endpoint(&self) -> &Uri;
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
+        plugin_req_state: &'a Option<PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError>;
 
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>

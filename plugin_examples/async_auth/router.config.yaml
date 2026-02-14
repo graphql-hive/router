@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+plugins:
+  allow_client_id_from_file:
+    enabled: true
+    config:
+        path: "./allowed_clients.json"
+        header: "x-client-id"

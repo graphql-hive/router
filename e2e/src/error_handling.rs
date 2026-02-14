@@ -53,7 +53,7 @@ mod error_handling_e2e_tests {
           },
           "errors": [
             {
-              "message": "Failed to send request to subgraph \"http://0.0.0.0:9876/products\": client error (Connect)",
+              "message": "Failed to send request to subgraph: client error (Connect)",
               "extensions": {
                 "code": "SUBGRAPH_REQUEST_FAILURE",
                 "serviceName": "products",

@@ -23,7 +23,7 @@ use xxhash_rust::xxh3::Xxh3;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryPlan {
-    pub kind: String, // "QueryPlan"
+    pub kind: &'static str, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node: Option<PlanNode>,
 }

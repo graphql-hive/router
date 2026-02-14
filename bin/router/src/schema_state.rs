@@ -1,18 +1,25 @@
+use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
-use graphql_tools::parser::schema::Document;
-use graphql_tools::validation::utils::ValidationError;
+use graphql_tools::{static_graphql::schema::Document, validation::utils::ValidationError};
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_internal::telemetry::TelemetryContext;
+use hive_router_internal::{
+    authorization::metadata::AuthorizationMetadata,
+    background_tasks::{BackgroundTask, BackgroundTasksManager},
+};
 use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
-    introspection::schema::{SchemaMetadata, SchemaWithMetadata},
+    hooks::on_supergraph_load::{
+        OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload, SupergraphData,
+    },
+    introspection::schema::SchemaWithMetadata,
+    plugin_trait::{EndControlFlow, RouterPluginBoxed, StartControlFlow},
     SubgraphExecutorMap,
 };
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::{
     planner::{Planner, PlannerError},
-    state::supergraph_state::SupergraphState,
     utils::parsing::parse_schema,
 };
 use moka::future::Cache;
@@ -22,11 +29,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
 
 use crate::{
-    background_tasks::{BackgroundTask, BackgroundTasksManager},
-    pipeline::{
-        authorization::{AuthorizationMetadata, AuthorizationMetadataError},
-        normalize::GraphQLNormalizationPayload,
-    },
+    pipeline::{authorization::AuthorizationMetadataError, normalize::GraphQLNormalizationPayload},
     supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
@@ -38,14 +41,6 @@ pub struct SchemaState {
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
-}
-
-pub struct SupergraphData {
-    pub metadata: SchemaMetadata,
-    pub planner: Planner,
-    pub authorization: AuthorizationMetadata,
-    pub subgraph_executor_map: SubgraphExecutorMap,
-    pub supergraph_schema: Arc<Document<'static, String>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +56,9 @@ pub enum SupergraphManagerError {
     ExecutorInitError(#[from] SubgraphExecutorError),
     #[error("Unexpected: failed to load initial supergraph")]
     FailedToLoadInitialSupergraph,
+
+    #[error("Error from plugin: {0}")]
+    PluginError(String),
 }
 
 impl SchemaState {
@@ -76,10 +74,11 @@ impl SchemaState {
         bg_tasks_manager: &mut BackgroundTasksManager,
         telemetry_context: Arc<TelemetryContext>,
         router_config: Arc<HiveRouterConfig>,
+        plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     ) -> Result<Self, SupergraphManagerError> {
         let (tx, mut rx) = mpsc::channel::<String>(1);
         let background_loader = SupergraphBackgroundLoader::new(&router_config.supergraph, tx)?;
-        bg_tasks_manager.register_task(Arc::new(background_loader));
+        bg_tasks_manager.register_task(SupergraphBackgroundLoaderTask(Arc::new(background_loader)));
 
         let swappable_data = Arc::new(ArcSwap::from(Arc::new(None)));
         let swappable_data_spawn_clone = swappable_data.clone();
@@ -96,9 +95,81 @@ impl SchemaState {
             while let Some(new_sdl) = rx.recv().await {
                 debug!("Received new supergraph SDL, building new supergraph state...");
 
-                match Self::build_data(router_config.clone(), telemetry_context.clone(), &new_sdl) {
-                    Ok(new_data) => {
-                        swappable_data_spawn_clone.store(Arc::new(Some(new_data)));
+                let mut new_ast = parse_schema(&new_sdl);
+
+                let mut on_end_callbacks = vec![];
+
+                let mut new_supergraph_data = None;
+                if let Some(plugins) = plugins.as_ref() {
+                    let current_supergraph_data = swappable_data_spawn_clone.load().clone();
+                    let mut start_payload = OnSupergraphLoadStartHookPayload {
+                        current_supergraph_data,
+                        new_ast,
+                    };
+                    for plugin in plugins.as_ref() {
+                        let result = plugin.on_supergraph_reload(start_payload);
+                        start_payload = result.payload;
+                        match result.control_flow {
+                            StartControlFlow::Proceed => {
+                                // continue to next plugin
+                            }
+                            // There is no way to end with response here, so we treat it as error
+                            // or the way to override the supergraph data
+                            StartControlFlow::EndWithResponse(plugin_res) => {
+                                new_supergraph_data = Some(plugin_res.map_err(|err| {
+                                    SupergraphManagerError::PluginError(err.message)
+                                }));
+                                break;
+                            }
+                            StartControlFlow::OnEnd(callback) => {
+                                on_end_callbacks.push(callback);
+                            }
+                        }
+                    }
+                    // Give the ownership back to variables
+                    new_ast = start_payload.new_ast;
+                }
+
+                match new_supergraph_data.unwrap_or_else(|| {
+                    Self::build_data(router_config.clone(), telemetry_context.clone(), new_ast)
+                }) {
+                    Ok(mut new_supergraph_data) => {
+                        if !on_end_callbacks.is_empty() {
+                            let mut end_payload = OnSupergraphLoadEndHookPayload {
+                                new_supergraph_data,
+                            };
+
+                            for callback in on_end_callbacks {
+                                let result = callback(end_payload);
+                                end_payload = result.payload;
+                                match result.control_flow {
+                                    EndControlFlow::Proceed => {
+                                        // continue to next callback
+                                    }
+                                    // Similar to StartControlFlow,
+                                    // There is no way to end with response here, so we treat it as error
+                                    // or the way to override the supergraph data
+                                    EndControlFlow::EndWithResponse(plugin_res) => match plugin_res
+                                    {
+                                        Ok(data) => {
+                                            end_payload.new_supergraph_data = data;
+                                        }
+                                        Err(err) => {
+                                            error!(
+                                                "Plugin ended supergraph load with error: {}",
+                                                err.message
+                                            );
+                                            return;
+                                        }
+                                    },
+                                }
+                            }
+
+                            // Give the ownership back to new_supergraph_data
+                            new_supergraph_data = end_payload.new_supergraph_data;
+                        }
+
+                        swappable_data_spawn_clone.store(Arc::new(Some(new_supergraph_data)));
                         debug!("Supergraph updated successfully");
 
                         task_plan_cache.invalidate_all();
@@ -124,15 +195,13 @@ impl SchemaState {
     fn build_data(
         router_config: Arc<HiveRouterConfig>,
         telemetry_context: Arc<TelemetryContext>,
-        supergraph_sdl: &str,
+        parsed_supergraph_sdl: Document,
     ) -> Result<SupergraphData, SupergraphManagerError> {
-        let parsed_supergraph_sdl = parse_schema(supergraph_sdl);
-        let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
         let metadata = planner.consumer_schema.schema_metadata();
         let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata)?;
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
-            &supergraph_state.subgraph_endpoint_map,
+            &planner.supergraph.subgraph_endpoint_map,
             router_config,
             telemetry_context,
         )?;
@@ -166,8 +235,10 @@ impl SupergraphBackgroundLoader {
     }
 }
 
+pub struct SupergraphBackgroundLoaderTask(pub Arc<SupergraphBackgroundLoader>);
+
 #[async_trait]
-impl BackgroundTask for Arc<SupergraphBackgroundLoader> {
+impl BackgroundTask for SupergraphBackgroundLoaderTask {
     fn id(&self) -> &str {
         "supergraph-background-loader"
     }
@@ -180,14 +251,14 @@ impl BackgroundTask for Arc<SupergraphBackgroundLoader> {
                 break;
             }
 
-            match self.loader.load().await {
+            match self.0.loader.load().await {
                 Ok(ReloadSupergraphResult::Unchanged) => {
                     debug!("Supergraph fetched successfully with no changes");
                 }
                 Ok(ReloadSupergraphResult::Changed { new_sdl }) => {
                     debug!("Supergraph loaded successfully with changes, updating...");
 
-                    if self.sender.clone().send(new_sdl).await.is_err() {
+                    if self.0.sender.clone().send(new_sdl).await.is_err() {
                         error!("Failed to send new supergraph SDL: receiver dropped.");
                         break;
                     }
@@ -197,7 +268,7 @@ impl BackgroundTask for Arc<SupergraphBackgroundLoader> {
                 }
             }
 
-            if let Some(interval) = self.loader.reload_interval() {
+            if let Some(interval) = self.0.loader.reload_interval() {
                 debug!(
                     "waiting for {:?}ms before checking again for supergraph changes",
                     interval.as_millis()
