@@ -23,22 +23,26 @@ use ntex::{
     },
     Pipeline, Service,
 };
-use sonic_rs::json;
+use serde::Serialize;
 use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState};
 use tracing::{info, warn};
 
 pub mod otel;
 
-pub fn init_graphql_request(op: &str, variables: Option<sonic_rs::Value>) -> TestRequest {
-    let body = json!({
-      "query": op,
-      "variables": variables
-    });
+#[derive(Serialize)]
+struct TestGraphQLRequest<'a> {
+    query: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variables: Option<sonic_rs::Value>,
+}
+
+pub fn init_graphql_request(query: &str, variables: Option<sonic_rs::Value>) -> TestRequest {
+    let body = TestGraphQLRequest { query, variables };
 
     test::TestRequest::post()
         .uri("/graphql")
         .header("content-type", "application/json")
-        .set_payload(body.to_string())
+        .set_payload(sonic_rs::to_vec(&body).unwrap())
 }
 
 pub async fn wait_for_readiness<S, E>(app: &Pipeline<S>)
