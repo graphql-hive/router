@@ -10,10 +10,10 @@
   "packageManager": "npm@11.10.0",
   "devDependencies": {
     "cross-spawn": "7.0.6",
-    "qs": "6.14.2"
+    "qs": "6.15.0"
   },
   "overrides": {
     "cross-spawn": "7.0.6",
-    "qs": "6.14.2"
+    "qs": "6.15.0"
   }
 }
