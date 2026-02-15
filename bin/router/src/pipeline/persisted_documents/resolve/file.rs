@@ -179,7 +179,7 @@ impl FileManifestResolver {
                         is_relevant_kind && touches_manifest
                     }
                     Err(err) => {
-                        warn!("persisted documents watcher event failed: {err}");
+                        warn!(error = %err, "persisted documents watcher event failed");
                         true
                     }
                 };
@@ -223,8 +223,8 @@ impl FileManifestResolver {
         let documents = Self::read_manifest_documents(&self.manifest_path).await?;
         self.documents.store(Arc::new(documents));
         info!(
-            "reloaded persisted documents manifest from '{}'",
-            self.manifest_path
+            manifest_path = self.manifest_path,
+            "reloaded persisted documents manifest",
         );
         Ok(())
     }
@@ -269,7 +269,7 @@ impl BackgroundTask for FileManifestReloadTask {
             .is_some()
         {
             if let Err(err) = self.reload_if_needed().await {
-                warn!("persisted documents background reload failed: {err}");
+                warn!(error = %err, "persisted documents background reload failed");
             }
         }
     }

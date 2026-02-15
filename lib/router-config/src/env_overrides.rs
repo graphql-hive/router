@@ -2,7 +2,7 @@ use config::{builder::BuilderState, ConfigBuilder, ConfigError};
 use envconfig::Envconfig;
 use tracing::debug;
 
-use crate::log::{LogFormat, LogLevel};
+use crate::log::shared::{LogFormat, LogLevel};
 
 #[derive(Envconfig)]
 pub struct EnvVarOverrides {

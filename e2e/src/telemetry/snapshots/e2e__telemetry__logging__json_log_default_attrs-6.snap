@@ -1,0 +1,14 @@
+---
+source: e2e/src/telemetry/logging.rs
+expression: subgraph_end
+---
+{
+  "level": "INFO",
+  "message": "subgraph request completed",
+  "span": {
+    "name": "request",
+    "req_id": "[req_id]"
+  },
+  "subgraph": "accounts",
+  "timestamp": "[timestamp]"
+}

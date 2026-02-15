@@ -1,0 +1,16 @@
+---
+source: e2e/src/telemetry/logging.rs
+expression: http_end
+---
+{
+  "duration_ms": "[duration_ms]",
+  "headers": null,
+  "level": "INFO",
+  "message": "http request completed",
+  "span": {
+    "name": "request",
+    "req_id": "[req_id]"
+  },
+  "status_code": 200,
+  "timestamp": "[timestamp]"
+}

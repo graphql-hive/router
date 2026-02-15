@@ -48,3 +48,4 @@ tiny_http = "0.12"
 futures-util = { workspace = true }
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 rcgen = "0.14.7"
+gag = "1.0.0"

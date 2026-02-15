@@ -134,12 +134,13 @@ impl UsageAgentInner {
             match operation {
                 Err(e) => {
                     tracing::warn!(
-                        "Dropping operation \"{}\" (phase: PROCESSING): {}",
-                        op.operation_name
+                        error = e,
+                        operation_name = op
+                            .operation_name
                             .clone()
                             .or_else(|| Some("anonymous".to_string()))
                             .unwrap(),
-                        e
+                        "Dropping operation (phase: PROCESSING) due to error",
                     );
                     continue;
                 }
@@ -274,7 +275,7 @@ impl UsageAgentExt for UsageAgent {
             }
             self.flush()
                 .await
-                .unwrap_or_else(|e| tracing::error!("Failed to flush usage reports: {}", e));
+                .unwrap_or_else(|e| tracing::error!(error = %e, "Failed to flush usage reports"));
         }
     }
 
@@ -449,7 +450,7 @@ pub fn get_vrl_value_from_execution_report_and_request(
 impl AsyncDrop for UsageAgentInner {
     async fn async_drop(&mut self) {
         if let Err(e) = self.flush().await {
-            tracing::error!("Failed to flush usage reports during drop: {}", e);
+            tracing::error!(error = %e, "Failed to flush usage reports during drop");
         }
     }
 }

@@ -11,7 +11,7 @@ use ntex::{
     ws::{self, error::WsError, WsClient as NtexWsClient, WsConnection, WsSink},
     SharedCfg,
 };
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 
 use crate::{
     executors::graphql_transport_ws::{SubscribePayload, WS_SUBPROTOCOL},
@@ -166,8 +166,7 @@ impl WsClient {
         connection: WsConnection<Sealed>,
         payload: Option<ConnectionInitPayload>,
     ) -> Result<Self, WsInitError> {
-        debug!("Initialising WebSocket client connection");
-
+        debug!(target: "websocket.client", payload = ?payload,  "Initialising WebSocket client connection");
         let sink = connection.sink();
         let mut receiver = connection.receiver();
 
@@ -206,7 +205,7 @@ impl WsClient {
                                 ServerMessage::ConnectionAck {} => {
                                     state.borrow_mut().handshake_received = true;
                                     state.borrow_mut().complete_handshake();
-                                    debug!("Connection acknowledged");
+                                    debug!(target: "websocket.client", "Connection acknowledged");
                                     break;
                                 }
                                 ServerMessage::Ping {} => {
@@ -216,8 +215,9 @@ impl WsClient {
                                 _ => {
                                     // any other message before ack is an error
                                     error!(
-                                        "Wrong message received before ConnectionAck: {:?}",
-                                        server_msg
+                                        target: "websocket.client",
+                                        error = ?server_msg,
+                                        "Wrong message received before ConnectionAck",
                                     );
                                     let _ = sink.send(CloseCode::Unauthorized.into()).await;
                                     return Err(WsInitError::WrongMessageBeforeAck);
@@ -230,18 +230,18 @@ impl WsClient {
                             let _ = sink.send(msg).await;
                         }
                         Err(FrameNotParsedToText::Closed) => {
-                            debug!("Connection closed before acknowledgement");
+                            warn!(target: "websocket.client", "Connection closed before acknowledgement");
                             return Err(WsInitError::ConnectionClosedBeforeAck);
                         }
                         Err(FrameNotParsedToText::None) => {}
                     }
                 }
                 Some(Err(e)) => {
-                    error!("WebSocket receiver error during init: {:?}", e);
+                    error!(target: "websocket.client",error = %e, "WebSocket receiver error during init");
                     return Err(WsInitError::ConnectionAckReceiverError);
                 }
                 None => {
-                    debug!("WebSocket receiver closed during init");
+                    warn!(target: "websocket.client", "WebSocket receiver closed during init");
                     return Err(WsInitError::ConnectionAckReceiverClosed);
                 }
             }
@@ -403,7 +403,7 @@ async fn dispatch_loop(
                 }
             }
             Some(Err(e)) => {
-                error!("Dispatch loop WebSocket receiver error: {:?}", e);
+                error!(target: "websocket.client", error = %e, "Dispatch loop WebSocket receiver error");
                 return;
             }
             None => {
@@ -441,7 +441,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
         Err(msg) => return Some(msg),
     };
 
-    trace!("type" = server_msg.as_ref(), "Received server message");
+    trace!(target: "websocket.client", type = server_msg.as_ref(), "Received server message");
 
     match server_msg {
         ServerMessage::ConnectionAck {} => {
@@ -460,7 +460,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
                 ) {
                     Ok(response) => response,
                     Err(e) => {
-                        tracing::warn!("Failed to deserialize payload: {}", e);
+                        tracing::warn!(target: "websocket.client", error = %e, payload = %payload, "Failed to deserialize payload");
                         WsClientError::FailedToDeserializePayload.into()
                     }
                 };
@@ -494,7 +494,7 @@ fn text_to_server_message(text: &str) -> Result<ServerMessage, ws::Message> {
     let server_msg: ServerMessage = match sonic_rs::from_str(text) {
         Ok(msg) => msg,
         Err(e) => {
-            error!("Failed to parse server message to JSON: {}", e);
+            error!(target: "websocket.client", error = %e, payload = text, "Failed to parse server message to JSON");
             return Err(CloseCode::BadResponse("Invalid message received from server").into());
         }
     };

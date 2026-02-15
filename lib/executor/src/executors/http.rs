@@ -197,14 +197,12 @@ async fn send_request<'a>(
     let request_body_size = body.len() as u64;
 
     let mut req = hyper::Request::builder()
-        .method(method)
+        .method(&method)
         .uri(endpoint)
         .version(Version::HTTP_11)
         .body(Full::new(Bytes::from(body)))?;
 
     *req.headers_mut() = headers;
-
-    debug!("making http request to {}", endpoint.to_string());
 
     let http_request_span = HttpClientRequestSpan::from_request(&req);
     let mut http_request_capture = telemetry_context.metrics.http_client.capture_request(
@@ -213,6 +211,8 @@ async fn send_request<'a>(
         Some(subgraph_name),
     );
     let transport_started_at = Instant::now();
+
+    debug!(target: "executor.http", subgraph_name, endpoint = %endpoint, method = method.as_str(), "executing operation over http");
 
     let response: Result<SubgraphHttpResponse, SubgraphExecutorError> = async {
         // TODO: let's decide at some point if the tracing headers
@@ -231,9 +231,11 @@ async fn send_request<'a>(
         http_request_capture.set_status_code(res.status().as_u16());
 
         debug!(
-            "http request to {} completed, status: {}",
-            endpoint.to_string(),
-            res.status()
+          target: "executor.http",
+          endpoint = %endpoint,
+          subgraph_name,
+          status = %res.status(),
+          "http request completed"
         );
 
         let (parts, body) = res.into_parts();
@@ -307,7 +309,6 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         let mut method = http::Method::POST;
         let mut deduplicate_request = !self.dedupe_enabled || !execution_request.dedupe;
-
         let mut on_end_callbacks = vec![];
         let mut response = None;
 
@@ -518,9 +519,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         *req.headers_mut() = headers;
 
         debug!(
-            "establishing subscription connection to subgraph {} at {}",
-            self.subgraph_name,
-            self.endpoint.to_string()
+            subgraph_name = self.subgraph_name,
+            endpoint = self.endpoint.to_string(),
+            "establishing subscription connection to subgraph",
         );
 
         let res_fut = self.http_client.request(req);
@@ -532,10 +533,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }?;
 
         debug!(
-            "subscription connection to subgraph {} at {} established, status: {}",
-            self.subgraph_name,
-            self.endpoint.to_string(),
-            res.status()
+            subgraph_name = self.subgraph_name,
+            endpoint = self.endpoint.to_string(),
+            status = ?res.status(),
+            "subscription connection to subgraph established",
         );
 
         if !res.status().is_success() {
@@ -590,9 +591,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             }))
         } else {
             debug!(
-                "using SSE for subscription connection to subgraph {} at {}",
-                self.subgraph_name,
-                self.endpoint.to_string(),
+                subgraph_name = self.subgraph_name,
+                endpoint = self.endpoint.to_string(),
+                "using SSE for subscription connection to subgraph",
             );
 
             let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone());

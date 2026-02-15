@@ -15,7 +15,7 @@ use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use hive_router_plan_executor::plugins::hooks;
-use tracing::{error, trace, Instrument};
+use tracing::{debug, warn, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 pub mod max_aliases_rule;
 pub mod max_depth_rule;
@@ -145,11 +145,8 @@ pub async fn validate_operation_with_cache(
         }
 
         if !errors.is_empty() {
-            error!(
-                "GraphQL validation failed with total of {} errors",
-                errors.len()
-            );
-            trace!("Validation errors: {:?}", errors);
+            warn!(total_errors = errors.len(), "GraphQL validation failed");
+            debug!(errors = ?errors, document = %validation_operation, "validation errors");
 
             return Err(PipelineError::ValidationErrors(errors));
         }

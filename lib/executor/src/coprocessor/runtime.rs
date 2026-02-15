@@ -7,7 +7,7 @@ use ntex::http::HeaderMap;
 use ntex::web::{self, DefaultError};
 use std::ops::ControlFlow;
 use std::sync::Arc;
-use tracing::{debug, error, info, Instrument};
+use tracing::{debug, error, info, warn, Instrument};
 
 use crate::coprocessor::client::CoprocessorClient;
 use crate::coprocessor::error::CoprocessorError;
@@ -109,8 +109,9 @@ impl<A: Stage> StageRuntime<A> {
           //       once Dotan's logging PR is merged.
           let request = self.stage.build_request(input, &id, shared_context)?;
             debug!(
-                coprocessor.id = %id,
-                coprocessor.stage = stage_name,
+                target: "coprocessor",
+                coprocessor_id = id,
+                coprocessor_stage = stage_name,
                 "Sending coprocessor request"
             );
 
@@ -119,6 +120,14 @@ impl<A: Stage> StageRuntime<A> {
             metrics.record_duration(stage_name, start.elapsed().as_secs_f64());
 
             if !response.status().is_success() {
+              warn!(
+                  target: "coprocessor",
+                  coprocessor_id = id,
+                  coprocessor_stage = stage_name,
+                  status_code = response.status().as_u16(),
+                  "coprocessor request failed and returned unexpected http status",
+              );
+
                 return Err(CoprocessorError::UnexpectedStatus(response.status()));
             }
 
@@ -138,8 +147,9 @@ impl<A: Stage> StageRuntime<A> {
                 }
                 Ok(ControlFlow::Break(response)) => {
                     info!(
-                        coprocessor.id = %id,
-                        coprocessor.stage = stage_name,
+                        target: "coprocessor",
+                        coprocessor_id = id,
+                        coprocessor_stage = stage_name,
                         status_code = %response.status(),
                         "Coprocessor short-circuited the request"
                     );
@@ -161,8 +171,9 @@ impl<A: Stage> StageRuntime<A> {
 
             if performed_mutations.body || performed_mutations.headers || performed_mutations.context {
                 debug!(
-                    coprocessor.id = %id,
-                    coprocessor.stage = stage_name,
+                    target: "coprocessor",
+                    coprocessor_id = %id,
+                    coprocessor_stage = stage_name,
                     body = performed_mutations.body,
                     headers = performed_mutations.headers,
                     context = performed_mutations.context,
@@ -179,7 +190,7 @@ impl<A: Stage> StageRuntime<A> {
         .instrument(span)
         .await
         .inspect_err(|err| {
-          error!(%err, coprocessor.id = %id, coprocessor.stage = stage_name, "Coprocessor failure");
+          error!(target: "coprocessor", error = %err, coprocessor_id = %id, coprocessor_stage = stage_name, "Coprocessor failure");
         })
     }
 }
@@ -266,7 +277,8 @@ impl CoprocessorRuntime {
                 // We deliberately do not map to CoprocessorError here,
                 // to follow the same logic for status codes
                 Err(err) => {
-                    error!(%err, "coprocessor {} stage failed", stage.stage.stage_name());
+                    error!(target: "coprocessor", error = %err, coprocessor_stage = stage.stage.stage_name(), "coprocessor stage failed");
+
                     let response =
                         build_router_stage_error_response(err.status_code(), err.error_code());
                     return ControlFlow::Break(req.into_response(response));
@@ -293,7 +305,7 @@ impl CoprocessorRuntime {
             .execute(&mut input, &shared_context)
             .await
             .unwrap_or_else(|err| {
-            error!(%err, coprocessor.stage = stage.stage.stage_name(), "coprocessor stage failed");
+            error!(target: "coprocessor", error = %err, coprocessor_stage = stage.stage.stage_name(), "coprocessor stage failed");
             ControlFlow::Break(build_router_stage_error_response(
                 err.status_code(),
                 err.error_code(),
@@ -319,6 +331,8 @@ impl CoprocessorRuntime {
         let shared_context = match response.request().read_request_context() {
             Ok(context) => context,
             Err(error) => {
+                error!(target: "coprocessor", error = %error, coprocessor_stage = stage.stage.stage_name(), "coprocessor stage failed");
+
                 let error = CoprocessorError::from(error);
                 let fallback =
                     build_router_stage_error_response(error.status_code(), error.error_code());
@@ -403,7 +417,7 @@ fn error_to_break<A: Stage>(
     // Stage error metrics and specific logs are already recorded in execute() where possible,
     // but keeping a fallback log here correctly reports the failure that causes short-circuit
     // in case it's not caught earlier, and always breaks the request.
-    error!(%err, coprocessor.stage = stage.stage.stage_name(), "coprocessor stage failed");
+    error!(target: "coprocessor", error = %err, coprocessor_stage = stage.stage.stage_name(), "coprocessor stage failed");
     ControlFlow::Break(web::HttpResponse::new(err.status_code()))
 }
 

@@ -1,0 +1,16 @@
+---
+source: e2e/src/telemetry/logging.rs
+expression: gql_start
+---
+{
+  "extensions": null,
+  "level": "INFO",
+  "message": "graphql request started",
+  "operation_name": "",
+  "span": {
+    "name": "request",
+    "req_id": "[req_id]"
+  },
+  "timestamp": "[timestamp]",
+  "variables": null
+}

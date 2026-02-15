@@ -36,7 +36,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info};
 
 use crate::{
     cache_state::CacheState,
@@ -129,7 +129,10 @@ impl SchemaState {
             let supergraph_metrics = &metrics.supergraph;
             while let Some(new_sdl) = rx.recv().await {
                 let process_capture = supergraph_metrics.capture_process();
-                debug!("Received new supergraph SDL, building new supergraph state...");
+                debug!(
+                    target: "schema_state",
+                    "Received new supergraph SDL, building new supergraph state..."
+                );
 
                 let mut new_ast = parse_schema(&new_sdl);
 
@@ -198,8 +201,9 @@ impl SchemaState {
                                         Err(err) => {
                                             process_capture.finish_error();
                                             error!(
-                                                "Plugin ended supergraph load with error: {}",
-                                                err.message
+                                              target: "schema_state",
+                                              error = err.message,
+                                              "Plugin short-circuit with error while loading supergraph"
                                             );
                                             return;
                                         }
@@ -222,15 +226,14 @@ impl SchemaState {
                         ]);
 
                         swappable_data_spawn_clone.store(Arc::new(Some(new_supergraph_data)));
-                        debug!("Supergraph updated successfully");
-
+                        info!(target: "schema_state" ,"Supergraph updated successfully, will be used for next request, clearing caches...");
                         cache_state_for_invalidation.on_schema_change();
-                        debug!("Schema-associated caches cleared successfully");
+                        debug!(target: "schema_state" ,"Schema-associated caches cleared successfully");
                         process_capture.finish_ok();
                     }
                     Err(e) => {
                         process_capture.finish_error();
-                        error!("Failed to build new supergraph data: {}", e);
+                        error!(target: "schema_state", error = %e, "Failed to build new supergraph data");
                     }
                 }
             }
@@ -310,22 +313,20 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
         let supergraph_metrics = &self.0.metrics.supergraph;
         loop {
             if token.is_cancelled() {
-                trace!("Background task cancelled");
-
                 break;
             }
 
             let poll_capture = supergraph_metrics.capture_poll();
             match self.0.loader.load().await {
                 Ok(ReloadSupergraphResult::Unchanged) => {
-                    debug!("Supergraph fetched successfully with no changes");
+                    debug!(target: "supergraph.background_task", "Supergraph fetched successfully with no changes");
                     poll_capture.finish_not_modified();
                 }
                 Ok(ReloadSupergraphResult::Changed { new_sdl }) => {
-                    debug!("Supergraph loaded successfully with changes, updating...");
+                    debug!(target: "supergraph.background_task", "Supergraph loaded successfully with changes, updating...");
 
                     if self.0.sender.clone().send(new_sdl).await.is_err() {
-                        error!("Failed to send new supergraph SDL: receiver dropped.");
+                        error!(target: "supergraph.background_task", "Failed to send new supergraph SDL: receiver dropped.");
                         poll_capture.finish_error();
                         break;
                     }
@@ -333,20 +334,21 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
                     poll_capture.finish_updated();
                 }
                 Err(err) => {
-                    error!("Failed to load supergraph: {}", err);
+                    error!(target: "supergraph.background_task", error = %err, "Failed to load supergraph");
                     poll_capture.finish_error();
                 }
             }
 
             if let Some(interval) = self.0.loader.reload_interval() {
                 debug!(
-                    "waiting for {:?}ms before checking again for supergraph changes",
-                    interval.as_millis()
+                    target: "supergraph.background_task",
+                    interval_ms = interval.as_millis(),
+                    "waiting checking again for supergraph changes",
                 );
 
                 ntex::time::sleep(*interval).await;
             } else {
-                debug!("poll interval not configured for supergraph changes, breaking");
+                debug!(target: "supergraph.background_task", "supergraph will not be reloaded because polling is disabled");
 
                 break;
             }
@@ -371,7 +373,7 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
-                    debug!("heartbeat enforcer cancelled, stopping");
+                    debug!(target: "http_callback_heartbeat_enforcer_task", "heartbeat enforcer cancelled, stopping");
                     return;
                 }
                 _ = ntex::time::sleep(self.heartbeat_interval) => {}
@@ -401,9 +403,11 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
             // separate iter so that we dont mess up the slice while looping
             for id in timed_out {
                 debug!(
+                    target: "http_callback_heartbeat_enforcer_task",
                     subscription_id = %id,
                     "terminating subscription due to http callback subgraph missed heartbeat"
                 );
+
                 if let Some((_, sub)) = self.callback_subscriptions.remove(&id) {
                     // we dont care about the result of this send, if it fails it means the client
                     // is already gone or too slow, either way we just terminate the subscription

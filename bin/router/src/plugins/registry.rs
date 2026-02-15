@@ -6,7 +6,7 @@ use hive_router_plan_executor::{
     hooks::on_plugin_init::OnPluginInitPayload,
     plugin_trait::{RouterPlugin, RouterPluginBoxed},
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 type PluginFactory = Box<
     dyn Fn(
@@ -77,18 +77,21 @@ impl PluginRegistry {
                 match plugin_init_result {
                     Err(plugin_init_error) => {
                         if plugin_config_value.warn_on_error {
-                            warn!("Plugin initialization error: {}", plugin_init_error);
+                            warn!(plugin_name, error = %plugin_init_error, "Failed to initialize plugin, ignoring due to 'warn_on_error' flag");
+
                             continue;
                         } else {
+                            error!(plugin_name, error = %plugin_init_error, "Failed to initialize plugin");
+
                             return Err(plugin_init_error);
                         }
                     }
                     Ok(maybe_plugin) => {
                         if let Some(plugin) = maybe_plugin {
-                            info!("Plugin '{}' successfully enabled", plugin_name);
+                            info!(plugin_name, "Plugin successfully enabled");
                             plugins_unordered.push((plugin_name.as_str(), plugin));
                         } else {
-                            warn!("Plugin '{}' disabled during initialization", plugin_name);
+                            warn!(plugin_name, "Plugin was disabled during initialization",);
                         }
                     }
                 }

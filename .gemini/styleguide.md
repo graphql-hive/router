@@ -37,6 +37,18 @@ Gemini must **request changes (block the PR)** when any of the following appear:
 > **Hot-path baseline:**
 > `#[instrument(skip_all, level = "trace", fields(... cheap only ...))]` + gated/lazy recording for anything expensive, or no instrumentation.
 
+### Logging
+
+When printing logs, use the following guidelines:
+
+- Use `trace!` only for things used for development. This level is eliminated at compile time. 
+- Use `debug!` for general debug-level logging.
+- Use `info!` for important events that are worth noting but not critical.
+- Use `warn!` for non-critical issues that may indicate a problem.
+- Use `error!` for critical errors that should be addressed immediately, or when requests failed to to any reason.
+
+Always prefer using structured logging (`info!(value = value, "hello")`) over unstructured logging (`info!("hello {}", value)`). When the level used is `error!`, the inner error message should be printed using the named attribute `error = ` only.
+
 ### Readability / Simplicity
 - **D. Deeply nested control flow** (more than **2 levels** on hot paths, **3** elsewhere) when it can be flattened with guard clauses, early returns, or `match`.
 - **E. Large monolithic functions** (> ~80 lines, or doing multiple responsibilities) when they can be split into focused helpers.

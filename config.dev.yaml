@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=router-config.schema.json
+supergraph:
+  source: file
+  path: ./bench/supergraph.graphql
+telemetry:
+  logging:
+    service:
+      exporters:
+        - kind: stdout
+          level: debug
+          format: text

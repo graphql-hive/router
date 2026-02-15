@@ -9,3 +9,6 @@ test_e2e = "nextest run --package e2e --test-threads 5"
 test_qpe = "nextest run --package hive-router-plan-executor"
 "clippy:fix" = "clippy --all --fix --allow-dirty --allow-staged"
 "router-config" = "run --release -p hive-router-config router-config.schema.json"
+
+[build]
+rustflags = ["--cfg", "tracing_unstable"]

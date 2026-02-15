@@ -1,5 +1,6 @@
 pub mod coprocessor;
 pub mod otel;
+pub mod stdout;
 
 use axum_server::{tls_rustls::RustlsConfig, Handle};
 use bytes::Bytes;

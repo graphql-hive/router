@@ -51,13 +51,10 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
-        debug!(
-            "establishing WebSocket connection to subgraph {} at {}",
-            subgraph_name, endpoint
-        );
+
+        debug!(target: "executor.websocket", subgraph_name, endpoint = %endpoint, "establishing websocket connection to subgraph");
 
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
-
         let (tx, rx) = oneshot::channel();
 
         // run this on ntex runtime instead of Handle::spawn because the websocket path builds
@@ -89,10 +86,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     }
                 };
 
-                debug!(
-                    "WebSocket connection to subgraph {} at {} established",
-                    subgraph_name, endpoint
-                );
+                debug!(target: "executor.websocket", subgraph_name, endpoint = %endpoint, "websocket connection was established");
 
                 let mut stream = client
                     .subscribe(subscribe_payload, custom_scalar_paths)
@@ -136,9 +130,8 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
 
-        debug!(
-            "establishing WebSocket subscription connection to subgraph {} at {}",
-            self.subgraph_name, self.endpoint
+        debug!(target: "executor.websocket", subgraph_name, endpoint = ?endpoint,
+            "establishing WebSocket subscription connection to subgraph",
         );
 
         // no await intentionally. the task runs the subscription in the background
@@ -169,10 +162,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 }
             };
 
-            debug!(
-                "WebSocket subscription connection to subgraph {} at {} established",
-                subgraph_name, endpoint
-            );
+            debug!(target: "executor.websocket", subgraph_name, endpoint = %endpoint, "websocket connection was established");
 
             let mut stream = client
                 .subscribe(subscribe_payload, custom_scalar_paths)
@@ -186,16 +176,22 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                         // up. we terminate the subscription without an error message because it anyways cant
                         // go through
                         warn!(
-                            "Client for subgraph {} at {} subscriptions is too slow",
-                            subgraph_name, endpoint
+                            target: "executor.websocket",
+                            subgraph_name,
+                            endpoint = %endpoint,
+                            "subscriptions client for subgraph is too slow"
                         );
+
                         break;
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
                         debug!(
-                            "Client for subgraph {} at {} dropped the receiver",
-                            subgraph_name, endpoint
+                            target: "executor.websocket",
+                            subgraph_name,
+                            endpoint = %endpoint,
+                            "Client for subgraph dropped the receiver",
                         );
+
                         break;
                     }
                 }

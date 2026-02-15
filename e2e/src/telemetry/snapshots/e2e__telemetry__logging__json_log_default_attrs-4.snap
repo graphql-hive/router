@@ -1,0 +1,14 @@
+---
+source: e2e/src/telemetry/logging.rs
+expression: gql_end
+---
+{
+  "error_count": 0,
+  "level": "INFO",
+  "message": "graphql request completed",
+  "span": {
+    "name": "request",
+    "req_id": "[req_id]"
+  },
+  "timestamp": "[timestamp]"
+}
