@@ -73,6 +73,30 @@ use tracing::{info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
+#[inline]
+async fn correlated_graphql_endpoint_handler(
+    request: HttpRequest,
+    body_stream: web::types::Payload,
+    schema_state: web::types::State<Arc<SchemaState>>,
+    app_state: web::types::State<Arc<RouterSharedState>>,
+) -> Response {
+    let root_logging_span = LoggerRootSpan::create(&request);
+
+    async {
+        let start = Instant::now();
+        let logging_context = app_state.logging_context.clone();
+        logging_context.http_request_start(&request);
+        let response =
+            graphql_endpoint_handler(request, body_stream, schema_state, app_state).await;
+        logging_context.http_request_end(start.elapsed(), &response);
+
+        response
+    }
+    .instrument(root_logging_span.span)
+    .await
+}
+
+#[inline]
 async fn graphql_endpoint_handler(
     request: HttpRequest,
     body_stream: web::types::Payload,
@@ -175,7 +199,8 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
-        telemetry.context.clone(),
+        telemetry.tracing_context.clone(),
+        telemetry.logging_context.clone(),
         &mut bg_tasks_manager,
         plugin_registry,
     )
@@ -284,6 +309,7 @@ pub async fn configure_app_from_config(
         telemetry_context_arc,
         plugins_arc,
         cache_state,
+        Arc::new(logger_context),
     )?);
 
     Ok((shared_state, schema_state_arc))

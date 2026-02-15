@@ -1,8 +1,11 @@
 use std::{sync::Arc, time::Instant};
 use tracing::{error, Instrument};
 
-use hive_router_internal::telemetry::traces::spans::{
-    graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+use hive_router_internal::{
+    logging::context::LoggerContext,
+    telemetry::traces::spans::{
+        graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+    },
 };
 use hive_router_plan_executor::{
     execution::{
@@ -73,6 +76,7 @@ pub async fn graphql_request_handler(
     schema_state: &Arc<SchemaState>,
     http_server_request_span: &HttpServerRequestSpan,
     response_mode: &mut ResponseMode,
+    logger_context: Arc<LoggerContext>,
 ) -> Result<web::HttpResponse, PipelineError> {
     // If an early CORS response is needed, return it immediately.
     if let Some(early_response) = shared_state
@@ -323,6 +327,8 @@ pub async fn graphql_request_handler(
         if let Some(response_headers_aggregator) = pipeline_result.response_headers_aggregator {
             response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
         }
+
+        logger_context.graphql_request_end(response.error_count);
 
         Ok(response_builder
             .content_type(single_content_type.as_ref())

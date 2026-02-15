@@ -10,12 +10,14 @@ use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::{trace::IdGenerator, Resource};
 use std::env;
 use std::sync::Arc;
+use tracing::level_filters::LevelFilter;
 use tracing::Subscriber;
-use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::filter::{filter_fn, Targets};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
 use crate::telemetry::metrics::Metrics;
+use crate::logging::logger_span::ROUTER_INTERNAL_LOGGER_TARGET;
 use crate::telemetry::traces::build_trace_provider;
 
 pub mod error;
@@ -143,11 +145,16 @@ where
     let traces_provider = build_trace_provider(config, id_generator, resource.clone())?;
 
     let tracer = traces_provider.tracer_with_scope(scope);
+    let target_filter = Targets::new()
+        .with_target(ROUTER_INTERNAL_LOGGER_TARGET, LevelFilter::OFF)
+        .with_default(LevelFilter::INFO);
+
     let traces_layer = tracing_opentelemetry::layer()
         .with_tracer(tracer)
         .with_tracked_inactivity(false)
         .with_location(false)
         .with_threads(false)
+        .with_filter(target_filter)
         // Drop events from tracing macros (info!, error!, etc.),
         // but accept those from span.add_event()
         .with_filter(filter_fn(|metadata| metadata.is_span()));

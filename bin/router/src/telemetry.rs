@@ -31,6 +31,7 @@ use tracing_subscriber::{
     fmt::{self},
     layer::SubscriberExt,
 };
+use tracing_subscriber::{util::SubscriberInitExt, Registry};
 
 pub struct HeaderExtractor<'a>(pub &'a ntex::http::HeaderMap);
 
@@ -217,6 +218,7 @@ impl Telemetry {
     }
 
     pub async fn graceful_shutdown(&self) {
+        debug!("flushing telemetry data");
         use tokio::task::spawn_blocking;
 
         let tracer = self.traces_provider.clone();
