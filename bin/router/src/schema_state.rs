@@ -35,7 +35,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     cache_state::CacheState,
@@ -197,8 +197,8 @@ impl SchemaState {
                                         Err(err) => {
                                             process_capture.finish_error();
                                             error!(
-                                                "Plugin ended supergraph load with error: {}",
-                                                err.message
+                                              err = err.message,
+                                              "Plugin short-circuit with error while loading supergraph"
                                             );
                                             return;
                                         }
@@ -221,15 +221,14 @@ impl SchemaState {
                         ]);
 
                         swappable_data_spawn_clone.store(Arc::new(Some(new_supergraph_data)));
-                        debug!("Supergraph updated successfully");
-
+                        info!("Supergraph updated successfully, will be used for next request, clearing caches...");
                         cache_state_for_invalidation.on_schema_change();
                         debug!("Schema-associated caches cleared successfully");
                         process_capture.finish_ok();
                     }
                     Err(e) => {
                         process_capture.finish_error();
-                        error!("Failed to build new supergraph data: {}", e);
+                        error!(error = %e, "Failed to build new supergraph data");
                     }
                 }
             }
@@ -328,20 +327,20 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
                     poll_capture.finish_updated();
                 }
                 Err(err) => {
-                    error!("Failed to load supergraph: {}", err);
+                    error!(err = %err, "Failed to load supergraph");
                     poll_capture.finish_error();
                 }
             }
 
             if let Some(interval) = self.0.loader.reload_interval() {
                 debug!(
-                    "waiting for {:?}ms before checking again for supergraph changes",
-                    interval.as_millis()
+                    interval_ms = interval.as_millis(),
+                    "waiting checking again for supergraph changes",
                 );
 
                 ntex::time::sleep(*interval).await;
             } else {
-                debug!("poll interval not configured for supergraph changes, breaking");
+                debug!("supergraph will not be reloaded because polling is disabled");
 
                 break;
             }

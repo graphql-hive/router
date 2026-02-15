@@ -40,6 +40,8 @@ jobs:
           token: ${{ secrets.BOT_GITHUB_TOKEN }}
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+        with:
+          rustflags: "" # to avoid override
       - name: generate config schema
         run: cargo router-config
       - name: setup node
@@ -118,6 +120,7 @@ jobs:
         with:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
+          rustflags: "" # to avoid override
 
       # Only if using Zigbuild
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2

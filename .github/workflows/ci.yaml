@@ -24,6 +24,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+        with:
+          rustflags: "" # to avoid override
       - uses: ./.github/actions/install-tools
       - name: test all
         run: cargo test_all
@@ -38,6 +40,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+        with:
+          rustflags: "" # to avoid override
       - uses: ./.github/actions/install-tools
       - name: test e2e
         run: cargo test_e2e
@@ -52,6 +56,8 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+        with:
+          rustflags: "" # to avoid override
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
@@ -86,6 +92,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+        with:
+          rustflags: "" # to avoid override
       - name: build
         run: cargo build --release
 
@@ -97,6 +105,7 @@ jobs:
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
         with:
+          rustflags: "" # to avoid override
           components: rustfmt
       - name: cargo fmt
         uses: actions-rust-lang/rustfmt@4066006ec54a31931b9b1fddfd38f2fdf2d27143 # v1
@@ -109,6 +118,7 @@ jobs:
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
         with:
+          rustflags: "" # to avoid override
           components: clippy
       - name: cargo clippy
         run: cargo clippy --all
@@ -129,6 +139,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+        with:
+          rustflags: "" # to avoid override
       - if: matrix.name == 'executor'
         name: Build subgraphs
         run: cargo build --release -p subgraphs
@@ -206,6 +218,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+        with:
+          rustflags: "" # to avoid override
       - name: Setup K6
         run: |
           wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
@@ -281,6 +295,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+        with:
+          rustflags: "" # to avoid override
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1
         with:
@@ -305,6 +321,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+        with:
+          rustflags: "" # to avoid override
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1
         with:

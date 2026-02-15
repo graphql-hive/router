@@ -204,7 +204,7 @@ async fn send_request<'a>(
 
     *req.headers_mut() = headers;
 
-    debug!("making http request to {}", endpoint.to_string());
+    debug!(endpoint = %endpoint, "making subraph http request");
 
     let http_request_span = HttpClientRequestSpan::from_request(&req);
     let mut http_request_capture = telemetry_context.metrics.http_client.capture_request(
@@ -231,9 +231,9 @@ async fn send_request<'a>(
         http_request_capture.set_status_code(res.status().as_u16());
 
         debug!(
-            "http request to {} completed, status: {}",
-            endpoint.to_string(),
-            res.status()
+          endpoint = %endpoint,
+          status = %res.status(),
+          "subgraph http request completed"
         );
 
         let (parts, body) = res.into_parts();

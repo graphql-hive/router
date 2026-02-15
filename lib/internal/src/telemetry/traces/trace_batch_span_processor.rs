@@ -629,9 +629,9 @@ impl TraceBatchSpanProcessor {
                     });
                 }
                 Err(err) => {
-                    eprintln!(
-                        "TraceBatchSpanProcessor.Runtime.Error: failed to create Tokio runtime for trace batch processor: {}",
-                        err
+                    warn!(
+                      error = %err,
+                        "TraceBatchSpanProcessor.Runtime.Error: failed to create Tokio runtime for trace batch processor",
                     );
                 }
             }

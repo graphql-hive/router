@@ -10,11 +10,14 @@ use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::{trace::IdGenerator, Resource};
 use std::env;
 use std::sync::Arc;
+use tracing::level_filters::LevelFilter;
 use tracing::Subscriber;
-use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::filter::{filter_fn, Targets};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
+use crate::logging::context::LoggerContext;
+use crate::logging::logger_span::ROUTER_INTERNAL_LOGGER_TARGET;
 use crate::telemetry::metrics::Metrics;
 use crate::telemetry::traces::build_trace_provider;
 
@@ -40,18 +43,17 @@ pub struct TelemetryContext {
     propagator: Option<Arc<TextMapCompositePropagator>>,
     pub metrics: Arc<Metrics>,
     meter: Option<Meter>,
+    pub logging: Arc<LoggerContext>,
 }
 
 impl TelemetryContext {
     /// Creates a telemetry context from tracing propagation config
-    pub fn from_propagation_config(
-        config: &hive_router_config::telemetry::tracing::TracingPropagationConfig,
-    ) -> Self {
-        Self::from_propagation_config_with_meter(config, None)
+    pub fn from_config(config: &hive_router_config::telemetry::TelemetryConfig) -> Self {
+        Self::from_config_with_meter(config, None)
     }
 
-    pub fn from_propagation_config_with_meter(
-        config: &hive_router_config::telemetry::tracing::TracingPropagationConfig,
+    pub fn from_config_with_meter(
+        config: &hive_router_config::telemetry::TelemetryConfig,
         meter: Option<Meter>,
     ) -> Self {
         use otel::opentelemetry_jaeger_propagator::Propagator as JaegerPropagator;
@@ -60,29 +62,35 @@ impl TelemetryContext {
 
         let mut propagators: Vec<Box<dyn TextMapPropagator + Send + Sync>> = Vec::new();
 
-        if config.trace_context {
+        let propagator_config = &config.tracing.propagation;
+
+        if propagator_config.trace_context {
             propagators.push(Box::new(TraceContextPropagator::new()));
         }
 
-        if config.baggage {
+        if propagator_config.baggage {
             propagators.push(Box::new(BaggagePropagator::new()));
         }
 
-        if config.b3 {
+        if propagator_config.b3 {
             propagators.push(Box::new(B3Propagator::new()));
         }
 
-        if config.jaeger {
+        if propagator_config.jaeger {
             propagators.push(Box::new(JaegerPropagator::new()));
         }
 
         let metrics = Arc::new(Metrics::new(meter.as_ref()));
+        let logging = Arc::new(LoggerContext::new(
+            config.logging.service.log_fields.clone(),
+        ));
 
         if propagators.is_empty() {
             return Self {
                 propagator: None,
                 metrics,
                 meter,
+                logging,
             };
         }
 
@@ -90,6 +98,7 @@ impl TelemetryContext {
             propagator: Some(Arc::new(TextMapCompositePropagator::new(propagators))),
             metrics,
             meter,
+            logging,
         }
     }
 
@@ -143,11 +152,16 @@ where
     let traces_provider = build_trace_provider(config, id_generator, resource.clone())?;
 
     let tracer = traces_provider.tracer_with_scope(scope);
+    let target_filter = Targets::new()
+        .with_target(ROUTER_INTERNAL_LOGGER_TARGET, LevelFilter::OFF)
+        .with_default(LevelFilter::INFO);
+
     let traces_layer = tracing_opentelemetry::layer()
         .with_tracer(tracer)
         .with_tracked_inactivity(false)
         .with_location(false)
         .with_threads(false)
+        .with_filter(target_filter)
         // Drop events from tracing macros (info!, error!, etc.),
         // but accept those from span.add_event()
         .with_filter(filter_fn(|metadata| metadata.is_span()));

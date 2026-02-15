@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::log::LoggingConfig;
 use crate::primitives::value_or_expression::ValueOrExpression;
 use crate::telemetry::{hive::HiveTelemetryConfig, metrics::MetricsConfig, tracing::TracingConfig};
 
@@ -20,6 +21,8 @@ pub struct TelemetryConfig {
     pub tracing: TracingConfig,
     #[serde(default)]
     pub metrics: MetricsConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
     #[serde(default)]
     pub resource: ResourceConfig,
     #[serde(default)]

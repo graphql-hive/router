@@ -34,7 +34,6 @@ use crate::{
     http_server::HttpServerConfig,
     introspection_policy::IntrospectionPermissionConfig,
     laboratory::LaboratoryConfig,
-    log::LoggingConfig,
     override_labels::OverrideLabelsConfig,
     primitives::file_path::with_start_path,
     query_planner::QueryPlannerConfig,
@@ -47,12 +46,6 @@ use crate::{
 pub struct HiveRouterConfig {
     #[serde(skip)]
     root_directory: PathBuf,
-
-    /// The router logger configuration.
-    ///
-    /// The router is configured to be mostly silent (`info`) level, and will print only important messages, warnings, and errors.
-    #[serde(default)]
-    pub log: LoggingConfig,
 
     /// Configuration for the Hive Laboratory interface.
     #[serde(default)]

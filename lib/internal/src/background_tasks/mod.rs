@@ -33,7 +33,7 @@ impl BackgroundTasksManager {
     where
         T: BackgroundTask + 'static,
     {
-        info!("registering background task: {}", task.id());
+        info!(task_id = task.id(), "registering background task");
         let child_token = self.cancellation_token.clone();
         let handle = spawn(async move {
             task.run(child_token).await;

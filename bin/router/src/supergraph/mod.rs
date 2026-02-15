@@ -14,10 +14,7 @@ pub mod hive;
 pub fn resolve_from_config(
     config: &SupergraphSource,
 ) -> Result<Box<dyn SupergraphLoader + Send + Sync>, LoadSupergraphError> {
-    debug!(
-        "Creating supergraph loader from source {}",
-        config.source_name()
-    );
+    debug!(kind = config.source_name(), "Creating supergraph loader");
 
     match config {
         SupergraphSource::File {
