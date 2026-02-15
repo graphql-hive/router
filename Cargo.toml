@@ -85,3 +85,4 @@ tracing-subscriber = { version = "0.3.22", features = [
   "json",
 ] }
 tracing-tree = "0.4.0"
+tracing-appender = "0.2.4"

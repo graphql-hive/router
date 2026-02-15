@@ -1,22 +1,23 @@
-use std::{io::IsTerminal, str::FromStr};
-
-use hive_router_config::{log::LogFormat, HiveRouterConfig};
-use hive_router_internal::telemetry::{
-    build_otel_layer_from_config,
-    error::TelemetryError,
-    otel::{
-        opentelemetry::{global::set_tracer_provider, propagation::Extractor},
-        opentelemetry_sdk::trace::{RandomIdGenerator, SdkTracerProvider},
+use hive_router_config::HiveRouterConfig;
+use hive_router_internal::{
+    logging::logging_layers_from_logger_config,
+    telemetry::{
+        build_otel_layer_from_config,
+        error::TelemetryError,
+        otel::{
+            opentelemetry::{global::set_tracer_provider, propagation::Extractor},
+            opentelemetry_sdk::trace::{RandomIdGenerator, SdkTracerProvider},
+        },
+        traces::set_tracing_enabled,
+        TelemetryContext,
     },
-    traces::set_tracing_enabled,
-    TelemetryContext,
 };
-use tracing_subscriber::{filter::filter_fn, util::SubscriberInitExt};
-use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, Layer, Registry};
+use tracing::debug;
 use tracing_subscriber::{
     fmt::{self},
     layer::SubscriberExt,
 };
+use tracing_subscriber::{util::SubscriberInitExt, Registry};
 
 pub struct HeaderExtractor<'a>(pub &'a ntex::http::HeaderMap);
 
@@ -36,6 +37,7 @@ impl Extractor for HeaderExtractor<'_> {
 pub struct Telemetry {
     pub provider: Option<SdkTracerProvider>,
     pub context: TelemetryContext,
+    pub writer_guards: Vec<tracing_appender::non_blocking::WorkerGuard>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -61,8 +63,13 @@ impl Telemetry {
             (None, None)
         };
 
-        let registry = tracing_subscriber::registry().with(otel_layer);
-        init_logging(config, registry)?;
+        let (logging_layers, writer_guards) =
+            logging_layers_from_logger_config::<Registry>(&config.log);
+
+        let registry = tracing_subscriber::registry()
+            .with(logging_layers)
+            .with(otel_layer);
+        registry.init();
 
         let context =
             TelemetryContext::from_propagation_config(&config.telemetry.tracing.propagation);
@@ -70,6 +77,7 @@ impl Telemetry {
         Ok(Self {
             provider: tracer_provider,
             context,
+            writer_guards,
         })
     }
 
@@ -94,10 +102,10 @@ impl Telemetry {
         let context =
             TelemetryContext::from_propagation_config(&config.telemetry.tracing.propagation);
 
-        let filter = EnvFilter::from_str(config.log.env_filter_str())?;
+        // let filter = EnvFilter::from_str(config.log.env_filter_str())?;
 
         let subscriber = Registry::default()
-            .with(filter)
+            // .with(filter)
             .with(otel_layer)
             .with(fmt::layer().with_test_writer());
 
@@ -105,12 +113,14 @@ impl Telemetry {
             Self {
                 provider: tracer_provider,
                 context,
+                writer_guards: vec![],
             },
             subscriber,
         ))
     }
 
     pub async fn graceful_shutdown(&self) {
+        debug!("flushing telemetry data");
         use tokio::task::spawn_blocking;
 
         let tracer = self.provider.clone();
@@ -133,64 +143,4 @@ impl Telemetry {
 
         let _ = tokio::join!(shutdown_tracer);
     }
-}
-
-pub fn init_logging<S>(config: &HiveRouterConfig, registry: S) -> Result<(), TelemetryInitError>
-where
-    S: tracing::Subscriber
-        + for<'span> tracing_subscriber::registry::LookupSpan<'span>
-        + Send
-        + Sync,
-{
-    let timer = UtcTime::rfc_3339();
-    let filter = EnvFilter::from_str(config.log.env_filter_str())?;
-    let is_terminal = std::io::stdout().is_terminal();
-
-    let events_only = filter_fn(|m| !m.is_span());
-
-    match config.log.format {
-        LogFormat::PrettyTree => {
-            registry
-                .with(
-                    tracing_tree::HierarchicalLayer::new(2)
-                        .with_ansi(is_terminal)
-                        .with_bracketed_fields(true)
-                        .with_deferred_spans(false)
-                        .with_wraparound(25)
-                        .with_indent_lines(true)
-                        .with_timer(tracing_tree::time::Uptime::default())
-                        .with_thread_names(false)
-                        .with_thread_ids(false)
-                        .with_targets(false)
-                        .with_filter(events_only),
-                )
-                .with(filter)
-                .init();
-        }
-        LogFormat::Json => {
-            registry
-                .with(
-                    fmt::layer()
-                        .json()
-                        .with_timer(timer)
-                        .with_filter(events_only),
-                )
-                .with(filter)
-                .init();
-        }
-        LogFormat::PrettyCompact => {
-            registry
-                .with(
-                    fmt::layer()
-                        .compact()
-                        .with_ansi(is_terminal)
-                        .with_timer(timer)
-                        .with_filter(events_only),
-                )
-                .with(filter)
-                .init();
-        }
-    };
-
-    Ok(())
 }

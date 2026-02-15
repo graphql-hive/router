@@ -19,7 +19,7 @@ use moka::future::Cache;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     background_tasks::{BackgroundTask, BackgroundTasksManager},
@@ -99,15 +99,14 @@ impl SchemaState {
                 match Self::build_data(router_config.clone(), telemetry_context.clone(), &new_sdl) {
                     Ok(new_data) => {
                         swappable_data_spawn_clone.store(Arc::new(Some(new_data)));
-                        debug!("Supergraph updated successfully");
-
+                        info!("Supergraph updated successfully, will be used for next request, clearing caches...");
                         task_plan_cache.invalidate_all();
                         validate_cache_cache.invalidate_all();
                         normalize_cache_cache.invalidate_all();
                         debug!("Schema-associated caches cleared successfully");
                     }
                     Err(e) => {
-                        error!("Failed to build new supergraph data: {}", e);
+                        error!(error = %e, "Failed to build new supergraph data");
                     }
                 }
             }

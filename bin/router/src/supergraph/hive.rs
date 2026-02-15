@@ -3,7 +3,7 @@ use hive_console_sdk::supergraph_fetcher::{
     async_fetcher::SupergraphFetcherAsyncState, SupergraphFetcher, SupergraphFetcherError,
 };
 use std::time::Duration;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{
     consts::ROUTER_VERSION,
@@ -63,9 +63,15 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
                 Err(LoadSupergraphError::from(err))
             }
             // If the supergraph has not changed, return Unchanged
-            Ok(None) => Ok(ReloadSupergraphResult::Unchanged),
+            Ok(None) => {
+                debug!("Supergraph from Hive Console loaded but was not changed");
+                Ok(ReloadSupergraphResult::Unchanged)
+            }
             // If there is a new supergraph SDL, return it
-            Ok(Some(sdl)) => Ok(ReloadSupergraphResult::Changed { new_sdl: sdl }),
+            Ok(Some(sdl)) => {
+                info!("Supergraph from Hive Console loaded and changed");
+                Ok(ReloadSupergraphResult::Changed { new_sdl: sdl })
+            }
         }
     }
 

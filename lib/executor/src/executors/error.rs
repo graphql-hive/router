@@ -20,7 +20,7 @@ pub enum SubgraphExecutorError {
     #[error("Failed to build request to subgraph \"{0}\": {1}")]
     #[strum(serialize = "SUBGRAPH_REQUEST_BUILD_FAILURE")]
     RequestBuildFailure(String, String),
-    #[error("Failed to send request to subgraph \"{0}\": {1}")]
+    #[error("Failed to send request to subgraph")]
     #[strum(serialize = "SUBGRAPH_REQUEST_FAILURE")]
     RequestFailure(String, String),
     #[error("Failed to serialize variable \"{0}\": {1}")]

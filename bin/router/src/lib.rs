@@ -38,9 +38,12 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
-use hive_router_internal::telemetry::{
-    otel::tracing_opentelemetry::OpenTelemetrySpanExt,
-    traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
+use hive_router_internal::{
+    logging::logger_span::{LoggerRootSpan, LOGGING_ROOT_SPAN_SCOPE},
+    telemetry::{
+        otel::tracing_opentelemetry::OpenTelemetrySpanExt,
+        traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
+    },
 };
 use http::header::{CONTENT_TYPE, RETRY_AFTER};
 use ntex::util::{select, Either};
@@ -48,10 +51,33 @@ use ntex::{
     time::sleep,
     web::{self, HttpRequest},
 };
-use tracing::{info, warn, Instrument};
+use tracing::{debug, info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
+#[inline]
+async fn correlated_graphql_endpoint_handler(
+    request: HttpRequest,
+    body_stream: web::types::Payload,
+    schema_state: web::types::State<Arc<SchemaState>>,
+    app_state: web::types::State<Arc<RouterSharedState>>,
+) -> impl web::Responder {
+    let root_logging_span = LoggerRootSpan::from_request(&request);
+
+    LOGGING_ROOT_SPAN_SCOPE
+        .scope(root_logging_span.clone(), async move {
+            let _enter = root_logging_span.span.enter();
+            debug!("started processing HTTP request");
+            let response =
+                graphql_endpoint_handler(request, body_stream, schema_state, app_state).await;
+            debug!("done processing HTTP request");
+
+            response
+        })
+        .await
+}
+
+#[inline]
 async fn graphql_endpoint_handler(
     request: HttpRequest,
     body_stream: web::types::Payload,
@@ -92,13 +118,12 @@ async fn graphql_endpoint_handler(
         let _ = root_http_request_span.set_parent(parent_ctx);
 
         async {
-            let timeout_fut = sleep(
-                app_state
-                    .router_config
-                    .traffic_shaping
-                    .router
-                    .request_timeout,
-            );
+          let timeout_limit = app_state
+              .router_config
+              .traffic_shaping
+              .router
+              .request_timeout;
+            let timeout_fut = sleep(timeout_limit);
             let req_handler_fut = graphql_request_handler(
                 &request,
                 body_stream,
@@ -112,19 +137,17 @@ async fn graphql_endpoint_handler(
                 // If the timeout future completes first, return a timeout error response.
                 Either::Left(_) => {
                     let err = PipelineError::TimeoutError;
-                    return {
-                        tracing::error!("{}", err);
-                        err.into_response(Some(response_mode))
-                    };
+                    tracing::error!(error = %err, limit_ms = timeout_limit.as_millis(), "request between client and router has timed out");
+
+                    err.into_response(Some(response_mode))
                 }
                 // If the request handler future completes first, return its response.
                 Either::Right(Ok(response)) => response,
                 // If the request handler future completes first with an error, return the error response.
                 Either::Right(Err(err)) => {
-                    return {
-                        tracing::error!("{}", err);
-                        err.into_response(Some(response_mode))
-                    }
+                  tracing::error!(error = %err, "request handler has failed");
+
+                  err.into_response(Some(response_mode))
                 }
             };
 
@@ -152,7 +175,7 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     let telemetry = telemetry::Telemetry::init_global(&router_config)?;
-    info!("hive-router@{} starting...", ROUTER_VERSION);
+    info!(version = ROUTER_VERSION, "hive-router starting...",);
     let http_config = router_config.http.clone();
     let addr = router_config.http.address();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
@@ -177,7 +200,7 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     .await
     .map_err(RouterInitError::HttpServerStartError);
 
-    info!("server stopped, clearning background tasks");
+    info!("server stopped");
     bg_tasks_manager.shutdown();
     telemetry.graceful_shutdown().await;
 
@@ -238,7 +261,7 @@ pub async fn configure_app_from_config(
 }
 
 pub fn configure_ntex_app(cfg: &mut web::ServiceConfig, graphql_path: &str) {
-    cfg.route(graphql_path, web::to(graphql_endpoint_handler))
+    cfg.route(graphql_path, web::to(correlated_graphql_endpoint_handler))
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }

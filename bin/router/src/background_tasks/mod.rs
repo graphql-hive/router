@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use ntex::rt::Arbiter;
 use std::future::Future;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{debug, info};
 
 #[async_trait]
 pub trait BackgroundTask: Send + Sync {
@@ -33,7 +33,7 @@ impl BackgroundTasksManager {
     where
         T: BackgroundTask + 'static,
     {
-        info!("registering background task: {}", task.id());
+        info!(task_id = task.id(), "registering background task");
         let child_token = self.cancellation_token.clone();
 
         self.arbiter.spawn(async move {
@@ -49,11 +49,9 @@ impl BackgroundTasksManager {
     }
 
     pub fn shutdown(&mut self) {
-        info!("shutdown triggered, stopping all background tasks...");
-
+        debug!("shutdown initiated, stopping all background tasks...");
         self.cancellation_token.cancel();
         self.arbiter.stop();
-
-        info!("all background tasks have been shut down gracefully.");
+        info!("all background tasks have been shut down successfully");
     }
 }

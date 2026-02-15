@@ -13,7 +13,7 @@
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_request_body_size":"2 MB"}`<br/>||
-|[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
+|[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"access_log":null,"service":{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}}`<br/>|yes|
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
@@ -95,9 +95,12 @@ jwt:
 limits:
   max_request_body_size: 2 MB
 log:
-  filter: null
-  format: json
-  level: info
+  access_log: null
+  service:
+    format: json
+    kind: StdoutExporterConfig
+    level: info
+    log_internals: false
 override_labels: {}
 override_subgraph_urls:
   accounts:
@@ -1758,20 +1761,69 @@ The router is configured to be mostly silent (`info`) level, and will print only
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**filter**|`string`, `null`|The filter to apply to log messages.<br/><br/>Can also be set via the `LOG_FILTER` environment variable.<br/>||
-|**format**|`string`|The format of the log messages.<br/><br/>Can also be set via the `LOG_FORMAT` environment variable.<br/>Default: `"json"`<br/>Enum: `"pretty-tree"`, `"pretty-compact"`, `"json"`<br/>||
-|**level**|`string`|The level of logging to use.<br/><br/>Can also be set via the `LOG_LEVEL` environment variable.<br/>Default: `"info"`<br/>Enum: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`<br/>||
+|[**access\_log**](#logaccess_log)|`object`, `null`||yes|
+|**service**|||yes|
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-filter: null
-format: json
-level: info
+access_log: null
+service:
+  format: json
+  kind: StdoutExporterConfig
+  level: info
+  log_internals: false
 
 ```
 
+<a name="logaccess_log"></a>
+### log\.access\_log: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**exporters**](#logaccess_logexporters)|`array`||yes|
+
+**Additional Properties:** not allowed  
+<a name="logaccess_logexporters"></a>
+#### log\.access\_log\.exporters\[\]: array
+
+**Items**
+
+   
+**Option 1 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**attributes**](#option1attributes)|`object`||yes|
+|**kind**|`string`|Constant Value: `"File"`<br/>|yes|
+|**path**|`string`||yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+attributes: {}
+
+```
+
+
+<a name="option1attributes"></a>
+## Option 1: attributes: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**duration\_ms**|`boolean`||yes|
+|**request\_id**|`boolean`||yes|
+|**status\_code**|`boolean`||yes|
+|**timestamp**|`boolean`||yes|
+
+**Additional Properties:** not allowed  
 <a name="override_labels"></a>
 ## override\_labels: object
 

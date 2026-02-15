@@ -3,35 +3,7 @@ use std::str::FromStr;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
-#[serde(deny_unknown_fields)]
-pub struct LoggingConfig {
-    /// The level of logging to use.
-    ///
-    /// Can also be set via the `LOG_LEVEL` environment variable.
-    #[serde(default)]
-    pub level: LogLevel,
-
-    /// The format of the log messages.
-    ///
-    /// Can also be set via the `LOG_FORMAT` environment variable.
-    #[serde(default)]
-    pub format: LogFormat,
-
-    /// The filter to apply to log messages.
-    ///
-    /// Can also be set via the `LOG_FILTER` environment variable.
-    #[serde(default)]
-    pub filter: Option<String>,
-}
-
-impl LoggingConfig {
-    pub fn env_filter_str(&self) -> &str {
-        self.filter.as_deref().unwrap_or(self.level.as_str())
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Trace,
@@ -68,6 +40,10 @@ impl Default for LogLevel {
     }
 }
 
+pub fn default_log_internals() -> bool {
+    false
+}
+
 impl LogLevel {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -80,12 +56,10 @@ impl LogLevel {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub enum LogFormat {
-    #[serde(rename = "pretty-tree")]
-    PrettyTree,
-    #[serde(rename = "pretty-compact")]
-    PrettyCompact,
+    #[serde(rename = "text")]
+    Text,
     #[serde(rename = "json")]
     Json,
 }
@@ -93,8 +67,7 @@ pub enum LogFormat {
 impl LogFormat {
     pub fn as_str(&self) -> &'static str {
         match self {
-            LogFormat::PrettyTree => "pretty-tree",
-            LogFormat::PrettyCompact => "pretty-compact",
+            LogFormat::Text => "text",
             LogFormat::Json => "json",
         }
     }
@@ -105,8 +78,7 @@ impl FromStr for LogFormat {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "pretty-tree" => Ok(LogFormat::PrettyTree),
-            "pretty-compact" => Ok(LogFormat::PrettyCompact),
+            "text" => Ok(LogFormat::Text),
             "json" => Ok(LogFormat::Json),
             _ => Err(format!("Invalid log format: {}", s)),
         }
@@ -116,7 +88,7 @@ impl FromStr for LogFormat {
 impl Default for LogFormat {
     #[cfg(debug_assertions)]
     fn default() -> Self {
-        LogFormat::PrettyCompact
+        LogFormat::Text
     }
 
     #[cfg(not(debug_assertions))]
