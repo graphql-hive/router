@@ -14,6 +14,7 @@ use hive_router::{
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use hive_router_internal::background_tasks::BackgroundTasksManager;
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use ntex::{
     http::Request,
     web::{
@@ -23,22 +24,21 @@ use ntex::{
     },
     Pipeline, Service,
 };
-use serde::Serialize;
 use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState};
 use tracing::{info, warn};
 
 pub mod otel;
 
-#[derive(Serialize)]
-struct TestGraphQLRequest<'a> {
-    query: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    variables: Option<sonic_rs::Value>,
-}
-
-pub fn init_graphql_request(query: &str, variables: Option<sonic_rs::Value>) -> TestRequest {
-    let body = TestGraphQLRequest { query, variables };
-
+pub fn init_graphql_request(
+    query: &str,
+    variables: Option<HashMap<String, sonic_rs::Value>>,
+) -> TestRequest {
+    let body = GraphQLParams {
+        query: Some(query.to_string()),
+        operation_name: None,
+        variables: variables.unwrap_or_default(),
+        extensions: None,
+    };
     test::TestRequest::post().uri("/graphql").set_json(&body)
 }
 

@@ -3,6 +3,7 @@ use core::fmt;
 use std::collections::HashMap;
 
 use ntex::util::Bytes;
+use serde::Serialize;
 use serde::{de, Deserialize, Deserializer};
 use sonic_rs::Value;
 
@@ -14,10 +15,13 @@ use crate::plugin_trait::StartHookPayload;
 use crate::plugin_trait::StartHookResult;
 use ntex::http::Response;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct GraphQLParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
+    #[serde(rename = "operationName", skip_serializing_if = "Option::is_none")]
     pub operation_name: Option<String>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub variables: HashMap<String, Value>,
     // TODO: We don't use extensions yet, but we definitely will in the future.
     #[allow(dead_code)]
