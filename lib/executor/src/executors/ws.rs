@@ -165,7 +165,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     ) -> BoxStream<'static, SubgraphResponse<'static>> {
         // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
         // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let permit = self.semaphore.acquire().await.unwrap();
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SubgraphResponse<'static>>();
 
@@ -199,6 +199,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // and sends responses through the channel. The returned future would only resolve
         // when the subscription completes, but we want to return the stream immediately
         drop(self.arbiter.spawn_with(move || async move {
+            let _permit = permit;
             let init_payload = if headers.is_empty() {
                 None
             } else {
