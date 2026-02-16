@@ -15,7 +15,7 @@ use crate::plugin_trait::StartHookPayload;
 use crate::plugin_trait::StartHookResult;
 use ntex::http::Response;
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct GraphQLParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
@@ -23,8 +23,7 @@ pub struct GraphQLParams {
     pub operation_name: Option<String>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub variables: HashMap<String, Value>,
-    // TODO: We don't use extensions yet, but we definitely will in the future.
-    #[allow(dead_code)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<HashMap<String, Value>>,
 }
 
@@ -135,3 +134,14 @@ impl<'exec> EndHookPayload<Response> for OnGraphQLParamsEndHookPayload<'exec> {}
 
 pub type OnGraphQLParamsEndHookResult<'exec> =
     EndHookResult<OnGraphQLParamsEndHookPayload<'exec>, Response>;
+
+#[cfg(test)]
+use ntex::web::test;
+
+#[cfg(test)]
+impl Into<test::TestRequest> for GraphQLParams {
+    fn into(self) -> test::TestRequest {
+        let body = self;
+        test::TestRequest::post().uri("/graphql").set_json(&body)
+    }
+}
