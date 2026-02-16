@@ -17,7 +17,7 @@
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
-|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"enabled":false,"websocket":null}`<br/>||
+|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
 |[**usage\_reporting**](#usage_reporting)|`object`|Configuration for usage reporting to GraphQL Hive.<br/>Default: `{"accept_invalid_certs":false,"access_token":null,"buffer_size":1000,"client_name_header":"graphql-client-name","client_version_header":"graphql-client-version","connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%","target_id":null}`<br/>||
@@ -120,7 +120,6 @@ query_planner:
   timeout: 10s
 subscriptions:
   enabled: false
-  websocket: null
 supergraph: {}
 traffic_shaping:
   all:
@@ -1839,7 +1838,6 @@ Configuration for subscriptions.
 
 ```yaml
 enabled: false
-websocket: null
 
 ```
 
@@ -1857,13 +1855,6 @@ Configuration for subgraphs using WebSocket protocol.
 |[**subgraphs**](#subscriptionswebsocketsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
 
 **Additional Properties:** not allowed  
-**Example**
-
-```yaml
-{}
-
-```
-
 <a name="subscriptionswebsocketall"></a>
 #### subscriptions\.websocket\.all: object,null
 
