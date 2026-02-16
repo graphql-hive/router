@@ -11,7 +11,7 @@ pub struct SubscriptionsConfig {
     #[serde(default)]
     pub enabled: bool,
     /// Configuration for subgraphs using WebSocket protocol.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub websocket: Option<WebSocketConfig>,
 }
 
