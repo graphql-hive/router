@@ -113,9 +113,10 @@ async fn ws_service(
         CloseCode::ConnectionInitTimeout,
     ));
 
+    let state_for_service = state.clone();
     let service = fn_service(move |frame| {
         let sink = sink.clone();
-        let state = state.clone();
+        let state = state_for_service.clone();
         let schema_state = schema_state.clone();
         let shared_state = shared_state.clone();
         async move {
@@ -125,10 +126,7 @@ async fn ws_service(
                 }
                 Err(FrameNotParsedToText::Message(msg)) => Ok(Some(msg)),
                 Err(FrameNotParsedToText::Closed) => {
-                    // clearing the map will drop all the senders, which will
-                    // in turn cancel all active subscription streams and perform
-                    // the cleanup in there
-                    state.borrow_mut().subscriptions.clear();
+                    // we dont need to emit anything here because the conneciton is already closed
                     Ok(None)
                 }
                 Err(FrameNotParsedToText::None) => Ok(None),
@@ -139,6 +137,13 @@ async fn ws_service(
     let on_shutdown = fn_shutdown(async move || {
         // stop heartbeat and handshake timeout tasks on shutdown
         let _ = heartbeat_tx.send(());
+        if let Some(tx) = state.borrow_mut().acknowledged_tx.take() {
+            let _ = tx.send(());
+        }
+        // clearing the map will drop all the senders, which will
+        // in turn cancel all active subscription streams and perform
+        // the cleanup in there
+        state.borrow_mut().subscriptions.clear();
     });
 
     Ok(chain(service).and_then(on_shutdown))
