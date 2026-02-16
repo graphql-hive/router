@@ -433,7 +433,6 @@ impl SubgraphExecutorMap {
                     subgraph_name.to_string(),
                     // we use the new constructed ws_endpoint_uri here
                     ws_endpoint_uri,
-                    semaphore,
                 )
                 .to_boxed_arc();
 

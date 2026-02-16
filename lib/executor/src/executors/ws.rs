@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -7,7 +6,6 @@ use futures::stream::BoxStream;
 use futures_util::StreamExt;
 use ntex::rt::Arbiter;
 use sonic_rs::Value;
-use tokio::sync::Semaphore;
 use tracing::debug;
 
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
@@ -19,11 +17,10 @@ pub struct WsSubgraphExecutor {
     arbiter: Arbiter,
     subgraph_name: String,
     endpoint: http::Uri,
-    semaphore: Arc<Semaphore>,
 }
 
 impl WsSubgraphExecutor {
-    pub fn new(subgraph_name: String, endpoint: http::Uri, semaphore: Arc<Semaphore>) -> Self {
+    pub fn new(subgraph_name: String, endpoint: http::Uri) -> Self {
         Self {
             // each executors its own arbiter because the WsClient is not sync+send compatible,
             // so we instead spawn a dedicated arbiter (maps to one OS thread) to run all websocket
@@ -31,7 +28,6 @@ impl WsSubgraphExecutor {
             arbiter: Arbiter::new(),
             subgraph_name,
             endpoint,
-            semaphore,
         }
     }
 }
@@ -58,10 +54,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
     ) -> SubgraphResponse<'a> {
-        // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
-        // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
-        let _permit = self.semaphore.acquire().await.unwrap();
-
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
 
@@ -163,10 +155,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
     ) -> BoxStream<'static, SubgraphResponse<'static>> {
-        // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
-        // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
-        let _permit = self.semaphore.acquire().await.unwrap();
-
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SubgraphResponse<'static>>();
 
         let endpoint = self.endpoint.clone();
