@@ -101,7 +101,6 @@ impl RouterPlugin for IncomingRequestDeduplicationPlugin {
 
         if self.in_flight_requests.contains_key(&fingerprint) {
             let receiver = self.receiver.clone();
-            // Clonne
             receiver.subscribe(fingerprint);
             let (response_key, shared_response) = receiver.recv().await.unwrap();
             if fingerprint == response_key {
@@ -110,9 +109,9 @@ impl RouterPlugin for IncomingRequestDeduplicationPlugin {
                 let mut response = web::HttpResponse::Ok();
                 response.status(shared_response.status);
                 for (header_name, header_value) in shared_response.headers.iter() {
-                    response.set_header(header_name.clone(), header_value.clone());
+                    response.set_header(header_name, header_value);
                 }
-                let response = response.body(shared_response.body.clone());
+                let response = response.body(shared_response.body);
                 receiver.unsubscribe(&fingerprint);
                 receiver
                     .close()
