@@ -14,9 +14,9 @@ use hive_router_query_planner::utils::cancellation::CancellationToken;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
-use ntex::rt;
-use ntex::service::{fn_factory_with_config, fn_service, Service};
+use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
+use ntex::{chain, rt};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -82,14 +82,6 @@ async fn ws_service(
     shared_state: Arc<RouterSharedState>,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
-    // stop lingering keep-alive timer from the H1 dispatcher that upgraded
-    // this connection. basically, the H1 dispatcher timer is set on the same IO object
-    // and will fire into the WS dispatcher, causing it to terminate with a http keep-alive
-    // error (close code 1006).
-    //
-    // TODO: fix in ntex instead
-    sink.io().stop_timer();
-
     if !has_accepted_subprotocol {
         debug!("WebSocket connection rejecting due to unacceptable subprotocol");
         let _ = sink.send(CloseCode::SubprotocolNotAcceptable.into()).await;
@@ -113,14 +105,12 @@ async fn ws_service(
         CloseCode::ConnectionInitTimeout,
     ));
 
-    let heartbeat_tx = Rc::new(RefCell::new(Some(heartbeat_tx)));
     let state_for_service = state.clone();
     let service = fn_service(move |frame| {
         let sink = sink.clone();
         let state = state_for_service.clone();
         let schema_state = schema_state.clone();
         let shared_state = shared_state.clone();
-        let heartbeat_tx = heartbeat_tx.clone();
         async move {
             match parse_frame_to_text(frame, &state) {
                 Ok(text) => {
@@ -128,19 +118,6 @@ async fn ws_service(
                 }
                 Err(FrameNotParsedToText::Message(msg)) => Ok(Some(msg)),
                 Err(FrameNotParsedToText::Closed) => {
-                    // TODO: move this to on_shutdown after https://github.com/ntex-rs/ntex/pull/765
-
-                    // stop heartbeat and handshake timeout tasks on shutdown
-                    if let Some(tx) = heartbeat_tx.borrow_mut().take() {
-                        let _ = tx.send(());
-                    }
-                    if let Some(tx) = state.borrow_mut().acknowledged_tx.take() {
-                        let _ = tx.send(());
-                    }
-                    // clearing the map will drop all the senders, which will
-                    // in turn cancel all active subscription streams and perform
-                    // the cleanup in there
-                    state.borrow_mut().subscriptions.clear();
                     // we dont need to emit anything here because the conneciton is already closed
                     Ok(None)
                 }
@@ -149,7 +126,19 @@ async fn ws_service(
         }
     });
 
-    Ok(service)
+    let on_shutdown = fn_shutdown(async move || {
+        // stop heartbeat and handshake timeout tasks on shutdown
+        let _ = heartbeat_tx.send(());
+        if let Some(tx) = state.borrow_mut().acknowledged_tx.take() {
+            let _ = tx.send(());
+        }
+        // clearing the map will drop all the senders, which will
+        // in turn cancel all active subscription streams and perform
+        // the cleanup in there
+        state.borrow_mut().subscriptions.clear();
+    });
+
+    Ok(chain(service).and_then(on_shutdown))
 }
 
 /// Ensure a subscription is removed from active subscriptions when dropped (server-side).
