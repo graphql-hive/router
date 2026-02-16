@@ -24,6 +24,7 @@ http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client"] }
 serde = { workspace = true }
 sonic-rs = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 xxhash-rust = { workspace = true }
@@ -36,6 +37,7 @@ ahash = { workspace = true }
 strum = { workspace = true }
 ntex = { workspace = true }
 hyper-rustls = { workspace = true}
+rustls = { workspace = true }
 
 hyper-util = { version = "0.1.16", features = [
   "client",

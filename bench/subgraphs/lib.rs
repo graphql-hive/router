@@ -4,7 +4,7 @@ pub mod inventory;
 pub mod products;
 pub mod reviews;
 
-use async_graphql_axum::GraphQL;
+use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use axum::{
     body::{to_bytes, Body, Bytes},
     extract::{Request, State},
@@ -197,6 +197,10 @@ pub fn start_subgraphs_server(
         .route(
             "/products",
             post_service(GraphQL::new(products::get_subgraph())),
+        )
+        .route_service(
+            "/reviews/ws",
+            GraphQLSubscription::new(reviews::get_subgraph()),
         )
         .route(
             "/reviews",
