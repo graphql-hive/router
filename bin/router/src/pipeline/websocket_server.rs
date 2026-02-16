@@ -14,9 +14,9 @@ use hive_router_query_planner::utils::cancellation::CancellationToken;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
+use ntex::rt;
 use ntex::service::{fn_factory_with_config, fn_service, Service};
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
-use ntex::{chain, rt};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -113,12 +113,14 @@ async fn ws_service(
         CloseCode::ConnectionInitTimeout,
     ));
 
+    let heartbeat_tx = Rc::new(RefCell::new(Some(heartbeat_tx)));
     let state_for_service = state.clone();
     let service = fn_service(move |frame| {
         let sink = sink.clone();
         let state = state_for_service.clone();
         let schema_state = schema_state.clone();
         let shared_state = shared_state.clone();
+        let heartbeat_tx = heartbeat_tx.clone();
         async move {
             match parse_frame_to_text(frame, &state) {
                 Ok(text) => {
@@ -127,7 +129,9 @@ async fn ws_service(
                 Err(FrameNotParsedToText::Message(msg)) => Ok(Some(msg)),
                 Err(FrameNotParsedToText::Closed) => {
                     // stop heartbeat and handshake timeout tasks on shutdown
-                    let _ = heartbeat_tx.send(());
+                    if let Some(tx) = heartbeat_tx.borrow_mut().take() {
+                        let _ = tx.send(());
+                    }
                     if let Some(tx) = state.borrow_mut().acknowledged_tx.take() {
                         let _ = tx.send(());
                     }
