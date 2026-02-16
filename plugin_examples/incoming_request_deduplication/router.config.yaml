@@ -9,3 +9,5 @@ override_subgraph_urls:
 plugins:
   incoming_request_deduplication:
     enabled: true
+    config:
+      deduplicate_headers: [authorization]
