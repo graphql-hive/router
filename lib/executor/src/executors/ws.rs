@@ -45,7 +45,7 @@ impl Drop for WsSubgraphExecutor {
 
 fn log_error(error: &SubgraphExecutorError) {
     tracing::error!(
-        error = error as &dyn std::error::Error,
+        error = %error,
         "Subgraph executor error"
     );
 }
