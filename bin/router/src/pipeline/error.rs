@@ -5,6 +5,8 @@ use hive_router_internal::graphql::ObservedError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
     headers::errors::HeaderRuleRuntimeError,
+    hooks::on_error::handle_errors_with_plugins,
+    plugin_trait::RouterPluginBoxed,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
@@ -201,7 +203,11 @@ impl PipelineError {
         }
     }
 
-    pub fn into_response(self, response_mode: Option<ResponseMode>) -> web::HttpResponse {
+    pub fn into_response(
+        self,
+        response_mode: Option<ResponseMode>,
+        plugins: &Option<Arc<Vec<RouterPluginBoxed>>>,
+    ) -> web::HttpResponse {
         let response_mode = response_mode.unwrap_or_default();
         let prefer_ok = matches!(
             response_mode,
@@ -209,46 +215,40 @@ impl PipelineError {
                 | ResponseMode::Dual(SingleContentType::JSON, _)
         );
 
-        let status = self.default_status_code(prefer_ok);
+        let mut status_code = self.default_status_code(prefer_ok);
+        let mut errors = match self {
+            PipelineError::ValidationErrors(errors) => {
+                errors.iter().map(|error| error.into()).collect()
+            }
+            PipelineError::AuthorizationFailed(errors) => {
+                errors.into_iter().map(|error| error.into()).collect()
+            }
+            error => {
+                let code = error.graphql_error_code();
+                let message = error.graphql_error_message();
 
-        if let PipelineError::ValidationErrors(validation_errors) = self {
-            let validation_error_result = FailedExecutionResult {
-                errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-            };
-
-            return ResponseBuilder::new(status).json(&validation_error_result);
-        }
-
-        if let PipelineError::AuthorizationFailed(authorization_errors) = self {
-            let authorization_error_result = FailedExecutionResult {
-                errors: Some(
-                    authorization_errors
-                        .into_iter()
-                        .map(|error| error.into())
-                        .collect(),
-                ),
-            };
-
-            return ResponseBuilder::new(status).json(&authorization_error_result);
-        }
-
-        let code = self.graphql_error_code();
-        let message = self.graphql_error_message();
-
-        let graphql_error = GraphQLError::from_message_and_code(message, code);
-
-        let result = FailedExecutionResult {
-            errors: Some(vec![graphql_error]),
+                vec![GraphQLError::from_message_and_code(message, code)]
+            }
         };
 
-        ResponseBuilder::new(status).json(&result)
+        if let Some(plugins) = plugins {
+            let (new_errors, new_status_code) =
+                handle_errors_with_plugins(plugins, errors, status_code);
+            errors = new_errors;
+            status_code = new_status_code;
+        }
+
+        let mut builder = ResponseBuilder::new(status_code);
+
+        let result = FailedExecutionResult { errors };
+
+        builder.json(&result)
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FailedExecutionResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub errors: Option<Vec<GraphQLError>>,
+    pub errors: Vec<GraphQLError>,
 }
 
 impl From<&PipelineError> for ObservedError {

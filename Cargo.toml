@@ -28,6 +28,7 @@ members = [
   "plugin_examples/feature_flags",
   "plugin_examples/non_standard_request",
   "plugin_examples/incoming_request_deduplication",
+  "plugin_examples/error_mapping"
 ]
 resolver = "2"
 default-members = ["bin/router"]

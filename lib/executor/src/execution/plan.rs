@@ -30,7 +30,10 @@ use crate::{
         request::modify_subgraph_request_headers,
         response::apply_subgraph_response_headers,
     },
-    hooks::on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
+    hooks::{
+        on_error::handle_errors_with_plugins,
+        on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
+    },
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
@@ -188,6 +191,18 @@ pub async fn execute_query_plan<'exec>(
         response_size_estimate = end_payload.response_size_estimate;
     }
 
+    let mut status_code = StatusCode::OK;
+
+    if !errors.is_empty() {
+        if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
+            let (new_errors, new_status_code) =
+                handle_errors_with_plugins(plugin_req_state.plugins.as_ref(), errors, status_code);
+
+            errors = new_errors;
+            status_code = new_status_code;
+        }
+    }
+
     let body = project_by_operation(
         &data,
         errors,
@@ -207,7 +222,7 @@ pub async fn execute_query_plan<'exec>(
         body,
         response_headers_aggregator: exec_ctx.response_headers_aggregator.none_if_empty(),
         error_count,
-        status_code: StatusCode::OK,
+        status_code,
     })
 }
 

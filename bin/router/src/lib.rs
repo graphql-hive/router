@@ -89,7 +89,7 @@ async fn graphql_endpoint_handler(
         // properly outside the request handler.
         let response_mode = match request.negotiate() {
             Ok(response_mode) => response_mode,
-            Err(err) => return err.into_response(None),
+            Err(err) => return err.into_response(None, &app_state.plugins),
         };
 
         if response_mode == ResponseMode::GraphiQL {
@@ -131,7 +131,7 @@ async fn graphql_endpoint_handler(
                     let err = PipelineError::TimeoutError;
                     return {
                         tracing::error!("{}", err);
-                        err.into_response(Some(response_mode))
+                        err.into_response(Some(response_mode), &app_state.plugins)
                     };
                 }
                 // If the request handler future completes first, return its response.
@@ -140,7 +140,7 @@ async fn graphql_endpoint_handler(
                 Either::Right(Err(err)) => {
                     return {
                         tracing::error!("{}", err);
-                        err.into_response(Some(response_mode))
+                        err.into_response(Some(response_mode), &app_state.plugins)
                     }
                 }
             };

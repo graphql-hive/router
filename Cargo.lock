@@ -1779,6 +1779,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "error-mapping-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
+]
+
+[[package]]
 name = "event-listener"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

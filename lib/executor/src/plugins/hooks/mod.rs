@@ -1,3 +1,4 @@
+pub mod on_error;
 pub mod on_execute;
 pub mod on_graphql_params;
 pub mod on_graphql_parse;
