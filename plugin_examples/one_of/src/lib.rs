@@ -218,7 +218,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for OneOfValidation {
 mod tests {
     use std::collections::HashMap;
 
-    use hive_router::sonic_rs::{JsonContainerTrait, JsonValueTrait, Value, from_slice, json};
+    use hive_router::sonic_rs::{from_slice, json, JsonContainerTrait, JsonValueTrait, Value};
     use hive_router::{ntex, PluginRegistry};
 
     use e2e::testkit::{init_router_from_config_file_with_plugins, wait_for_readiness};
@@ -292,14 +292,13 @@ mod tests {
                 }
             }
             "#,
-            Some(
-                HashMap::from_iter(vec![
-                    ("input".to_string(), json!({
-                        "string": "test",
-                        "int": 42
-                    }))
-                ])
-            ),
+            Some(HashMap::from_iter(vec![(
+                "input".to_string(),
+                json!({
+                    "string": "test",
+                    "int": 42
+                }),
+            )])),
         );
 
         let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
