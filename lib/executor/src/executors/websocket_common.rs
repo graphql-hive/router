@@ -6,7 +6,7 @@ use ntex::{
     util::Bytes,
     ws::{self, WsSink},
 };
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use super::graphql_transport_ws::{CloseCode, ConnectionInitPayload};
 
@@ -93,7 +93,13 @@ pub async fn heartbeat<T>(
             Either::Left(_) => {
                 if Instant::now().duration_since(state.borrow().last_heartbeat) > HEARTBEAT_TIMEOUT
                 {
-                    debug!("WebSocket heartbeat timeout");
+                    debug!("WebSocket heartbeat timeout, closing connection");
+                    let _ = sink.send(ws::Message::Close(Some(
+                        // client is violating the WebSocket protocol by not responding
+                        // to the PING frames with PONG frames as required by the spec,
+                        // so we use the "Protocol Error" to close the connection
+                        ws::CloseCode::Protocol.into(),
+                    )));
                     return;
                 }
                 if sink
@@ -101,6 +107,7 @@ pub async fn heartbeat<T>(
                     .await
                     .is_err()
                 {
+                    warn!("Failed to send WebSocket heartbeat ping, stopping heartbeat task");
                     return;
                 }
             }
