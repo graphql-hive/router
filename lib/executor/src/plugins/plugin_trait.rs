@@ -1,7 +1,7 @@
 use crate::{
     hooks::{
-        on_error::{OnErrorHookPayload, OnErrorHookResult},
         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
+        on_graphql_error::{OnGraphQLErrorHookPayload, OnGraphQLErrorHookResult},
         on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
         on_graphql_parse::{OnGraphQLParseHookResult, OnGraphQLParseStartHookPayload},
         on_graphql_validation::{
@@ -222,7 +222,7 @@ pub trait RouterPlugin: Send + Sync + 'static {
         start_payload.proceed()
     }
     #[inline]
-    fn on_error(&self, payload: OnErrorHookPayload) -> OnErrorHookResult {
+    fn on_graphql_error(&self, payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
         payload.proceed()
     }
     #[inline]
@@ -267,7 +267,7 @@ pub trait DynRouterPlugin: Send + Sync + 'static {
         &'exec self,
         start_payload: OnSupergraphLoadStartHookPayload,
     ) -> OnSupergraphLoadStartHookResult<'exec>;
-    fn on_error(&self, payload: OnErrorHookPayload) -> OnErrorHookResult;
+    fn on_graphql_error(&self, payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult;
     async fn on_shutdown<'exec>(&'exec self);
 }
 
@@ -340,8 +340,8 @@ where
         RouterPlugin::on_supergraph_reload(self, start_payload)
     }
     #[inline]
-    fn on_error(&self, payload: OnErrorHookPayload) -> OnErrorHookResult {
-        RouterPlugin::on_error(self, payload)
+    fn on_graphql_error(&self, payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
+        RouterPlugin::on_graphql_error(self, payload)
     }
     #[inline]
     async fn on_shutdown<'exec>(&'exec self) {

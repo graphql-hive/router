@@ -31,8 +31,8 @@ use crate::{
         response::apply_subgraph_response_headers,
     },
     hooks::{
-        on_error::handle_errors_with_plugins,
         on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
+        on_graphql_error::handle_graphql_errors_with_plugins,
     },
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
@@ -195,8 +195,11 @@ pub async fn execute_query_plan<'exec>(
 
     if !errors.is_empty() {
         if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
-            let (new_errors, new_status_code) =
-                handle_errors_with_plugins(plugin_req_state.plugins.as_ref(), errors, status_code);
+            let (new_errors, new_status_code) = handle_graphql_errors_with_plugins(
+                plugin_req_state.plugins.as_ref(),
+                errors,
+                status_code,
+            );
 
             errors = new_errors;
             status_code = new_status_code;

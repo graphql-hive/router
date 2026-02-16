@@ -6,7 +6,7 @@ use hive_router::{
     ntex::util::HashMap,
     plugins::{
         hooks::{
-            on_error::{OnErrorHookPayload, OnErrorHookResult},
+            on_graphql_error::{OnGraphQLErrorHookPayload, OnGraphQLErrorHookResult},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
         },
         plugin_trait::RouterPlugin,
@@ -35,7 +35,7 @@ impl RouterPlugin for ErrorMappingPlugin {
         let config = payload.config()?;
         payload.initialize_plugin(Self { config })
     }
-    fn on_error(&self, mut payload: OnErrorHookPayload) -> OnErrorHookResult {
+    fn on_graphql_error(&self, mut payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
         if let Some(code) = &payload.error.extensions.code {
             if let Some(mapping) = self.config.get(code) {
                 if let Some(status_code) = mapping.status_code {

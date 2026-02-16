@@ -2,30 +2,30 @@ use http::StatusCode;
 
 use crate::{plugin_trait::RouterPluginBoxed, response::graphql_error::GraphQLError};
 
-pub type OnErrorHookResult = OnErrorHookPayload;
+pub type OnGraphQLErrorHookResult = OnGraphQLErrorHookPayload;
 
-pub struct OnErrorHookPayload {
+pub struct OnGraphQLErrorHookPayload {
     pub error: GraphQLError,
     pub status_code: StatusCode,
 }
 
-impl OnErrorHookPayload {
-    pub fn proceed(self) -> OnErrorHookResult {
+impl OnGraphQLErrorHookPayload {
+    pub fn proceed(self) -> OnGraphQLErrorHookResult {
         self
     }
 }
 
-pub fn handle_errors_with_plugins(
+pub fn handle_graphql_errors_with_plugins(
     plugins: &[RouterPluginBoxed],
     errors: Vec<GraphQLError>,
     mut status_code: StatusCode,
 ) -> (Vec<GraphQLError>, StatusCode) {
     let mut new_errors = Vec::with_capacity(errors.len());
     for error in errors {
-        let mut payload = OnErrorHookPayload { error, status_code };
+        let mut payload = OnGraphQLErrorHookPayload { error, status_code };
 
         for plugin in plugins {
-            payload = plugin.on_error(payload);
+            payload = plugin.on_graphql_error(payload);
         }
 
         new_errors.push(payload.error);

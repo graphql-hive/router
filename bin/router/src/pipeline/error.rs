@@ -5,7 +5,7 @@ use hive_router_internal::graphql::ObservedError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
     headers::errors::HeaderRuleRuntimeError,
-    hooks::on_error::handle_errors_with_plugins,
+    hooks::on_graphql_error::handle_graphql_errors_with_plugins,
     plugin_trait::RouterPluginBoxed,
     response::graphql_error::GraphQLError,
 };
@@ -233,7 +233,7 @@ impl PipelineError {
 
         if let Some(plugins) = plugins {
             let (new_errors, new_status_code) =
-                handle_errors_with_plugins(plugins, errors, status_code);
+                handle_graphql_errors_with_plugins(plugins, errors, status_code);
             errors = new_errors;
             status_code = new_status_code;
         }
