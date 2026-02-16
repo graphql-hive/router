@@ -14,7 +14,7 @@ use hive_router_query_planner::utils::cancellation::CancellationToken;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
-use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
+use ntex::service::{fn_factory_with_config, fn_service, Service};
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
@@ -126,6 +126,15 @@ async fn ws_service(
                 }
                 Err(FrameNotParsedToText::Message(msg)) => Ok(Some(msg)),
                 Err(FrameNotParsedToText::Closed) => {
+                    // stop heartbeat and handshake timeout tasks on shutdown
+                    let _ = heartbeat_tx.send(());
+                    if let Some(tx) = state.borrow_mut().acknowledged_tx.take() {
+                        let _ = tx.send(());
+                    }
+                    // clearing the map will drop all the senders, which will
+                    // in turn cancel all active subscription streams and perform
+                    // the cleanup in there
+                    state.borrow_mut().subscriptions.clear();
                     // we dont need to emit anything here because the conneciton is already closed
                     Ok(None)
                 }
@@ -134,19 +143,7 @@ async fn ws_service(
         }
     });
 
-    let on_shutdown = fn_shutdown(async move || {
-        // stop heartbeat and handshake timeout tasks on shutdown
-        let _ = heartbeat_tx.send(());
-        if let Some(tx) = state.borrow_mut().acknowledged_tx.take() {
-            let _ = tx.send(());
-        }
-        // clearing the map will drop all the senders, which will
-        // in turn cancel all active subscription streams and perform
-        // the cleanup in there
-        state.borrow_mut().subscriptions.clear();
-    });
-
-    Ok(chain(service).and_then(on_shutdown))
+    Ok(service)
 }
 
 /// Ensure a subscription is removed from active subscriptions when dropped (server-side).
