@@ -1,5 +1,6 @@
 use bytes::Bytes;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use hyper_rustls::ConfigBuilderExt;
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use futures::{stream::LocalBoxStream, StreamExt};
 use ntex::{
@@ -36,8 +37,8 @@ pub enum WsConnectError {
     Client(#[from] ws::error::WsClientError),
     #[error("WebSocket client builder error: {0}")]
     BuilderError(String),
-    #[error("TLS error: {0}")]
-    Tls(#[from] openssl::error::ErrorStack),
+    #[error("Failed to load native TLS certificates: {0}")]
+    NativeTlsCertificatesError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -91,18 +92,17 @@ pub async fn connect(uri: &http::Uri) -> Result<WsConnection<ntex::io::Sealed>, 
         .scheme_str()
         .ok_or_else(|| WsConnectError::MissingUriSchema(uri.to_string()))?;
     if scheme == "wss" {
-        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_verify(SslVerifyMode::PEER);
-        let _ = builder
-            .set_alpn_protos(b"\x08http/1.1")
-            .map_err(|e| tracing::error!("Cannot set alpn protocol: {e:?}"));
+        let tls_config = Arc::new(
+            rustls::ClientConfig::builder()
+                .with_native_roots()
+                .map_err(|e| WsConnectError::NativeTlsCertificatesError(e.to_string()))?
+                .with_no_client_auth(),
+        );
 
         let ws_client = NtexWsClient::builder(uri)
             .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
-            .openssl(builder.build())
+            .rustls(tls_config)
             .take()
             .build(SharedCfg::default())
             .await
