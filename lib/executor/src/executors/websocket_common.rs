@@ -94,12 +94,14 @@ pub async fn heartbeat<T>(
                 if Instant::now().duration_since(state.borrow().last_heartbeat) > HEARTBEAT_TIMEOUT
                 {
                     debug!("WebSocket heartbeat timeout, closing connection");
-                    let _ = sink.send(ws::Message::Close(Some(
-                        // client is violating the WebSocket protocol by not responding
-                        // to the PING frames with PONG frames as required by the spec,
-                        // so we use the "Protocol Error" to close the connection
-                        ws::CloseCode::Protocol.into(),
-                    )));
+                    let _ = sink
+                        .send(ws::Message::Close(Some(
+                            // client is violating the WebSocket protocol by not responding
+                            // to the PING frames with PONG frames as required by the spec,
+                            // so we use the "Protocol Error" to close the connection
+                            ws::CloseCode::Protocol.into(),
+                        )))
+                        .await;
                     return;
                 }
                 if sink
