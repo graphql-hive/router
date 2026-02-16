@@ -128,6 +128,8 @@ async fn ws_service(
                 }
                 Err(FrameNotParsedToText::Message(msg)) => Ok(Some(msg)),
                 Err(FrameNotParsedToText::Closed) => {
+                    // TODO: move this to on_shutdown after https://github.com/ntex-rs/ntex/pull/765
+
                     // stop heartbeat and handshake timeout tasks on shutdown
                     if let Some(tx) = heartbeat_tx.borrow_mut().take() {
                         let _ = tx.send(());
