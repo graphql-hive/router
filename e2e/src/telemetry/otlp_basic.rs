@@ -76,7 +76,7 @@ async fn test_otlp_http_export_with_graphql_request() {
       Status: message='' code='1'
       Attributes:
         hive.kind: http.server
-        http.request.body.size: 45
+        http.request.body.size: 28
         http.request.method: POST
         http.response.body.size: 86
         http.response.status_code: 200
@@ -318,7 +318,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
       Status: message='' code='1'
       Attributes:
         hive.kind: http.server
-        http.request.body.size: 45
+        http.request.body.size: 28
         http.request.method: POST
         http.response.body.size: 86
         http.response.status_code: 200
