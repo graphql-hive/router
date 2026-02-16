@@ -39,10 +39,7 @@ struct TestGraphQLRequest<'a> {
 pub fn init_graphql_request(query: &str, variables: Option<sonic_rs::Value>) -> TestRequest {
     let body = TestGraphQLRequest { query, variables };
 
-    test::TestRequest::post()
-        .uri("/graphql")
-        .header("content-type", "application/json")
-        .set_payload(sonic_rs::to_vec(&body).unwrap())
+    test::TestRequest::post().uri("/graphql").set_json(&body)
 }
 
 pub async fn wait_for_readiness<S, E>(app: &Pipeline<S>)
