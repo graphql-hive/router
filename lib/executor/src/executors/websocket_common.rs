@@ -1,6 +1,5 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration, time::Instant};
 
-use futures::future::{select, Either};
 use ntex::{
     channel::oneshot,
     util::Bytes,
@@ -84,13 +83,8 @@ pub async fn heartbeat<T>(
     mut stop_rx: oneshot::Receiver<()>,
 ) {
     loop {
-        match select(
-            Box::pin(ntex::time::sleep(HEARTBEAT_INTERVAL)),
-            &mut stop_rx,
-        )
-        .await
-        {
-            Either::Left(_) => {
+        tokio::select! {
+            _ = ntex::time::sleep(HEARTBEAT_INTERVAL) => {
                 if Instant::now().duration_since(state.borrow().last_heartbeat) > HEARTBEAT_TIMEOUT
                 {
                     debug!("WebSocket heartbeat timeout, closing connection");
@@ -113,7 +107,7 @@ pub async fn heartbeat<T>(
                     return;
                 }
             }
-            Either::Right(_) => return,
+            _ = &mut stop_rx => return,
         }
     }
 }
@@ -126,8 +120,8 @@ pub async fn handshake_timeout<T>(
     mut stop_rx: oneshot::Receiver<()>,
     timeout_close_code: CloseCode,
 ) {
-    match select(Box::pin(ntex::time::sleep(HANDSHAKE_TIMEOUT)), &mut stop_rx).await {
-        Either::Left(_) => {
+    tokio::select! {
+        _ = ntex::time::sleep(HANDSHAKE_TIMEOUT) => {
             // handshake_received should always be here false, but double check
             // just to avoid any potential race conditions
             if !state.borrow().handshake_received {
@@ -135,7 +129,7 @@ pub async fn handshake_timeout<T>(
                 let _ = sink.send(timeout_close_code.into()).await;
             }
         }
-        Either::Right(_) => {
+        _ = &mut stop_rx => {
             // cancelled, handshake was completed
         }
     }
