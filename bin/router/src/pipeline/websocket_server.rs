@@ -101,7 +101,6 @@ async fn ws_service(
     }
 
     let (heartbeat_tx, heartbeat_rx) = oneshot::channel();
-    let (handshake_timeout_tx, _) = oneshot::channel();
     let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
 
     let state: WsStateRef = Rc::new(RefCell::new(WsState::new(acknowledged_tx)));
@@ -140,7 +139,6 @@ async fn ws_service(
     let on_shutdown = fn_shutdown(async move || {
         // stop heartbeat and handshake timeout tasks on shutdown
         let _ = heartbeat_tx.send(());
-        let _ = handshake_timeout_tx.send(());
     });
 
     Ok(chain(service).and_then(on_shutdown))
