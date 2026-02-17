@@ -27,7 +27,7 @@ use hive_router::{
         plugin_context::RouterHttpRequest,
         plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
     },
-    DashMap,
+    DashMap, GraphQLError,
 };
 use serde::Deserialize;
 use xxhash_rust::xxh3::Xxh3;
@@ -102,7 +102,24 @@ impl RouterPlugin for IncomingRequestDeduplicationPlugin {
         if self.in_flight_requests.contains_key(&fingerprint) {
             let receiver = self.receiver.clone();
             receiver.subscribe(fingerprint);
-            let (response_key, shared_response) = receiver.recv().await.unwrap();
+            let (response_key, shared_response) = match receiver.recv().await {
+                Ok(res) => res,
+                Err(err) => {
+                    println!(
+                        "Error receiving response for fingerprint {}: {:?}",
+                        fingerprint, err
+                    );
+                    // The leader request failed before it could publish a response.
+                    // End this request with an error instead of panicking.
+                    return payload.end_with_graphql_error(
+                        GraphQLError::from_message_and_code(
+                            "In-flight request failed, please try again.",
+                            "INFLIGHT_REQUEST_FAILED",
+                        ),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    );
+                }
+            };
             if fingerprint == response_key {
                 // Remove from in-flight requests to allow future identical requests to proceed
                 self.in_flight_requests.remove(&fingerprint);

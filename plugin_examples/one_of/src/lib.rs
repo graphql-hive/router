@@ -125,7 +125,7 @@ impl RouterPlugin for OneOfPlugin {
                                 ),
                                 "TOO_MANY_FIELDS_SET_IN_ONEOF",
                             ),
-                            http::StatusCode::PAYLOAD_TOO_LARGE
+                            http::StatusCode::BAD_REQUEST
                         );
                         }
                     }
@@ -159,7 +159,7 @@ struct OneOfValidationRule {
 
 impl ValidationRule for OneOfValidationRule {
     fn error_code<'a>(&self) -> &'a str {
-        "TOO_MANY_ROOT_FIELDS"
+        "TOO_MANY_FIELDS_SET_IN_ONEOF"
     }
     fn validate(
         &self,
