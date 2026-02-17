@@ -98,7 +98,7 @@ pub async fn validate_operation_with_cache(
                     let res = validate(
                         &validation_schema.document,
                         &validation_operation,
-                        &app_state.validation_plan,
+                        &validation_rules,
                     );
                     let arc_res = Arc::new(res);
 
