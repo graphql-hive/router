@@ -436,7 +436,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
         }
         ServerMessage::Next { id, payload } => {
             if let Some(tx) = state.borrow().subscriptions.get(&id) {
-                let payload_bytes = Bytes::from(sonic_rs::to_string(&payload).unwrap_or_default());
+                let payload_bytes = Bytes::from(sonic_rs::to_vec(&payload).unwrap_or_default());
                 let response = match SubgraphResponse::deserialize_from_bytes(payload_bytes) {
                     Ok(response) => response,
                     Err(e) => {
