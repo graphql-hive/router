@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::parser::GraphQLParserPayload;
-use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLValidateSpan;
@@ -23,7 +22,6 @@ mod shared;
 #[inline]
 pub async fn validate_operation_with_cache(
     supergraph: &SupergraphData,
-    schema_state: &SchemaState,
     app_state: &RouterSharedState,
     parser_payload: &GraphQLParserPayload,
     plugin_req_state: &Option<PluginRequestState<'_>>,
@@ -85,7 +83,7 @@ pub async fn validate_operation_with_cache(
                 cache_hint = CacheHint::Hit;
                 errors
             }
-            None => match schema_state.validate_cache.get(&cache_key).await {
+            None => match app_state.validate_cache.get(&cache_key).await {
                 Some(cached_validation) => {
                     trace!(
                         "validation result of hash {} has been loaded from cache",
@@ -110,7 +108,7 @@ pub async fn validate_operation_with_cache(
                     );
                     let arc_res = Arc::new(res);
 
-                    schema_state
+                    app_state
                         .validate_cache
                         .insert(cache_key, arc_res.clone())
                         .await;

@@ -1,3 +1,4 @@
+use graphql_tools::validation::utils::ValidationError;
 use graphql_tools::validation::validate::ValidationPlan;
 use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::HiveRouterConfig;
@@ -64,6 +65,7 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
 pub struct RouterSharedState {
     pub validation_plan: Arc<ValidationPlan>,
     pub parse_cache: Cache<u64, ParseCacheEntry>,
+    pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: HeaderRulesPlan,
     pub override_labels_evaluator: OverrideLabelsEvaluator,
@@ -93,6 +95,7 @@ impl RouterSharedState {
             validation_plan: Arc::new(validation_plan),
             headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
             parse_cache: moka::future::Cache::new(1000),
+            validate_cache: moka::future::Cache::new(1000),
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             jwt_claims_cache: Cache::builder()
                 // High capacity due to potentially high token diversity.

@@ -149,7 +149,6 @@ pub async fn graphql_request_handler(
 
         if let Some(response) = validate_operation_with_cache(
             supergraph,
-            schema_state,
             shared_state,
             &parser_payload,
             &plugin_req_state,

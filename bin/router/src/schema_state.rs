@@ -1,7 +1,7 @@
 use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
-use graphql_tools::{static_graphql::schema::Document, validation::utils::ValidationError};
+use graphql_tools::static_graphql::schema::Document;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_internal::{
@@ -39,7 +39,6 @@ use crate::{
 pub struct SchemaState {
     current_swapable: Arc<ArcSwap<Option<SupergraphData>>>,
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
-    pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
 }
 
@@ -83,12 +82,10 @@ impl SchemaState {
         let swappable_data = Arc::new(ArcSwap::from(Arc::new(None)));
         let swappable_data_spawn_clone = swappable_data.clone();
         let plan_cache = Cache::new(1000);
-        let validate_cache = Cache::new(1000);
         let normalize_cache = Cache::new(1000);
 
         // This is cheap clone, as Cache is thread-safe and can be cloned without any performance penalty.
         let task_plan_cache = plan_cache.clone();
-        let validate_cache_cache = validate_cache.clone();
         let normalize_cache_cache = normalize_cache.clone();
 
         bg_tasks_manager.register_handle(async move {
@@ -173,7 +170,6 @@ impl SchemaState {
                         debug!("Supergraph updated successfully");
 
                         task_plan_cache.invalidate_all();
-                        validate_cache_cache.invalidate_all();
                         normalize_cache_cache.invalidate_all();
                         debug!("Schema-associated caches cleared successfully");
                     }
@@ -187,7 +183,6 @@ impl SchemaState {
         Ok(Self {
             current_swapable: swappable_data,
             plan_cache,
-            validate_cache,
             normalize_cache,
         })
     }

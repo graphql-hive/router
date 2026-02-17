@@ -219,7 +219,6 @@ impl<S> TestRouterApp<S> {
     pub async fn shutdown(&self) {
         self.schema_state.normalize_cache.run_pending_tasks().await;
         self.schema_state.plan_cache.run_pending_tasks().await;
-        self.schema_state.validate_cache.run_pending_tasks().await;
         invoke_shutdown_hooks(&self.shared_state).await;
     }
 
