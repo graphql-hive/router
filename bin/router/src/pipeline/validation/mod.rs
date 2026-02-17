@@ -5,7 +5,7 @@ use crate::pipeline::error::PipelineError;
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
-use graphql_tools::validation::validate::{validate, ValidationPlan};
+use graphql_tools::validation::validate::validate;
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLValidateSpan;
 use hive_router_plan_executor::hooks::on_graphql_validation::{
     OnGraphQLValidationEndHookPayload, OnGraphQLValidationStartHookPayload,
@@ -13,7 +13,6 @@ use hive_router_plan_executor::hooks::on_graphql_validation::{
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
-use hive_router_query_planner::consumer_schema::ConsumerSchema;
 use tracing::{error, trace, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 pub mod max_aliases_rule;
@@ -36,15 +35,15 @@ pub async fn validate_operation_with_cache(
         let mut on_end_callbacks = vec![];
         let mut validation_schema = supergraph.planner.consumer_schema.clone();
         let mut validation_operation = parser_payload.parsed_operation.clone();
-        let mut validation_rules = app_state.validation_plan.clone();
+        let mut validation_plan = app_state.validation_plan.clone();
 
         if let Some(plugin_req_state) = plugin_req_state {
             let mut start_payload = OnGraphQLValidationStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
-                schema: validation_schema.clone(),
-                document: validation_operation.clone(),
-                validation_plan: validation_rules.clone(),
+                schema: validation_schema,
+                document: validation_operation,
+                validation_plan,
                 errors,
             };
 
@@ -67,15 +66,17 @@ pub async fn validate_operation_with_cache(
 
             validation_schema = start_payload.schema;
             validation_operation = start_payload.document;
-            validation_rules = start_payload.validation_plan;
+            validation_plan = start_payload.validation_plan;
             errors = start_payload.errors;
         }
 
-        let cache_key = calculate_cache_key(
-            &validation_schema,
-            parser_payload.cache_key,
-            &validation_rules,
-        );
+        let cache_key = {
+            let mut hasher = Xxh3::new();
+            validation_schema.hash.hash(&mut hasher);
+            validation_plan.hash.hash(&mut hasher);
+            parser_payload.cache_key.hash(&mut hasher);
+            hasher.finish()
+        };
 
         let cache_hint;
 
@@ -88,7 +89,7 @@ pub async fn validate_operation_with_cache(
                 Some(cached_validation) => {
                     trace!(
                         "validation result of hash {} has been loaded from cache",
-                        parser_payload.cache_key
+                        cache_key
                     );
                     cache_hint = CacheHint::Hit;
                     validate_span.record_cache_hit(true);
@@ -97,7 +98,7 @@ pub async fn validate_operation_with_cache(
                 None => {
                     trace!(
                         "validation result of hash {} does not exists in cache",
-                        parser_payload.cache_key
+                        cache_key
                     );
                     cache_hint = CacheHint::Miss;
                     validate_span.record_cache_hit(false);
@@ -105,7 +106,7 @@ pub async fn validate_operation_with_cache(
                     let res = validate(
                         &validation_schema.document,
                         &validation_operation,
-                        &validation_rules,
+                        &validation_plan,
                     );
                     let arc_res = Arc::new(res);
 
@@ -149,17 +150,4 @@ pub async fn validate_operation_with_cache(
     }
     .instrument(validate_span.clone())
     .await
-}
-
-#[inline]
-fn calculate_cache_key(
-    consumer_schema: &ConsumerSchema,
-    document_hash: u64,
-    validation_plan: &ValidationPlan,
-) -> u64 {
-    let mut hasher = Xxh3::new();
-    consumer_schema.hash.hash(&mut hasher);
-    document_hash.hash(&mut hasher);
-    validation_plan.hash.hash(&mut hasher);
-    hasher.finish()
 }

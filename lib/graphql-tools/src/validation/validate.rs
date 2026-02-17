@@ -21,7 +21,8 @@ pub struct ValidationPlan {
     pub hash: u64,
 }
 
-fn calculate_hash_for_rules(rules: &[Arc<Box<dyn ValidationRule>>]) -> u64 {
+#[inline]
+fn calculate_hash(rules: &[Arc<Box<dyn ValidationRule>>]) -> u64 {
     let mut hasher = Xxh3::new();
     for rule in rules {
         rule.error_code().hash(&mut hasher);
@@ -32,8 +33,10 @@ fn calculate_hash_for_rules(rules: &[Arc<Box<dyn ValidationRule>>]) -> u64 {
 impl ValidationPlan {
     pub fn new() -> Self {
         let rules = vec![];
-        let hash = calculate_hash_for_rules(&rules);
-        Self { rules, hash }
+        Self {
+            hash: calculate_hash(&rules),
+            rules,
+        }
     }
 
     pub fn from(rules: Vec<Box<dyn ValidationRule>>) -> Self {
@@ -42,12 +45,19 @@ impl ValidationPlan {
             .map(|rule| rule.into())
             .collect::<Vec<Arc<Box<dyn ValidationRule>>>>();
 
-        let hash = calculate_hash_for_rules(&rules);
-        Self { rules, hash }
+        Self {
+            hash: calculate_hash(&rules),
+            rules,
+        }
     }
 
     pub fn add_rule(&mut self, rule: Box<dyn ValidationRule>) {
         self.rules.push(Arc::new(rule));
+        self.recalculate_hash();
+    }
+
+    fn recalculate_hash(&mut self) {
+        self.hash = calculate_hash(&self.rules);
     }
 }
 

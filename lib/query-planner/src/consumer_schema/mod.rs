@@ -21,7 +21,8 @@ impl From<Arc<Document>> for ConsumerSchema {
     fn from(document: Arc<Document>) -> Self {
         let hash = {
             let mut hasher = Xxh3::new();
-            document.to_string().hash(&mut hasher);
+            let sdl = document.to_string();
+            sdl.hash(&mut hasher);
             hasher.finish()
         };
         Self { document, hash }
