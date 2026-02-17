@@ -236,7 +236,7 @@ jobs:
           path: main-branch
       - name: Build router
         if: github.event_name == 'pull_request'
-        run: cargo build --release -p hive-router ${{matrix.args}}
+        run: cargo build --release -p hive-router
         working-directory: main-branch
       - name: Run router
         if: github.event_name == 'pull_request'
@@ -245,7 +245,7 @@ jobs:
           ./main-branch/target/release/hive_router &
           sleep 5
         env:
-          ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
+          ROUTER_CONFIG_FILE_PATH: bench/configs/default.config.yaml
       - name: Run k6 benchmark for main
         if: github.event_name == 'pull_request'
         run: k6 run -e SUMMARY_PATH=./bench/results/main -e NO_GITHUB_COMMENT=true bench/k6.js
