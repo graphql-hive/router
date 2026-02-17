@@ -240,17 +240,17 @@ pub async fn graphql_request_handler(
                         &client_request_details,
                         hive_usage_agent,
                         shared_state
-                                            .router_config
-                                            .telemetry
-                                            .hive
-                                            .as_ref()
-                                            .map(|c| &c.usage_reporting)
-                                            .expect(
-                                                // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
-                                                // the UsageAgent is only created when usage reporting is enabled.
-                                                // Thus, this expect should never panic.
-                                                "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
-                                            ),
+                            .router_config
+                            .telemetry
+                            .hive
+                            .as_ref()
+                            .map(|c| &c.usage_reporting)
+                            .expect(
+                                // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
+                                // the UsageAgent is only created when usage reporting is enabled.
+                                // Thus, this expect should never panic.
+                                "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
+                            ),
                         result.error_count,
                     )
                     .await;
