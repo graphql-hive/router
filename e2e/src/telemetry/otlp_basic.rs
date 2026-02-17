@@ -752,11 +752,11 @@ async fn test_otlp_cache_hits() {
     let second_plan_span = second_trace.span_by_hive_kind_one("graphql.plan");
 
     fn assert_cache_hit(span: &CollectedSpan) {
-        assert_eq!(span.attributes.get("cache.hit"), Some(&"true".to_string()));
+        assert_eq!(span.attributes.get("cache.hit"), Some(&"true".to_string()), "Expected cache hit for span '{}'", span.name);
     }
 
     fn assert_cache_miss(span: &CollectedSpan) {
-        assert_eq!(span.attributes.get("cache.hit"), Some(&"false".to_string()));
+        assert_eq!(span.attributes.get("cache.hit"), Some(&"false".to_string()), "Expected cache miss for span '{}'", span.name);
     }
 
     assert_cache_miss(first_parse_span);

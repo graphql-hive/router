@@ -33,6 +33,7 @@ pub struct ParseCacheEntry {
 }
 
 impl ParseCacheEntry {
+    #[inline]
     pub fn try_new(
         parsed_arc: Arc<Document<'static, String>>,
         query_str: &str,
@@ -60,7 +61,7 @@ impl ParseCacheEntry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GraphQLParserPayload {
     pub parsed_operation: Arc<Document<'static, String>>,
     pub minified_document: Arc<String>,
