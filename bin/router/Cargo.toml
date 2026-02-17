@@ -15,6 +15,9 @@ homepage = "https://github.com/graphql-hive/router"
 name = "hive_router"
 path = "src/main.rs"
 
+[features]
+noop_otlp_exporter = ["hive-router-internal/noop_otlp_exporter"]
+
 [dependencies]
 hive-router-query-planner = { path = "../../lib/query-planner", version = "2.2.1" }
 hive-router-plan-executor = { path = "../../lib/executor", version = "6.5.1" }

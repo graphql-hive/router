@@ -11,6 +11,9 @@ authors = ["The Guild"]
 
 [lib]
 
+[features]
+noop_otlp_exporter = []
+
 [dependencies]
 hive-router-config = { path = "../router-config", version = "0.0.23" }
 
