@@ -780,12 +780,14 @@ mod subscriptions_e2e_tests {
 
         let res = test::call_service(&router.app, req).await;
 
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
         let body = test::read_body(res).await;
         let body_str = std::str::from_utf8(&body).unwrap();
 
         assert_snapshot!(body_str, @r#"
         event: next
-        data: {"data":null,"errors":[{"message":"Failed to execute request to subgraph","extensions":{"code":"SUBGRAPH_REQUEST_FAILURE","serviceName":"reviews"}}]}
+        data: {"errors":[{"message":"Failed to execute a plan: Failed to send request to subgraph \"http://0.0.0.0:4200/reviews\": Subgraph returned non-success status: 500 Internal Server Error","extensions":{"code":"SUBGRAPH_REQUEST_FAILURE"}}]}
 
         event: complete
         "#);
