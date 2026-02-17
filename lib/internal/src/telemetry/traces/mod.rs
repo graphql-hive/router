@@ -39,8 +39,6 @@ use tracing_opentelemetry::OpenTelemetryLayer;
 #[cfg(feature = "noop_otlp_exporter")]
 use self::noop_exporter::NoopExporter;
 use self::standard_pipeline_exporter::StandardPipelineExporter;
-#[cfg(feature = "noop_otlp_exporter")]
-use self::noop_exporter::NoopExporter;
 use crate::telemetry::{
     error::TelemetryError,
     resolve_value_or_expression,
