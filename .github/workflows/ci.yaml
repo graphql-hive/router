@@ -148,6 +148,9 @@ jobs:
           - name: "default"
             args: ""
             config: bench/configs/default.config.yaml
+          - name: "no-dedupe"
+            args: ""
+            config: bench/configs/no-deduplication.config.yaml
           - name: "hive-tracing"
             # turns otlp http/grpc to noop
             args: "--features noop_otlp_exporter"
