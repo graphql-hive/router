@@ -3,11 +3,11 @@ mod consts;
 pub mod error;
 mod http_utils;
 mod jwt;
-mod logger;
 pub mod pipeline;
 mod schema_state;
 mod shared_state;
 mod supergraph;
+pub mod telemetry;
 mod utils;
 
 use std::sync::Arc;
@@ -21,38 +21,45 @@ use crate::{
         probes::{health_check_handler, readiness_check_handler},
     },
     jwt::JwtAuthRuntime,
-    logger::configure_logging,
     pipeline::{
+        error::PipelineError,
         graphql_request_handler,
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
-        usage_reporting::init_hive_user_agent,
-        validation::{max_depth_rule::MaxDepthRule, max_directives_rule::MaxDirectivesRule},
+        usage_reporting::init_hive_usage_agent,
+        validation::{
+            max_aliases_rule::MaxAliasesRule, max_depth_rule::MaxDepthRule,
+            max_directives_rule::MaxDirectivesRule,
+        },
         websocket_server::ws_index,
     },
+    telemetry::HeaderExtractor,
 };
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
+use hive_router_internal::telemetry::{
+    otel::tracing_opentelemetry::OpenTelemetrySpanExt,
+    traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
+};
 use http::header::{CONTENT_TYPE, RETRY_AFTER};
+use ntex::util::{select, Either};
 use ntex::{
-    util::Bytes,
+    time::sleep,
     web::{self, HttpRequest},
 };
-use tracing::{info, warn};
+use tracing::{info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
 async fn graphql_endpoint_handler(
     request: HttpRequest,
-    body_bytes: Bytes,
+    body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
-    let maybe_supergraph = schema_state.current_supergraph();
-
-    if let Some(supergraph) = maybe_supergraph.as_ref() {
+    if let Some(supergraph) = schema_state.current_supergraph().as_ref() {
         // If an early CORS response is needed, return it immediately.
         if let Some(early_response) = app_state
             .cors_runtime
@@ -79,31 +86,60 @@ async fn graphql_endpoint_handler(
             }
         }
 
-        let mut res = match graphql_request_handler(
-            &request,
-            body_bytes,
-            &response_mode,
-            supergraph,
-            app_state.get_ref(),
-            schema_state.get_ref(),
-        )
-        .await
-        {
-            Ok(response) => response,
-            Err(err) => {
-                return {
-                    tracing::error!("{}", err);
-                    err.into_response(Some(response_mode))
+        let parent_ctx = app_state
+            .telemetry_context
+            .extract_context(&HeaderExtractor(request.headers()));
+        let root_http_request_span = HttpServerRequestSpan::from_request(&request);
+        let _ = root_http_request_span.set_parent(parent_ctx);
+
+        async {
+            let timeout_fut = sleep(
+                app_state
+                    .router_config
+                    .traffic_shaping
+                    .router
+                    .request_timeout,
+            );
+            let req_handler_fut = graphql_request_handler(
+                &request,
+                body_stream,
+                &response_mode,
+                supergraph,
+                app_state.get_ref(),
+                schema_state.get_ref(),
+                &root_http_request_span,
+            );
+            let mut res = match select(timeout_fut, req_handler_fut).await {
+                // If the timeout future completes first, return a timeout error response.
+                Either::Left(_) => {
+                    let err = PipelineError::TimeoutError;
+                    return {
+                        tracing::error!("{}", err);
+                        err.into_response(Some(response_mode))
+                    };
                 }
+                // If the request handler future completes first, return its response.
+                Either::Right(Ok(response)) => response,
+                // If the request handler future completes first with an error, return the error response.
+                Either::Right(Err(err)) => {
+                    return {
+                        tracing::error!("{}", err);
+                        err.into_response(Some(response_mode))
+                    }
+                }
+            };
+
+            // Apply CORS headers to the final response if CORS is configured.
+            if let Some(cors) = app_state.cors_runtime.as_ref() {
+                cors.set_headers(&request, res.headers_mut());
             }
-        };
 
-        // Apply CORS headers to the final response if CORS is configured.
-        if let Some(cors) = app_state.cors_runtime.as_ref() {
-            cors.set_headers(&request, res.headers_mut());
+            root_http_request_span.record_response(&res);
+
+            res
         }
-
-        res
+        .instrument(root_http_request_span.clone())
+        .await
     } else {
         warn!("No supergraph available yet, unable to process request");
 
@@ -116,14 +152,19 @@ async fn graphql_endpoint_handler(
 pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
-    configure_logging(&router_config.log);
+    let telemetry = telemetry::Telemetry::init_global(&router_config)?;
     info!("hive-router@{} starting...", ROUTER_VERSION);
     let addr = router_config.address();
     let gql_path = router_config.graphql_path().to_string();
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
     let mut bg_tasks_manager = BackgroundTasksManager::new();
-    let (shared_state, schema_state) =
-        configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
+    let (shared_state, schema_state) = configure_app_from_config(
+        router_config,
+        telemetry.context.clone(),
+        &mut bg_tasks_manager,
+    )
+    .await?;
+
     let maybe_error = web::HttpServer::new(async move || {
         let lp_gql_path = gql_path.clone();
         web::App::new()
@@ -140,12 +181,14 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
 
     info!("server stopped, clearning background tasks");
     bg_tasks_manager.shutdown();
+    telemetry.graceful_shutdown().await;
 
     maybe_error
 }
 
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
+    telemetry_context: TelemetryContext,
     bg_tasks_manager: &mut BackgroundTasksManager,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), RouterInitError> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
@@ -153,17 +196,21 @@ pub async fn configure_app_from_config(
         false => None,
     };
 
-    let hive_usage_agent = match router_config.usage_reporting.enabled {
-        true => Some(init_hive_user_agent(
-            bg_tasks_manager,
-            &router_config.usage_reporting,
-        )?),
-        false => None,
+    let hive_usage_agent = match router_config.telemetry.hive.as_ref() {
+        Some(hive_config) if hive_config.usage_reporting.enabled => {
+            Some(init_hive_usage_agent(bg_tasks_manager, hive_config)?)
+        }
+        _ => None,
     };
 
     let router_config_arc = Arc::new(router_config);
-    let schema_state =
-        SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
+    let telemetry_context_arc = Arc::new(telemetry_context);
+    let schema_state = SchemaState::new_from_config(
+        bg_tasks_manager,
+        telemetry_context_arc.clone(),
+        router_config_arc.clone(),
+    )
+    .await?;
     let schema_state_arc = Arc::new(schema_state);
     let mut validation_plan = default_rules_validation_plan();
     if let Some(max_depth_config) = &router_config_arc.limits.max_depth {
@@ -176,11 +223,17 @@ pub async fn configure_app_from_config(
             config: max_directives_config.clone(),
         }));
     }
+    if let Some(max_aliases_config) = &router_config_arc.limits.max_aliases {
+        validation_plan.add_rule(Box::new(MaxAliasesRule {
+            config: max_aliases_config.clone(),
+        }));
+    }
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc,
         jwt_runtime,
         hive_usage_agent,
         validation_plan,
+        telemetry_context_arc,
     )?);
 
     Ok((shared_state, schema_state_arc))

@@ -168,10 +168,7 @@ impl ApplyRequestHeader for RequestInsertExpression {
             return Ok(());
         }
         let value = self.expression.execute(ctx.into()).map_err(|err| {
-            HeaderRuleRuntimeError::new_expression_evaluation(
-                self.name.to_string(),
-                Box::new(err.0),
-            )
+            HeaderRuleRuntimeError::ExpressionEvaluation(self.name.to_string(), Box::new(err.0))
         })?;
 
         if let Some(header_value) = vrl_value_to_header_value(value) {

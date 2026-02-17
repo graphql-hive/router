@@ -1,4 +1,5 @@
 use futures::StreamExt;
+use hive_router_internal::telemetry::traces::spans::graphql::GraphQLOperationSpan;
 use hive_router_plan_executor::execution::client_request_details::{
     ClientRequestDetails, JwtRequestDetails, OperationDetails,
 };
@@ -203,6 +204,9 @@ async fn handle_text_frame(
                 return Some(CloseCode::SubscriberAlreadyExists(id).into());
             }
 
+            // TODO: do the same as bin/router/src/pipeline/mod.rs
+            let operation_span = GraphQLOperationSpan::new();
+
             let maybe_supergraph = schema_state.current_supergraph();
             let supergraph = match maybe_supergraph.as_ref() {
                 Some(supergraph) => supergraph,
@@ -336,7 +340,7 @@ async fn handle_text_frame(
                     },
                     query: &payload.query,
                 },
-                jwt: &jwt_request_details,
+                jwt: jwt_request_details,
             };
 
             if normalize_payload.operation_for_introspection.is_some() {
@@ -381,6 +385,7 @@ async fn handle_text_frame(
                 supergraph,
                 shared_state,
                 schema_state,
+                &operation_span,
             )
             .await
             {

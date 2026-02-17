@@ -1,4 +1,11 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.12 (2026-02-06)
+
+### Features
+
+- Operation Complexity - Limit Aliases (#746)
+- Operation Complexity - Limit Aliases (#749)
+
 ## 0.0.11 (2026-01-22)
 
 ### Fixes

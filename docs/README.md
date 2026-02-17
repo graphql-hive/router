@@ -12,15 +12,15 @@
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
-|[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{}`<br/>||
+|[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_request_body_size":"2 MB"}`<br/>||
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
-|[**usage\_reporting**](#usage_reporting)|`object`|Configuration for usage reporting to GraphQL Hive.<br/>Default: `{"accept_invalid_certs":false,"access_token":null,"buffer_size":1000,"client_name_header":"graphql-client-name","client_version_header":"graphql-client-version","connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%","target_id":null}`<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"request_timeout":"1m"}}`<br/>||
 |[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -94,7 +94,8 @@ jwt:
     - name: authorization
       prefix: Bearer
       source: header
-limits: {}
+limits:
+  max_request_body_size: 2 MB
 log:
   filter: null
   format: json
@@ -121,26 +122,38 @@ query_planner:
 subscriptions:
   enabled: false
 supergraph: {}
+telemetry:
+  client_identification:
+    name_header: graphql-client-name
+    version_header: graphql-client-version
+  hive: null
+  resource:
+    attributes: {}
+  tracing:
+    collect:
+      max_attributes_per_event: 16
+      max_attributes_per_link: 32
+      max_attributes_per_span: 128
+      max_events_per_span: 128
+      parent_based_sampler: false
+      sampling: 1
+    exporters: []
+    instrumentation:
+      spans:
+        mode: spec_compliant
+    propagation:
+      b3: false
+      baggage: false
+      jaeger: false
+      trace_context: true
 traffic_shaping:
   all:
     dedupe_enabled: true
     pool_idle_timeout: 50s
     request_timeout: 30s
   max_connections_per_host: 100
-usage_reporting:
-  accept_invalid_certs: false
-  access_token: null
-  buffer_size: 1000
-  client_name_header: graphql-client-name
-  client_version_header: graphql-client-version
-  connect_timeout: 5s
-  enabled: false
-  endpoint: https://app.graphql-hive.com/usage
-  exclude: []
-  flush_interval: 5s
-  request_timeout: 15s
-  sample_rate: 100%
-  target_id: null
+  router:
+    request_timeout: 1m
 websocket:
   enabled: false
   headers:
@@ -1668,9 +1681,33 @@ Configuration for checking the limits such as query depth, complexity, etc.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**max\_aliases**](#limitsmax_aliases)|`object`, `null`|Configuration of limiting the number of aliases in the incoming GraphQL operations.<br/>|yes|
 |[**max\_depth**](#limitsmax_depth)|`object`, `null`|Configuration of limiting the depth of the incoming GraphQL operations.<br/>|yes|
 |[**max\_directives**](#limitsmax_directives)|`object`, `null`|Configuration of limiting the number of directives in the incoming GraphQL operations.<br/>|yes|
+|**max\_request\_body\_size**|`string`|Default: `"2 MB"`<br/>||
 |[**max\_tokens**](#limitsmax_tokens)|`object`, `null`|Configuration of limiting the number of tokens in the incoming GraphQL operations.<br/>|yes|
+
+**Example**
+
+```yaml
+max_request_body_size: 2 MB
+
+```
+
+<a name="limitsmax_aliases"></a>
+### limits\.max\_aliases: object,null
+
+Configuration of limiting the number of aliases in the incoming GraphQL operations.
+If not specified, alias limiting is disabled.
+
+It is used to prevent too many aliases that could lead to overfetching or DOS attacks.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**n**|`integer`|Aliases threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
 
 <a name="limitsmax_depth"></a>
 ### limits\.max\_depth: object,null
@@ -1984,6 +2021,521 @@ max_retries: 10
 
 ```
 
+<a name="telemetry"></a>
+## telemetry: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
+|[**hive**](#telemetryhive)|`object`, `null`|||
+|[**resource**](#telemetryresource)|`object`|Default: `{"attributes":{}}`<br/>||
+|[**tracing**](#telemetrytracing)|`object`|Default: `{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+client_identification:
+  name_header: graphql-client-name
+  version_header: graphql-client-version
+hive: null
+resource:
+  attributes: {}
+tracing:
+  collect:
+    max_attributes_per_event: 16
+    max_attributes_per_link: 32
+    max_attributes_per_span: 128
+    max_events_per_span: 128
+    parent_based_sampler: false
+    sampling: 1
+  exporters: []
+  instrumentation:
+    spans:
+      mode: spec_compliant
+  propagation:
+    b3: false
+    baggage: false
+    jaeger: false
+    trace_context: true
+
+```
+
+<a name="telemetryclient_identification"></a>
+### telemetry\.client\_identification: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**name\_header**|`string`|Default: `"graphql-client-name"`<br/>||
+|**version\_header**|`string`|Default: `"graphql-client-version"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+name_header: graphql-client-name
+version_header: graphql-client-version
+
+```
+
+<a name="telemetryhive"></a>
+### telemetry\.hive: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**target**||A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
+|**token**||Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
+|[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":false,"endpoint":"https://api.graphql-hive.com/otel/v1/traces"}`<br/>||
+|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="telemetryhivetracing"></a>
+#### telemetry\.hive\.tracing: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**batch\_processor**](#telemetryhivetracingbatch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"}`<br/>||
+|**enabled**|`boolean`|Default: `false`<br/>||
+|**endpoint**||Default: `"https://api.graphql-hive.com/otel/v1/traces"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+batch_processor:
+  max_concurrent_exports: 1
+  max_export_batch_size: 500
+  max_export_timeout: 5s
+  max_queue_size: 20000
+  max_spans_per_trace: 1000
+  max_traces_in_memory: 30000
+  scheduled_delay: 5s
+enabled: false
+endpoint: https://api.graphql-hive.com/otel/v1/traces
+
+```
+
+<a name="telemetryhivetracingbatch_processor"></a>
+##### telemetry\.hive\.tracing\.batch\_processor: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_concurrent\_exports**|`integer`|Maximum number of export tasks that can run concurrently.<br/>Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_batch\_size**|`integer`|Maximum number of traces (not spans) to include in a single export batch.<br/>Default: `500`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_timeout**|`string`|Maximum time to wait for the exporter to finish a batch export.<br/>Default: `"5s"`<br/>||
+|**max\_queue\_size**|`integer`|Capacity of the input channel (from `on_end` to the worker thread).<br/>Default: `20000`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_spans\_per\_trace**|`integer`|Maximum number of spans to buffer per single trace.<br/><br/>If a trace exceeds this limit, subsequent spans for that trace will be dropped.<br/>Default: `1000`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_traces\_in\_memory**|`integer`|Maximum number of unique traces to keep in memory simultaneously.<br/><br/>If this limit is reached, the processor will attempt to flush ready traces.<br/>If no traces are ready, new spans for new traces will be dropped to preserve memory.<br/>Spans for existing traces will still be accepted.<br/>Default: `30000`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**scheduled\_delay**|`string`|Maximum time to wait before exporting ready traces if the batch size<br/>hasn't been reached.<br/>Default: `"5s"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+max_concurrent_exports: 1
+max_export_batch_size: 500
+max_export_timeout: 5s
+max_queue_size: 20000
+max_spans_per_trace: 1000
+max_traces_in_memory: 30000
+scheduled_delay: 5s
+
+```
+
+<a name="telemetryhiveusage_reporting"></a>
+#### telemetry\.hive\.usage\_reporting: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**accept\_invalid\_certs**|`boolean`|Accepts invalid SSL certificates<br/>Default: false<br/>Default: `false`<br/>||
+|**buffer\_size**|`integer`|A maximum number of operations to hold in a buffer before sending to Hive Console<br/>Default: 1000<br/>Default: `1000`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**connect\_timeout**|`string`|A timeout for only the connect phase of a request to Hive Console<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
+|**enabled**|`boolean`|Default: `false`<br/>||
+|**endpoint**|`string`|For self-hosting, you can override `/usage` endpoint (defaults to `https://app.graphql-hive.com/usage`).<br/>Default: `"https://app.graphql-hive.com/usage"`<br/>||
+|[**exclude**](#telemetryhiveusage_reportingexclude)|`string[]`|A list of operations (by name) to be ignored by Hive.<br/>Default: <br/>||
+|**flush\_interval**|`string`|Frequency of flushing the buffer to the server<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
+|**request\_timeout**|`string`|A timeout for the entire request to Hive Console<br/>Default: 15 seconds<br/>Default: `"15s"`<br/>||
+|**sample\_rate**|`string`|Sample rate to determine sampling.<br/>0% = never being sent<br/>50% = half of the requests being sent<br/>100% = always being sent<br/>Default: 100%<br/>Default: `"100%"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+accept_invalid_certs: false
+buffer_size: 1000
+connect_timeout: 5s
+enabled: false
+endpoint: https://app.graphql-hive.com/usage
+exclude: []
+flush_interval: 5s
+request_timeout: 15s
+sample_rate: 100%
+
+```
+
+<a name="telemetryhiveusage_reportingexclude"></a>
+##### telemetry\.hive\.usage\_reporting\.exclude\[\]: array
+
+A list of operations (by name) to be ignored by Hive.
+Example: ["IntrospectionQuery", "MeQuery"]
+
+
+**Items**
+
+**Item Type:** `string`  
+<a name="telemetryresource"></a>
+### telemetry\.resource: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**attributes**](#telemetryresourceattributes)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+attributes: {}
+
+```
+
+<a name="telemetryresourceattributes"></a>
+#### telemetry\.resource\.attributes: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="telemetrytracing"></a>
+### telemetry\.tracing: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**collect**](#telemetrytracingcollect)|`object`|Default: `{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1}`<br/>||
+|[**exporters**](#telemetrytracingexporters)|`array`|Default: <br/>||
+|[**instrumentation**](#telemetrytracinginstrumentation)|`object`|Default: `{"spans":{"mode":"spec_compliant"}}`<br/>||
+|[**propagation**](#telemetrytracingpropagation)|`object`|Default: `{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+collect:
+  max_attributes_per_event: 16
+  max_attributes_per_link: 32
+  max_attributes_per_span: 128
+  max_events_per_span: 128
+  parent_based_sampler: false
+  sampling: 1
+exporters: []
+instrumentation:
+  spans:
+    mode: spec_compliant
+propagation:
+  b3: false
+  baggage: false
+  jaeger: false
+  trace_context: true
+
+```
+
+<a name="telemetrytracingcollect"></a>
+#### telemetry\.tracing\.collect: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_attributes\_per\_event**|`integer`|Default: `16`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_attributes\_per\_link**|`integer`|Default: `32`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_attributes\_per\_span**|`integer`|Default: `128`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_events\_per\_span**|`integer`|Default: `128`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**parent\_based\_sampler**|`boolean`|Default: `false`<br/>||
+|**sampling**|`number`|Default: `1`<br/>Format: `"double"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+max_attributes_per_event: 16
+max_attributes_per_link: 32
+max_attributes_per_span: 128
+max_events_per_span: 128
+parent_based_sampler: false
+sampling: 1
+
+```
+
+<a name="telemetrytracingexporters"></a>
+#### telemetry\.tracing\.exporters\[\]: array
+
+**Items**
+
+   
+**Option 1 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**batch\_processor**](#option1batch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
+|**enabled**|`boolean`|Default: `true`<br/>|no|
+|**endpoint**||Default: `""`<br/>|no|
+|[**grpc**](#option1grpc)|`object`, `null`||no|
+|[**http**](#option1http)|`object`, `null`||no|
+|**kind**|`string`|Constant Value: `"otlp"`<br/>|yes|
+|**protocol**|`string`|Enum: `"grpc"`, `"http"`<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+batch_processor:
+  max_concurrent_exports: 1
+  max_export_batch_size: 512
+  max_export_timeout: 5s
+  max_queue_size: 2048
+  scheduled_delay: 5s
+enabled: true
+endpoint: ''
+grpc: null
+http: null
+
+```
+
+
+   
+**Option 2 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**batch\_processor**](#option2batch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
+|**enabled**|`boolean`|Default: `true`<br/>|no|
+|**kind**|`string`|Constant Value: `"stdout"`<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+batch_processor:
+  max_concurrent_exports: 1
+  max_export_batch_size: 512
+  max_export_timeout: 5s
+  max_queue_size: 2048
+  scheduled_delay: 5s
+enabled: true
+
+```
+
+
+<a name="option1batch_processor"></a>
+## Option 1: batch\_processor: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_concurrent\_exports**|`integer`|Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_batch\_size**|`integer`|Default: `512`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_timeout**|`string`|Default: `"5s"`<br/>||
+|**max\_queue\_size**|`integer`|Default: `2048`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**scheduled\_delay**|`string`|Default: `"5s"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+max_concurrent_exports: 1
+max_export_batch_size: 512
+max_export_timeout: 5s
+max_queue_size: 2048
+scheduled_delay: 5s
+
+```
+
+<a name="option1grpc"></a>
+## Option 1: grpc: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**metadata**](#option1grpcmetadata)|`object`|Default: `{}`<br/>||
+|[**tls**](#option1grpctls)|`object`|Default: `{"ca":null,"cert":null,"domain_name":null,"key":null}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option1grpcmetadata"></a>
+### Option 1: grpc\.metadata: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="option1grpctls"></a>
+### Option 1: grpc\.tls: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**ca**|`string`, `null`|The path to the Certificate Authority (CA) certificate file (PEM format) used to verify the server's certificate.<br/>||
+|**cert**|`string`, `null`|The path to the client's certificate file (PEM format).<br/>||
+|**domain\_name**|`string`, `null`|The domain name used to verify the server's TLS certificate.<br/>||
+|**key**|`string`, `null`|The path to the client's private key file.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+ca: null
+cert: null
+domain_name: null
+key: null
+
+```
+
+<a name="option1http"></a>
+## Option 1: http: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**headers**](#option1httpheaders)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option1httpheaders"></a>
+### Option 1: http\.headers: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="option2batch_processor"></a>
+## Option 2: batch\_processor: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_concurrent\_exports**|`integer`|Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_batch\_size**|`integer`|Default: `512`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_timeout**|`string`|Default: `"5s"`<br/>||
+|**max\_queue\_size**|`integer`|Default: `2048`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**scheduled\_delay**|`string`|Default: `"5s"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+max_concurrent_exports: 1
+max_export_batch_size: 512
+max_export_timeout: 5s
+max_queue_size: 2048
+scheduled_delay: 5s
+
+```
+
+<a name="telemetrytracinginstrumentation"></a>
+#### telemetry\.tracing\.instrumentation: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**spans**](#telemetrytracinginstrumentationspans)|`object`|Default: `{"mode":"spec_compliant"}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+spans:
+  mode: spec_compliant
+
+```
+
+<a name="telemetrytracinginstrumentationspans"></a>
+##### telemetry\.tracing\.instrumentation\.spans: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**mode**||Controls which semantic conventions are emitted on spans.<br/>Default: SpecCompliant (only stable attributes).<br/>Default: `"spec_compliant"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+mode: spec_compliant
+
+```
+
+<a name="telemetrytracingpropagation"></a>
+#### telemetry\.tracing\.propagation: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**b3**|`boolean`|Default: `false`<br/>||
+|**baggage**|`boolean`|Default: `false`<br/>||
+|**jaeger**|`boolean`|Default: `false`<br/>||
+|**trace\_context**|`boolean`|Default: `true`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+b3: false
+baggage: false
+jaeger: false
+trace_context: true
+
+```
+
 <a name="traffic_shaping"></a>
 ## traffic\_shaping: object
 
@@ -1996,6 +2548,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 |----|----|-----------|--------|
 |[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"request_timeout":"1m"}`<br/>||
 |[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
 
 **Additional Properties:** not allowed  
@@ -2007,6 +2560,8 @@ all:
   pool_idle_timeout: 50s
   request_timeout: 30s
 max_connections_per_host: 100
+router:
+  request_timeout: 1m
 
 ```
 
@@ -2034,6 +2589,26 @@ request_timeout: 30s
 
 ```
 
+<a name="traffic_shapingrouter"></a>
+### traffic\_shaping\.router: object
+
+Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**request\_timeout**|`string`|Optional timeout configuration for incoming requests to the router.<br/>It starts from the moment the request is received by the router,<br/>and includes the entire processing of the request (validation, execution, etc.) until a response is sent back to the client.<br/>If a request takes longer than the specified duration, it will be aborted and a timeout error will be returned to the client.<br/>Default: `"1m"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+request_timeout: 1m
+
+```
+
 <a name="traffic_shapingsubgraphs"></a>
 ### traffic\_shaping\.subgraphs: object
 
@@ -2058,60 +2633,6 @@ Optional per-subgraph configurations that will override the default configuratio
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
 
 **Additional Properties:** not allowed  
-<a name="usage_reporting"></a>
-## usage\_reporting: object
-
-Configuration for usage reporting to GraphQL Hive.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**accept\_invalid\_certs**|`boolean`|Accepts invalid SSL certificates<br/>Default: false<br/>Default: `false`<br/>||
-|**access\_token**|`string`, `null`|Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
-|**buffer\_size**|`integer`|A maximum number of operations to hold in a buffer before sending to Hive Console<br/>Default: 1000<br/>Default: `1000`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
-|**client\_name\_header**|`string`|Default: `"graphql-client-name"`<br/>||
-|**client\_version\_header**|`string`|Default: `"graphql-client-version"`<br/>||
-|**connect\_timeout**|`string`|A timeout for only the connect phase of a request to Hive Console<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
-|**enabled**|`boolean`|Default: `false`<br/>||
-|**endpoint**|`string`|For self-hosting, you can override `/usage` endpoint (defaults to `https://app.graphql-hive.com/usage`).<br/>Default: `"https://app.graphql-hive.com/usage"`<br/>||
-|[**exclude**](#usage_reportingexclude)|`string[]`|A list of operations (by name) to be ignored by Hive.<br/>Default: <br/>||
-|**flush\_interval**|`string`|Frequency of flushing the buffer to the server<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
-|**request\_timeout**|`string`|A timeout for the entire request to Hive Console<br/>Default: 15 seconds<br/>Default: `"15s"`<br/>||
-|**sample\_rate**|`string`|Sample rate to determine sampling.<br/>0% = never being sent<br/>50% = half of the requests being sent<br/>100% = always being sent<br/>Default: 100%<br/>Default: `"100%"`<br/>||
-|**target\_id**|`string`, `null`|A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-accept_invalid_certs: false
-access_token: null
-buffer_size: 1000
-client_name_header: graphql-client-name
-client_version_header: graphql-client-version
-connect_timeout: 5s
-enabled: false
-endpoint: https://app.graphql-hive.com/usage
-exclude: []
-flush_interval: 5s
-request_timeout: 15s
-sample_rate: 100%
-target_id: null
-
-```
-
-<a name="usage_reportingexclude"></a>
-### usage\_reporting\.exclude\[\]: array
-
-A list of operations (by name) to be ignored by Hive.
-Example: ["IntrospectionQuery", "MeQuery"]
-
-
-**Items**
-
-**Item Type:** `string`  
 <a name="websocket"></a>
 ## websocket: object
 

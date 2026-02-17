@@ -190,10 +190,7 @@ impl ApplyResponseHeader for ResponseInsertExpression {
             return Ok(());
         }
         let value = self.expression.execute(ctx.into()).map_err(|err| {
-            HeaderRuleRuntimeError::new_expression_evaluation(
-                self.name.to_string(),
-                Box::new(err.0),
-            )
+            HeaderRuleRuntimeError::ExpressionEvaluation(self.name.to_string(), Box::new(err.0))
         })?;
         if let Some(header_value) = vrl_value_to_header_value(value) {
             let strategy = if is_never_join_header(&self.name) {
@@ -282,38 +279,40 @@ fn write_agg(
         (_, _) => {}
     }
 }
-
-/// Modify the outgoing client response headers based on the aggregated headers from subgraphs.
-pub fn modify_client_response_headers(
-    agg: ResponseHeaderAggregator,
-    out: &mut HeaderMap,
-) -> Result<(), HeaderRuleRuntimeError> {
-    for (name, (agg_strategy, mut values)) in agg.entries {
-        if values.is_empty() {
-            continue;
-        }
-
-        if is_never_join_header(&name) {
-            // never-join headers must be emitted as multiple header fields
-            for value in values {
-                out.append(name.clone(), value);
+impl ResponseHeaderAggregator {
+    /// Modify the outgoing client response headers based on the aggregated headers from subgraphs.
+    #[inline]
+    pub fn modify_client_response_headers(
+        self,
+        out: &mut ntex::http::ResponseBuilder,
+    ) -> Result<(), HeaderRuleRuntimeError> {
+        for (name, (agg_strategy, mut values)) in self.entries {
+            if values.is_empty() {
+                continue;
             }
-            continue;
+
+            if is_never_join_header(&name) {
+                // never-join headers must be emitted as multiple header fields
+                for value in values {
+                    out.header(&name, value);
+                }
+                continue;
+            }
+
+            if values.len() == 1 {
+                out.set_header(name, values.pop().unwrap());
+                continue;
+            }
+
+            if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
+                let joined = join_with_comma(&values)
+                    .map_err(|_| HeaderRuleRuntimeError::BadHeaderValue(name.to_string()))?;
+                out.set_header(name, joined);
+            }
         }
 
-        if values.len() == 1 {
-            out.insert(name, values.pop().unwrap());
-            continue;
-        }
-
-        if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
-            let joined = join_with_comma(&values)
-                .map_err(|_| HeaderRuleRuntimeError::BadHeaderValue(name.to_string()))?;
-            out.insert(name, joined);
-        }
+        Ok(())
     }
-
-    Ok(())
 }
 
 #[inline]

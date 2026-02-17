@@ -37,6 +37,10 @@ pub struct EnvVarOverrides {
     pub hive_access_token: Option<String>,
     #[envconfig(from = "HIVE_TARGET")]
     pub hive_target: Option<String>,
+    #[envconfig(from = "HIVE_TRACING_ENABLED")]
+    pub hive_tracing_enabled: Option<bool>,
+    #[envconfig(from = "HIVE_USAGE_REPORTING_ENABLED")]
+    pub hive_usage_reporting_enabled: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -103,12 +107,20 @@ impl EnvVarOverrides {
             }
         }
 
+        if let Some(enabled) = self.hive_tracing_enabled.take() {
+            config = config.set_override("telemetry.hive.tracing.enabled", enabled)?;
+        }
+
+        if let Some(enabled) = self.hive_usage_reporting_enabled.take() {
+            config = config.set_override("telemetry.hive.usage_reporting.enabled", enabled)?;
+        }
+
         if let Some(hive_access_token) = self.hive_access_token.take() {
-            config = config.set_override("usage_reporting.access_token", hive_access_token)?;
-            if let Some(hive_target) = self.hive_target.take() {
-                config = config.set_override("usage_reporting.target_id", hive_target)?;
-            }
-            config = config.set_override("usage_reporting.enabled", true)?;
+            config = config.set_override("telemetry.hive.token", hive_access_token)?;
+        }
+
+        if let Some(hive_target) = self.hive_target.take() {
+            config = config.set_override("telemetry.hive.target", hive_target)?;
         }
 
         // GraphiQL overrides

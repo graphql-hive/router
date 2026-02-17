@@ -132,9 +132,11 @@ impl<'a> SubgraphResponse<'a> {
 
 impl SubgraphExecutorError {
     pub fn to_subgraph_response(self, subgraph_name: &str) -> SubgraphResponse<'static> {
-        let mut graphql_error: GraphQLError = self.into();
-        graphql_error.message = "Failed to execute request to subgraph".to_string();
-        graphql_error.to_subgraph_response(subgraph_name)
+        GraphQLError::from_message_and_code(
+            "Failed to execute request to subgraph",
+            self.error_code(),
+        )
+        .to_subgraph_response(subgraph_name)
     }
     pub fn stream_once_subgraph_response(
         self,

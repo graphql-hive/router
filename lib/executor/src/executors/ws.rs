@@ -39,21 +39,13 @@ impl Drop for WsSubgraphExecutor {
     }
 }
 
-fn log_error(error: &SubgraphExecutorError) {
-    tracing::error!(
-        error = %error,
-        "Subgraph executor error"
-    );
-}
-
 #[async_trait]
 impl SubgraphExecutor for WsSubgraphExecutor {
-    #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
-    ) -> SubgraphResponse<'a> {
+    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
 
@@ -96,7 +88,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                             endpoint.to_string(),
                             e.to_string(),
                         );
-                        log_error(&error);
                         return error.to_subgraph_response(&subgraph_name);
                     }
                 };
@@ -108,7 +99,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                             endpoint.to_string(),
                             e.to_string(),
                         );
-                        log_error(&error);
                         return error.to_subgraph_response(&subgraph_name);
                     }
                 };
@@ -129,32 +119,25 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                             endpoint.to_string(),
                             "Stream closed without response".to_string(),
                         );
-                        log_error(&error);
                         error.to_subgraph_response(&subgraph_name)
                     }
                 }
             })
             .await;
 
-        match result {
-            Ok(response) => response,
-            Err(_) => {
-                let error = SubgraphExecutorError::RequestFailure(
-                    self.endpoint.to_string(),
-                    "WebSocket executor channel closed".to_string(),
-                );
-                log_error(&error);
-                error.to_subgraph_response(&self.subgraph_name)
-            }
-        }
+        result.map_err(|_| {
+            SubgraphExecutorError::RequestFailure(
+                self.endpoint.to_string(),
+                "WebSocket executor channel closed".to_string(),
+            )
+        })
     }
 
-    #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn subscribe<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
-    ) -> BoxStream<'static, SubgraphResponse<'static>> {
+    ) -> Result<BoxStream<'static, SubgraphResponse<'static>>, SubgraphExecutorError> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SubgraphResponse<'static>>();
 
         let endpoint = self.endpoint.clone();
@@ -198,7 +181,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 Err(e) => {
                     let error =
                         SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string());
-                    log_error(&error);
                     let _ = tx.send(error.to_subgraph_response(&subgraph_name));
                     return;
                 }
@@ -209,7 +191,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 Err(e) => {
                     let error =
                         SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string());
-                    log_error(&error);
                     let _ = tx.send(error.to_subgraph_response(&subgraph_name));
                     return;
                 }
@@ -237,10 +218,10 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             }
         }));
 
-        Box::pin(async_stream::stream! {
+        Ok(Box::pin(async_stream::stream! {
             while let Some(response) = rx.recv().await {
                 yield response;
             }
-        })
+        }))
     }
 }

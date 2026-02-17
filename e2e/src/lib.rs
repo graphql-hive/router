@@ -3,9 +3,13 @@ mod authorization_directives_filter;
 #[cfg(test)]
 mod authorization_directives_reject;
 #[cfg(test)]
+mod body_limit;
+#[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
 mod env_vars;
+#[cfg(test)]
+mod error_handling;
 #[cfg(test)]
 mod file_supergraph;
 #[cfg(test)]
@@ -17,6 +21,8 @@ mod http;
 #[cfg(test)]
 mod jwt;
 #[cfg(test)]
+mod max_aliases;
+#[cfg(test)]
 mod max_depth;
 #[cfg(test)]
 mod max_directives;
@@ -27,9 +33,13 @@ mod override_subgraph_urls;
 #[cfg(test)]
 mod probes;
 #[cfg(test)]
+mod router_timeout;
+#[cfg(test)]
 mod subscriptions;
 #[cfg(test)]
 mod supergraph;
+#[cfg(test)]
+mod telemetry;
 #[cfg(test)]
 mod testkit;
 #[cfg(test)]

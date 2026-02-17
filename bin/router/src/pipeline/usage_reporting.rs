@@ -7,11 +7,13 @@ use async_trait::async_trait;
 use graphql_tools::parser::schema::Document;
 use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgentExt};
 use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
-use hive_router_config::usage_reporting::UsageReportingConfig;
-use hive_router_plan_executor::execution::{
-    client_request_details::ClientRequestDetails, plan::PlanExecutionOutput,
+use hive_router_config::telemetry::hive::{
+    is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig,
 };
-use ntex::web::HttpRequest;
+use hive_router_config::usage_reporting::UsageReportingConfig;
+use hive_router_internal::telemetry::resolve_value_or_expression;
+use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
+
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
 
@@ -22,51 +24,75 @@ use crate::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum UsageReportingError {
-    #[error("Access token is missing. Please provide it via 'HIVE_ACCESS_TOKEN' environment variable or under 'usage_reporting.access_token' in the configuration.")]
+    #[error("Usage Reporting - Access token is missing. Please provide it via 'HIVE_ACCESS_TOKEN' environment variable or under 'telemetry.hive.token' in the configuration.")]
     MissingAccessToken,
     #[error("Failed to initialize usage agent: {0}")]
     AgentCreationError(#[from] AgentError),
+    #[error("Usage Reporting - Configuration error: {0}")]
+    ConfigurationError(String),
 }
 
-pub fn init_hive_user_agent(
+pub fn init_hive_usage_agent(
     bg_tasks_manager: &mut BackgroundTasksManager,
-    usage_config: &UsageReportingConfig,
+    hive_config: &HiveTelemetryConfig,
 ) -> Result<UsageAgent, UsageReportingError> {
+    let usage_config = &hive_config.usage_reporting;
     let user_agent = format!("hive-router/{}", ROUTER_VERSION);
-    let access_token = usage_config
-        .access_token
-        .as_deref()
-        .ok_or(UsageReportingError::MissingAccessToken)?;
+    let access_token = match &hive_config.token {
+        Some(t) => resolve_value_or_expression(t, "Hive Telemetry token")
+            .map_err(|e| UsageReportingError::ConfigurationError(e.to_string()))?,
+        None => return Err(UsageReportingError::MissingAccessToken),
+    };
 
-    let mut agent = UsageAgent::builder()
+    let target = match &hive_config.target {
+        Some(t) => Some(
+            resolve_value_or_expression(t, "Hive Telemetry target")
+                .map_err(|e| UsageReportingError::ConfigurationError(e.to_string()))?,
+        ),
+        None => None,
+    };
+
+    if let Some(target) = &target {
+        if !is_uuid_target_ref(target) && !is_slug_target_ref(target) {
+            return Err(UsageReportingError::ConfigurationError(format!(
+                "Invalid Hive Telemetry target format: '{}'. It must be either in slug format '$organizationSlug/$projectSlug/$targetSlug' or UUID format 'a0f4c605-6541-4350-8cfe-b31f21a4bf80'",
+                target
+            )));
+        }
+    }
+
+    let mut agent_builder = UsageAgent::builder()
         .user_agent(user_agent)
         .endpoint(usage_config.endpoint.clone())
-        .token(access_token.to_string())
+        .token(access_token)
         .buffer_size(usage_config.buffer_size)
         .connect_timeout(usage_config.connect_timeout)
         .request_timeout(usage_config.request_timeout)
         .accept_invalid_certs(usage_config.accept_invalid_certs)
         .flush_interval(usage_config.flush_interval);
 
-    if let Some(target_id) = usage_config.target_id.as_ref() {
-        agent = agent.target_id(target_id.clone());
+    if let Some(target_id) = target {
+        agent_builder = agent_builder.target_id(target_id);
     }
 
-    let agent = agent.build()?;
+    let agent = agent_builder.build()?;
 
     bg_tasks_manager.register_task(agent.clone());
     Ok(agent)
 }
 
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
 #[inline]
 pub async fn collect_usage_report<'a>(
     schema: Arc<Document<'static, String>>,
     duration: Duration,
-    req: &HttpRequest,
+    client_name: Option<&str>,
+    client_version: Option<&str>,
     client_request_details: &ClientRequestDetails<'a>,
     hive_usage_agent: &UsageAgent,
     usage_config: &UsageReportingConfig,
-    execution_result: &PlanExecutionOutput,
+    error_count: usize,
 ) {
     let sample_rate = usage_config.sample_rate.as_f64();
     if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
@@ -79,20 +105,18 @@ pub async fn collect_usage_report<'a>(
     {
         return;
     }
-    let client_name = get_header_value(req, &usage_config.client_name_header);
-    let client_version = get_header_value(req, &usage_config.client_version_header);
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
     let execution_report = ExecutionReport {
         schema,
-        client_name: client_name.map(|s| s.to_owned()),
-        client_version: client_version.map(|s| s.to_owned()),
+        client_name: client_name.map(|name| name.to_string()),
+        client_version: client_version.map(|version| version.to_string()),
         timestamp,
         duration,
-        ok: execution_result.error_count == 0,
-        errors: execution_result.error_count,
+        ok: error_count == 0,
+        errors: error_count,
         operation_body: client_request_details.operation.query.to_owned(),
         operation_name: client_request_details
             .operation
@@ -104,11 +128,6 @@ pub async fn collect_usage_report<'a>(
     if let Err(err) = hive_usage_agent.add_report(execution_report).await {
         tracing::error!("Failed to send usage report: {}", err);
     }
-}
-
-#[inline]
-fn get_header_value<'req>(req: &'req HttpRequest, header_name: &str) -> Option<&'req str> {
-    req.headers().get(header_name).and_then(|v| v.to_str().ok())
 }
 
 #[async_trait]

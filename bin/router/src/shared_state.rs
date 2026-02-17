@@ -3,6 +3,7 @@ use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
+use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
@@ -15,6 +16,7 @@ use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
 use crate::pipeline::introspection_policy::compile_introspection_policy;
+use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
@@ -58,10 +60,9 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
         Some(DEFAULT_TTL.min(time_until_exp))
     }
 }
-
 pub struct RouterSharedState {
     pub validation_plan: ValidationPlan,
-    pub parse_cache: Cache<u64, Arc<graphql_tools::parser::query::Document<'static, String>>>,
+    pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: HeaderRulesPlan,
     pub override_labels_evaluator: OverrideLabelsEvaluator,
@@ -74,6 +75,7 @@ pub struct RouterSharedState {
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
     pub hive_usage_agent: Option<UsageAgent>,
     pub introspection_policy: BooleanOrProgram,
+    pub telemetry_context: Arc<TelemetryContext>,
 }
 
 impl RouterSharedState {
@@ -82,6 +84,7 @@ impl RouterSharedState {
         jwt_auth_runtime: Option<JwtAuthRuntime>,
         hive_usage_agent: Option<UsageAgent>,
         validation_plan: ValidationPlan,
+        telemetry_context: Arc<TelemetryContext>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan,
@@ -103,6 +106,7 @@ impl RouterSharedState {
             hive_usage_agent,
             introspection_policy: compile_introspection_policy(&router_config.introspection)
                 .map_err(Box::new)?,
+            telemetry_context,
         })
     }
 }

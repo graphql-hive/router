@@ -3,14 +3,14 @@ name = "hive-console-sdk"
 edition = "2021"
 license = "MIT"
 publish = true
-version = "0.3.5"
+version = "0.3.6"
 description = "Rust SDK for Hive Console"
 repository = "https://github.com/graphql-hive/router"
 homepage = "https://github.com/graphql-hive/router"
 authors = ["The Guild"]
 
 [dependencies]
-graphql-tools =  { path = "../graphql-tools", version = "0.5.0" }
+graphql-tools =  { path = "../graphql-tools", version = "0.5.1" }
 
 async-trait = { workspace = true }
 thiserror = { workspace = true }
@@ -30,10 +30,10 @@ regex-automata = { workspace = true }
 retry-policies = { workspace = true }
 recloser = "1.3.1"
 futures-util = "0.3.31"
-typify = "0.5.0"
+typify = "0.6.0"
 regress = "0.10.5"
 lazy_static = { workspace = true }
 async-dropper-simple = { version = "0.2.6", features = ["tokio", "no-default-bound"] }
 
 [dev-dependencies]
-mockito = "1.7.0"
+mockito = { workspace = true }

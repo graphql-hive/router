@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use graphql_tools::validation::utils::ValidationError;
+use hive_router_internal::graphql::ObservedError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
+    headers::errors::HeaderRuleRuntimeError,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
@@ -20,6 +22,7 @@ use crate::{
     jwt::errors::JwtError,
     pipeline::{
         authorization::AuthorizationError,
+        body_read::ReadBodyStreamError,
         header::{ResponseMode, SingleContentType},
         progressive_override::LabelEvaluationError,
     },
@@ -68,6 +71,9 @@ pub enum PipelineError {
     #[error("Failed to parse GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_FAILED")]
     FailedToParseOperation(#[from] graphql_tools::parser::query::ParseError),
+    #[error("Failed to minify parsed GraphQL operation: {0}")]
+    #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
+    FailedToMinifyParsedOperation(String),
     #[error("Failed to normalize GraphQL operation")]
     #[strum(serialize = "OPERATION_RESOLUTION_FAILURE")]
     NormalizationError(#[from] NormalizationError),
@@ -118,6 +124,22 @@ pub enum PipelineError {
     #[error("Subscriptions are not supported over accepted transport(s)")]
     #[strum(serialize = "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED")]
     SubscriptionsTransportNotSupported,
+
+    #[error(transparent)]
+    #[strum(serialize = "READ_BODY_STREAM_ERROR")]
+    ReadBodyStreamError(#[from] ReadBodyStreamError),
+
+    #[error("Request timed out")]
+    #[strum(serialize = "GATEWAY_TIMEOUT")]
+    TimeoutError,
+
+    #[error(transparent)]
+    #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
+    HeaderPropagation(#[from] HeaderRuleRuntimeError),
+
+    #[error("Failed to serialize the query plan: {0}")]
+    #[strum(serialize = "QUERY_PLAN_SERIALIZATION_FAILED")]
+    QueryPlanSerializationFailed(sonic_rs::Error),
 }
 
 impl PipelineError {
@@ -125,6 +147,7 @@ impl PipelineError {
         match self {
             Self::JwtError(err) => err.error_code(),
             Self::PlanExecutionError(err) => err.error_code(),
+            Self::ReadBodyStreamError(err) => err.error_code(),
             _ => self.into(),
         }
     }
@@ -152,6 +175,8 @@ impl PipelineError {
             (Self::FailedToParseExtensions(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseOperation(_), false) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseOperation(_), true) => StatusCode::OK,
+            (Self::FailedToMinifyParsedOperation(_), false) => StatusCode::BAD_REQUEST,
+            (Self::FailedToMinifyParsedOperation(_), true) => StatusCode::OK,
             (Self::NormalizationError(_), _) => StatusCode::BAD_REQUEST,
             (Self::VariablesCoercionError(_), false) => StatusCode::BAD_REQUEST,
             (Self::VariablesCoercionError(_), true) => StatusCode::OK,
@@ -169,6 +194,10 @@ impl PipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::ReadBodyStreamError(err), _) => err.status_code(),
+            (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
+            (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -222,4 +251,16 @@ impl PipelineError {
 pub struct FailedExecutionResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<GraphQLError>>,
+}
+
+impl From<&PipelineError> for ObservedError {
+    fn from(value: &PipelineError) -> Self {
+        Self {
+            code: Some(value.graphql_error_code().to_string()),
+            message: value.graphql_error_message(),
+            path: None,
+            service_name: None,
+            affected_path: None,
+        }
+    }
 }
