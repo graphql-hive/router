@@ -22,10 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: test all
         run: cargo test_all
         timeout-minutes: 5
@@ -37,10 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: test e2e
         run: cargo test_e2e
         timeout-minutes: 60
@@ -69,10 +65,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: build
         run: cargo build --release
 
@@ -81,15 +75,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         with:
           components: rustfmt
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: cargo fmt
         uses: actions-rust-lang/rustfmt@4066006ec54a31931b9b1fddfd38f2fdf2d27143 # v1
 
@@ -98,12 +87,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: cargo clippy
         run: cargo clippy --all
 
@@ -121,10 +108,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - if: matrix.name == 'executor'
         name: Build subgraphs
         run: cargo build --release -p subgraphs
@@ -169,10 +154,8 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: Setup K6
         run: |
           wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
@@ -191,14 +174,9 @@ jobs:
           sleep 5
         env:
           ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
-      # run only on main
-      - name: Run k6 benchmark for Pull Request
-        if: github.event_name == 'push'
-        run: k6 run bench/k6.js
-      # run only on PR
-      - name: Run k6 benchmark for Pull Request
+      - name: Run k6 benchmark for ${{ github.ref }}
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./bench/results/pr -e NO_GITHUB_COMMENT=true bench/k6.js
+        run: k6 run -e SUMMARY_PATH=./bench/results/pr bench/k6.js
       - name: Checkout main branch in a separate directory
         if: github.event_name == 'pull_request'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -219,7 +197,7 @@ jobs:
           ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
       - name: Run k6 benchmark for main
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./bench/results/main -e NO_GITHUB_COMMENT=true bench/k6.js
+        run: k6 run -e SUMMARY_PATH=./bench/results/main bench/k6.js
       - name: Compare benchmark results
         if: github.event_name == 'pull_request'
         run: |
@@ -231,10 +209,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1
         with:
@@ -276,10 +252,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - run: cargo build --package hive-router
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1
