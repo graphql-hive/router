@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=../../router-config.schema.json
 supergraph:
   source: file
-  path: ./bench/supergraph.graphql
+  path: ../supergraph.graphql
 log:
   level: info
 telemetry:
