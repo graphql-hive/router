@@ -195,7 +195,7 @@ jobs:
       # run only on PR
       - name: Run k6 benchmark for Pull Request
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./bench/results/pr bench/k6.js
+        run: k6 run -e SUMMARY_PATH=./bench/results/pr -e NO_GITHUB_COMMENT=true bench/k6.js
       - name: Checkout main branch in a separate directory
         if: github.event_name == 'pull_request'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
