@@ -62,7 +62,7 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
     }
 }
 pub struct RouterSharedState {
-    pub validation_plan: ValidationPlan,
+    pub validation_plan: Arc<ValidationPlan>,
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: HeaderRulesPlan,
@@ -90,7 +90,7 @@ impl RouterSharedState {
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
-            validation_plan,
+            validation_plan: Arc::new(validation_plan),
             headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
             parse_cache: moka::future::Cache::new(1000),
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,

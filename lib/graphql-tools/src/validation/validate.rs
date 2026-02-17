@@ -1,3 +1,7 @@
+use std::{hash::{Hash, Hasher}, sync::Arc};
+
+use xxhash_rust::xxh3::Xxh3;
+
 use super::{
     rules::ValidationRule,
     utils::{ValidationError, ValidationErrorContext},
@@ -8,21 +12,39 @@ use crate::{
     static_graphql::{query, schema},
 };
 
+#[derive(Clone)]
 pub struct ValidationPlan {
-    pub rules: Vec<Box<dyn ValidationRule>>,
+    pub rules: Vec<Arc<Box<dyn ValidationRule>>>,
+    pub hash: u64,
+}
+
+fn calculate_hash_for_rules(rules: &[Arc<Box<dyn ValidationRule>>]) -> u64 {
+    let mut hasher = Xxh3::new();
+    for rule in rules {
+        rule.error_code().hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 impl ValidationPlan {
     pub fn new() -> Self {
-        Self { rules: vec![] }
+        let rules = vec![];
+        let hash = calculate_hash_for_rules(&rules);
+        Self { rules, hash }
     }
 
     pub fn from(rules: Vec<Box<dyn ValidationRule>>) -> Self {
-        Self { rules }
+        let rules = rules
+            .into_iter()
+            .map(|rule| rule.into())
+            .collect::<Vec<Arc<Box<dyn ValidationRule>>>>();
+            
+        let hash = calculate_hash_for_rules(&rules);
+        Self { rules, hash }
     }
 
     pub fn add_rule(&mut self, rule: Box<dyn ValidationRule>) {
-        self.rules.push(rule);
+        self.rules.push(Arc::new(rule));
     }
 }
 

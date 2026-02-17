@@ -1,21 +1,28 @@
 pub(crate) mod prune_inacessible;
 pub(crate) mod strip_schema_internals;
 
-use std::sync::Arc;
+use std::hash::{Hash, Hasher};
 
 use graphql_tools::parser::schema::*;
 use prune_inacessible::PruneInaccessible;
 use strip_schema_internals::StripSchemaInternals;
+use xxhash_rust::xxh3::Xxh3;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ConsumerSchema {
-    pub document: Arc<Document<'static, String>>,
+    pub document: Document<'static, String>,
+    pub hash: u64,
 }
 
 impl ConsumerSchema {
     pub fn new_from_supergraph(supergraph: &Document<'static, String>) -> Self {
-        let document = Self::create_consumer_schema(supergraph).into();
-        Self { document }
+        let document: Document<'static, String> = Self::create_consumer_schema(supergraph).into();
+        let hash = {
+            let mut hasher = Xxh3::new();
+            document.to_string().hash(&mut hasher);
+            hasher.finish()
+        };
+        Self { document, hash }
     }
 
     fn create_consumer_schema(supergraph: &Document<'static, String>) -> Document<'static, String> {

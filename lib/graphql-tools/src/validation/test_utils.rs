@@ -230,10 +230,9 @@ directive @repeatable repeatable on FIELD | FRAGMENT_DEFINITION
 
 #[cfg(test)]
 pub fn create_plan_from_rule(rule: Box<dyn ValidationRule>) -> ValidationPlan {
-    let mut rules = Vec::new();
-    rules.push(rule);
-
-    ValidationPlan { rules }
+  let mut plan = ValidationPlan::new();
+  plan.add_rule(rule);
+  plan
 }
 
 #[cfg(test)]

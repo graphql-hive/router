@@ -93,7 +93,7 @@ pub enum PipelineError {
     PlanExecutionError(#[from] PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
     #[strum(serialize = "QUERY_PLAN_BUILD_FAILED")]
-    PlannerError(#[from] PlannerError),
+    PlannerError(#[from] Arc<PlannerError>),
     #[error(transparent)]
     #[strum(serialize = "OVERRIDE_LABEL_EVALUATION_FAILED")]
     LabelEvaluationError(#[from] LabelEvaluationError),

@@ -350,3 +350,8 @@ where
 }
 
 pub type RouterPluginBoxed = Box<dyn DynRouterPlugin>;
+
+pub enum CacheHint {
+    Hit,
+    Miss,
+}

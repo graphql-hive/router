@@ -3,28 +3,33 @@ use std::sync::Arc;
 use graphql_tools::{
     static_graphql::query::Document,
     validation::{
-        rules::{default_rules_validation_plan, ValidationRule},
+        rules::ValidationRule,
         utils::ValidationError,
         validate::ValidationPlan,
     },
 };
-use hive_router_query_planner::state::supergraph_state::SchemaDocument;
+use hive_router_query_planner::consumer_schema::ConsumerSchema;
 use ntex::http::Response;
 
 use crate::{
-    plugin_context::{PluginContext, PluginRequestState, RouterHttpRequest},
+    plugin_context::{PluginContext, RouterHttpRequest},
     plugin_trait::{EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
 };
 
 pub struct OnGraphQLValidationStartHookPayload<'exec> {
     pub router_http_request: &'exec RouterHttpRequest<'exec>,
     pub context: &'exec PluginContext,
-    pub schema: Arc<SchemaDocument>,
+    pub schema: Arc<ConsumerSchema>,
     pub document: Arc<Document>,
-    default_validation_plan: &'exec ValidationPlan,
-    // Override
-    new_validation_plan: Option<ValidationPlan>,
-    pub errors: Option<Vec<ValidationError>>,
+    pub validation_plan: Arc<ValidationPlan>,
+    pub errors: Option<Arc<Vec<ValidationError>>>,
+}
+
+impl OnGraphQLValidationStartHookPayload<'_> {
+    pub fn with_validation_plan<TValidationPlan: Into<ValidationPlan>>(mut self, validation_plan: TValidationPlan) -> Self {
+        self.validation_plan = Arc::new(validation_plan.into());
+        self
+    }
 }
 
 impl<'exec> StartHookPayload<OnGraphQLValidationEndHookPayload, Response>
@@ -40,30 +45,13 @@ pub type OnGraphQLValidationStartHookResult<'exec> = StartHookResult<
 >;
 
 impl<'exec> OnGraphQLValidationStartHookPayload<'exec> {
-    pub fn new(
-        plugin_req_state: &'exec PluginRequestState<'exec>,
-        schema: Arc<SchemaDocument>,
-        document: Arc<Document>,
-        default_validation_plan: &'exec ValidationPlan,
-    ) -> Self {
-        OnGraphQLValidationStartHookPayload {
-            router_http_request: &plugin_req_state.router_http_request,
-            context: &plugin_req_state.context,
-            schema,
-            document,
-            default_validation_plan,
-            new_validation_plan: None,
-            errors: None,
-        }
-    }
-
     pub fn with_validation_rule<TValidationRule: ValidationRule + 'static>(
         mut self,
         rule: TValidationRule,
     ) -> Self {
-        self.new_validation_plan
-            .get_or_insert_with(default_rules_validation_plan)
-            .add_rule(Box::new(rule));
+        let mut new_plan = self.validation_plan.as_ref().clone();
+        new_plan.add_rule(Box::new(rule));
+        self.validation_plan = Arc::new(new_plan);
         self
     }
 
@@ -71,23 +59,15 @@ impl<'exec> OnGraphQLValidationStartHookPayload<'exec> {
     where
         F: FnMut(&Box<dyn ValidationRule>) -> bool,
     {
-        let plan = self
-            .new_validation_plan
-            .get_or_insert_with(default_rules_validation_plan);
-        plan.rules.retain(|rule| f(rule));
+        let mut new_plan = self.validation_plan.as_ref().clone();
+        new_plan.rules.retain(|rule| f(rule));
+        self.validation_plan = Arc::new(new_plan);
         self
-    }
-
-    pub fn get_validation_plan(&self) -> &ValidationPlan {
-        match &self.new_validation_plan {
-            Some(plan) => plan,
-            None => self.default_validation_plan,
-        }
     }
 }
 
 pub struct OnGraphQLValidationEndHookPayload {
-    pub errors: Vec<ValidationError>,
+    pub errors: Arc<Vec<ValidationError>>,
 }
 
 impl EndHookPayload<Response> for OnGraphQLValidationEndHookPayload {}
