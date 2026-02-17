@@ -166,28 +166,33 @@ jobs:
             package: "hive-router"
             binary: "hive_router"
             config: "bench/configs/default.config.yaml"
+            compare_with_default: true
           - name: "no-dedupe"
             args: ""
             package: "hive-router"
             binary: "hive_router"
             config: bench/configs/no-deduplication.config.yaml
+            compare_with_default: false
           - name: "hive-tracing"
             # turns otlp http/grpc to noop
             args: "--features noop_otlp_exporter"
             package: "hive-router"
             binary: "hive_router"
             config: bench/configs/hive-tracing.config.yaml
+            compare_with_default: false
           - name: "otlp-tracing"
             # turns otlp http/grpc to noop
             args: "--features noop_otlp_exporter"
             package: "hive-router"
             binary: "hive_router"
             config: bench/configs/otlp-tracing.config.yaml
+            compare_with_default: false
           - name: "plugins"
             args: ""
             package: "plugin-template"
             binary: "hive_router_with_plugin"
             config: "bench/configs/plugins.config.yaml"
+            compare_with_default: true
     name: benchmark / router / ${{ matrix.name }}
     runs-on: ubuntu-latest
     env:
@@ -234,18 +239,33 @@ jobs:
         with:
           ref: main
           path: main-branch
-      - name: Build router
-        if: github.event_name == 'pull_request'
+
+      - name: Build router from main branch w/ default config
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == 'true'
         run: cargo build --release -p hive-router
         working-directory: main-branch
-      - name: Run router
-        if: github.event_name == 'pull_request'
+      - name: Run router from main branch w/ default config
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == 'true'
         run: |
           kill $(cat router.pid)
           ./main-branch/target/release/hive_router &
           sleep 5
         env:
           ROUTER_CONFIG_FILE_PATH: bench/configs/default.config.yaml
+
+      - name: Build router from main branch w/ ${{ matrix.config }} config
+        if: github.event_name == 'pull_request' && matrix.compare_with_default != 'true'
+        run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
+        working-directory: main-branch
+      - name: Run router from main branch w/ ${{ matrix.config }} config
+        if: github.event_name == 'pull_request' && matrix.compare_with_default != 'true'
+        run: |
+          kill $(cat router.pid)
+          ./main-branch/target/release/${{ matrix.binary }} &
+          sleep 5
+        env:
+          ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
+
       - name: Run k6 benchmark for main
         if: github.event_name == 'pull_request'
         run: k6 run -e SUMMARY_PATH=./bench/results/main -e NO_GITHUB_COMMENT=true bench/k6.js
