@@ -13,6 +13,7 @@ use hive_router_query_planner::ast::operation::OperationDefinition;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::PipelineError;
+use crate::pipeline::execution_request::GetQueryStr;
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::SchemaState;
 use tracing::{trace, Instrument};
@@ -57,7 +58,7 @@ pub async fn normalize_request_with_cache(
         let cache_key = match &graphql_params.operation_name {
             Some(operation_name) => {
                 let mut hasher = Xxh3::new();
-                graphql_params.query.hash(&mut hasher);
+                graphql_params.get_query()?.hash(&mut hasher);
                 operation_name.hash(&mut hasher);
                 hasher.finish()
             }

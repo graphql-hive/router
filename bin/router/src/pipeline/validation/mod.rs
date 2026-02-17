@@ -65,9 +65,9 @@ pub async fn validate_operation_with_cache(
                 }
             }
 
-            validation_schema = Arc::clone(&start_payload.schema);
-            validation_operation = Arc::clone(&start_payload.document);
-            validation_rules = Arc::clone(&start_payload.validation_plan);
+            validation_schema = start_payload.schema;
+            validation_operation = start_payload.document;
+            validation_rules = start_payload.validation_plan;
             errors = start_payload.errors;
         }
 
