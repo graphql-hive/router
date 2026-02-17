@@ -58,7 +58,7 @@ fn authorization_benchmark(c: &mut Criterion) {
                 .map(Arc::new),
             operation_indentity: OperationIdentity {
                 name: None,
-                operation_type: "query".to_string(),
+                operation_type: "query",
                 client_document_hash: "".to_string(),
             },
         }
