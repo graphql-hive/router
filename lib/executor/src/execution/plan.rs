@@ -25,7 +25,7 @@ use tracing::Instrument;
 use crate::{
     context::ExecutionContext,
     execution::{
-        client_request_details::ClientRequestDetails,
+        client_request_details::{ClientRequestDetails, OperationDetails},
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
@@ -193,30 +193,59 @@ pub async fn execute_query_plan<'exec>(
                 affected_path: || None,
             })?;
 
-        // prepare executor for potential entity resolution after subscription event is received
-        let executor = Executor {
-            variable_values: opts.variable_values,
-            schema_metadata: opts.introspection_context.metadata,
-            executors: opts.executors,
-            client_request: opts.client_request,
-            headers_plan: opts.headers_plan,
-            jwt_forwarding_plan: opts.jwt_auth_forwarding,
-            dedupe_subgraph_requests: false, // TODO: decide how and when to dedupe during entity resolution
-        };
-
         // clone all necessary data from the context for usage in the stream.
         // the stream will move all of these values inside its closure
-        let initial_errors = opts.initial_errors.clone();
+        let projection_plan: Arc<[FieldProjectionPlan]> = opts.projection_plan.into();
+        let headers_plan: Arc<HeaderRulesPlan> = opts.headers_plan.clone().into();
+        let variable_values: Option<HashMap<String, sonic_rs::Value>> =
+            opts.variable_values.clone();
+        let extensions: HashMap<String, sonic_rs::Value> = opts.extensions.clone();
+        let schema_metadata: Arc<SchemaMetadata> =
+            Arc::new(opts.introspection_context.metadata.clone());
+        let operation_type_name: String = opts.operation_type_name.to_string();
+        let executors: Arc<SubgraphExecutorMap> = opts.executors.clone().into();
+        let jwt_auth_forwarding: Option<JwtAuthForwardingPlan> = opts.jwt_auth_forwarding.clone();
+        let initial_errors: Vec<GraphQLError> = opts.initial_errors.clone();
+
+        let client_method = opts.client_request.method.clone();
+        let client_url = opts.client_request.url.clone();
+        let client_headers = opts.client_request.headers.clone();
+        let client_operation_name = opts.client_request.operation.name.map(|s| s.to_string());
+        let client_operation_query = opts.client_request.operation.query.to_string();
+        let client_operation_kind = opts.client_request.operation.kind;
+        let client_jwt = opts.client_request.jwt.clone();
 
         let body_stream = Box::pin(async_stream::stream! {
             let mut response_stream = response_stream;
             while let Some(response) = response_stream.next().await {
+                let client_request = ClientRequestDetails {
+                    method: &client_method,
+                    url: &client_url,
+                    headers: &client_headers,
+                    operation: OperationDetails {
+                        name: client_operation_name.as_deref(),
+                        query: &client_operation_query,
+                        kind: client_operation_kind,
+                    },
+                    jwt: client_jwt.clone(),
+                };
+
+                let executor = Executor {
+                    variable_values: &variable_values,
+                    schema_metadata: &schema_metadata,
+                    executors: &executors,
+                    client_request: &client_request,
+                    headers_plan: &headers_plan,
+                    jwt_forwarding_plan: jwt_auth_forwarding.clone(),
+                    // TODO: decide how and when to dedupe during entity resolution
+                    dedupe_subgraph_requests: false,
+                };
+
                 let mut errors = initial_errors.clone();
                 if let Some(resp_errors) = response.errors {
                     errors.extend(resp_errors);
                 }
 
-                // entity resolution
                 let mut exec_ctx = ExecutionContext::new(&query_plan, response.data, errors);
                 if let Some(node) = &query_plan.node {
                     executor.execute_plan_node(&mut exec_ctx, node).await;
@@ -237,12 +266,12 @@ pub async fn execute_query_plan<'exec>(
                 yield match project_by_operation(
                     &data,
                     errors,
-                    &opts.extensions,
-                    opts.operation_type_name,
-                    opts.projection_plan,
-                    opts.variable_values,
+                    &extensions,
+                    &operation_type_name,
+                    &projection_plan,
+                    &variable_values,
                     response_size_estimate,
-                    opts.introspection_context.metadata,
+                    &schema_metadata,
                 )
                 .with_plan_context(LazyPlanContext {
                     subgraph_name: || None,
