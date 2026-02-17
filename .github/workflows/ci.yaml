@@ -242,11 +242,11 @@ jobs:
           path: main-branch
 
       - name: Build router from main branch w/ default config
-        if: github.event_name == 'pull_request' && matrix.compare_with_default == 'true'
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == true
         run: cargo build --release -p hive-router
         working-directory: main-branch
       - name: Run router from main branch w/ default config
-        if: github.event_name == 'pull_request' && matrix.compare_with_default == 'true'
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == true
         run: |
           kill $(cat router.pid)
           ./main-branch/target/release/hive_router &
@@ -255,11 +255,11 @@ jobs:
           ROUTER_CONFIG_FILE_PATH: bench/configs/default.config.yaml
 
       - name: Build router from main branch w/ ${{ matrix.config }} config
-        if: github.event_name == 'pull_request' && matrix.compare_with_default != 'true'
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == false
         run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
         working-directory: main-branch
       - name: Run router from main branch w/ ${{ matrix.config }} config
-        if: github.event_name == 'pull_request' && matrix.compare_with_default != 'true'
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == false
         run: |
           kill $(cat router.pid)
           ./main-branch/target/release/${{ matrix.binary }} &
