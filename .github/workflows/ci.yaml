@@ -241,6 +241,8 @@ jobs:
           node-version-file: .node-version
       - name: Run Audits
         run: npm run test:federation-all
+        env:
+          GATEWAY_TIMEOUT: 1_800_000 # 30 minutes, to prevent CI timeout for long-running tests
         working-directory: audits
         continue-on-error: true # continue even if the test fails
       - name: Upload logs
