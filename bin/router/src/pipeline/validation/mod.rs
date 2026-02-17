@@ -12,7 +12,7 @@ use hive_router_plan_executor::hooks::on_graphql_validation::{
 };
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
-use hive_router_plan_executor::plugin_trait::{EndControlFlow, StartControlFlow};
+use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use hive_router_query_planner::consumer_schema::ConsumerSchema;
 use tracing::{error, trace, Instrument};
 use xxhash_rust::xxh3::Xxh3;
@@ -77,14 +77,20 @@ pub async fn validate_operation_with_cache(
             &validation_rules,
         );
 
+        let cache_hint;
+
         let mut errors = match errors {
-            Some(errors) => errors,
+            Some(errors) => {
+                cache_hint = CacheHint::Hit;
+                errors
+            }
             None => match schema_state.validate_cache.get(&cache_key).await {
                 Some(cached_validation) => {
                     trace!(
                         "validation result of hash {} has been loaded from cache",
                         parser_payload.cache_key
                     );
+                    cache_hint = CacheHint::Hit;
                     validate_span.record_cache_hit(true);
                     cached_validation
                 }
@@ -93,6 +99,7 @@ pub async fn validate_operation_with_cache(
                         "validation result of hash {} does not exists in cache",
                         parser_payload.cache_key
                     );
+                    cache_hint = CacheHint::Miss;
                     validate_span.record_cache_hit(false);
 
                     let res = validate(
@@ -104,7 +111,7 @@ pub async fn validate_operation_with_cache(
 
                     schema_state
                         .validate_cache
-                        .insert(parser_payload.cache_key, arc_res.clone())
+                        .insert(cache_key, arc_res.clone())
                         .await;
                     arc_res
                 }
@@ -112,7 +119,7 @@ pub async fn validate_operation_with_cache(
         };
 
         if !on_end_callbacks.is_empty() {
-            let mut end_payload = OnGraphQLValidationEndHookPayload { errors };
+            let mut end_payload = OnGraphQLValidationEndHookPayload { errors, cache_hint };
             for callback in on_end_callbacks {
                 let result = callback(end_payload);
                 end_payload = result.payload;

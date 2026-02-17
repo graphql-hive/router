@@ -10,7 +10,7 @@ use ntex::http::Response;
 
 use crate::{
     plugin_context::{PluginContext, RouterHttpRequest},
-    plugin_trait::{EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
+    plugin_trait::{CacheHint, EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
 };
 
 pub struct OnGraphQLValidationStartHookPayload<'exec> {
@@ -74,6 +74,7 @@ impl<'exec> OnGraphQLValidationStartHookPayload<'exec> {
 
 pub struct OnGraphQLValidationEndHookPayload {
     pub errors: Arc<Vec<ValidationError>>,
+    pub cache_hint: CacheHint,
 }
 
 impl EndHookPayload<Response> for OnGraphQLValidationEndHookPayload {}
