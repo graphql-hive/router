@@ -1,4 +1,7 @@
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use bytes::BufMut;
 use futures::{
@@ -11,7 +14,7 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
 };
 use hive_router_query_planner::{
     planner::plan_nodes::{
-        ConditionNode, FetchNode, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
+        ConditionNode, FetchNode, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan, SequenceNode,
     },
     state::supergraph_state::OperationKind,
 };
@@ -88,7 +91,7 @@ pub enum QueryPlanExecutionResult {
 pub async fn execute_query_plan<'exec>(
     opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
-    let (subscription_node, _remaining_nodes) = match &opts.query_plan.node {
+    let (subscription_node, remaining_nodes) = match &opts.query_plan.node {
         // a subscription to a subgraph that contains all data and doesn't need entity resolution
         Some(PlanNode::Subscription(sub)) => (Some(sub), None),
         // a subscription that needs entity resolution. after emitting, it needs to execute the
@@ -108,10 +111,154 @@ pub async fn execute_query_plan<'exec>(
         _ => (None, None),
     };
 
-    if let Some(_sub) = subscription_node {
+    if let Some(sub) = subscription_node {
         // subscription
 
-        todo!()
+        // the primary (fetch node) of the subscription is the
+        // subscription destination, we execute it first and it
+        // would give us back a stream of results
+        let fetch_node = sub.primary.clone();
+
+        // we assemble a synthetic query plan for entity resolution from remaining nodes
+        // because we might need entity resolution after receiving each subscription event
+        let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan {
+            kind: "QueryPlan".to_string(),
+            node: remaining_nodes.map(|nodes| {
+                if nodes.len() == 1 {
+                    nodes.into_iter().next().unwrap()
+                } else {
+                    PlanNode::Sequence(SequenceNode { nodes })
+                }
+            }),
+        });
+
+        // we perform a regular subgraph request to the subscription subgraph
+        // the only difference is that we get back a stream of results
+        let mut headers_map = HeaderMap::new();
+        modify_subgraph_request_headers(
+            opts.headers_plan,
+            &fetch_node.service_name,
+            opts.client_request,
+            &mut headers_map,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || Some(fetch_node.service_name.clone()),
+            affected_path: || None,
+        })?;
+        let variable_refs =
+            select_fetch_variables(opts.variable_values, fetch_node.variable_usages.as_ref());
+
+        let mut subgraph_request = SubgraphExecutionRequest {
+            query: fetch_node.operation.document_str.as_str(),
+            dedupe: false,
+            operation_name: fetch_node.operation_name.as_deref(),
+            variables: variable_refs,
+            representations: None,
+            headers: headers_map,
+            extensions: None,
+        };
+
+        // TODO: otel instrumentation and stuff
+        // let subgraph_operation_span = GraphQLSubgraphOperationSpan::new(
+        //     fetch_node.service_name.as_str(),
+        //     &fetch_node.operation.document_str,
+        // );
+        // subgraph_operation_span.record_operation_identity(GraphQLSpanOperationIdentity {
+        //     name: subgraph_request.operation_name,
+        //     operation_type: match fetch_node.operation_kind {
+        //         Some(OperationKind::Query) | None => "query",
+        //         Some(OperationKind::Mutation) => "mutation",
+        //         Some(OperationKind::Subscription) => "subscription",
+        //     },
+        //     client_document_hash: fetch_node.operation.hash.to_string().as_str(),
+        // });
+
+        if let Some(jwt_forwarding_plan) = &opts.jwt_auth_forwarding {
+            subgraph_request.add_request_extensions_field(
+                jwt_forwarding_plan.extension_field_name.clone(),
+                jwt_forwarding_plan.extension_field_value.clone(),
+            );
+        }
+
+        let response_stream = opts
+            .executors
+            .subscribe(
+                &fetch_node.service_name,
+                subgraph_request,
+                opts.client_request,
+            )
+            .await
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: || Some(fetch_node.service_name.clone()),
+                affected_path: || None,
+            })?;
+
+        // prepare executor for potential entity resolution after subscription event is received
+        let executor = Executor {
+            variable_values: opts.variable_values,
+            schema_metadata: opts.introspection_context.metadata,
+            executors: opts.executors,
+            client_request: opts.client_request,
+            headers_plan: opts.headers_plan,
+            jwt_forwarding_plan: opts.jwt_auth_forwarding,
+            dedupe_subgraph_requests: false, // TODO: decide how and when to dedupe during entity resolution
+        };
+
+        // clone all necessary data from the context for usage in the stream.
+        // the stream will move all of these values inside its closure
+        let initial_errors = opts.initial_errors.clone();
+
+        let body_stream = Box::pin(async_stream::stream! {
+            let mut response_stream = response_stream;
+            while let Some(response) = response_stream.next().await {
+                let mut errors = initial_errors.clone();
+                if let Some(resp_errors) = response.errors {
+                    errors.extend(resp_errors);
+                }
+
+                // entity resolution
+                let mut exec_ctx = ExecutionContext::new(&query_plan, response.data, errors);
+                if let Some(node) = &query_plan.node {
+                    executor.execute_plan_node(&mut exec_ctx, node).await;
+                }
+
+                let data = exec_ctx.data;
+                let errors = exec_ctx.errors;
+                let response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
+
+                // TODO: otel tracing and insturmentation for subscription events
+                // let error_count = exec_ctx.errors.len();
+                // if error_count > 0 {
+                //     opts.span.record_error_count(error_count);
+                //     opts.span
+                //         .record_errors(|| errors.iter().map(|e| e.into()).collect());
+                // }
+
+                yield match project_by_operation(
+                    &data,
+                    errors,
+                    &opts.extensions,
+                    opts.operation_type_name,
+                    opts.projection_plan,
+                    opts.variable_values,
+                    response_size_estimate,
+                    opts.introspection_context.metadata,
+                )
+                .with_plan_context(LazyPlanContext {
+                    subgraph_name: || None,
+                    affected_path: || None,
+                }) {
+                    Ok(body) => body,
+                    Err(_) => todo!(),
+                }
+            }
+        });
+
+        return Ok(QueryPlanExecutionResult::Stream(PlanSubscriptionOutput {
+            body: body_stream,
+            response_headers_aggregator: None,
+            error_count: 0, // NOTE: errors can only happen before streaming started
+        }));
     }
 
     // query or mutation
