@@ -9,5 +9,4 @@ telemetry:
     token: "hvo1/NWRl="
     target: "organization/project/target"
     tracing:
-      enabled: false
-      protocol: http
+      enabled: true
