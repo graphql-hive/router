@@ -1,12 +1,9 @@
 use std::sync::Arc;
 
 use graphql_tools::{
-    static_graphql::query::Document,
-    validation::{
-        rules::ValidationRule,
-        utils::ValidationError,
-        validate::ValidationPlan,
-    },
+    static_graphql::query::Document as QueryDocument,
+    static_graphql::schema::Document as SchemaDocument,
+    validation::{rules::ValidationRule, utils::ValidationError, validate::ValidationPlan},
 };
 use hive_router_query_planner::consumer_schema::ConsumerSchema;
 use ntex::http::Response;
@@ -20,14 +17,23 @@ pub struct OnGraphQLValidationStartHookPayload<'exec> {
     pub router_http_request: &'exec RouterHttpRequest<'exec>,
     pub context: &'exec PluginContext,
     pub schema: Arc<ConsumerSchema>,
-    pub document: Arc<Document>,
+    pub document: Arc<QueryDocument>,
     pub validation_plan: Arc<ValidationPlan>,
     pub errors: Option<Arc<Vec<ValidationError>>>,
 }
 
 impl OnGraphQLValidationStartHookPayload<'_> {
-    pub fn with_validation_plan<TValidationPlan: Into<ValidationPlan>>(mut self, validation_plan: TValidationPlan) -> Self {
+    pub fn with_validation_plan<TValidationPlan: Into<ValidationPlan>>(
+        mut self,
+        validation_plan: TValidationPlan,
+    ) -> Self {
         self.validation_plan = Arc::new(validation_plan.into());
+        self
+    }
+    pub fn with_schema<TSchema: Into<Arc<SchemaDocument>>>(mut self, schema: TSchema) -> Self {
+        let schema: Arc<SchemaDocument> = schema.into();
+        let new_consumer_schema = ConsumerSchema::from(schema);
+        self.schema = new_consumer_schema.into();
         self
     }
 }

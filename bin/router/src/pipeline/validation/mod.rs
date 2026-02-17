@@ -79,11 +79,7 @@ pub async fn validate_operation_with_cache(
 
         let mut errors = match errors {
             Some(errors) => errors,
-            None => match schema_state
-                .validate_cache
-                .get(&cache_key)
-                .await
-            {
+            None => match schema_state.validate_cache.get(&cache_key).await {
                 Some(cached_validation) => {
                     trace!(
                         "validation result of hash {} has been loaded from cache",
@@ -116,9 +112,7 @@ pub async fn validate_operation_with_cache(
         };
 
         if !on_end_callbacks.is_empty() {
-            let mut end_payload = OnGraphQLValidationEndHookPayload {
-                errors,
-            };
+            let mut end_payload = OnGraphQLValidationEndHookPayload { errors };
             for callback in on_end_callbacks {
                 let result = callback(end_payload);
                 end_payload = result.payload;

@@ -1,22 +1,24 @@
 pub(crate) mod prune_inacessible;
 pub(crate) mod strip_schema_internals;
 
-use std::hash::{Hash, Hasher};
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
-use graphql_tools::parser::schema::*;
+use graphql_tools::static_graphql::schema::{Definition, Document, TypeDefinition};
 use prune_inacessible::PruneInaccessible;
 use strip_schema_internals::StripSchemaInternals;
 use xxhash_rust::xxh3::Xxh3;
 
 #[derive(Debug)]
 pub struct ConsumerSchema {
-    pub document: Document<'static, String>,
+    pub document: Arc<Document>,
     pub hash: u64,
 }
 
-impl ConsumerSchema {
-    pub fn new_from_supergraph(supergraph: &Document<'static, String>) -> Self {
-        let document: Document<'static, String> = Self::create_consumer_schema(supergraph).into();
+impl From<Arc<Document>> for ConsumerSchema {
+    fn from(document: Arc<Document>) -> Self {
         let hash = {
             let mut hasher = Xxh3::new();
             document.to_string().hash(&mut hasher);
@@ -24,8 +26,15 @@ impl ConsumerSchema {
         };
         Self { document, hash }
     }
+}
 
-    fn create_consumer_schema(supergraph: &Document<'static, String>) -> Document<'static, String> {
+impl ConsumerSchema {
+    pub fn new_from_supergraph(supergraph: &Document) -> Self {
+        let document: Arc<Document> = Self::create_consumer_schema(supergraph).into();
+        document.into()
+    }
+
+    fn create_consumer_schema(supergraph: &Document) -> Document {
         let mut result = PruneInaccessible::prune(supergraph);
         result = StripSchemaInternals::strip_schema_internals(&result);
         // Add introspection schema to the consumer schema

@@ -35,7 +35,7 @@ impl RouterPlugin for FeatureFlagsPlugin {
     }
     async fn on_graphql_validation<'exec>(
         &'exec self,
-        mut payload: OnGraphQLValidationStartHookPayload<'exec>,
+        payload: OnGraphQLValidationStartHookPayload<'exec>,
     ) -> OnGraphQLValidationStartHookResult<'exec> {
         let feature_flags_header = payload
             .router_http_request
@@ -53,20 +53,21 @@ impl RouterPlugin for FeatureFlagsPlugin {
 
         let cache_key = feature_flags.join(",");
 
-        payload.schema = self
+        let cached_schema = self
             .schema_with_flags_cache
             .entry(cache_key)
             .or_insert_with(|| {
                 let visitor = FeatureFlagsVisitor { feature_flags };
 
                 visitor
-                    .visit_schema_document(SchemaDocument::clone(&payload.schema), &mut ())
+                    .visit_schema_document(SchemaDocument::clone(&payload.schema.document), &mut ())
                     .unwrap()
                     .into()
             })
             .value()
             .clone();
-        payload.proceed()
+
+        payload.with_schema(cached_schema).proceed()
     }
 }
 

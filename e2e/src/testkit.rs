@@ -254,7 +254,7 @@ async fn _init_router_from_config(
 
     let ntex_app = test::init_service(
         web::App::new()
-            .wrap(PluginService)
+            .middleware(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .configure(|m| configure_ntex_app(m, graphql_path)),

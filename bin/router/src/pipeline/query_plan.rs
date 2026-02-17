@@ -8,8 +8,7 @@ use crate::schema_state::SchemaState;
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLPlanSpan;
 use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 use hive_router_plan_executor::hooks::on_query_plan::{
-    OnQueryPlanStartHookPayload,
-    OnQueryPlanEndHookPayload
+    OnQueryPlanEndHookPayload, OnQueryPlanStartHookPayload,
 };
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
@@ -88,7 +87,8 @@ pub async fn plan_operation_with_cache(
         plan_span.record_cache_hit(true);
         let mut plan = match plan {
             Some(plan) => plan,
-            None => schema_state
+            None => {
+                schema_state
                     .plan_cache
                     .try_get_with(plan_cache_key, async {
                         cache_hint = CacheHint::Miss;
@@ -123,6 +123,7 @@ pub async fn plan_operation_with_cache(
                             .map(Arc::new)
                     })
                     .await?
+            }
         };
 
         if !on_end_callbacks.is_empty() {

@@ -17,7 +17,10 @@ pub struct OnGraphQLParseStartHookPayload<'exec> {
 }
 
 impl<'exec> OnGraphQLParseStartHookPayload<'exec> {
-    pub fn with_parsed_document<TDocument: Into<Arc<Document>>>(mut self, document: TDocument) -> Self {
+    pub fn with_parsed_document<TDocument: Into<Arc<Document>>>(
+        mut self,
+        document: TDocument,
+    ) -> Self {
         self.document = Some(document.into());
         self
     }

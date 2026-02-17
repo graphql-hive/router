@@ -1,4 +1,7 @@
-use std::{hash::{Hash, Hasher}, sync::Arc};
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use xxhash_rust::xxh3::Xxh3;
 
@@ -38,7 +41,7 @@ impl ValidationPlan {
             .into_iter()
             .map(|rule| rule.into())
             .collect::<Vec<Arc<Box<dyn ValidationRule>>>>();
-            
+
         let hash = calculate_hash_for_rules(&rules);
         Self { rules, hash }
     }

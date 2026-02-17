@@ -23,7 +23,10 @@ pub struct OnQueryPlanStartHookPayload<'exec> {
 }
 
 impl<'exec> OnQueryPlanStartHookPayload<'exec> {
-    pub fn with_query_plan<TQueryPlan: Into<Arc<QueryPlan>>>(mut self, query_plan: TQueryPlan) -> Self {
+    pub fn with_query_plan<TQueryPlan: Into<Arc<QueryPlan>>>(
+        mut self,
+        query_plan: TQueryPlan,
+    ) -> Self {
         self.query_plan = Some(query_plan.into());
         self
     }
