@@ -159,6 +159,7 @@ jobs:
 
   router-benchmark:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: "default"
