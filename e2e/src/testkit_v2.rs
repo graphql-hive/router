@@ -1,8 +1,8 @@
-use std::{marker::PhantomData, str::FromStr, sync::Arc, time::Duration};
+use std::{any::Any, marker::PhantomData, str::FromStr, sync::Arc, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider,
+    init_rustls_crypto_provider, telemetry::Telemetry,
 };
 use hive_router_config::{parse_yaml_config, HiveRouterConfig};
 use hive_router_plan_executor::executors::websocket_client;
@@ -53,6 +53,7 @@ impl TestRouterBuilder {
             config: Some(config),
             start_subgraphs: self.start_subgraphs,
             handle: None,
+            _hold_until_drop: vec![],
             _state: PhantomData,
         }
     }
@@ -126,12 +127,16 @@ pub struct TestRouter<State> {
     config: Option<HiveRouterConfig>,
     start_subgraphs: bool,
     handle: Option<TestRouterHandle>,
+    _hold_until_drop: Vec<Box<dyn Any>>,
     _state: PhantomData<State>,
 }
 
 impl TestRouter<Built> {
     pub async fn start(mut self) -> Result<TestRouter<Started>, Box<dyn std::error::Error>> {
         init_rustls_crypto_provider();
+        let config = self.config.take().unwrap();
+        let (telemetry, subscriber) = Telemetry::init_subscriber(&config)?;
+        let subscription_guard = tracing::subscriber::set_default(subscriber);
 
         let subgraphs = if self.start_subgraphs {
             Some(SubgraphsHandle::start().await)
@@ -140,9 +145,9 @@ impl TestRouter<Built> {
         };
 
         let mut bg_tasks_manager = BackgroundTasksManager::new();
-        let config = self.config.take().unwrap();
         let (shared_state, schema_state) =
-            configure_app_from_config(config, &mut bg_tasks_manager).await?;
+            configure_app_from_config(config, telemetry.context.clone(), &mut bg_tasks_manager)
+                .await?;
 
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
@@ -208,6 +213,7 @@ impl TestRouter<Built> {
             }),
             config: None,
             start_subgraphs: false,
+            _hold_until_drop: vec![Box::new(subscription_guard)],
             _state: PhantomData,
         })
     }
