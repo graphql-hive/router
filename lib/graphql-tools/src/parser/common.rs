@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::{collections::BTreeMap, fmt};
 
 use combine::easy::{Error, Info};
@@ -42,6 +43,19 @@ pub struct Directive<'a, T: Text<'a>> {
     pub arguments: Vec<(T::Value, Value<'a, T>)>,
 }
 
+impl<'a, T: Text<'a>> Hash for Directive<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "Directive".hash(state);
+        // position intentionally excluded from semantic hash
+        self.name.as_ref().hash(state);
+        self.arguments.len().hash(state);
+        for (name, value) in &self.arguments {
+            name.as_ref().hash(state);
+            value.hash(state);
+        }
+    }
+}
+
 /// This represents integer number
 ///
 /// But since there is no definition on limit of number in spec
@@ -52,6 +66,13 @@ pub struct Directive<'a, T: Text<'a>> {
 // we use i64 as a reference implementation: graphql-js thinks even 32bit
 // integers is enough. We might consider lift this limit later though
 pub struct Number(pub(crate) i64);
+
+impl Hash for Number {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "Number".hash(state);
+        self.0.hash(state);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value<'a, T: Text<'a>> {
@@ -64,6 +85,52 @@ pub enum Value<'a, T: Text<'a>> {
     Enum(T::Value),
     List(Vec<Value<'a, T>>),
     Object(BTreeMap<T::Value, Value<'a, T>>),
+}
+
+impl<'a, T: Text<'a>> Hash for Value<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Variable(value) => {
+                "Value::Variable".hash(state);
+                value.as_ref().hash(state);
+            }
+            Value::Int(value) => {
+                "Value::Int".hash(state);
+                value.hash(state);
+            }
+            Value::Float(value) => {
+                "Value::Float".hash(state);
+                value.to_bits().hash(state);
+            }
+            Value::String(value) => {
+                "Value::String".hash(state);
+                value.hash(state);
+            }
+            Value::Boolean(value) => {
+                "Value::Boolean".hash(state);
+                value.hash(state);
+            }
+            Value::Null => {
+                "Value::Null".hash(state);
+            }
+            Value::Enum(value) => {
+                "Value::Enum".hash(state);
+                value.as_ref().hash(state);
+            }
+            Value::List(values) => {
+                "Value::List".hash(state);
+                values.hash(state);
+            }
+            Value::Object(values) => {
+                "Value::Object".hash(state);
+                values.len().hash(state);
+                for (key, value) in values {
+                    key.as_ref().hash(state);
+                    value.hash(state);
+                }
+            }
+        }
+    }
 }
 
 impl<'a, T: Text<'a>> Value<'a, T> {
@@ -91,6 +158,25 @@ pub enum Type<'a, T: Text<'a>> {
     NamedType(T::Value),
     ListType(Box<Type<'a, T>>),
     NonNullType(Box<Type<'a, T>>),
+}
+
+impl<'a, T: Text<'a>> Hash for Type<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Type::NamedType(value) => {
+                "Type::NamedType".hash(state);
+                value.as_ref().hash(state);
+            }
+            Type::ListType(value) => {
+                "Type::ListType".hash(state);
+                value.hash(state);
+            }
+            Type::NonNullType(value) => {
+                "Type::NonNullType".hash(state);
+                value.hash(state);
+            }
+        }
+    }
 }
 
 impl Number {

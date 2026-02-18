@@ -1,3 +1,5 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
 use thiserror::Error;
@@ -530,5 +532,684 @@ impl<'a, T: Text<'a>> TypeDefinition<'a, T> {
             TypeDefinition::Enum(enum_) => &enum_.directives,
             TypeDefinition::InputObject(input_object) => &input_object.directives,
         }
+    }
+}
+
+#[inline]
+fn digest_of<F>(f: F) -> u64
+where
+    F: FnOnce(&mut DefaultHasher),
+{
+    let mut hasher = DefaultHasher::new();
+    f(&mut hasher);
+    hasher.finish()
+}
+
+const UNORDERED_MULTISET_DOMAIN: &str = "UnorderedMultisetV1";
+
+/// Hashes an unordered multiset of element digests without allocations.
+///
+/// Properties:
+/// - order-independent (`{a,b,c}` equals `{c,b,a}`)
+/// - multiplicity-sensitive (`{a,a,b}` differs from `{a,b}`)
+/// - deterministic for this implementation
+///
+/// This is intentionally non-cryptographic and used for cache identity only.
+///
+/// Implementation note:
+/// - keeps three commutative accumulators (`count`, `xor`, `sum`)
+/// - avoids domain-specific constants for readability and maintenance
+#[inline]
+fn hash_unordered_iter<H, I>(iter: I, state: &mut H)
+where
+    H: Hasher,
+    I: IntoIterator<Item = u64>,
+{
+    let mut count: u64 = 0;
+    let mut xor_acc: u64 = 0;
+    let mut sum: u64 = 0;
+
+    for digest in iter {
+        count = count.wrapping_add(1);
+        xor_acc ^= digest;
+        sum = sum.wrapping_add(digest);
+    }
+
+    UNORDERED_MULTISET_DOMAIN.hash(state);
+    count.hash(state);
+    xor_acc.hash(state);
+    sum.hash(state);
+}
+
+#[inline]
+fn hash_text_value<'a, T, H>(value: &T::Value, state: &mut H)
+where
+    T: Text<'a>,
+    H: Hasher,
+{
+    value.as_ref().hash(state);
+}
+
+#[inline]
+fn hash_type_value<'a, T, H>(value: &Type<'a, T>, state: &mut H)
+where
+    T: Text<'a>,
+    H: Hasher,
+{
+    match value {
+        Type::NamedType(name) => {
+            "Type::NamedType".hash(state);
+            hash_text_value::<T, H>(name, state);
+        }
+        Type::ListType(inner) => {
+            "Type::ListType".hash(state);
+            hash_type_value::<T, H>(inner, state);
+        }
+        Type::NonNullType(inner) => {
+            "Type::NonNullType".hash(state);
+            hash_type_value::<T, H>(inner, state);
+        }
+    }
+}
+
+#[inline]
+fn hash_const_value<'a, T, H>(value: &Value<'a, T>, state: &mut H)
+where
+    T: Text<'a>,
+    H: Hasher,
+{
+    match value {
+        Value::Variable(name) => {
+            "Value::Variable".hash(state);
+            hash_text_value::<T, H>(name, state);
+        }
+        Value::Int(number) => {
+            "Value::Int".hash(state);
+            number.as_i64().hash(state);
+        }
+        Value::Float(value) => {
+            "Value::Float".hash(state);
+            value.to_bits().hash(state);
+        }
+        Value::String(value) => {
+            "Value::String".hash(state);
+            value.hash(state);
+        }
+        Value::Boolean(value) => {
+            "Value::Boolean".hash(state);
+            value.hash(state);
+        }
+        Value::Null => {
+            "Value::Null".hash(state);
+        }
+        Value::Enum(value) => {
+            "Value::Enum".hash(state);
+            hash_text_value::<T, H>(value, state);
+        }
+        Value::List(values) => {
+            "Value::List".hash(state);
+            values.len().hash(state);
+            for item in values {
+                hash_const_value::<T, H>(item, state);
+            }
+        }
+        Value::Object(values) => {
+            "Value::Object".hash(state);
+            hash_unordered_iter(
+                values.iter().map(|(key, value)| {
+                    digest_of(|hasher| {
+                        hash_text_value::<T, _>(key, hasher);
+                        hash_const_value::<T, _>(value, hasher);
+                    })
+                }),
+                state,
+            );
+        }
+    }
+}
+
+#[inline]
+fn hash_directive_value<'a, T, H>(directive: &Directive<'a, T>, state: &mut H)
+where
+    T: Text<'a>,
+    H: Hasher,
+{
+    hash_text_value::<T, H>(&directive.name, state);
+    hash_unordered_iter(
+        directive.arguments.iter().map(|(name, value)| {
+            digest_of(|hasher| {
+                hash_text_value::<T, _>(name, hasher);
+                hash_const_value::<T, _>(value, hasher);
+            })
+        }),
+        state,
+    );
+}
+
+impl<'a, T: Text<'a>> Hash for Document<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "Document".hash(state);
+        hash_unordered_iter(
+            self.definitions
+                .iter()
+                .map(|definition| digest_of(|hasher| definition.hash(hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for Definition<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Self::SchemaDefinition(value) => {
+                "Definition::SchemaDefinition".hash(state);
+                value.hash(state);
+            }
+            Self::TypeDefinition(value) => {
+                "Definition::TypeDefinition".hash(state);
+                value.hash(state);
+            }
+            Self::TypeExtension(value) => {
+                "Definition::TypeExtension".hash(state);
+                value.hash(state);
+            }
+            Self::DirectiveDefinition(value) => {
+                "Definition::DirectiveDefinition".hash(state);
+                value.hash(state);
+            }
+        }
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for SchemaDefinition<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "SchemaDefinition".hash(state);
+        self.query.as_ref().map(AsRef::as_ref).hash(state);
+        self.mutation.as_ref().map(AsRef::as_ref).hash(state);
+        self.subscription.as_ref().map(AsRef::as_ref).hash(state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for TypeDefinition<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Scalar(value) => {
+                "TypeDefinition::Scalar".hash(state);
+                value.hash(state);
+            }
+            Self::Object(value) => {
+                "TypeDefinition::Object".hash(state);
+                value.hash(state);
+            }
+            Self::Interface(value) => {
+                "TypeDefinition::Interface".hash(state);
+                value.hash(state);
+            }
+            Self::Union(value) => {
+                "TypeDefinition::Union".hash(state);
+                value.hash(state);
+            }
+            Self::Enum(value) => {
+                "TypeDefinition::Enum".hash(state);
+                value.hash(state);
+            }
+            Self::InputObject(value) => {
+                "TypeDefinition::InputObject".hash(state);
+                value.hash(state);
+            }
+        }
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for TypeExtension<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Scalar(value) => {
+                "TypeExtension::Scalar".hash(state);
+                value.hash(state);
+            }
+            Self::Object(value) => {
+                "TypeExtension::Object".hash(state);
+                value.hash(state);
+            }
+            Self::Interface(value) => {
+                "TypeExtension::Interface".hash(state);
+                value.hash(state);
+            }
+            Self::Union(value) => {
+                "TypeExtension::Union".hash(state);
+                value.hash(state);
+            }
+            Self::Enum(value) => {
+                "TypeExtension::Enum".hash(state);
+                value.hash(state);
+            }
+            Self::InputObject(value) => {
+                "TypeExtension::InputObject".hash(state);
+                value.hash(state);
+            }
+        }
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for ScalarType<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "ScalarType".hash(state);
+        self.description.hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for ScalarTypeExtension<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "ScalarTypeExtension".hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for ObjectType<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "ObjectType".hash(state);
+        self.description.hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.implements_interfaces.iter().map(|interface_name| {
+                digest_of(|hasher| hash_text_value::<T, _>(interface_name, hasher))
+            }),
+            state,
+        );
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+        hash_unordered_iter(
+            self.fields
+                .iter()
+                .map(|field| digest_of(|hasher| field.hash(hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for ObjectTypeExtension<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "ObjectTypeExtension".hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.implements_interfaces.iter().map(|interface_name| {
+                digest_of(|hasher| hash_text_value::<T, _>(interface_name, hasher))
+            }),
+            state,
+        );
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+        hash_unordered_iter(
+            self.fields
+                .iter()
+                .map(|field| digest_of(|hasher| field.hash(hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for Field<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "Field".hash(state);
+        self.description.hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.arguments
+                .iter()
+                .map(|argument| digest_of(|hasher| argument.hash(hasher))),
+            state,
+        );
+        hash_type_value::<T, H>(&self.field_type, state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for InputValue<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "InputValue".hash(state);
+        self.description.hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_type_value::<T, H>(&self.value_type, state);
+        self.default_value.is_some().hash(state);
+        if let Some(default_value) = self.default_value.as_ref() {
+            hash_const_value::<T, H>(default_value, state);
+        }
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for InterfaceType<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "InterfaceType".hash(state);
+        self.description.hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.implements_interfaces.iter().map(|interface_name| {
+                digest_of(|hasher| hash_text_value::<T, _>(interface_name, hasher))
+            }),
+            state,
+        );
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+        hash_unordered_iter(
+            self.fields
+                .iter()
+                .map(|field| digest_of(|hasher| field.hash(hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for InterfaceTypeExtension<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "InterfaceTypeExtension".hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.implements_interfaces.iter().map(|interface_name| {
+                digest_of(|hasher| hash_text_value::<T, _>(interface_name, hasher))
+            }),
+            state,
+        );
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+        hash_unordered_iter(
+            self.fields
+                .iter()
+                .map(|field| digest_of(|hasher| field.hash(hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for UnionType<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "UnionType".hash(state);
+        self.description.hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+        hash_unordered_iter(
+            self.types
+                .iter()
+                .map(|type_name| digest_of(|hasher| hash_text_value::<T, _>(type_name, hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for UnionTypeExtension<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "UnionTypeExtension".hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+        hash_unordered_iter(
+            self.types
+                .iter()
+                .map(|type_name| digest_of(|hasher| hash_text_value::<T, _>(type_name, hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for EnumType<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "EnumType".hash(state);
+        self.description.hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+        hash_unordered_iter(
+            self.values
+                .iter()
+                .map(|enum_value| digest_of(|hasher| enum_value.hash(hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for EnumValue<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "EnumValue".hash(state);
+        self.description.hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for EnumTypeExtension<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "EnumTypeExtension".hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+        hash_unordered_iter(
+            self.values
+                .iter()
+                .map(|enum_value| digest_of(|hasher| enum_value.hash(hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for InputObjectType<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "InputObjectType".hash(state);
+        self.description.hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+        hash_unordered_iter(
+            self.fields
+                .iter()
+                .map(|field| digest_of(|hasher| field.hash(hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for InputObjectTypeExtension<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "InputObjectTypeExtension".hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.directives
+                .iter()
+                .map(|directive| digest_of(|hasher| hash_directive_value(directive, hasher))),
+            state,
+        );
+        hash_unordered_iter(
+            self.fields
+                .iter()
+                .map(|field| digest_of(|hasher| field.hash(hasher))),
+            state,
+        );
+    }
+}
+
+impl<'a, T: Text<'a>> Hash for DirectiveDefinition<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        "DirectiveDefinition".hash(state);
+        self.description.hash(state);
+        hash_text_value::<T, H>(&self.name, state);
+        hash_unordered_iter(
+            self.arguments
+                .iter()
+                .map(|argument| digest_of(|hasher| argument.hash(hasher))),
+            state,
+        );
+        self.repeatable.hash(state);
+        hash_unordered_iter(
+            self.locations
+                .iter()
+                .map(|location| digest_of(|hasher| location.hash(hasher))),
+            state,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    use super::*;
+    use crate::parser::schema::parse_schema;
+
+    fn hash_of<T: Hash>(value: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn parse_doc(sdl: &str) -> Document<'static, String> {
+        parse_schema::<String>(sdl)
+            .expect("schema should parse")
+            .to_owned()
+            .into_static()
+    }
+
+    #[test]
+    fn schema_hash_is_deterministic() {
+        let doc = parse_doc(
+            r#"
+            directive @tag(a: Int, b: Int) on FIELD_DEFINITION | OBJECT
+
+            type Query @tag(a: 1, b: 2) {
+                user(id: ID!, role: String): String @tag(a: 1, b: 2)
+                ping: String
+            }
+            "#,
+        );
+
+        let h1 = hash_of(&doc);
+        let h2 = hash_of(&doc);
+        let h3 = hash_of(&doc.clone());
+
+        assert_eq!(h1, h2);
+        assert_eq!(h2, h3);
+    }
+
+    #[test]
+    fn schema_hash_is_order_independent() {
+        let doc_a = parse_doc(
+            r#"
+            directive @tag(a: Int, b: Int) on FIELD_DEFINITION | OBJECT
+
+            type User {
+                id: ID!
+                name: String
+            }
+
+            type Query @tag(a: 1, b: 2) {
+                ping: String
+                user(role: String, id: ID!): String @tag(a: 1, b: 2)
+            }
+            "#,
+        );
+
+        let doc_b = parse_doc(
+            r#"
+            type Query @tag(b: 2, a: 1) {
+                user(id: ID!, role: String): String @tag(b: 2, a: 1)
+                ping: String
+            }
+
+            directive @tag(b: Int, a: Int) on OBJECT | FIELD_DEFINITION
+
+            type User {
+                name: String
+                id: ID!
+            }
+            "#,
+        );
+
+        assert_eq!(hash_of(&doc_a), hash_of(&doc_b));
+    }
+
+    #[test]
+    fn schema_hash_is_multiplicity_sensitive() {
+        let single: Document<'static, String> = Document {
+            definitions: vec![Definition::SchemaDefinition(SchemaDefinition::default())],
+        };
+        let duplicate: Document<'static, String> = Document {
+            definitions: vec![
+                Definition::SchemaDefinition(SchemaDefinition::default()),
+                Definition::SchemaDefinition(SchemaDefinition::default()),
+            ],
+        };
+
+        assert_ne!(hash_of(&single), hash_of(&duplicate));
     }
 }
