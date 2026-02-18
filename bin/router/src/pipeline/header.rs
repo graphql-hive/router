@@ -220,94 +220,97 @@ impl ResponseMode {
     }
 }
 
-/// Reads the `Accept` header contents and returns a tuple of accepted/parsed content types.
-/// It perform negotiation and respects q-weights.
-fn negotiate_content_type(
-    method: &Method,
-    accept_header: Option<&str>,
-) -> Result<Option<ResponseMode>, <Accept as FromStr>::Err> {
-    let accept_header = accept_header.unwrap_or_default();
-    let accept_header = if accept_header.is_empty() {
-        "*/*" // no header is same as this, but we want headers_accept to do the negotiation to be consistent
-    } else {
-        accept_header
-    };
-
-    let accept = Accept::from_str(accept_header)?;
-
-    if method == Method::GET {
-        // if the client GETs we negotiate with the all supported media type, including HTML
-        // to see if the client wants GraphiQL. we negotiate with everything because browsers
-        // tend to send very broad accept headers that include text/html with highest q-weight,
-        // but would also accept */* which we would interpret as "I want normal GraphQL responses"
-        let has_agreed_graphiql = accept
-            .negotiate(ALL_RESPONSE_MODES_CONTENT_TYPE_MEDIA_TYPES.iter())
-            .is_some_and(|t| *t == HTML_MEDIA_TYPE);
-        if has_agreed_graphiql {
-            return Ok(Some(ResponseMode::GraphiQL));
-        }
-    }
-
-    let agreed_single: Option<SingleContentType> = accept
-        .negotiate(SingleContentType::media_types().iter())
-        .and_then(|t| t.try_into().ok()); // we dont care about the conversion error, it _should_ not happen
-
-    let agreed_stream = accept
-        .negotiate(StreamContentType::media_types().iter())
-        .and_then(|t| t.try_into().ok()); // we dont care about the conversion error, it _should_ not happen
-
-    match (agreed_single, agreed_stream) {
-        (Some(single), Some(stream)) => Ok(Some(ResponseMode::Dual(single, stream))),
-        (Some(single), None) => Ok(Some(ResponseMode::SingleOnly(single))),
-        (None, Some(stream)) => Ok(Some(ResponseMode::StreamOnly(stream))),
-        (None, None) => Ok(None),
-    }
-}
-
 pub trait RequestAccepts {
     /// Reads the request's `Accept` header and returns the agreed response mode.
     ///
     /// Returns an error if no valid content types are found in the Accept header.
-    fn negotiate(&mut self) -> Result<Arc<ResponseMode>, PipelineError>;
-    /// If the request has already negotiated the response mode, return it.
+    fn negotiate(&self) -> Result<ResponseMode, PipelineError>;
+
+    /// Saves the agreed response mode in the request's extensions for later retrieval.
     /// Useful in the error to response handler
-    fn response_mode(&self) -> Option<Arc<ResponseMode>>;
+    fn set_response_mode<TResponseMode: Into<Arc<ResponseMode>>>(
+        &self,
+        response_mode: TResponseMode,
+    );
+
+    // Gets the agreed response mode from the request's extensions, if it was previously set.
+    fn get_response_mode(&self) -> Arc<ResponseMode>;
 }
 
 impl RequestAccepts for HttpRequest {
     #[inline]
-    fn negotiate(&mut self) -> Result<Arc<ResponseMode>, PipelineError> {
-        let content_types = self
+    /// Reads the `Accept` header contents and returns a tuple of accepted/parsed content types.
+    /// It perform negotiation and respects q-weights.
+    fn negotiate(&self) -> Result<ResponseMode, PipelineError> {
+        let accept_header = self
             .headers()
             .get(ACCEPT)
-            .and_then(|value| value.to_str().ok());
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
 
-        let agreed = negotiate_content_type(self.method(), content_types).map_err(|err| {
+        let accept_header = if accept_header.is_empty() {
+            "*/*" // no header is same as this, but we want headers_accept to do the negotiation to be consistent
+        } else {
+            accept_header
+        };
+
+        let accept = Accept::from_str(accept_header).map_err(|err| {
             error!("Failed to parse Accept header: {}", err);
             PipelineError::InvalidHeaderValue(ACCEPT)
         })?;
 
-        // at this point we treat no content type as "user explicitly does not support any known types"
-        // this is because only empty accept header or */* is treated as "accept everything" and we check
-        // that above
-        match agreed {
-            Some(response_mode) => {
-                let response_mode = Arc::new(response_mode);
-                // Save the negotiated response mode for later retrieval (e.g., in error handling).
-                self.extensions_mut().insert(response_mode.clone());
-                Ok(response_mode)
+        if self.method() == Method::GET {
+            // if the client GETs we negotiate with the all supported media type, including HTML
+            // to see if the client wants GraphiQL. we negotiate with everything because browsers
+            // tend to send very broad accept headers that include text/html with highest q-weight,
+            // but would also accept */* which we would interpret as "I want normal GraphQL responses"
+            let has_agreed_graphiql = accept
+                .negotiate(ALL_RESPONSE_MODES_CONTENT_TYPE_MEDIA_TYPES.iter())
+                .is_some_and(|t| *t == HTML_MEDIA_TYPE);
+            if has_agreed_graphiql {
+                return Ok(ResponseMode::GraphiQL);
             }
-            None => Err(PipelineError::UnsupportedContentType),
+        }
+
+        let agreed_single: Option<SingleContentType> = accept
+            .negotiate(SingleContentType::media_types().iter())
+            .and_then(|t| t.try_into().ok()); // we dont care about the conversion error, it _should_ not happen
+
+        let agreed_stream = accept
+            .negotiate(StreamContentType::media_types().iter())
+            .and_then(|t| t.try_into().ok()); // we dont care about the conversion error, it _should_ not happen
+
+        match (agreed_single, agreed_stream) {
+            (Some(single), Some(stream)) => Ok(ResponseMode::Dual(single, stream)),
+            (Some(single), None) => Ok(ResponseMode::SingleOnly(single)),
+            (None, Some(stream)) => Ok(ResponseMode::StreamOnly(stream)),
+            // at this point we treat no content type as "user explicitly does not support any known types"
+            // this is because only empty accept header or */* is treated as "accept everything" and we check
+            // that above
+            (None, None) => Err(PipelineError::UnsupportedContentType),
         }
     }
     #[inline]
-    fn response_mode(&self) -> Option<Arc<ResponseMode>> {
-        self.extensions().get::<Arc<ResponseMode>>().cloned()
+    fn get_response_mode(&self) -> Arc<ResponseMode> {
+        self.extensions()
+            .get::<Arc<ResponseMode>>()
+            .cloned()
+            .unwrap_or_default()
+    }
+    #[inline]
+    fn set_response_mode<TResponseMode: Into<Arc<ResponseMode>>>(
+        &self,
+        response_mode: TResponseMode,
+    ) {
+        let response_mode_arc: Arc<ResponseMode> = response_mode.into();
+        self.extensions_mut().insert(response_mode_arc);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use ntex::web::test::TestRequest;
+
     use super::*;
 
     #[test]
@@ -378,9 +381,11 @@ mod tests {
         ];
 
         for (method, accept_header, excepted_agreed) in cases {
-            let agreed = negotiate_content_type(&method, Some(accept_header))
-                .expect("unable to parse accept header")
-                .expect("no agreed response mode");
+            let request = TestRequest::default()
+                .method(method.clone())
+                .header(ACCEPT, accept_header)
+                .to_http_request();
+            let agreed = request.negotiate().expect("unable to parse accept header");
             assert_eq!(
                 agreed, excepted_agreed,
                 "wrong agreed response mode when negotiating method {} with accept: {}",

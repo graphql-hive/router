@@ -53,7 +53,7 @@ use tracing::{info, warn, Instrument};
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
 async fn graphql_endpoint_handler(
-    mut request: HttpRequest,
+    request: HttpRequest,
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
@@ -74,7 +74,7 @@ async fn graphql_endpoint_handler(
     // properly outside the request handler.
     let response_mode = request.negotiate()?;
 
-    if *response_mode == ResponseMode::GraphiQL {
+    if response_mode == ResponseMode::GraphiQL {
         if app_state.router_config.graphiql.enabled {
             return Ok(web::HttpResponse::Ok()
                 .header(CONTENT_TYPE, TEXT_HTML_MIME)
@@ -83,6 +83,11 @@ async fn graphql_endpoint_handler(
             return Ok(web::HttpResponse::NotFound().into());
         }
     }
+
+    // Sets the agreed response mode in the request's extensions for later retrieval,
+    // such as in the error to response handler or,
+    // in the request handler itself
+    request.set_response_mode(response_mode);
 
     let parent_ctx = app_state
         .telemetry_context
@@ -101,7 +106,6 @@ async fn graphql_endpoint_handler(
         let req_handler_fut = graphql_request_handler(
             &request,
             body_stream,
-            &response_mode,
             supergraph,
             app_state.get_ref(),
             schema_state.get_ref(),
