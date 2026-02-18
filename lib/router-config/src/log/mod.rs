@@ -4,10 +4,7 @@ pub mod shared;
 
 use crate::log::{
     access_log::AccessLogLoggingConfig,
-    service::{
-        HttpLogFieldsConfig, HttpRequestLogFieldsConfig, HttpResponseLogFieldsConfig,
-        LogFieldsConfig, ServiceLogExporter, ServiceLoggingConfig, StdoutExporterConfig,
-    },
+    service::{LogFieldsConfig, ServiceLogExporter, ServiceLoggingConfig, StdoutExporterConfig},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -22,7 +19,12 @@ pub struct LoggingConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ServiceLogging {
-    Shortcut(StdoutExporterConfig),
+    Shortcut {
+        #[serde(flatten)]
+        exporter: StdoutExporterConfig,
+        #[serde(default = "LogFieldsConfig::default")]
+        log_fields: LogFieldsConfig,
+    },
     Advanced(ServiceLoggingConfig),
 }
 
@@ -30,17 +32,12 @@ impl ServiceLogging {
     pub fn as_list(&self) -> ServiceLoggingConfig {
         match self {
             ServiceLogging::Advanced(c) => c.clone(),
-            ServiceLogging::Shortcut(c) => ServiceLoggingConfig {
-                exporters: vec![ServiceLogExporter::Stdout(c.clone())],
-                log_fields: LogFieldsConfig {
-                    http: HttpLogFieldsConfig {
-                        request: HttpRequestLogFieldsConfig {
-                            method: true,
-                            path: true,
-                        },
-                        response: HttpResponseLogFieldsConfig { status_code: true },
-                    },
-                },
+            ServiceLogging::Shortcut {
+                exporter,
+                log_fields,
+            } => ServiceLoggingConfig {
+                exporters: vec![ServiceLogExporter::Stdout(exporter.clone())],
+                log_fields: log_fields.clone(),
             },
         }
     }
@@ -49,7 +46,10 @@ impl ServiceLogging {
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
-            service: ServiceLogging::Shortcut(StdoutExporterConfig::default()),
+            service: ServiceLogging::Shortcut {
+                exporter: StdoutExporterConfig::default(),
+                log_fields: LogFieldsConfig::default(),
+            },
             access_log: None,
         }
     }

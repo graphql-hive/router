@@ -204,7 +204,7 @@ impl BackgroundTask for Arc<SupergraphBackgroundLoader> {
 
                 ntex::time::sleep(*interval).await;
             } else {
-                debug!("poll interval not configured for supergraph changes, breaking");
+                debug!("supergraph will not be reloaded because polling is disabled");
 
                 break;
             }

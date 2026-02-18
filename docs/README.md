@@ -13,7 +13,7 @@
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_request_body_size":"2 MB"}`<br/>||
-|[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"access_log":null,"service":{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}}`<br/>|yes|
+|[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"access_log":null,"service":{"format":"json","kind":"StdoutExporterConfig","level":"info","log_fields":{"http":{"request":{"method":false,"path":false},"response":{"duration_ms":false,"status_code":false}}},"log_internals":false}}`<br/>|yes|
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
@@ -100,6 +100,14 @@ log:
     format: json
     kind: StdoutExporterConfig
     level: info
+    log_fields:
+      http:
+        request:
+          method: false
+          path: false
+        response:
+          duration_ms: false
+          status_code: false
     log_internals: false
 override_labels: {}
 override_subgraph_urls:
@@ -1773,6 +1781,14 @@ service:
   format: json
   kind: StdoutExporterConfig
   level: info
+  log_fields:
+    http:
+      request:
+        method: false
+        path: false
+      response:
+        duration_ms: false
+        status_code: false
   log_internals: false
 
 ```

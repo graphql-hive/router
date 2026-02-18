@@ -5,4 +5,12 @@ supergraph:
 log:
   service:
     level: debug
-    format: text
+    format: json
+    log_fields:
+      http:
+        request:
+          method: true
+          path: true
+        response:
+          status_code: true
+          duration_ms: true

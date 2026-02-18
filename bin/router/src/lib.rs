@@ -39,18 +39,22 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
 use hive_router_internal::{
-    logging::logger_span::LoggerRootSpan,
+    logging::{context::LoggerContext, logger_span::LoggerRootSpan},
     telemetry::{
         otel::tracing_opentelemetry::OpenTelemetrySpanExt,
         traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
     },
 };
 use http::header::{CONTENT_TYPE, RETRY_AFTER};
-use ntex::util::{select, Either};
+use ntex::{
+    http::Response,
+    util::{select, Either},
+};
 use ntex::{
     time::sleep,
     web::{self, HttpRequest},
 };
+use tokio::time::Instant;
 use tracing::{info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
@@ -61,13 +65,16 @@ async fn correlated_graphql_endpoint_handler(
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
-) -> impl web::Responder {
+) -> Response {
     let root_logging_span = LoggerRootSpan::create(&request);
 
     async {
-        app_state.logging_context.http_request_start(&request);
+        let start = Instant::now();
+        let logging_context = app_state.logging_context.clone();
+        logging_context.http_request_start(&request);
         let response =
             graphql_endpoint_handler(request, body_stream, schema_state, app_state).await;
+        logging_context.http_request_end(start.elapsed(), &response);
 
         response
     }
@@ -81,7 +88,7 @@ async fn graphql_endpoint_handler(
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
-) -> impl web::Responder {
+) -> Response {
     if let Some(supergraph) = schema_state.current_supergraph().as_ref() {
         // If an early CORS response is needed, return it immediately.
         if let Some(early_response) = app_state
@@ -180,6 +187,7 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
         telemetry.tracing_context.clone(),
+        telemetry.logging_context.clone(),
         &mut bg_tasks_manager,
     )
     .await?;
@@ -208,6 +216,7 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     telemetry_context: TelemetryContext,
+    logger_context: LoggerContext,
     bg_tasks_manager: &mut BackgroundTasksManager,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), RouterInitError> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
@@ -253,6 +262,7 @@ pub async fn configure_app_from_config(
         hive_usage_agent,
         validation_plan,
         telemetry_context_arc,
+        Arc::new(logger_context),
     )?);
 
     Ok((shared_state, schema_state_arc))

@@ -28,6 +28,7 @@ where
             .with_target(false)
             .with_ansi(is_terminal)
             .flatten_event(true)
+            .with_span_list(false)
             .with_filter(filter)
             .boxed(),
         LogFormat::Text => stdout_layer
