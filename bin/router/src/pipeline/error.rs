@@ -14,7 +14,7 @@ use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError},
 };
-use sonic_rs::json;
+use serde::Serialize;
 use strum::IntoStaticStr;
 
 use crate::{
@@ -212,6 +212,11 @@ impl From<&PipelineError> for GraphQLError {
     }
 }
 
+#[derive(Serialize)]
+struct FailedExecutionResult {
+    errors: Vec<GraphQLError>,
+}
+
 impl web::error::WebResponseError for PipelineError {
     fn error_response(&self, req: &web::HttpRequest) -> web::HttpResponse {
         // Retrieve the negotiated response mode, defaulting to standard if not set
@@ -247,9 +252,6 @@ impl web::error::WebResponseError for PipelineError {
             }
         };
 
-        res.json(&json!({
-            "errors": errors
-        }))
+        res.json(&FailedExecutionResult { errors })
     }
 }
-
