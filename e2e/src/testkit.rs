@@ -198,7 +198,7 @@ pub async fn init_router_from_config(
 
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
-        telemetry.context.clone(),
+        telemetry.tracing_context.clone(),
         &mut bg_tasks_manager,
     )
     .await
@@ -265,7 +265,7 @@ impl<T> Drop for TestRouterApp<T> {
 }
 
 fn shutdown_telemetry_sync(telemetry: &Telemetry) {
-    let Some(provider) = telemetry.provider.clone() else {
+    let Some(provider) = telemetry.tracing_provider.clone() else {
         return;
     };
 

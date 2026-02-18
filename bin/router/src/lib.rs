@@ -39,10 +39,7 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
 use hive_router_internal::{
-    logging::{
-        logger_span::{LoggerRootSpan, LOGGING_ROOT_SPAN_SCOPE},
-        printer::LogPrinter,
-    },
+    logging::logger_span::LoggerRootSpan,
     telemetry::{
         otel::tracing_opentelemetry::OpenTelemetrySpanExt,
         traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
@@ -54,7 +51,7 @@ use ntex::{
     time::sleep,
     web::{self, HttpRequest},
 };
-use tracing::{debug, info, warn, Instrument};
+use tracing::{info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
@@ -67,19 +64,15 @@ async fn correlated_graphql_endpoint_handler(
 ) -> impl web::Responder {
     let root_logging_span = LoggerRootSpan::create(&request);
 
-    LOGGING_ROOT_SPAN_SCOPE
-        .scope(
-            (root_logging_span.clone(), app_state.router_config.clone()),
-            async move {
-                let _enter = root_logging_span.span.enter();
-                LogPrinter::http_request_start(&request);
-                let response =
-                    graphql_endpoint_handler(request, body_stream, schema_state, app_state).await;
+    async {
+        app_state.logging_context.http_request_start(&request);
+        let response =
+            graphql_endpoint_handler(request, body_stream, schema_state, app_state).await;
 
-                response
-            },
-        )
-        .await
+        response
+    }
+    .instrument(root_logging_span.span)
+    .await
 }
 
 #[inline]
@@ -186,7 +179,7 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
-        telemetry.context.clone(),
+        telemetry.tracing_context.clone(),
         &mut bg_tasks_manager,
     )
     .await?;

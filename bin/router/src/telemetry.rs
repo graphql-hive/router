@@ -1,6 +1,6 @@
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::{
-    logging::logging_layers_from_logger_config,
+    logging::{context::LoggerContext, logging_layers_from_logger_config},
     telemetry::{
         build_otel_layer_from_config,
         error::TelemetryError,
@@ -35,9 +35,10 @@ impl Extractor for HeaderExtractor<'_> {
 }
 
 pub struct Telemetry {
-    pub provider: Option<SdkTracerProvider>,
-    pub context: TelemetryContext,
-    pub writer_guards: Vec<tracing_appender::non_blocking::WorkerGuard>,
+    pub tracing_provider: Option<SdkTracerProvider>,
+    pub tracing_context: TelemetryContext,
+    pub logging_writer_guards: Vec<tracing_appender::non_blocking::WorkerGuard>,
+    pub logging_context: LoggerContext,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -63,7 +64,7 @@ impl Telemetry {
             (None, None)
         };
 
-        let (logging_layers, writer_guards) =
+        let (logging_layers, writer_guards, service_log_config) =
             logging_layers_from_logger_config::<Registry>(&config.log);
 
         let registry = tracing_subscriber::registry()
@@ -75,9 +76,10 @@ impl Telemetry {
             TelemetryContext::from_propagation_config(&config.telemetry.tracing.propagation);
 
         Ok(Self {
-            provider: tracer_provider,
-            context,
-            writer_guards,
+            tracing_provider: tracer_provider,
+            tracing_context: context,
+            logging_writer_guards: writer_guards,
+            logging_context: LoggerContext::new(service_log_config.log_fields),
         })
     }
 
@@ -111,9 +113,10 @@ impl Telemetry {
 
         Ok((
             Self {
-                provider: tracer_provider,
-                context,
-                writer_guards: vec![],
+                tracing_provider: tracer_provider,
+                tracing_context: context,
+                logging_writer_guards: vec![],
+                logging_context: todo!(),
             },
             subscriber,
         ))
@@ -123,7 +126,7 @@ impl Telemetry {
         debug!("flushing telemetry data");
         use tokio::task::spawn_blocking;
 
-        let tracer = self.provider.clone();
+        let tracer = self.tracing_provider.clone();
         let shutdown_tracer = spawn_blocking(|| {
             if let Some(provider) = tracer {
                 tracing::info!(
