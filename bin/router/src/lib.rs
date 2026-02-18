@@ -39,7 +39,10 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
 use hive_router_internal::{
-    logging::logger_span::{LoggerRootSpan, LOGGING_ROOT_SPAN_SCOPE},
+    logging::{
+        logger_span::{LoggerRootSpan, LOGGING_ROOT_SPAN_SCOPE},
+        printer::LogPrinter,
+    },
     telemetry::{
         otel::tracing_opentelemetry::OpenTelemetrySpanExt,
         traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
@@ -62,18 +65,20 @@ async fn correlated_graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
-    let root_logging_span = LoggerRootSpan::from_request(&request);
+    let root_logging_span = LoggerRootSpan::create(&request);
 
     LOGGING_ROOT_SPAN_SCOPE
-        .scope(root_logging_span.clone(), async move {
-            let _enter = root_logging_span.span.enter();
-            debug!("started processing HTTP request");
-            let response =
-                graphql_endpoint_handler(request, body_stream, schema_state, app_state).await;
-            debug!("done processing HTTP request");
+        .scope(
+            (root_logging_span.clone(), app_state.router_config.clone()),
+            async move {
+                let _enter = root_logging_span.span.enter();
+                LogPrinter::http_request_start(&request);
+                let response =
+                    graphql_endpoint_handler(request, body_stream, schema_state, app_state).await;
 
-            response
-        })
+                response
+            },
+        )
         .await
 }
 

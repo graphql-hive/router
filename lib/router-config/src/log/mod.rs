@@ -4,7 +4,10 @@ pub mod shared;
 
 use crate::log::{
     access_log::AccessLogLoggingConfig,
-    service::{ServiceLogExporter, ServiceLoggingConfig, StdoutExporterConfig},
+    service::{
+        HttpLogFieldsConfig, HttpRequestLogFieldsConfig, HttpResponseLogFieldsConfig,
+        LogFieldsConfig, ServiceLogExporter, ServiceLoggingConfig, StdoutExporterConfig,
+    },
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -29,6 +32,15 @@ impl ServiceLogging {
             ServiceLogging::Advanced(c) => c.clone(),
             ServiceLogging::Shortcut(c) => ServiceLoggingConfig {
                 exporters: vec![ServiceLogExporter::Stdout(c.clone())],
+                log_fields: LogFieldsConfig {
+                    http: HttpLogFieldsConfig {
+                        request: HttpRequestLogFieldsConfig {
+                            method: true,
+                            path: true,
+                        },
+                        response: HttpResponseLogFieldsConfig { status_code: true },
+                    },
+                },
             },
         }
     }

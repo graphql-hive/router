@@ -1,6 +1,7 @@
-use std::borrow::Borrow;
+use std::{borrow::Borrow, sync::Arc};
 
-use tracing::{info_span, Span};
+use hive_router_config::{log::service::LogFieldsConfig, HiveRouterConfig};
+use tracing::{debug_span, field::Empty, Span};
 
 use crate::logging::request_id::obtain_req_correlation_id;
 
@@ -12,7 +13,7 @@ pub struct LoggerRootSpan {
 }
 
 tokio::task_local! {
-    pub static LOGGING_ROOT_SPAN_SCOPE: LoggerRootSpan;
+    pub static LOGGING_ROOT_SPAN_SCOPE: (LoggerRootSpan, Arc<HiveRouterConfig>);
 }
 
 impl std::ops::Deref for LoggerRootSpan {
@@ -29,10 +30,11 @@ impl Borrow<Span> for LoggerRootSpan {
 }
 
 impl LoggerRootSpan {
-    pub fn from_request(request: &ntex::web::HttpRequest) -> Self {
+    pub fn create(request: &ntex::web::HttpRequest) -> Self {
         let request_id = obtain_req_correlation_id(request);
-        let span =
-            info_span!(target: ROUTER_INTERNAL_LOGGER_TARGET, "request", req_id = %request_id);
+        let span = debug_span!(target: ROUTER_INTERNAL_LOGGER_TARGET, "request",
+          req_id = %request_id,
+        );
 
         Self { span }
     }

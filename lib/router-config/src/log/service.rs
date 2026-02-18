@@ -6,7 +6,34 @@ use crate::log::shared::{default_log_internals, LogFormat, LogLevel};
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceLoggingConfig {
+    pub log_fields: LogFieldsConfig,
     pub exporters: Vec<ServiceLogExporter>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LogFieldsConfig {
+    pub http: HttpLogFieldsConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HttpLogFieldsConfig {
+    pub request: HttpRequestLogFieldsConfig,
+    pub response: HttpResponseLogFieldsConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HttpRequestLogFieldsConfig {
+    pub method: bool,
+    pub path: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HttpResponseLogFieldsConfig {
+    pub status_code: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]

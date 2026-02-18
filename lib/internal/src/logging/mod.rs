@@ -1,5 +1,6 @@
 pub mod file;
 pub mod logger_span;
+pub mod printer;
 pub mod request_id;
 pub mod stdout;
 pub mod utils;
