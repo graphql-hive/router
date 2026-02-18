@@ -121,7 +121,7 @@ export function handleSummary(data) {
       `Writing summary to ${__ENV.SUMMARY_PATH}/k6_summary.json and .txt`,
     );
     out[`${__ENV.SUMMARY_PATH}/k6_summary.json`] = JSON.stringify(
-      { ...data, vus, duration },
+      Object.assign(data, { vus, duration }),
     );
     out[`${__ENV.SUMMARY_PATH}/k6_summary.txt`] = textSummary(data, {
       indent: " ",
