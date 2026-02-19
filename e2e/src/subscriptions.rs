@@ -1,10 +1,9 @@
 #[cfg(test)]
 mod subscriptions_e2e_tests {
-    use futures::{future, Stream};
     use std::sync::Arc;
 
     use insta::assert_snapshot;
-    use ntex::{http, util::Bytes, web::test};
+    use ntex::{http, web::test};
     use reqwest::StatusCode;
     use sonic_rs::json;
     use subgraphs::InterceptedResponse;
@@ -881,45 +880,45 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_stream_client_cancelled() {
-        let _subgraphs_server = SubgraphsServer::start().await;
+        use futures::StreamExt;
 
-        let router = init_router_from_config_inline(&format!(
-            r#"
-            supergraph:
-                source: file
-                path: supergraph.graphql
-            subscriptions:
-                enabled: true
-            "#
-        ))
-        .await
-        .unwrap();
-
-        wait_for_readiness(&router.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
         // Use a longer interval so we have time to cancel
-        let req = init_graphql_request(
-            r#"
-            subscription {
-                reviewAdded(intervalInMs: 100) {
-                    id
+        let mut res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 100) {
+                        id
+                    }
                 }
-            }
-            "#,
-            None,
-        )
-        .header(http::header::ACCEPT, "text/event-stream")
-        .to_request();
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
 
-        let mut res = test::call_service(&router.app, req).await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        // consume body by chunks
-        let mut body = Box::pin(res.take_body().into_body::<Bytes>());
-
         // read first chunk
-        let chunk = future::poll_fn(|cx| body.as_mut().poll_next(cx)).await;
-        let chunk_bytes = chunk.unwrap().unwrap();
+        let chunk_bytes = res.next().await.unwrap().unwrap();
         let chunk_str = std::str::from_utf8(&chunk_bytes).unwrap();
 
         assert_snapshot!(chunk_str, @r#"
@@ -928,8 +927,7 @@ mod subscriptions_e2e_tests {
         "#);
 
         // read second chunk to ensure stream is flowing
-        let chunk = future::poll_fn(|cx| body.as_mut().poll_next(cx)).await;
-        let chunk_bytes = chunk.unwrap().unwrap();
+        let chunk_bytes = res.next().await.unwrap().unwrap();
         let chunk_str = std::str::from_utf8(&chunk_bytes).unwrap();
 
         assert_snapshot!(chunk_str, @r#"
@@ -938,7 +936,6 @@ mod subscriptions_e2e_tests {
         "#);
 
         // cancel
-        drop(body);
         drop(res);
 
         // TODO: check if propagated?
