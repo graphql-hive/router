@@ -4,15 +4,16 @@ mod websocket_e2e_tests {
     use sonic_rs::json;
     use std::collections::HashMap;
 
-    use crate::testkit_v2::TestRouterBuilder;
+    use crate::testkit_v2::{TestRouterBuilder, TestSubgraphsBuilder};
     use hive_router_plan_executor::executors::{
         graphql_transport_ws::ConnectionInitPayload, websocket_client::WsClient,
     };
 
     #[ntex::test]
     async fn query_over_websocket() {
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
         let router = TestRouterBuilder::new()
-            .with_subgraphs()
+            .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
                 supergraph:
@@ -24,8 +25,7 @@ mod websocket_e2e_tests {
             )
             .build()
             .start()
-            .await
-            .expect("Failed to start test router");
+            .await;
 
         let wsconn = router.ws().await;
 
@@ -61,8 +61,9 @@ mod websocket_e2e_tests {
 
     #[ntex::test]
     async fn subscription_over_websocket() {
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
         let router = TestRouterBuilder::new()
-            .with_subgraphs()
+            .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
                 supergraph:
@@ -76,8 +77,7 @@ mod websocket_e2e_tests {
             )
             .build()
             .start()
-            .await
-            .expect("Failed to start test router");
+            .await;
 
         let wsconn = router.ws().await;
 
@@ -117,8 +117,9 @@ mod websocket_e2e_tests {
 
     #[ntex::test]
     async fn multiple_subscriptions_in_parallel() {
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
         let router = TestRouterBuilder::new()
-            .with_subgraphs()
+            .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
                 supergraph:
@@ -132,8 +133,7 @@ mod websocket_e2e_tests {
             )
             .build()
             .start()
-            .await
-            .expect("Failed to start test router");
+            .await;
 
         let wsconn = router.ws().await;
 
@@ -223,8 +223,9 @@ mod websocket_e2e_tests {
 
     #[ntex::test]
     async fn header_propagation_from_connection_init_payload() {
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
         let router = TestRouterBuilder::new()
-            .with_subgraphs()
+            .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
                 supergraph:
@@ -242,8 +243,7 @@ mod websocket_e2e_tests {
             )
             .build()
             .start()
-            .await
-            .expect("Failed to start test router");
+            .await;
 
         let wsconn = router.ws().await;
 
@@ -276,9 +276,8 @@ mod websocket_e2e_tests {
 
         stream.next().await.expect("Expected a response");
 
-        let products_requests = router
-            .get_subgraph_requests_log("products")
-            .await
+        let products_requests = subgraphs
+            .get_requests_log("products")
             .expect("expected requests sent to products subgraph");
         let last_products_request = products_requests
             .last()
@@ -294,8 +293,9 @@ mod websocket_e2e_tests {
 
     #[ntex::test]
     async fn header_propagation_from_operation_extensions() {
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
         let router = TestRouterBuilder::new()
-            .with_subgraphs()
+            .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
                 supergraph:
@@ -314,8 +314,7 @@ mod websocket_e2e_tests {
             )
             .build()
             .start()
-            .await
-            .expect("Failed to start test router");
+            .await;
 
         let wsconn = router.ws().await;
 
@@ -345,9 +344,8 @@ mod websocket_e2e_tests {
 
         stream.next().await.expect("Expected a response");
 
-        let products_requests = router
-            .get_subgraph_requests_log("products")
-            .await
+        let products_requests = subgraphs
+            .get_requests_log("products")
             .expect("expected requests sent to products subgraph");
         let last_products_request = products_requests
             .last()
@@ -364,8 +362,9 @@ mod websocket_e2e_tests {
     #[ntex::test]
     async fn merged_header_propagation_from_both_connection_init_payload_and_operation_extensions()
     {
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
         let router = TestRouterBuilder::new()
-            .with_subgraphs()
+            .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
                 supergraph:
@@ -385,8 +384,7 @@ mod websocket_e2e_tests {
             )
             .build()
             .start()
-            .await
-            .expect("Failed to start test router");
+            .await;
 
         let wsconn = router.ws().await;
 
@@ -441,9 +439,8 @@ mod websocket_e2e_tests {
             .await;
         stream.next().await.expect("Expected a response");
 
-        let products_requests = router
-            .get_subgraph_requests_log("products")
-            .await
+        let products_requests = subgraphs
+            .get_requests_log("products")
             .expect("expected requests sent to products subgraph");
         let last_products_request = products_requests
             .last()

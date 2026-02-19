@@ -1,5 +1,9 @@
-use std::{any::Any, marker::PhantomData, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    any::Any, marker::PhantomData, net::SocketAddr, str::FromStr, sync::Arc, time::Duration,
+};
 
+use axum;
+use dashmap::DashMap;
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
     init_rustls_crypto_provider, telemetry::Telemetry,
@@ -14,23 +18,162 @@ use ntex::{
 };
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
-use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState, SubscriptionProtocol};
-use tokio::sync::oneshot::Sender;
+use subgraphs::{subgraphs_app, SubscriptionProtocol};
+use tokio::{net::TcpListener, sync::oneshot};
 use tracing::{info, warn};
 
 pub struct Built;
 pub struct Started;
 
-pub struct TestRouterBuilder {
-    config: Option<HiveRouterConfig>,
-    start_subgraphs: bool,
+// subgraphs
+
+pub struct TestSubgraphsBuilder {
+    subscriptions_protocol: SubscriptionProtocol,
 }
 
-impl TestRouterBuilder {
+impl TestSubgraphsBuilder {
+    pub fn new() -> Self {
+        Self {
+            subscriptions_protocol: SubscriptionProtocol::Auto,
+        }
+    }
+
+    pub fn build(self) -> TestSubgraphs<Built> {
+        TestSubgraphs {
+            subscriptions_protocol: self.subscriptions_protocol,
+            handle: None,
+            _state: PhantomData,
+        }
+    }
+}
+
+impl Default for TestSubgraphsBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct TestSubgraphsHandle {
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    addr: SocketAddr,
+    state: Arc<TestSubgraphsMiddlewareState>,
+}
+
+pub struct TestSubgraphs<State> {
+    subscriptions_protocol: SubscriptionProtocol,
+    handle: Option<TestSubgraphsHandle>,
+    _state: PhantomData<State>,
+}
+
+#[derive(Clone)]
+pub struct RequestLog {
+    pub headers: http::HeaderMap,
+    #[allow(unused)]
+    pub body: sonic_rs::Value,
+}
+
+struct TestSubgraphsMiddlewareState {
+    /// A map of request path to list of requests received on that path.
+    request_log: DashMap<String, Vec<RequestLog>>,
+}
+
+async fn record_requests(
+    axum::extract::State(state): axum::extract::State<Arc<TestSubgraphsMiddlewareState>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> impl axum::response::IntoResponse {
+    let path = request.uri().path().to_string();
+    let (parts, body) = request.into_parts();
+    let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+
+    let header_map = parts.headers.clone();
+    let body_value: sonic_rs::Value = sonic_rs::from_slice(&body_bytes)
+        .unwrap_or_else(|err| sonic_rs::Value::from(&err.to_string()));
+    let record = RequestLog {
+        headers: header_map,
+        body: body_value,
+    };
+    state.request_log.entry(path).or_default().push(record);
+
+    let rebuilt_body = axum::body::Body::from(body_bytes);
+    let request = axum::extract::Request::from_parts(parts, rebuilt_body);
+    next.run(request).await
+}
+
+impl TestSubgraphs<Built> {
+    pub async fn start(self) -> TestSubgraphs<Started> {
+        let listener = TcpListener::bind("127.0.0.1:4200") // TODO: use 0 and allocate random port
+            .await
+            .expect("failed to bind tcp listener");
+        let addr = listener.local_addr().expect("failed to get local address");
+
+        let mut app = subgraphs_app(self.subscriptions_protocol.clone());
+
+        let middleware_state = Arc::new(TestSubgraphsMiddlewareState {
+            request_log: DashMap::new(),
+        });
+        app = app.layer(axum::middleware::from_fn_with_state(
+            middleware_state.clone(),
+            record_requests,
+        ));
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    shutdown_rx.await.ok();
+                })
+                .await
+                .expect("failed to start subgraphs server");
+        });
+
+        TestSubgraphs {
+            subscriptions_protocol: self.subscriptions_protocol,
+            handle: Some(TestSubgraphsHandle {
+                shutdown_tx: Some(shutdown_tx),
+                addr,
+                state: middleware_state,
+            }),
+            _state: PhantomData,
+        }
+    }
+}
+
+impl TestSubgraphs<Started> {
+    #[allow(unused)]
+    pub fn addr(&self) -> SocketAddr {
+        self.handle.as_ref().expect("subgraphs not started").addr
+    }
+
+    pub fn get_requests_log(&self, path: &str) -> Option<Vec<RequestLog>> {
+        self.handle
+            .as_ref()
+            .expect("subgraphs not started")
+            .state
+            .request_log
+            .get(path)
+            .map(|entry| entry.value().to_vec())
+    }
+}
+
+impl Drop for TestSubgraphsHandle {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.take().map(|tx| tx.send(()));
+    }
+}
+
+// router
+
+pub struct TestRouterBuilder<'subgraphs> {
+    config: Option<HiveRouterConfig>,
+    subgraphs: Option<&'subgraphs TestSubgraphs<Started>>,
+}
+
+impl<'subgraphs> TestRouterBuilder<'subgraphs> {
     pub fn new() -> Self {
         Self {
             config: None,
-            start_subgraphs: false,
+            subgraphs: None,
         }
     }
 
@@ -40,18 +183,18 @@ impl TestRouterBuilder {
         self
     }
 
-    pub fn with_subgraphs(mut self) -> Self {
-        self.start_subgraphs = true;
+    pub fn with_subgraphs(mut self, subgraphs: &'subgraphs TestSubgraphs<Started>) -> Self {
+        self.subgraphs = Some(subgraphs);
         self
     }
 
-    pub fn build(self) -> TestRouter<Built> {
+    pub fn build(self) -> TestRouter<'subgraphs, Built> {
         let config = self.config.expect("config is required");
         TestRouter {
             graphql_path: config.graphql_path().to_string(),
             websocket_path: config.websocket_path().map(|p| p.to_string()),
             config: Some(config),
-            start_subgraphs: self.start_subgraphs,
+            subgraphs: self.subgraphs,
             handle: None,
             _hold_until_drop: vec![],
             _state: PhantomData,
@@ -59,60 +202,15 @@ impl TestRouterBuilder {
     }
 }
 
-impl Default for TestRouterBuilder {
+impl Default for TestRouterBuilder<'_> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-struct SubgraphsHandle {
-    shutdown_tx: Option<Sender<()>>,
-    #[allow(dead_code)]
-    state: Arc<SubgraphsServiceState>,
-}
-
-impl SubgraphsHandle {
-    async fn start() -> Self {
-        let (_server_handle, shutdown_tx, state) = start_subgraphs_server(
-            // TODO: should auto-allocate free port
-            Some(4200),
-            // TODO: make configurable
-            SubscriptionProtocol::Auto,
-            None,
-        );
-
-        loop {
-            match reqwest::get(&state.health_check_url).await {
-                Ok(response) if response.status().is_success() => {
-                    break;
-                }
-                _ => {
-                    warn!("Subgraphs not healthy yet, retrying in 50ms");
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-            }
-        }
-
-        Self {
-            shutdown_tx: Some(shutdown_tx),
-            state,
-        }
-    }
-}
-
-impl Drop for SubgraphsHandle {
-    fn drop(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
     }
 }
 
 struct TestRouterHandle {
     serv: test::TestServer,
     bg_tasks_manager: BackgroundTasksManager,
-    #[allow(dead_code)]
-    subgraphs: Option<SubgraphsHandle>,
 }
 
 impl Drop for TestRouterHandle {
@@ -121,33 +219,29 @@ impl Drop for TestRouterHandle {
     }
 }
 
-pub struct TestRouter<State> {
+pub struct TestRouter<'subgraphs, State> {
     graphql_path: String,
     websocket_path: Option<String>,
     config: Option<HiveRouterConfig>,
-    start_subgraphs: bool,
+    subgraphs: Option<&'subgraphs TestSubgraphs<Started>>,
     handle: Option<TestRouterHandle>,
     _hold_until_drop: Vec<Box<dyn Any>>,
     _state: PhantomData<State>,
 }
 
-impl TestRouter<Built> {
-    pub async fn start(mut self) -> Result<TestRouter<Started>, Box<dyn std::error::Error>> {
+impl<'subgraphs> TestRouter<'subgraphs, Built> {
+    pub async fn start(mut self) -> TestRouter<'subgraphs, Started> {
         init_rustls_crypto_provider();
         let config = self.config.take().unwrap();
-        let (telemetry, subscriber) = Telemetry::init_subscriber(&config)?;
+        let (telemetry, subscriber) =
+            Telemetry::init_subscriber(&config).expect("failed to initialize telemetry subscriber");
         let subscription_guard = tracing::subscriber::set_default(subscriber);
-
-        let subgraphs = if self.start_subgraphs {
-            Some(SubgraphsHandle::start().await)
-        } else {
-            None
-        };
 
         let mut bg_tasks_manager = BackgroundTasksManager::new();
         let (shared_state, schema_state) =
             configure_app_from_config(config, telemetry.context.clone(), &mut bg_tasks_manager)
-                .await?;
+                .await
+                .expect("failed to configure hive router from config");
 
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
@@ -203,23 +297,22 @@ impl TestRouter<Built> {
             }
         }
 
-        Ok(TestRouter {
+        TestRouter {
             graphql_path: self.graphql_path,
             websocket_path: self.websocket_path,
             handle: Some(TestRouterHandle {
                 serv,
                 bg_tasks_manager,
-                subgraphs,
             }),
-            config: None,
-            start_subgraphs: false,
+            config: self.config,
+            subgraphs: self.subgraphs,
             _hold_until_drop: vec![Box::new(subscription_guard)],
             _state: PhantomData,
-        })
+        }
     }
 }
 
-impl TestRouter<Started> {
+impl<'subgraphs> TestRouter<'subgraphs, Started> {
     #[allow(unused)]
     pub async fn send_graphql_request(
         &self,
@@ -254,17 +347,5 @@ impl TestRouter<Started> {
         websocket_client::connect(&ws_uri)
             .await
             .expect("Failed to connect to websocket")
-    }
-
-    #[allow(dead_code)]
-    pub async fn get_subgraph_requests_log(&self, subgraph_name: &str) -> Option<Vec<RequestLog>> {
-        self.handle.as_ref().and_then(|h| {
-            h.subgraphs.as_ref().and_then(|s| {
-                s.state
-                    .request_log
-                    .get(&format!("/{}", subgraph_name))
-                    .map(|entry| entry.value().clone())
-            })
-        })
     }
 }

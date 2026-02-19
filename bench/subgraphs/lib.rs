@@ -185,7 +185,47 @@ pub fn start_subgraphs_server(
         health_check_url: format!("http://{}:{}/health", host, port),
     });
 
-    let mut app = Router::new()
+    let mut app = subgraphs_app(subscriptions_protocol);
+
+    // shared state
+    app = app.layer(middleware::from_fn_with_state(
+        shared_state.clone(),
+        track_requests,
+    ));
+
+    // request interceptor
+    if let Some(interceptor) = request_interceptor.clone() {
+        app = app.layer(middleware::from_fn_with_state(
+            interceptor,
+            intercept_requests,
+        ));
+    }
+
+    // healtcheck
+    app = app.route("/health", get(health_check_handler));
+
+    println!("Starting server on http://{}:{}", host, port);
+
+    let server_handle = tokio::spawn(async move {
+        axum::serve(
+            TcpListener::bind(&format!("{}:{}", host, port))
+                .await
+                .unwrap(),
+            app,
+        )
+        .with_graceful_shutdown(async {
+            shutdown_rx.await.ok();
+            println!("Graceful shutdown signal received.");
+        })
+        .await
+        .expect("failed to start subgraphs server");
+    });
+
+    (server_handle, shutdown_tx, shared_state)
+}
+
+pub fn subgraphs_app(subscriptions_protocol: SubscriptionProtocol) -> Router<()> {
+    Router::new()
         .route(
             "/accounts",
             post_service(GraphQL::new(accounts::get_subgraph())),
@@ -209,40 +249,6 @@ pub fn start_subgraphs_server(
                 subscriptions_protocol,
             )),
         )
-        .layer(middleware::from_fn_with_state(
-            shared_state.clone(),
-            track_requests,
-        ));
-
-    // only intercept if intercepting
-    if let Some(interceptor) = request_interceptor.clone() {
-        app = app.layer(middleware::from_fn_with_state(
-            interceptor,
-            intercept_requests,
-        ));
-    }
-
-    let app = app
-        .route("/health", get(health_check_handler))
         .route_layer(middleware::from_fn(add_subgraph_header))
-        .route_layer(middleware::from_fn(delay_middleware));
-
-    println!("Starting server on http://{}:{}", host, port);
-
-    let server_handle = tokio::spawn(async move {
-        axum::serve(
-            TcpListener::bind(&format!("{}:{}", host, port))
-                .await
-                .unwrap(),
-            app,
-        )
-        .with_graceful_shutdown(async {
-            shutdown_rx.await.ok();
-            println!("Graceful shutdown signal received.");
-        })
-        .await
-        .expect("failed to start subgraphs server");
-    });
-
-    (server_handle, shutdown_tx, shared_state)
+        .route_layer(middleware::from_fn(delay_middleware))
 }
