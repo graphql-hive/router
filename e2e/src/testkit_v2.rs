@@ -95,7 +95,7 @@ pub struct RequestLog {
 }
 
 struct TestSubgraphsMiddlewareState {
-    /// A map of request path to list of requests received on that path.
+    /// A map of subgraph name to list of requests received on that subgraph.
     request_log: DashMap<String, Vec<RequestLog>>,
 }
 
@@ -104,7 +104,12 @@ async fn record_requests(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> impl axum::response::IntoResponse {
-    let path = request.uri().path().to_string();
+    let subgraph = request
+        .uri()
+        .path()
+        .to_string()
+        .trim_start_matches("/") // remove leading slash to have the path represent the subgraph
+        .to_string();
     let (parts, body) = request.into_parts();
     let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
 
@@ -115,7 +120,7 @@ async fn record_requests(
         headers: header_map,
         body: body_value,
     };
-    state.request_log.entry(path).or_default().push(record);
+    state.request_log.entry(subgraph).or_default().push(record);
 
     let rebuilt_body = axum::body::Body::from(body_bytes);
     let request = axum::extract::Request::from_parts(parts, rebuilt_body);
@@ -167,13 +172,14 @@ impl TestSubgraphs<Started> {
         self.handle.as_ref().expect("subgraphs not started").addr
     }
 
-    pub fn get_requests_log(&self, path: &str) -> Option<Vec<RequestLog>> {
+    /// Returns the list of requests received on the given subgraph. Supply the subgarph name.
+    pub fn get_requests_log(&self, subgraph: &str) -> Option<Vec<RequestLog>> {
         self.handle
             .as_ref()
             .expect("subgraphs not started")
             .state
             .request_log
-            .get(path)
+            .get(subgraph)
             .map(|entry| entry.value().to_vec())
     }
 }
