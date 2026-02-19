@@ -1,9 +1,8 @@
-use subgraphs::{start_subgraphs_server, SubscriptionProtocol};
+use subgraphs::start_subgraphs_server;
 
 #[tokio::main]
 async fn main() {
-    let (server_handle, _shutdown_tx, _shared_state) =
-        start_subgraphs_server(None, SubscriptionProtocol::Auto, None);
+    let (server_handle, _shutdown_tx, _shared_state) = start_subgraphs_server(None);
 
     server_handle
         .await
