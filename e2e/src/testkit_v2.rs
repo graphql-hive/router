@@ -1,5 +1,6 @@
 use std::{
-    any::Any, marker::PhantomData, net::SocketAddr, str::FromStr, sync::Arc, time::Duration,
+    any::Any, marker::PhantomData, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc,
+    time::Duration,
 };
 
 use axum;
@@ -9,7 +10,7 @@ use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
     init_rustls_crypto_provider, telemetry::Telemetry,
 };
-use hive_router_config::{parse_yaml_config, HiveRouterConfig};
+use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use hive_router_plan_executor::executors::websocket_client;
 use ntex::{
     client::ClientResponse,
@@ -284,6 +285,15 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
     pub fn inline_config(mut self, config_yaml: &str) -> Self {
         let router_config = parse_yaml_config(config_yaml.to_string()).unwrap();
         self.config = Some(router_config);
+        self
+    }
+
+    pub fn file_config(mut self, config_path: &str) -> Self {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(config_path);
+        self.config = Some(
+            load_config(Some(supergraph_path.to_str().unwrap().to_string()))
+                .expect("failed to load router config from file"),
+        );
         self
     }
 

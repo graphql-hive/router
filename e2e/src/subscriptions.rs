@@ -2,15 +2,12 @@
 mod subscriptions_e2e_tests {
 
     use insta::assert_snapshot;
-    use ntex::{http, web::test};
+    use ntex::http;
     use reqwest::StatusCode;
     use sonic_rs::json;
 
-    use crate::{
-        testkit::{
-            init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
-        },
-        testkit_v2::{some_header_map, ResponseLike, TestRouterBuilder, TestSubgraphsBuilder},
+    use crate::testkit_v2::{
+        some_header_map, ResponseLike, TestRouterBuilder, TestSubgraphsBuilder,
     };
 
     #[ntex::test]
@@ -951,39 +948,39 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_header_propagation_for_subscription() {
-        let subgraphs_server = SubgraphsServer::start().await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/header_propagation.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let router = init_router_from_config_file("configs/header_propagation.router.yaml")
-            .await
-            .unwrap();
-
-        wait_for_readiness(&router.app).await;
-
-        let req = init_graphql_request(
-            r#"
-            subscription {
-                reviewAdded(intervalInMs: 0) {
-                    id
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                    }
                 }
-            }
-            "#,
-            None,
-        )
-        .header(http::header::ACCEPT, "text/event-stream")
-        .header("x-context", "maybe-propagate")
-        .to_request();
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream",
+                    http::header::HeaderName::from_static("x-context") => "maybe-propagate"
+                },
+            )
+            .await;
 
-        let res = test::call_service(&router.app, req).await;
-
-        assert!(res.status().is_success(), "Expected 200 OK");
+        assert_eq!(res.status(), 200, "Expected 200 OK");
 
         // we have to consume the body to ensure the subscription is fully processed
-        let body = test::read_body(res).await;
+        let body = res.body().await.unwrap();
         std::str::from_utf8(&body).unwrap();
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("reviews")
-            .await
+        let subgraph_requests = subgraphs
+            .get_requests_log("reviews")
             .expect("expected requests sent to reviews subgraph");
 
         let context_header = subgraph_requests[0]
@@ -999,41 +996,41 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_header_propagation_for_entity_resolution() {
-        let subgraphs_server = SubgraphsServer::start().await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/header_propagation.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let router = init_router_from_config_file("configs/header_propagation.router.yaml")
-            .await
-            .unwrap();
-
-        wait_for_readiness(&router.app).await;
-
-        let req = init_graphql_request(
-            r#"
-            subscription {
-                reviewAdded(intervalInMs: 0) {
-                    product {
-                        name
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        product {
+                            name
+                        }
                     }
                 }
-            }
-            "#,
-            None,
-        )
-        .header(http::header::ACCEPT, "text/event-stream")
-        .header("x-context", "maybe-propagate")
-        .to_request();
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream",
+                    http::header::HeaderName::from_static("x-context") => "maybe-propagate"
+                },
+            )
+            .await;
 
-        let res = test::call_service(&router.app, req).await;
-
-        assert!(res.status().is_success(), "Expected 200 OK");
+        assert_eq!(res.status(), 200, "Expected 200 OK");
 
         // we have to consume the body to ensure all entity resolutions were made
-        let body = test::read_body(res).await;
+        let body = res.body().await.unwrap();
         std::str::from_utf8(&body).unwrap();
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("products")
-            .await
+        let subgraph_requests = subgraphs
+            .get_requests_log("products")
             .expect("expected requests sent to products subgraph");
 
         // every entity resolution request must have the propagated header
