@@ -242,7 +242,7 @@ jobs:
       - name: Run Audits
         run: npm run test:federation-all
         env:
-          GATEWAY_TIMEOUT: 1_800_000 # 30 minutes, to prevent CI timeout for long-running tests
+          GATEWAY_TIMEOUT: 1800000 # 30 minutes, to prevent CI timeout for long-running tests
         working-directory: audits
         continue-on-error: true # continue even if the test fails
       - name: Upload logs
@@ -256,7 +256,6 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@27d65e188ec43221b20d26de30f4892fad91df2f # v2
         if: (!cancelled())
         with:
-          fail_on: "nothing"
           check_name: test / federation-audit
           comment_title: Federation Audit Results
           comment_mode: off
