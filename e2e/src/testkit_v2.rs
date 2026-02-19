@@ -22,6 +22,23 @@ use subgraphs::{subgraphs_app, SubscriptionProtocol};
 use tokio::{net::TcpListener, sync::oneshot};
 use tracing::{info, warn};
 
+// utilities
+
+/// Creates a Some(http::HeaderMap) from a list of key-value pairs, for use in test requests.
+#[macro_export]
+macro_rules! some_header_map {
+    ($($key:expr => $val:expr),* $(,)?) => {{
+        let mut map = ::http::HeaderMap::new();
+        $(map.insert($key, $val.parse().unwrap());)*
+        Some(map)
+    }};
+}
+
+// #[macro_export] always hoists to the crate root so we re-export it here module level
+pub use some_header_map;
+
+// state markers
+
 pub struct Built;
 pub struct Started;
 
@@ -36,6 +53,11 @@ impl TestSubgraphsBuilder {
         Self {
             subscriptions_protocol: SubscriptionProtocol::Auto,
         }
+    }
+
+    pub fn with_subscriptions_protocol(mut self, protocol: SubscriptionProtocol) -> Self {
+        self.subscriptions_protocol = protocol;
+        self
     }
 
     pub fn build(self) -> TestSubgraphs<Built> {
@@ -313,13 +335,13 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
 }
 
 impl<'subgraphs> TestRouter<'subgraphs, Started> {
-    #[allow(unused)]
     pub async fn send_graphql_request(
         &self,
         query: &str,
         variables: Option<sonic_rs::Value>,
+        headers: Option<http::HeaderMap>,
     ) -> ClientResponse {
-        let req = self
+        let mut req = self
             .handle
             .as_ref()
             .unwrap()
@@ -327,6 +349,12 @@ impl<'subgraphs> TestRouter<'subgraphs, Started> {
             .post(self.graphql_path.as_str())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/graphql-response+json");
+
+        if let Some(headers) = headers {
+            for (key, value) in headers.iter() {
+                req = req.set_header(key, value);
+            }
+        }
 
         req.send_json(&json!({
           "query": query,

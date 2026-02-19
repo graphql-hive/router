@@ -9,9 +9,12 @@ mod subscriptions_e2e_tests {
     use sonic_rs::json;
     use subgraphs::InterceptedResponse;
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_file, init_router_from_config_inline,
-        wait_for_readiness, SubgraphsServer,
+    use crate::{
+        testkit::{
+            init_graphql_request, init_router_from_config_file, init_router_from_config_inline,
+            wait_for_readiness, SubgraphsServer,
+        },
+        testkit_v2::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder},
     };
 
     fn get_content_type_header(res: &ntex::web::WebResponse) -> String {
@@ -75,47 +78,51 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_no_entity_resolution_sse_subgraph() {
-        let _subgraphs_server = SubgraphsServer::start_with_subscriptions_protocol(
-            subgraphs::SubscriptionProtocol::SseOnly,
-        )
-        .await;
+        let subgraphs = TestSubgraphsBuilder::new()
+            .with_subscriptions_protocol(subgraphs::SubscriptionProtocol::SseOnly)
+            .build()
+            .start()
+            .await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-        let router = init_router_from_config_inline(&format!(
-            r#"
-            supergraph:
-                source: file
-                path: supergraph.graphql
-            subscriptions:
-                enabled: true
-            "#
-        ))
-        .await
-        .unwrap();
-
-        wait_for_readiness(&router.app).await;
-
-        let req = init_graphql_request(
-            r#"
-            subscription {
-                reviewAdded(intervalInMs: 0) {
-                    product {
-                        upc
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        product {
+                            upc
+                        }
                     }
                 }
-            }
-            "#,
-            None,
-        )
-        .header(http::header::ACCEPT, "text/event-stream")
-        .to_request();
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
 
-        let res = test::call_service(&router.app, req).await;
+        assert_eq!(res.status(), 200, "Expected 200 OK");
 
-        assert!(res.status().is_success(), "Expected 200 OK");
+        let content_type_header = res
+            .header("content-type")
+            .expect("must have content-type header");
 
-        let content_type_header = get_content_type_header(&res);
-
-        let body = test::read_body(res).await;
+        let body = res.body().await.unwrap();
         let body_str = std::str::from_utf8(&body).unwrap();
 
         assert_snapshot!(body_str, @r#"
