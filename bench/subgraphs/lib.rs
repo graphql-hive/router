@@ -111,7 +111,7 @@ pub fn start_subgraphs_server(
         health_check_url: format!("http://{}:{}/health", host, port),
     });
 
-    let mut app = subgraphs_app(SubscriptionProtocol::Auto);
+    let mut app = subgraphs_app(SubscriptionProtocol::default());
     app = app.layer(middleware::from_fn_with_state(
         shared_state.clone(),
         track_requests,
@@ -138,11 +138,12 @@ pub fn start_subgraphs_server(
     (server_handle, shutdown_tx, shared_state)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum SubscriptionProtocol {
-    Auto, // prefers multipart
-    SseOnly,
+    #[default]
+    PreferMultipartFallbackSse,
     MultipartOnly,
+    SseOnly,
 }
 
 pub fn subgraphs_app(subscriptions_protocol: SubscriptionProtocol) -> Router<()> {

@@ -86,7 +86,7 @@ impl TestSubgraphsBuilder {
     pub fn new() -> Self {
         Self {
             on_request: None,
-            subscriptions_protocol: SubscriptionProtocol::Auto,
+            subscriptions_protocol: SubscriptionProtocol::default(),
         }
     }
 

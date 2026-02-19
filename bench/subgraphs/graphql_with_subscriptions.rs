@@ -107,7 +107,7 @@ where
             let stream = executor.execute_stream(req.0, None);
 
             let use_sse = match sub_prot {
-                SubscriptionProtocol::Auto => does_accept_event_stream,
+                SubscriptionProtocol::PreferMultipartFallbackSse => does_accept_event_stream,
                 SubscriptionProtocol::SseOnly => true,
                 SubscriptionProtocol::MultipartOnly => false,
             };
