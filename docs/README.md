@@ -13,7 +13,7 @@
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_request_body_size":"2 MB"}`<br/>||
-|[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"access_log":null,"service":{"format":"json","kind":"StdoutExporterConfig","level":"info","log_fields":{"http":{"request":{"method":false,"path":false},"response":{"duration_ms":false,"status_code":false}}},"log_internals":false}}`<br/>|yes|
+|[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"access_log":null,"service":{"exporters":[{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}],"log_fields":{"http":{"request":{"method":false,"path":false},"response":{"duration_ms":false,"status_code":false}}}}}`<br/>|yes|
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
@@ -97,9 +97,11 @@ limits:
 log:
   access_log: null
   service:
-    format: json
-    kind: StdoutExporterConfig
-    level: info
+    exporters:
+      - format: json
+        kind: StdoutExporterConfig
+        level: info
+        log_internals: false
     log_fields:
       http:
         request:
@@ -108,7 +110,6 @@ log:
         response:
           duration_ms: false
           status_code: false
-    log_internals: false
 override_labels: {}
 override_subgraph_urls:
   accounts:
@@ -1770,7 +1771,7 @@ The router is configured to be mostly silent (`info`) level, and will print only
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**access\_log**](#logaccess_log)|`object`, `null`||yes|
-|**service**|||yes|
+|[**service**](#logservice)|`object`||yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -1778,9 +1779,11 @@ The router is configured to be mostly silent (`info`) level, and will print only
 ```yaml
 access_log: null
 service:
-  format: json
-  kind: StdoutExporterConfig
-  level: info
+  exporters:
+    - format: json
+      kind: StdoutExporterConfig
+      level: info
+      log_internals: false
   log_fields:
     http:
       request:
@@ -1789,7 +1792,6 @@ service:
       response:
         duration_ms: false
         status_code: false
-  log_internals: false
 
 ```
 
@@ -1840,6 +1842,167 @@ attributes: {}
 |**timestamp**|`boolean`||yes|
 
 **Additional Properties:** not allowed  
+<a name="logservice"></a>
+### log\.service: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**exporters**](#logserviceexporters)|`array`||yes|
+|[**log\_fields**](#logservicelog_fields)|`object`|Default: `{"http":{"request":{"method":false,"path":false},"response":{"duration_ms":false,"status_code":false}}}`<br/>|no|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+log_fields:
+  http:
+    request:
+      method: false
+      path: false
+    response:
+      duration_ms: false
+      status_code: false
+
+```
+
+<a name="logserviceexporters"></a>
+#### log\.service\.exporters\[\]: array
+
+**Items**
+
+   
+**Option 1 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**format**|`string`|Default: `"json"`<br/>Enum: `"text"`, `"json"`<br/>|no|
+|**kind**|`string`|Constant Value: `"stdout"`<br/>|yes|
+|**level**|`string`|Default: `"info"`<br/>Enum: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`<br/>|no|
+|**log\_internals**|`boolean`|Default: `false`<br/>|no|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+format: json
+level: info
+log_internals: false
+
+```
+
+
+   
+**Option 2 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**format**|`string`|Default: `"json"`<br/>Enum: `"text"`, `"json"`<br/>|no|
+|**kind**|`string`|Constant Value: `"file"`<br/>|yes|
+|**level**|`string`|Default: `"info"`<br/>Enum: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`<br/>|no|
+|**log\_internals**|`boolean`|Default: `false`<br/>|no|
+|**path**|`string`||yes|
+|**rolling**|`string`, `null`|Enum: `"minutely"`, `"hourly"`, `"daily"`, `null`<br/>|no|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+format: json
+level: info
+log_internals: false
+rolling: null
+
+```
+
+
+<a name="logservicelog_fields"></a>
+#### log\.service\.log\_fields: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**http**](#logservicelog_fieldshttp)|`object`|Default: `{"request":{"method":false,"path":false},"response":{"duration_ms":false,"status_code":false}}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+http:
+  request:
+    method: false
+    path: false
+  response:
+    duration_ms: false
+    status_code: false
+
+```
+
+<a name="logservicelog_fieldshttp"></a>
+##### log\.service\.log\_fields\.http: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**request**](#logservicelog_fieldshttprequest)|`object`|Default: `{"method":false,"path":false}`<br/>||
+|[**response**](#logservicelog_fieldshttpresponse)|`object`|Default: `{"duration_ms":false,"status_code":false}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+request:
+  method: false
+  path: false
+response:
+  duration_ms: false
+  status_code: false
+
+```
+
+<a name="logservicelog_fieldshttprequest"></a>
+###### log\.service\.log\_fields\.http\.request: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**method**|`boolean`|Default: `true`<br/>||
+|**path**|`boolean`|Default: `true`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+method: false
+path: false
+
+```
+
+<a name="logservicelog_fieldshttpresponse"></a>
+###### log\.service\.log\_fields\.http\.response: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**duration\_ms**|`boolean`|Default: `true`<br/>||
+|**status\_code**|`boolean`|Default: `true`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+duration_ms: false
+status_code: false
+
+```
+
 <a name="override_labels"></a>
 ## override\_labels: object
 

@@ -116,7 +116,7 @@ impl Telemetry {
                 tracing_provider: tracer_provider,
                 tracing_context: context,
                 logging_writer_guards: vec![],
-                logging_context: todo!(),
+                logging_context: Default::default(),
             },
             subscriber,
         ))

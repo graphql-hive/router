@@ -6,9 +6,18 @@ use crate::log::shared::{default_log_internals, LogFormat, LogLevel};
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceLoggingConfig {
-    #[serde(default = "LogFieldsConfig::default")]
+    #[serde(default)]
     pub log_fields: LogFieldsConfig,
     pub exporters: Vec<ServiceLogExporter>,
+}
+
+impl Default for ServiceLoggingConfig {
+    fn default() -> Self {
+        Self {
+            log_fields: LogFieldsConfig::default(),
+            exporters: vec![ServiceLogExporter::Stdout(StdoutExporterConfig::default())],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Default)]
@@ -27,26 +36,36 @@ pub struct HttpLogFieldsConfig {
     pub response: HttpResponseLogFieldsConfig,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Default)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
 pub struct HttpRequestLogFieldsConfig {
-    #[serde(default = "enabled_by_default")]
     pub method: bool,
-    #[serde(default = "enabled_by_default")]
     pub path: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Default)]
-#[serde(deny_unknown_fields)]
+impl Default for HttpRequestLogFieldsConfig {
+    fn default() -> Self {
+        HttpRequestLogFieldsConfig {
+            method: true,
+            path: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
 pub struct HttpResponseLogFieldsConfig {
-    #[serde(default = "enabled_by_default")]
     pub status_code: bool,
-    #[serde(default = "enabled_by_default")]
     pub duration_ms: bool,
 }
 
-fn enabled_by_default() -> bool {
-    true
+impl Default for HttpResponseLogFieldsConfig {
+    fn default() -> Self {
+        HttpResponseLogFieldsConfig {
+            status_code: true,
+            duration_ms: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]

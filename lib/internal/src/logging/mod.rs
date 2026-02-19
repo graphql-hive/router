@@ -24,16 +24,15 @@ where
     let mut layers = vec![];
     let mut guards = vec![];
 
-    let service_log_config = config.service.as_list();
-    for service_layer_config in &service_log_config.exporters {
+    for service_layer_config in &config.service.exporters {
         let out = match service_layer_config {
-            ServiceLogExporter::Stdout(config) => build_stdout_layer(&config),
-            ServiceLogExporter::File(config) => build_file_layer(&config),
+            ServiceLogExporter::Stdout(config) => build_stdout_layer(config),
+            ServiceLogExporter::File(config) => build_file_layer(config),
         };
 
         layers.push(out.0);
         guards.push(out.1);
     }
 
-    (layers, guards, service_log_config)
+    (layers, guards, config.service.clone())
 }

@@ -4,13 +4,7 @@ supergraph:
   path: ./bench/supergraph.graphql
 log:
   service:
-    level: debug
-    format: json
-    log_fields:
-      http:
-        request:
-          method: true
-          path: true
-        response:
-          status_code: true
-          duration_ms: true
+    exporters:
+      - kind: stdout
+        level: debug
+        format: text
