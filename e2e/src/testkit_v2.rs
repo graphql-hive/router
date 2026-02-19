@@ -3,6 +3,7 @@ use std::{
 };
 
 use axum;
+use bytes::Bytes;
 use dashmap::DashMap;
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
@@ -44,13 +45,46 @@ pub struct Started;
 
 // subgraphs
 
+#[derive(Clone)]
+pub struct RequestLike {
+    #[allow(unused)]
+    pub path: String,
+    pub headers: http::HeaderMap,
+    #[allow(unused)]
+    pub body: Option<Bytes>,
+}
+
+pub struct ResponseLike {
+    pub status: axum::http::StatusCode,
+    pub headers: http::HeaderMap,
+    pub body: Option<Bytes>,
+}
+
+impl ResponseLike {
+    pub fn new(
+        status: axum::http::StatusCode,
+        body: Option<String>,
+        headers: Option<http::HeaderMap>,
+    ) -> Self {
+        Self {
+            status,
+            headers: headers.unwrap_or_else(http::HeaderMap::new),
+            body: body.map(Bytes::from),
+        }
+    }
+}
+
+type OnRequest = dyn Fn(RequestLike) -> Option<ResponseLike> + Send + Sync;
+
 pub struct TestSubgraphsBuilder {
     subscriptions_protocol: SubscriptionProtocol,
+    on_request: Option<Arc<OnRequest>>,
 }
 
 impl TestSubgraphsBuilder {
     pub fn new() -> Self {
         Self {
+            on_request: None,
             subscriptions_protocol: SubscriptionProtocol::Auto,
         }
     }
@@ -60,9 +94,18 @@ impl TestSubgraphsBuilder {
         self
     }
 
+    pub fn with_on_request(
+        mut self,
+        on_request: impl Fn(RequestLike) -> Option<ResponseLike> + Send + Sync + 'static,
+    ) -> Self {
+        self.on_request = Some(Arc::new(on_request));
+        self
+    }
+
     pub fn build(self) -> TestSubgraphs<Built> {
         TestSubgraphs {
             subscriptions_protocol: self.subscriptions_protocol,
+            on_request: self.on_request,
             handle: None,
             _state: PhantomData,
         }
@@ -83,20 +126,14 @@ struct TestSubgraphsHandle {
 
 pub struct TestSubgraphs<State> {
     subscriptions_protocol: SubscriptionProtocol,
+    on_request: Option<Arc<OnRequest>>,
     handle: Option<TestSubgraphsHandle>,
     _state: PhantomData<State>,
 }
 
-#[derive(Clone)]
-pub struct RequestLog {
-    pub headers: http::HeaderMap,
-    #[allow(unused)]
-    pub body: sonic_rs::Value,
-}
-
 struct TestSubgraphsMiddlewareState {
     /// A map of subgraph name to list of requests received on that subgraph.
-    request_log: DashMap<String, Vec<RequestLog>>,
+    request_log: DashMap<String, Vec<RequestLike>>,
 }
 
 async fn record_requests(
@@ -104,26 +141,58 @@ async fn record_requests(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> impl axum::response::IntoResponse {
-    let subgraph = request
-        .uri()
-        .path()
-        .to_string()
+    let path = request.uri().path().to_string();
+    let subgraph = path
         .trim_start_matches("/") // remove leading slash to have the path represent the subgraph
         .to_string();
     let (parts, body) = request.into_parts();
     let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
 
     let header_map = parts.headers.clone();
-    let body_value: sonic_rs::Value = sonic_rs::from_slice(&body_bytes)
-        .unwrap_or_else(|err| sonic_rs::Value::from(&err.to_string()));
-    let record = RequestLog {
+    let record = RequestLike {
+        path,
         headers: header_map,
-        body: body_value,
+        body: body_bytes
+            .is_empty()
+            .then(|| None)
+            .unwrap_or(Some(body_bytes.clone())),
     };
     state.request_log.entry(subgraph).or_default().push(record);
 
     let rebuilt_body = axum::body::Body::from(body_bytes);
     let request = axum::extract::Request::from_parts(parts, rebuilt_body);
+    next.run(request).await
+}
+
+async fn handle_on_request(
+    axum::extract::State(on_request): axum::extract::State<Arc<OnRequest>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> impl axum::response::IntoResponse {
+    let path = request.uri().path().to_string();
+    let (parts, body) = request.into_parts();
+
+    let req = RequestLike {
+        path: path.clone(),
+        headers: parts.headers.clone(),
+        body: None, // TODO: do we really care about the body?
+    };
+
+    if let Some(new_resp) = on_request(req) {
+        // response intercepted, return it and stop
+        let mut response = axum::response::Response::builder()
+            .status(new_resp.status)
+            .body(if let Some(body) = new_resp.body {
+                axum::body::Body::from(body)
+            } else {
+                axum::body::Body::empty()
+            })
+            .unwrap();
+        *response.headers_mut() = new_resp.headers;
+        return response;
+    }
+
+    let request = axum::extract::Request::from_parts(parts, body);
     next.run(request).await
 }
 
@@ -143,6 +212,12 @@ impl TestSubgraphs<Built> {
             middleware_state.clone(),
             record_requests,
         ));
+        if let Some(on_request) = self.on_request.clone() {
+            app = app.layer(axum::middleware::from_fn_with_state(
+                on_request,
+                handle_on_request,
+            ));
+        }
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         tokio::spawn(async move {
@@ -156,6 +231,7 @@ impl TestSubgraphs<Built> {
 
         TestSubgraphs {
             subscriptions_protocol: self.subscriptions_protocol,
+            on_request: self.on_request,
             handle: Some(TestSubgraphsHandle {
                 shutdown_tx: Some(shutdown_tx),
                 addr,
@@ -173,7 +249,7 @@ impl TestSubgraphs<Started> {
     }
 
     /// Returns the list of requests received on the given subgraph. Supply the subgarph name.
-    pub fn get_requests_log(&self, subgraph: &str) -> Option<Vec<RequestLog>> {
+    pub fn get_requests_log(&self, subgraph: &str) -> Option<Vec<RequestLike>> {
         self.handle
             .as_ref()
             .expect("subgraphs not started")

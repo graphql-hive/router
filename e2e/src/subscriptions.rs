@@ -1,19 +1,16 @@
 #[cfg(test)]
 mod subscriptions_e2e_tests {
-    use std::sync::Arc;
 
     use insta::assert_snapshot;
     use ntex::{http, web::test};
     use reqwest::StatusCode;
     use sonic_rs::json;
-    use subgraphs::InterceptedResponse;
 
     use crate::{
         testkit::{
-            init_graphql_request, init_router_from_config_file, init_router_from_config_inline,
-            wait_for_readiness, SubgraphsServer,
+            init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
         },
-        testkit_v2::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder},
+        testkit_v2::{some_header_map, ResponseLike, TestRouterBuilder, TestSubgraphsBuilder},
     };
 
     #[ntex::test]
@@ -751,46 +748,52 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_stream_failed_source_subgraph_requests() {
-        let _subgraphs_server = SubgraphsServer::start_with_interceptor(Arc::new(|_req| {
-            Some(InterceptedResponse::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                None,
-            ))
-        }))
-        .await;
+        let subgraphs = TestSubgraphsBuilder::new()
+            .with_on_request(|_req| {
+                Some(ResponseLike::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    None,
+                    None,
+                ))
+            })
+            .build()
+            .start()
+            .await;
 
-        let router = init_router_from_config_inline(&format!(
-            r#"
-            supergraph:
-                source: file
-                path: supergraph.graphql
-            subscriptions:
-                enabled: true
-            "#
-        ))
-        .await
-        .unwrap();
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&router.app).await;
-
-        let req = init_graphql_request(
-            r#"
-            subscription {
-                reviewAdded(intervalInMs: 0) {
-                    id
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                    }
                 }
-            }
-            "#,
-            None,
-        )
-        .header(http::header::ACCEPT, "text/event-stream")
-        .to_request();
-
-        let res = test::call_service(&router.app, req).await;
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
 
         assert_eq!(res.status(), 200, "Expected 200 OK");
 
-        let body = test::read_body(res).await;
+        let body = res.body().await.unwrap();
         let body_str = std::str::from_utf8(&body).unwrap();
 
         assert_snapshot!(body_str, @r#"
@@ -803,11 +806,11 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_stream_failed_entity_resolution_requests() {
-        let _subgraphs_server = SubgraphsServer::start_with_interceptor(Arc::new(|req| {
-            if req.path.contains("products") {
-                // entity resolution
-                Some(
-                    InterceptedResponse::new(
+        let subgraphs = TestSubgraphsBuilder::new()
+            .with_on_request(|req| {
+                if req.path.contains("products") {
+                    // entity resolution
+                    Some(ResponseLike::new(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Some(
                             json!({
@@ -815,50 +818,55 @@ mod subscriptions_e2e_tests {
                             })
                             .to_string(),
                         ),
-                    )
-                    .with_header("content-type", "application/json"),
-                )
-            } else {
-                // subscription itself (on "reviews" subgraph)
-                None
-            }
-        }))
-        .await;
+                        some_header_map! {
+                            http::header::CONTENT_TYPE => "application/json"
+                        },
+                    ))
+                } else {
+                    // subscription itself (on "reviews" subgraph)
+                    None
+                }
+            })
+            .build()
+            .start()
+            .await;
 
-        let router = init_router_from_config_inline(&format!(
-            r#"
-            supergraph:
-                source: file
-                path: supergraph.graphql
-            subscriptions:
-                enabled: true
-            "#
-        ))
-        .await
-        .unwrap();
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&router.app).await;
-
-        let req = init_graphql_request(
-            r#"
-            subscription ($upc: String!) {
-                reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
-                    product {
-                        name
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription ($upc: String!) {
+                    reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
+                        product {
+                            name
+                        }
                     }
                 }
-            }
-            "#,
-            Some(json!({
-                "upc": "2"
-            })),
-        )
-        .header(http::header::ACCEPT, "text/event-stream")
-        .to_request();
+                "#,
+                Some(json!({
+                    "upc": "2"
+                })),
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
 
-        let res = test::call_service(&router.app, req).await;
-
-        let body = test::read_body(res).await;
+        let body = res.body().await.unwrap();
         let body_str = std::str::from_utf8(&body).unwrap();
 
         assert_snapshot!(body_str, @r#"
