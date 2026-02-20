@@ -20,30 +20,6 @@ use tokio::{
 };
 use tracing::{info, warn};
 
-lazy_static! {
-    /// Limits concurrent test routers to avoid hitting the OS open-file-descriptor limit.
-    /// Hive Router and the subgraphs opens about 24 file descriptors per instance (tokio
-    /// for the event queue, dyn libs, port bindings, domain sockets), so we divide the system's
-    /// `RLIMIT_NOFILE` by that number to get a safe concurrency limit. Increasing the OS ulimit
-    /// will increase the concurrency of tests.
-    static ref CONCURRENCY_SEMAPHORE: Arc<Semaphore> = {
-        let limit = {
-            let mut rlimit = libc::rlimit {
-                rlim_cur: 0,
-                rlim_max: 0,
-            };
-            let nofile = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlimit) } == 0 {
-                rlimit.rlim_cur as usize
-            } else {
-                256 // fallback, about the default ulimit on many sysstms
-            };
-            (nofile / 24).max(1)
-        };
-        info!("Concurrency semaphore initialized with {} permits", limit);
-        Arc::new(Semaphore::new(limit))
-    };
-}
-
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
     init_rustls_crypto_provider, telemetry::Telemetry,
@@ -71,6 +47,32 @@ pub use some_header_map;
 
 pub struct Built;
 pub struct Started;
+
+// concurrency limiter
+
+lazy_static! {
+    /// Limits concurrent test routers to avoid hitting the OS open-file-descriptor limit.
+    /// Hive Router and the subgraphs opens about 24 file descriptors per instance (tokio
+    /// for the event queue, dyn libs, port bindings, domain sockets), so we divide the system's
+    /// `RLIMIT_NOFILE` by that number to get a safe concurrency limit. Increasing the OS ulimit
+    /// will increase the concurrency of tests.
+    static ref CONCURRENCY_SEMAPHORE: Arc<Semaphore> = {
+        let limit = {
+            let mut rlimit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            let nofile = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlimit) } == 0 {
+                rlimit.rlim_cur as usize
+            } else {
+                256 // fallback, about the default ulimit on many sysstms
+            };
+            (nofile / 24).max(1)
+        };
+        info!("Concurrency semaphore initialized with {} permits", limit);
+        Arc::new(Semaphore::new(limit))
+    };
+}
 
 // subgraphs
 
