@@ -43,6 +43,79 @@ macro_rules! some_header_map {
 // #[macro_export] always hoists to the crate root so we re-export it here module level
 pub use some_header_map;
 
+lazy_static! {
+    /// Ensures only one `EnvVarsGuard` exists at a time, preventing concurrent mutation of
+    /// environment variables (which are global process state and not thread-safe to modify).
+    static ref ENV_VAR_SEMAPHORE: Arc<Semaphore> = Arc::new(Semaphore::new(1));
+}
+
+/// A guard that sets one or more environment variables and restores their original values (or
+/// removes them) when dropped. Only one instance may exist at a time across all threads;
+/// `apply()` is async and blocks until any previous guard has been dropped.
+///
+/// Usage: `EnvVarsGuard::new().set("key", "value").set("key2", "value2").apply().await`
+pub struct EnvVarsGuard {
+    pending: Vec<(String, String)>,
+    vars: Vec<(String, Option<String>)>,
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+impl EnvVarsGuard {
+    pub fn new() -> Self {
+        EnvVarsGuard {
+            pending: vec![],
+            vars: vec![],
+            permit: None,
+        }
+    }
+
+    pub fn set(mut self, key: &str, value: &str) -> Self {
+        self.pending.push((key.to_string(), value.to_string()));
+        self
+    }
+
+    /// Applies the pending environment variable changes, returning a guard that
+    /// will restore them on drop. This method is async and will block until any
+    /// previous guard has been dropped to ensure that environment variable mutations
+    /// are not done concurrently.
+    pub async fn apply(mut self) -> Self {
+        self.permit = Some(
+            Arc::clone(&ENV_VAR_SEMAPHORE)
+                .acquire_owned()
+                .await
+                .expect("env var semaphore closed"),
+        );
+
+        self.vars = self
+            .pending
+            .iter()
+            .map(|(key, value)| {
+                let original = std::env::var(key).ok();
+                // SAFETY: environment variables are global state; we serialise all mutations
+                // through ENV_VAR_SEMAPHORE so only one guard can set/restore vars at a time.
+                unsafe { std::env::set_var(key, value) };
+                (key.to_string(), original)
+            })
+            .collect();
+
+        self
+    }
+}
+
+impl Drop for EnvVarsGuard {
+    fn drop(&mut self) {
+        for (key, original) in &self.vars {
+            // SAFETY: same as in `apply`; the permit is still held here and released after drop.
+            unsafe {
+                match original {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+}
+
 // state markers
 
 pub struct Built;

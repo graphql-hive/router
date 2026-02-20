@@ -1,26 +1,32 @@
 #[cfg(test)]
 mod disable_introspection_e2e_tests {
-    use ntex::web::test;
-    use sonic_rs::{from_slice, to_string_pretty, Value};
+    use sonic_rs::{to_string_pretty, Value};
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_file, wait_for_readiness, EnvVarGuard,
+    use crate::testkit_v2::{
+        some_header_map, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
     };
 
     #[ntex::test]
     async fn should_disable_based_on_env_var() {
-        let _env_var_guard = EnvVarGuard::new("DISABLE_INTROSPECTION", "true");
+        let _env_var_guard = EnvVarsGuard::new()
+            .set("DISABLE_INTROSPECTION", "true")
+            .apply()
+            .await;
 
-        let app = init_router_from_config_file("configs/disable_introspection_env.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/disable_introspection_env.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request("{ __schema { queryType { name } } }", None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request("{ __schema { queryType { name } } }", None, None)
+            .await;
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
         {
@@ -38,18 +44,25 @@ mod disable_introspection_e2e_tests {
 
     #[ntex::test]
     async fn should_enable_based_on_env_var() {
-        let _env_var_guard = EnvVarGuard::new("DISABLE_INTROSPECTION", "false");
+        let _env_var_guard = EnvVarsGuard::new()
+            .set("DISABLE_INTROSPECTION", "false")
+            .apply()
+            .await;
 
-        let app = init_router_from_config_file("configs/disable_introspection_env.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/disable_introspection_env.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request("{ __schema { queryType { name } } }", None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request("{ __schema { queryType { name } } }", None, None)
+            .await;
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -66,17 +79,26 @@ mod disable_introspection_e2e_tests {
 
     #[ntex::test]
     async fn should_disable_based_on_headers() {
-        let app = init_router_from_config_file("configs/disable_introspection_header.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/disable_introspection_header.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request("{ __schema { queryType { name } } }", None)
-            .header("X-Enable-Introspection", "false");
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request(
+                "{ __schema { queryType { name } } }",
+                None,
+                some_header_map! {
+                    http::header::HeaderName::from_static("x-enable-introspection") => "false"
+                },
+            )
+            .await;
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
         {
@@ -94,17 +116,27 @@ mod disable_introspection_e2e_tests {
 
     #[ntex::test]
     async fn should_enable_based_on_headers() {
-        let app = init_router_from_config_file("configs/disable_introspection_header.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/disable_introspection_header.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request("{ __schema { queryType { name } } }", None)
-            .header("X-Enable-Introspection", "true");
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request(
+                "{ __schema { queryType { name } } }",
+                None,
+                some_header_map! {
+                    http::header::HeaderName::from_static("x-enable-introspection") => "true"
+                },
+            )
+            .await;
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
+
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
           "data": {
