@@ -385,8 +385,8 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
         }
     }
 
-    pub fn inline_config(mut self, config_yaml: &str) -> Self {
-        let router_config = parse_yaml_config(config_yaml.to_string()).unwrap();
+    pub fn inline_config(mut self, config_yaml: impl Into<String>) -> Self {
+        let router_config = parse_yaml_config(config_yaml.into()).unwrap();
         self.config = Some(router_config);
         self
     }
