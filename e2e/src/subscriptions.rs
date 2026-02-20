@@ -793,12 +793,11 @@ mod subscriptions_e2e_tests {
         let body = res.body().await.unwrap();
         let body_str = std::str::from_utf8(&body).unwrap();
 
-        assert_snapshot!(body_str, @r#"
-        event: next
-        data: {"errors":[{"message":"Failed to execute a plan: Failed to send request to subgraph \"http://0.0.0.0:4200/reviews\": Subgraph returned non-success status: 500 Internal Server Error","extensions":{"code":"SUBGRAPH_REQUEST_FAILURE"}}]}
-
-        event: complete
-        "#);
+        assert!(
+            body_str.contains(r#"{"code":"SUBGRAPH_REQUEST_FAILURE"}"#),
+            "Expected '{}' to contain the subgraph request failure error code",
+            body_str
+        );
     }
 
     #[ntex::test]

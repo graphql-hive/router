@@ -1,17 +1,6 @@
-use std::{
-    any::Any, marker::PhantomData, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc,
-    time::Duration,
-};
-
 use axum;
 use bytes::Bytes;
 use dashmap::DashMap;
-use hive_router::{
-    background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider, telemetry::Telemetry,
-};
-use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
-use hive_router_plan_executor::executors::websocket_client;
 use ntex::{
     client::ClientResponse,
     io::Sealed,
@@ -20,9 +9,21 @@ use ntex::{
 };
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
-use subgraphs::{subgraphs_app, SubscriptionProtocol};
+use std::{
+    any::Any, marker::PhantomData, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc,
+    time::Duration,
+};
+use tempfile::NamedTempFile;
 use tokio::{net::TcpListener, sync::oneshot};
 use tracing::{info, warn};
+
+use hive_router::{
+    background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
+    init_rustls_crypto_provider, telemetry::Telemetry,
+};
+use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
+use hive_router_plan_executor::executors::websocket_client;
+use subgraphs::{subgraphs_app, SubscriptionProtocol};
 
 // utilities
 
@@ -199,7 +200,7 @@ async fn handle_on_request(
 
 impl TestSubgraphs<Built> {
     pub async fn start(self) -> TestSubgraphs<Started> {
-        let listener = TcpListener::bind("127.0.0.1:4200") // TODO: use 0 and allocate random port
+        let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("failed to bind tcp listener");
         let addr = listener.local_addr().expect("failed to get local address");
@@ -303,14 +304,57 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
     }
 
     pub fn build(self) -> TestRouter<'subgraphs, Built> {
-        let config = self.config.expect("config is required");
+        let mut config = self.config.expect("config is required");
+        let subgraphs = self.subgraphs;
+        let mut _hold_until_drop: Vec<Box<dyn Any>> = vec![];
+
+        // change the supergraph to use the test subgraphs address
+        if let Some(subgraphs) = subgraphs {
+            let addr = subgraphs.addr();
+            match &config.supergraph {
+                hive_router_config::supergraph::SupergraphSource::File { path, .. } => {
+                    let path = path.as_ref().expect("supergraph file path is required");
+
+                    let original = std::fs::read_to_string(&path.absolute)
+                        .expect("failed to read supergraph file");
+                    let with_subgraphs_addr =
+                        original.replace("0.0.0.0:4200", addr.to_string().as_str());
+
+                    let temp_file =
+                        NamedTempFile::new().expect("failed to create temp supergraph file");
+                    std::fs::write(temp_file.path(), with_subgraphs_addr)
+                        .expect("failed to write temp supergraph file");
+
+                    let temp_path = hive_router_config::primitives::file_path::FilePath {
+                        relative: temp_file.path().to_str().unwrap().to_string(),
+                        absolute: temp_file.path().to_str().unwrap().to_string(),
+                    };
+                    let temp_absolute_path = temp_path.absolute.clone();
+
+                    config.supergraph = hive_router_config::supergraph::SupergraphSource::File {
+                        path: Some(temp_path),
+                        // TODO: we disable polling, but what if it was enabled?
+                        poll_interval: None,
+                    };
+
+                    _hold_until_drop.push(Box::new(temp_file));
+
+                    info!(
+                        "Using supergraph at {} to use test subgraphs with address {}",
+                        temp_absolute_path, addr
+                    );
+                }
+                _ => warn!("Only file-based supergraph sources are supported in tests"),
+            }
+        }
+
         TestRouter {
             graphql_path: config.graphql_path().to_string(),
             websocket_path: config.websocket_path().map(|p| p.to_string()),
             config: Some(config),
-            subgraphs: self.subgraphs,
+            subgraphs,
             handle: None,
-            _hold_until_drop: vec![],
+            _hold_until_drop,
             _state: PhantomData,
         }
     }
@@ -411,6 +455,9 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
             }
         }
 
+        let mut hold_until_drop = self._hold_until_drop;
+        hold_until_drop.push(Box::new(subscription_guard));
+
         TestRouter {
             graphql_path: self.graphql_path,
             websocket_path: self.websocket_path,
@@ -420,7 +467,7 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
             }),
             config: self.config,
             subgraphs: self.subgraphs,
-            _hold_until_drop: vec![Box::new(subscription_guard)],
+            _hold_until_drop: hold_until_drop,
             _state: PhantomData,
         }
     }
