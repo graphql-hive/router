@@ -1,14 +1,10 @@
 #[cfg(test)]
 mod authorization_directives_in_reject_mode_e2e_tests {
     use jsonwebtoken::{encode, EncodingKey};
-    use ntex::http::header::{self, HeaderValue};
-    use ntex::web::test;
-    use sonic_rs::{from_slice, json, to_string_pretty, Value};
+    use sonic_rs::{json, to_string_pretty, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
-    };
+    use crate::testkit_v2::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder};
 
     fn generate_jwt(payload: &Value) -> String {
         let pem = include_str!("../jwks.rsa512.pem");
@@ -25,20 +21,22 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         .expect("failed to create token")
     }
 
-    fn authorization_header_value_with_scopes(scopes: &str) -> HeaderValue {
-        header::HeaderValue::from_str(&format!(
-            "Bearer {}",
-            generate_jwt(&json!({
-                "sub": "user2",
-                "iat": 1516239022,
-                "exp": SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-                    + 3600,
-                "scope": scopes,
-            }))
-        ))
+    fn authorization_header_with_scopes(scopes: &str) -> http::HeaderMap {
+        some_header_map! {
+            http::header::AUTHORIZATION => format!(
+                "Bearer {}",
+                generate_jwt(&json!({
+                    "sub": "user2",
+                    "iat": 1516239022,
+                    "exp": SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 3600,
+                    "scope": scopes,
+                }))
+            )
+        }
         .unwrap()
     }
 
@@ -46,26 +44,29 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// results in a 403 Forbidden response.
     #[ntex::test]
     async fn unauthenticated_access_to_authenticated_field() {
-        let subgraphs_server = SubgraphsServer::start().await;
-        // This config file should have `unauthorized: { mode: "reject" }` set.
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request("{ me { id name } topProducts(first: 1) { upc } }", None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "{ me { id name } topProducts(first: 1) { upc } }",
+                None,
+                None,
+            )
+            .await;
+        assert_eq!(res.status(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
-            .unwrap_or_default();
+        let subgraph_requests = subgraphs.get_requests_log("accounts");
         assert_eq!(
-            subgraph_requests.len(),
+            subgraph_requests.map(|r| r.len()).unwrap_or(0),
             0,
             "expected 0 requests to accounts subgraph"
         );
@@ -89,21 +90,25 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// by `@authenticated` is successful.
     #[ntex::test]
     async fn authenticated_access_to_authenticated_field() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request("{ me { id name } }", None).header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes(""),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ me { id name } }",
+                None,
+                Some(authorization_header_with_scopes("")),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -121,21 +126,25 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// protected by `@requiresScopes`.
     #[ntex::test]
     async fn authenticated_access_to_scoped_field() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request("{ me { birthday } }", None).header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes("read:birthday"),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ me { birthday } }",
+                None,
+                Some(authorization_header_with_scopes("read:birthday")),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -152,44 +161,45 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// It verifies that the entire request is rejected with a 403 status.
     #[ntex::test]
     async fn complex_query_unauthenticated() {
-        let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(
-            "query { topProducts { name shippingEstimate reviews { body } } me { name birthday } }",
-            None,
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "query { topProducts { name shippingEstimate reviews { body } } me { name birthday } }",
+                None,
+                None,
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         assert_eq!(
-            subgraphs_server
-                .get_subgraph_requests_log("accounts")
-                .await
-                .unwrap_or_default()
-                .len(),
+            subgraphs
+                .get_requests_log("accounts")
+                .map(|r| r.len())
+                .unwrap_or(0),
             0
         );
         assert_eq!(
-            subgraphs_server
-                .get_subgraph_requests_log("inventory")
-                .await
-                .unwrap_or_default()
-                .len(),
+            subgraphs
+                .get_requests_log("inventory")
+                .map(|r| r.len())
+                .unwrap_or(0),
             0
         );
         assert_eq!(
-            subgraphs_server
-                .get_subgraph_requests_log("reviews")
-                .await
-                .unwrap_or_default()
-                .len(),
+            subgraphs
+                .get_requests_log("reviews")
+                .map(|r| r.len())
+                .unwrap_or(0),
             0
         );
 
@@ -226,25 +236,25 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// of the required scopes. Verifies the request is rejected.
     #[ntex::test]
     async fn complex_query_partially_authorized() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(
-            "query { topProducts { name shippingEstimate reviews { body } } me { name birthday } }",
-            None,
-        )
-        .header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes("read:shipping"),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "query { topProducts { name shippingEstimate reviews { body } } me { name birthday } }",
+                None,
+                Some(authorization_header_with_scopes("read:shipping")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -265,25 +275,27 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// It verifies that the entire query is resolved successfully.
     #[ntex::test]
     async fn complex_query_fully_authorized() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(
-            "query { topProducts { name shippingEstimate reviews { body } } me { name birthday } }",
-            None,
-        )
-        .header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes("read:shipping read:birthday read:body"),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "query { topProducts { name shippingEstimate reviews { body } } me { name birthday } }",
+                None,
+                Some(authorization_header_with_scopes(
+                    "read:shipping read:birthday read:body",
+                )),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -365,37 +377,36 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// when it is correctly excluded from the operation by `@include(if: false)`.
     #[ntex::test]
     async fn include_unauthorized_field_with_false() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(
-            r#"
-              query($should_include: Boolean!) {
-                me {
-                  id
-                  birthday @include(if: $should_include)
-                }
-              }
-            "#,
-            Some(json!({ "should_include": false })),
-        )
-        .header(
-            header::AUTHORIZATION,
-            // User has a valid token but lacks the "read:birthday" scope.
-            authorization_header_value_with_scopes("read:user"),
-        );
-
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request(
+                r#"
+                  query($should_include: Boolean!) {
+                    me {
+                      id
+                      birthday @include(if: $should_include)
+                    }
+                  }
+                "#,
+                Some(json!({ "should_include": false })),
+                // User has a valid token but lacks the "read:birthday" scope.
+                Some(authorization_header_with_scopes("read:user")),
+            )
+            .await;
         assert!(
-            resp.status().is_success(),
+            res.status().is_success(),
             "Expected 200 OK because the unauthorized field is not included"
         );
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
           {
@@ -412,25 +423,25 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// included via `@include(if: true)`. An unauthorized user should be denied access.
     #[ntex::test]
     async fn include_unauthorized_field_with_true() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(
-          "query($includeBirthday: Boolean!) { me { id birthday @include(if: $includeBirthday) } }",
-          Some(json!({ "includeBirthday": true })),
-        )
-        .header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes(""),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "query($includeBirthday: Boolean!) { me { id birthday @include(if: $includeBirthday) } }",
+                Some(json!({ "includeBirthday": true })),
+                Some(authorization_header_with_scopes("")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -451,22 +462,28 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// A field with `scopes: [["scopeA", "scopeB"]]` requires both scopes to be present.
     #[ntex::test]
     async fn test_scope_and_logic() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
         let query = "query { topProducts(first: 1) { name internal } }";
 
         // Test 1: Failure with only one of the required scopes
-        let auth_header = authorization_header_value_with_scopes("read:internal");
-        let req = init_graphql_request(query, None).header(header::AUTHORIZATION, auth_header);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                query,
+                None,
+                Some(authorization_header_with_scopes("read:internal")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -483,13 +500,17 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // Test 2: Success with both required scopes
-        let auth_header = authorization_header_value_with_scopes("read:internal admin");
-        let req = init_graphql_request(query, None).header(header::AUTHORIZATION, auth_header);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                query,
+                None,
+                Some(authorization_header_with_scopes("read:internal admin")),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
           {
@@ -509,22 +530,28 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// A field with `scopes: [["scopeA"], ["scopeB"]]` requires either scope to be present.
     #[ntex::test]
     async fn test_scope_or_logic() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
         let query = "query { topProducts(first: 1) { name notes } }";
 
         // Test 1: Success with the first scope
-        let auth_header = authorization_header_value_with_scopes("read:notes");
-        let req = init_graphql_request(query, None).header(header::AUTHORIZATION, auth_header);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                query,
+                None,
+                Some(authorization_header_with_scopes("read:notes")),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -540,13 +567,13 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // Test 2: Success with the second scope
-        let auth_header = authorization_header_value_with_scopes("admin");
-        let req = init_graphql_request(query, None).header(header::AUTHORIZATION, auth_header);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(query, None, Some(authorization_header_with_scopes("admin")))
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
           {
@@ -562,13 +589,17 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // Test 3: Failure with incorrect scope
-        let auth_header = authorization_header_value_with_scopes("read:shipping");
-        let req = init_graphql_request(query, None).header(header::AUTHORIZATION, auth_header);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                query,
+                None,
+                Some(authorization_header_with_scopes("read:shipping")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -590,19 +621,22 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// SocialAccount.url requires @authenticated on both TwitterAccount and GitHubAccount
     #[ntex::test]
     async fn interface_field_authenticated_on_interface() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
         // Unauthenticated - should reject entire request with 403
-        let req = init_graphql_request("{ me { socialAccounts { url } } }", None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request("{ me { socialAccounts { url } } }", None, None)
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -619,15 +653,17 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // Authenticated - should succeed
-        let req = init_graphql_request("{ me { socialAccounts { url } } }", None).header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes(""),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { url } } }",
+                None,
+                Some(authorization_header_with_scopes("")),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -657,22 +693,26 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// Expected: Requires BOTH read:twitter_handle AND read:github_handle
     #[ntex::test]
     async fn interface_field_requires_all_implementor_scopes() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
         // No scopes - should reject
-        let req = init_graphql_request("{ me { socialAccounts { handle } } }", None).header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes(""),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { handle } } }",
+                None,
+                Some(authorization_header_with_scopes("")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -689,15 +729,17 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // Only twitter scope - should reject
-        let req = init_graphql_request("{ me { socialAccounts { handle } } }", None).header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes("read:twitter_handle"),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { handle } } }",
+                None,
+                Some(authorization_header_with_scopes("read:twitter_handle")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -714,15 +756,19 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // Both scopes - should succeed
-        let req = init_graphql_request("{ me { socialAccounts { handle } } }", None).header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes("read:twitter_handle read:github_handle"),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { handle } } }",
+                None,
+                Some(authorization_header_with_scopes(
+                    "read:twitter_handle read:github_handle",
+                )),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -749,26 +795,26 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// Expected: Only requires read:github_handle scope
     #[ntex::test]
     async fn interface_inline_fragment_github_only() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
         // Only github scope - should succeed
-        let req = init_graphql_request(
-            "{ me { socialAccounts { ... on GitHubAccount { handle } } } }",
-            None,
-        )
-        .header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes("read:github_handle"),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { ... on GitHubAccount { handle } } } }",
+                None,
+                Some(authorization_header_with_scopes("read:github_handle")),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -786,19 +832,17 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // No scope - should reject the entire request
-        let req = init_graphql_request(
-            "{ me { socialAccounts { ... on GitHubAccount { handle } } } }",
-            None,
-        )
-        .header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes(""),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { ... on GitHubAccount { handle } } } }",
+                None,
+                Some(authorization_header_with_scopes("")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -820,26 +864,26 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// Expected: Only requires read:twitter_handle scope
     #[ntex::test]
     async fn interface_inline_fragment_twitter_only() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
         // Only twitter scope - should succeed
-        let req = init_graphql_request(
-            "{ me { socialAccounts { ... on TwitterAccount { handle } } } }",
-            None,
-        )
-        .header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes("read:twitter_handle"),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { ... on TwitterAccount { handle } } } }",
+                None,
+                Some(authorization_header_with_scopes("read:twitter_handle")),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -857,19 +901,17 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // No scope - should reject the entire request
-        let req = init_graphql_request(
-            "{ me { socialAccounts { ... on TwitterAccount { handle } } } }",
-            None,
-        )
-        .header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes(""),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { ... on TwitterAccount { handle } } } }",
+                None,
+                Some(authorization_header_with_scopes("")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -892,26 +934,26 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// Expected: Requires BOTH scopes (should reject if only partial access)
     #[ntex::test]
     async fn interface_inline_fragments_both_implementors() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
         // Only twitter scope - should reject (not partially succeed)
-        let req = init_graphql_request(
-            "{ me { socialAccounts { ... on GitHubAccount { handle } ... on TwitterAccount { handle } } } }",
-            None,
-        )
-        .header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes("read:twitter_handle"),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { ... on GitHubAccount { handle } ... on TwitterAccount { handle } } } }",
+                None,
+                Some(authorization_header_with_scopes("read:twitter_handle")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -928,19 +970,17 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // Only github scope - should also reject
-        let req = init_graphql_request(
-            "{ me { socialAccounts { ... on GitHubAccount { handle } ... on TwitterAccount { handle } } } }",
-            None,
-        )
-        .header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes("read:github_handle"),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { ... on GitHubAccount { handle } ... on TwitterAccount { handle } } } }",
+                None,
+                Some(authorization_header_with_scopes("read:github_handle")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -957,19 +997,19 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // Both scopes - should succeed
-        let req = init_graphql_request(
-            "{ me { socialAccounts { ... on GitHubAccount { handle } ... on TwitterAccount { handle } } } }",
-            None,
-        )
-        .header(
-            header::AUTHORIZATION,
-            authorization_header_value_with_scopes("read:twitter_handle read:github_handle"),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { ... on GitHubAccount { handle } ... on TwitterAccount { handle } } } }",
+                None,
+                Some(authorization_header_with_scopes(
+                    "read:twitter_handle read:github_handle",
+                )),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -994,23 +1034,26 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     /// Expected: handle field rejected without scopes, __typename shown with proper auth
     #[ntex::test]
     async fn interface_field_authorization_with_typename() {
-        let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth.directives.reject.router.yaml")
+            .build()
+            .start()
+            .await;
 
         // Authenticated with no scopes - should reject on handle field
-        let req = init_graphql_request("{ me { socialAccounts { __typename handle } } }", None)
-            .header(
-                header::AUTHORIZATION,
-                authorization_header_value_with_scopes(""),
-            );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 403, "Expected 403 Forbidden");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { __typename handle } } }",
+                None,
+                Some(authorization_header_with_scopes("")),
+            )
+            .await;
+        assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -1027,16 +1070,19 @@ mod authorization_directives_in_reject_mode_e2e_tests {
         "#);
 
         // With both scopes - should get both fields
-        let req = init_graphql_request("{ me { socialAccounts { __typename handle } } }", None)
-            .header(
-                header::AUTHORIZATION,
-                authorization_header_value_with_scopes("read:twitter_handle read:github_handle"),
-            );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ me { socialAccounts { __typename handle } } }",
+                None,
+                Some(authorization_header_with_scopes(
+                    "read:twitter_handle read:github_handle",
+                )),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {

@@ -1,28 +1,32 @@
 #[cfg(test)]
 
 mod header_propagation_e2e_tests {
-    use ntex::web::test;
-
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
-    };
+    use crate::testkit_v2::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn should_propagate_headers_to_subgraphs() {
-        let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/header_propagation.router.yaml")
-            .await
-            .expect("Failed to initialize router from config file");
-        wait_for_readiness(&app.app).await;
-        let req =
-            init_graphql_request("{ users { id } }", None).header("x-context", "my-context-value");
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/header_propagation.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ users { id } }",
+                None,
+                some_header_map! {
+                    http::header::HeaderName::from_static("x-context") => "my-context-value"
+                },
+            )
+            .await;
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
             .expect("expected requests sent to accounts subgraph");
         assert_eq!(
             subgraph_requests.len(),
@@ -31,8 +35,8 @@ mod header_propagation_e2e_tests {
         );
 
         let last_request = &subgraph_requests[0];
-        let headers = &last_request.headers;
-        let context_header = headers
+        let context_header = last_request
+            .headers
             .get("x-context")
             .expect("expected x-context header to be present");
         assert_eq!(

@@ -519,6 +519,14 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
 }
 
 impl<'subgraphs> TestRouter<'subgraphs, Started> {
+    pub fn serv(&self) -> &test::TestServer {
+        &self.handle.as_ref().unwrap().serv
+    }
+
+    pub fn graphql_path(&self) -> &str {
+        &self.graphql_path
+    }
+
     pub async fn send_graphql_request(
         &self,
         query: &str,
@@ -526,11 +534,8 @@ impl<'subgraphs> TestRouter<'subgraphs, Started> {
         headers: Option<http::HeaderMap>,
     ) -> ClientResponse {
         let mut req = self
-            .handle
-            .as_ref()
-            .unwrap()
-            .serv
-            .post(self.graphql_path.as_str())
+            .serv()
+            .post(self.graphql_path())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/graphql-response+json");
 

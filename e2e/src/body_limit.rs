@@ -1,28 +1,38 @@
 #[cfg(test)]
 mod body_limit_e2e_tests {
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness,
-    };
-    use ntex::web::test;
-
+    use crate::testkit_v2::TestRouterBuilder;
     #[ntex::test]
     async fn should_return_payload_too_large_if_limit_exceeds_while_reading_the_stream() {
-        let app = init_router_from_config_inline(
-            r#"
-          limits:
-            max_request_body_size: 1B
-        "#,
-        )
-        .await
-        .unwrap();
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                limits:
+                    max_request_body_size: 1B
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request("{ __typename }", None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        // Check the status code
-        assert_eq!(resp.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
+        // we must use a stream to avoid ntex setting the content-type
+        let stream = Box::pin(futures::stream::once(async move {
+            Ok::<_, std::io::Error>(ntex::util::Bytes::from(r#"{"query":"{__typename}"}"#))
+        }));
 
-        let body = test::read_body(resp).await;
+        let res = router
+            .serv()
+            .post(router.graphql_path())
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .send_stream(stream)
+            .await
+            .expect("failed to send graphql request");
+
+        assert_eq!(res.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
+
+        let body = res.body().await.unwrap();
         let json_body: sonic_rs::Value =
             sonic_rs::from_slice(&body).expect("The response body should be valid JSON");
 
@@ -39,24 +49,31 @@ mod body_limit_e2e_tests {
         }
         "#);
     }
+
     #[ntex::test]
     async fn should_return_payload_too_large_if_content_length_header_exceeds_the_limit() {
-        let app = init_router_from_config_inline(
-            r#"
-          limits:
-            max_request_body_size: 10MB
-        "#,
-        )
-        .await
-        .unwrap();
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                limits:
+                    max_request_body_size: 1B
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request("{ __typename }", None).header("content-length", "20000000"); // 20MB
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        // Check the status code
-        assert_eq!(resp.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
+        // ntex will set the content-type and it will exceede the 1B
+        let res = router
+            .send_graphql_request("{ __typename }", None, None)
+            .await;
 
-        let body = test::read_body(resp).await;
+        assert_eq!(res.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
+
+        let body = res.body().await.unwrap();
         let json_body: sonic_rs::Value =
             sonic_rs::from_slice(&body).expect("The response body should be valid JSON");
 
@@ -64,7 +81,7 @@ mod body_limit_e2e_tests {
         {
           "errors": [
             {
-              "message": "Content-Length exceeds the maximum allowed size: 10000000",
+              "message": "Content-Length exceeds the maximum allowed size: 1",
               "extensions": {
                 "code": "PAYLOAD_TOO_LARGE_CONTENT_LENGTH"
               }
