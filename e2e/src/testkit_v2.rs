@@ -425,35 +425,41 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
 
         info!("Waiting for health check to pass...");
 
-        loop {
-            match serv.get("/health").send().await {
-                Ok(response) => {
-                    if response.status() == 200 {
-                        break;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match serv.get("/health").send().await {
+                    Ok(response) => {
+                        if response.status() == 200 {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
-                Err(err) => {
-                    warn!("Server not healthy yet, retrying in 50ms: {:?}", err);
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
             }
-        }
+        })
+        .await
+        .expect("/health did not return 200 within 3 seconds");
 
         info!("Waiting for readiness check to pass...");
 
-        loop {
-            match serv.get("/readiness").send().await {
-                Ok(response) => {
-                    if response.status() == 200 {
-                        break;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match serv.get("/readiness").send().await {
+                    Ok(response) => {
+                        if response.status() == 200 {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
-                Err(err) => {
-                    warn!("Server not ready yet, retrying in 50ms: {:?}", err);
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
             }
-        }
+        })
+        .await
+        .expect("/readiness did not return 200 within 3 seconds");
 
         let mut hold_until_drop = self._hold_until_drop;
         hold_until_drop.push(Box::new(subscription_guard));
