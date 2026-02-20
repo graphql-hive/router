@@ -52,7 +52,7 @@ pub struct Started;
 
 lazy_static! {
     /// Limits concurrent test routers to avoid hitting the OS open-file-descriptor limit.
-    /// Hive Router and the subgraphs opens about 24 file descriptors per instance (event queues
+    /// Hive Router and the subgraphs opens about 30 file descriptors per instance (event queues
     /// for tokio, dyn libs, port bindings, domain sockets), so we divide the system's
     /// `RLIMIT_NOFILE` by that number to get a safe concurrency limit. Increasing the OS ulimit
     /// will increase the concurrency of tests.
@@ -67,7 +67,7 @@ lazy_static! {
             } else {
                 256 // fallback, about the default ulimit on many sysstms
             };
-            (nofile / 24).max(1)
+            (nofile / 30).max(1)
         };
         info!("Concurrency semaphore initialized with {} permits", limit);
         Arc::new(Semaphore::new(limit))
