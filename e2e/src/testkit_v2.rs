@@ -320,8 +320,8 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
                     let with_subgraphs_addr =
                         original.replace("0.0.0.0:4200", addr.to_string().as_str());
 
-                    let temp_file =
-                        NamedTempFile::new().expect("failed to create temp supergraph file");
+                    let temp_file = NamedTempFile::with_suffix(".graphql")
+                        .expect("failed to create temp supergraph file");
                     std::fs::write(temp_file.path(), with_subgraphs_addr)
                         .expect("failed to write temp supergraph file");
 
