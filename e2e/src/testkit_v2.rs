@@ -331,13 +331,17 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
                     };
                     let temp_absolute_path = temp_path.absolute.clone();
 
+                    // close the file handle but keep the path for cleanup on drop
+                    // useful when running many tests in parallel to avoid hitting the open file limit
+                    let temp_path_handle = temp_file.into_temp_path();
+
                     config.supergraph = hive_router_config::supergraph::SupergraphSource::File {
                         path: Some(temp_path),
                         // TODO: we disable polling, but what if it was enabled?
                         poll_interval: None,
                     };
 
-                    _hold_until_drop.push(Box::new(temp_file));
+                    _hold_until_drop.push(Box::new(temp_path_handle));
 
                     info!(
                         "Using supergraph at {} to use test subgraphs with address {}",
