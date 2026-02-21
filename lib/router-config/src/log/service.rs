@@ -1,7 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::log::shared::{default_log_internals, LogFormat, LogLevel};
+use crate::{
+    log::shared::{default_log_internals, LogFormat, LogLevel},
+    primitives::http_header::HttpHeaderName,
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +44,7 @@ pub struct HttpLogFieldsConfig {
 pub struct HttpRequestLogFieldsConfig {
     pub method: bool,
     pub path: bool,
+    pub headers: Vec<HttpHeaderName>,
 }
 
 impl Default for HttpRequestLogFieldsConfig {
@@ -48,6 +52,7 @@ impl Default for HttpRequestLogFieldsConfig {
         HttpRequestLogFieldsConfig {
             method: true,
             path: true,
+            headers: vec!["accept".into(), "content-type".into(), "user-agent".into()],
         }
     }
 }
@@ -57,6 +62,7 @@ impl Default for HttpRequestLogFieldsConfig {
 pub struct HttpResponseLogFieldsConfig {
     pub status_code: bool,
     pub duration_ms: bool,
+    pub headers: Vec<HttpHeaderName>,
 }
 
 impl Default for HttpResponseLogFieldsConfig {
@@ -64,6 +70,7 @@ impl Default for HttpResponseLogFieldsConfig {
         HttpResponseLogFieldsConfig {
             status_code: true,
             duration_ms: true,
+            headers: vec![],
         }
     }
 }

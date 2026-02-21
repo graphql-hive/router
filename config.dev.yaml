@@ -7,4 +7,4 @@ log:
     exporters:
       - kind: stdout
         level: debug
-        format: text
+        format: json
