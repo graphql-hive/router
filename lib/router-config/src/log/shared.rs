@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
-    Trace,
     Debug,
     Info,
     Warn,
@@ -18,7 +17,6 @@ impl FromStr for LogLevel {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "trace" => Ok(LogLevel::Trace),
             "debug" => Ok(LogLevel::Debug),
             "info" => Ok(LogLevel::Info),
             "warn" => Ok(LogLevel::Warn),
@@ -47,7 +45,6 @@ pub fn default_log_internals() -> bool {
 impl LogLevel {
     pub fn as_str(&self) -> &'static str {
         match self {
-            LogLevel::Trace => "trace",
             LogLevel::Debug => "debug",
             LogLevel::Info => "info",
             LogLevel::Warn => "warn",

@@ -13,7 +13,7 @@
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_request_body_size":"2 MB"}`<br/>||
-|[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"access_log":null,"service":{"exporters":[{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}],"log_fields":{"http":{"request":{"method":false,"path":false},"response":{"duration_ms":false,"status_code":false}}}}}`<br/>|yes|
+|[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"access_log":null,"service":{"exporters":[{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}],"log_fields":{"graphql":{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{}},"http":{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}}}}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
@@ -103,13 +103,29 @@ log:
         level: info
         log_internals: false
     log_fields:
+      graphql:
+        request:
+          body_size_bytes: false
+          client_name: true
+          client_version: true
+          extensions: false
+          operation: false
+          operation_name: true
+          variables: false
+        response: {}
       http:
         request:
-          method: false
-          path: false
+          headers:
+            - accept
+            - user-agent
+          method: true
+          path: true
+          query_string: false
         response:
-          duration_ms: false
-          status_code: false
+          duration_ms: true
+          headers: []
+          payload_bytes: false
+          status_code: true
 override_labels: {}
 override_subgraph_urls:
   accounts:
@@ -1771,7 +1787,7 @@ The router is configured to be mostly silent (`info`) level, and will print only
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**access\_log**](#logaccess_log)|`object`, `null`||yes|
-|[**service**](#logservice)|`object`||yes|
+|[**service**](#logservice)|`object`|Default: `{"exporters":[{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}],"log_fields":{"graphql":{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{}},"http":{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}}}`<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -1785,13 +1801,29 @@ service:
       level: info
       log_internals: false
   log_fields:
+    graphql:
+      request:
+        body_size_bytes: false
+        client_name: true
+        client_version: true
+        extensions: false
+        operation: false
+        operation_name: true
+        variables: false
+      response: {}
     http:
       request:
-        method: false
-        path: false
+        headers:
+          - accept
+          - user-agent
+        method: true
+        path: true
+        query_string: false
       response:
-        duration_ms: false
-        status_code: false
+        duration_ms: true
+        headers: []
+        payload_bytes: false
+        status_code: true
 
 ```
 
@@ -1805,6 +1837,13 @@ service:
 |[**exporters**](#logaccess_logexporters)|`array`||yes|
 
 **Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
 <a name="logaccess_logexporters"></a>
 #### log\.access\_log\.exporters\[\]: array
 
@@ -1850,20 +1889,41 @@ attributes: {}
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**exporters**](#logserviceexporters)|`array`||yes|
-|[**log\_fields**](#logservicelog_fields)|`object`|Default: `{"http":{"request":{"method":false,"path":false},"response":{"duration_ms":false,"status_code":false}}}`<br/>|no|
+|[**log\_fields**](#logservicelog_fields)|`object`|Default: `{"graphql":{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{}},"http":{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}}`<br/>|no|
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
+exporters:
+  - format: json
+    kind: StdoutExporterConfig
+    level: info
+    log_internals: false
 log_fields:
+  graphql:
+    request:
+      body_size_bytes: false
+      client_name: true
+      client_version: true
+      extensions: false
+      operation: false
+      operation_name: true
+      variables: false
+    response: {}
   http:
     request:
-      method: false
-      path: false
+      headers:
+        - accept
+        - user-agent
+      method: true
+      path: true
+      query_string: false
     response:
-      duration_ms: false
-      status_code: false
+      duration_ms: true
+      headers: []
+      payload_bytes: false
+      status_code: true
 
 ```
 
@@ -1880,7 +1940,7 @@ log_fields:
 |----|----|-----------|--------|
 |**format**|`string`|Default: `"json"`<br/>Enum: `"text"`, `"json"`<br/>|no|
 |**kind**|`string`|Constant Value: `"stdout"`<br/>|yes|
-|**level**|`string`|Default: `"info"`<br/>Enum: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`<br/>|no|
+|**level**|`string`|Default: `"info"`<br/>Enum: `"debug"`, `"info"`, `"warn"`, `"error"`<br/>|no|
 |**log\_internals**|`boolean`|Default: `false`<br/>|no|
 
 **Additional Properties:** not allowed  
@@ -1902,7 +1962,7 @@ log_internals: false
 |----|----|-----------|--------|
 |**format**|`string`|Default: `"json"`<br/>Enum: `"text"`, `"json"`<br/>|no|
 |**kind**|`string`|Constant Value: `"file"`<br/>|yes|
-|**level**|`string`|Default: `"info"`<br/>Enum: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`<br/>|no|
+|**level**|`string`|Default: `"info"`<br/>Enum: `"debug"`, `"info"`, `"warn"`, `"error"`<br/>|no|
 |**log\_internals**|`boolean`|Default: `false`<br/>|no|
 |**path**|`string`||yes|
 |**rolling**|`string`, `null`|Enum: `"minutely"`, `"hourly"`, `"daily"`, `null`<br/>|no|
@@ -1926,22 +1986,100 @@ rolling: null
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**http**](#logservicelog_fieldshttp)|`object`|Default: `{"request":{"method":false,"path":false},"response":{"duration_ms":false,"status_code":false}}`<br/>||
+|[**graphql**](#logservicelog_fieldsgraphql)|`object`|Default: `{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{}}`<br/>||
+|[**http**](#logservicelog_fieldshttp)|`object`|Default: `{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
+graphql:
+  request:
+    body_size_bytes: false
+    client_name: true
+    client_version: true
+    extensions: false
+    operation: false
+    operation_name: true
+    variables: false
+  response: {}
 http:
   request:
-    method: false
-    path: false
+    headers:
+      - accept
+      - user-agent
+    method: true
+    path: true
+    query_string: false
   response:
-    duration_ms: false
-    status_code: false
+    duration_ms: true
+    headers: []
+    payload_bytes: false
+    status_code: true
 
 ```
 
+<a name="logservicelog_fieldsgraphql"></a>
+##### log\.service\.log\_fields\.graphql: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**request**](#logservicelog_fieldsgraphqlrequest)|`object`|Default: `{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false}`<br/>||
+|[**response**](#logservicelog_fieldsgraphqlresponse)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+request:
+  body_size_bytes: false
+  client_name: true
+  client_version: true
+  extensions: false
+  operation: false
+  operation_name: true
+  variables: false
+response: {}
+
+```
+
+<a name="logservicelog_fieldsgraphqlrequest"></a>
+###### log\.service\.log\_fields\.graphql\.request: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body\_size\_bytes**|`boolean`|Default: `false`<br/>||
+|**client\_name**|`boolean`|Default: `true`<br/>||
+|**client\_version**|`boolean`|Default: `true`<br/>||
+|**extensions**|`boolean`|Default: `false`<br/>||
+|**operation**|`boolean`|Default: `false`<br/>||
+|**operation\_name**|`boolean`|Default: `true`<br/>||
+|**variables**|`boolean`|Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body_size_bytes: false
+client_name: true
+client_version: true
+extensions: false
+operation: false
+operation_name: true
+variables: false
+
+```
+
+<a name="logservicelog_fieldsgraphqlresponse"></a>
+###### log\.service\.log\_fields\.graphql\.response: object
+
+**No properties.**
+
+**Additional Properties:** not allowed  
 <a name="logservicelog_fieldshttp"></a>
 ##### log\.service\.log\_fields\.http: object
 
@@ -1949,19 +2087,25 @@ http:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**request**](#logservicelog_fieldshttprequest)|`object`|Default: `{"method":false,"path":false}`<br/>||
-|[**response**](#logservicelog_fieldshttpresponse)|`object`|Default: `{"duration_ms":false,"status_code":false}`<br/>||
+|[**request**](#logservicelog_fieldshttprequest)|`object`|Default: `{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false}`<br/>||
+|[**response**](#logservicelog_fieldshttpresponse)|`object`|Default: `{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
 request:
-  method: false
-  path: false
+  headers:
+    - accept
+    - user-agent
+  method: true
+  path: true
+  query_string: false
 response:
-  duration_ms: false
-  status_code: false
+  duration_ms: true
+  headers: []
+  payload_bytes: false
+  status_code: true
 
 ```
 
@@ -1972,15 +2116,39 @@ response:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**headers**](#logservicelog_fieldshttprequestheaders)|`string[]`|Default: `"accept"`, `"user-agent"`<br/>||
 |**method**|`boolean`|Default: `true`<br/>||
 |**path**|`boolean`|Default: `true`<br/>||
+|**query\_string**|`boolean`|Default: `false`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-method: false
-path: false
+headers:
+  - accept
+  - user-agent
+method: true
+path: true
+query_string: false
+
+```
+
+<a name="logservicelog_fieldshttprequestheaders"></a>
+####### log\.service\.log\_fields\.http\.request\.headers\[\]: array
+
+**Items**
+
+
+A valid HTTP header name, according to RFC 7230.
+
+**Item Type:** `string`  
+**Item Pattern:** `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`  
+**Example**
+
+```yaml
+- accept
+- user-agent
 
 ```
 
@@ -1992,17 +2160,31 @@ path: false
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**duration\_ms**|`boolean`|Default: `true`<br/>||
+|[**headers**](#logservicelog_fieldshttpresponseheaders)|`string[]`|Default: <br/>||
+|**payload\_bytes**|`boolean`|Default: `false`<br/>||
 |**status\_code**|`boolean`|Default: `true`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-duration_ms: false
-status_code: false
+duration_ms: true
+headers: []
+payload_bytes: false
+status_code: true
 
 ```
 
+<a name="logservicelog_fieldshttpresponseheaders"></a>
+####### log\.service\.log\_fields\.http\.response\.headers\[\]: array
+
+**Items**
+
+
+A valid HTTP header name, according to RFC 7230.
+
+**Item Type:** `string`  
+**Item Pattern:** `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`  
 <a name="override_labels"></a>
 ## override\_labels: object
 
