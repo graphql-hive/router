@@ -35,6 +35,7 @@ impl LoggerContext {
         );
     }
 
+    #[inline]
     pub fn graphql_request_start(
         &self,
         body_size: usize,
@@ -90,6 +91,7 @@ impl LoggerContext {
     }
 }
 
+#[inline]
 fn obtain_headers<'req, 'cfg>(
     header_map: &'req ntex::http::HeaderMap,
     headers_list: &'cfg Vec<HttpHeaderName>,
