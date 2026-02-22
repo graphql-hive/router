@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 
-use tracing::{debug_span, Span};
+use tracing::{debug_span, info_span, Span};
 
 use crate::logging::request_id::obtain_req_correlation_id;
 
@@ -27,7 +27,7 @@ impl Borrow<Span> for LoggerRootSpan {
 impl LoggerRootSpan {
     pub fn create(request: &ntex::web::HttpRequest) -> Self {
         let request_id = obtain_req_correlation_id(request);
-        let span = debug_span!(target: ROUTER_INTERNAL_LOGGER_TARGET, "request",
+        let span = info_span!(target: ROUTER_INTERNAL_LOGGER_TARGET, "request",
           req_id = %request_id,
         );
 

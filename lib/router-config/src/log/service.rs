@@ -104,7 +104,9 @@ pub struct GraphQLRequestLogFieldsConfig {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
-pub struct GraphQLResponseLogFieldsConfig {}
+pub struct GraphQLResponseLogFieldsConfig {
+    pub error_count: bool,
+}
 
 impl Default for GraphQLRequestLogFieldsConfig {
     fn default() -> Self {
@@ -122,7 +124,7 @@ impl Default for GraphQLRequestLogFieldsConfig {
 
 impl Default for GraphQLResponseLogFieldsConfig {
     fn default() -> Self {
-        GraphQLResponseLogFieldsConfig {}
+        GraphQLResponseLogFieldsConfig { error_count: true }
     }
 }
 

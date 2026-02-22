@@ -64,8 +64,20 @@ impl LoggerContext {
             // TODO: figure this out due to sonic_rs
             // variables = tracing::field::valuable(&variables),
             // extensions = tracing::field::valuable(&extensions),
-            "processing graphql operation"
+            "graphql operation started"
         );
+    }
+
+    #[inline]
+    pub fn graphql_request_end(&self, error_count: usize) {
+        let error_count = self
+            .fields_config
+            .graphql
+            .response
+            .error_count
+            .then(|| error_count);
+
+        info!(error_count, "graphql operation completed");
     }
 
     #[inline]

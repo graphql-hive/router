@@ -6,5 +6,5 @@ log:
   service:
     exporters:
       - kind: stdout
-        level: debug
-        format: json
+        level: info
+        format: text

@@ -1,5 +1,5 @@
 use std::{sync::Arc, time::Instant};
-use tracing::{debug, error, Instrument};
+use tracing::{error, Instrument};
 
 use hive_router_internal::{
     logging::context::LoggerContext,
@@ -245,6 +245,7 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
+
         if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
                     usage_reporting::collect_usage_report(
                         supergraph.supergraph_schema.clone(),
@@ -275,6 +276,8 @@ pub async fn graphql_request_handler(
         if let Some(response_headers_aggregator) = response.response_headers_aggregator {
             response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
         }
+
+        logger_context.graphql_request_end(response.error_count);
 
         Ok(response_builder
             .content_type(single_content_type.as_ref())
