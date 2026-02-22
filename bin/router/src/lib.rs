@@ -55,7 +55,7 @@ use ntex::{
     web::{self, HttpRequest},
 };
 use tokio::time::Instant;
-use tracing::{info, warn, Instrument};
+use tracing::{debug, info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
@@ -96,6 +96,7 @@ async fn graphql_endpoint_handler(
             .as_ref()
             .and_then(|cors| cors.get_early_response(&request))
         {
+            debug!("responding with early cors response");
             return early_response;
         }
 
@@ -106,12 +107,16 @@ async fn graphql_endpoint_handler(
             Err(err) => return err.into_response(None),
         };
 
+        debug!(%response_mode, "response mode set");
+
         if response_mode == ResponseMode::GraphiQL {
             if app_state.router_config.graphiql.enabled {
+                debug!("responding with graphiql");
                 return web::HttpResponse::Ok()
                     .header(CONTENT_TYPE, TEXT_HTML_MIME)
                     .body(GRAPHIQL_HTML);
             } else {
+                debug!("responding with not found, graphiql disabled");
                 return web::HttpResponse::NotFound().into();
             }
         }
@@ -137,6 +142,7 @@ async fn graphql_endpoint_handler(
                 app_state.get_ref(),
                 schema_state.get_ref(),
                 &root_http_request_span,
+                app_state.logging_context.clone(),
             );
             let mut res = match select(timeout_fut, req_handler_fut).await {
                 // If the timeout future completes first, return a timeout error response.

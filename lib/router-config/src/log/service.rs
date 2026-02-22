@@ -26,17 +26,28 @@ impl Default for ServiceLoggingConfig {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct LogFieldsConfig {
-    #[serde(default = "HttpLogFieldsConfig::default")]
+    #[serde(default)]
     pub http: HttpLogFieldsConfig,
+    #[serde(default)]
+    pub graphql: GraphQLLogFieldsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct HttpLogFieldsConfig {
-    #[serde(default = "HttpRequestLogFieldsConfig::default")]
+    #[serde(default)]
     pub request: HttpRequestLogFieldsConfig,
-    #[serde(default = "HttpResponseLogFieldsConfig::default")]
+    #[serde(default)]
     pub response: HttpResponseLogFieldsConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct GraphQLLogFieldsConfig {
+    #[serde(default)]
+    pub request: GraphQLRequestLogFieldsConfig,
+    #[serde(default)]
+    pub response: GraphQLResponseLogFieldsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -44,6 +55,7 @@ pub struct HttpLogFieldsConfig {
 pub struct HttpRequestLogFieldsConfig {
     pub method: bool,
     pub path: bool,
+    pub query_string: bool,
     pub headers: Vec<HttpHeaderName>,
 }
 
@@ -52,7 +64,8 @@ impl Default for HttpRequestLogFieldsConfig {
         HttpRequestLogFieldsConfig {
             method: true,
             path: true,
-            headers: vec!["accept".into(), "content-type".into(), "user-agent".into()],
+            query_string: false,
+            headers: vec!["accept".into(), "user-agent".into()],
         }
     }
 }
@@ -63,6 +76,7 @@ pub struct HttpResponseLogFieldsConfig {
     pub status_code: bool,
     pub duration_ms: bool,
     pub headers: Vec<HttpHeaderName>,
+    pub payload_bytes: bool,
 }
 
 impl Default for HttpResponseLogFieldsConfig {
@@ -71,7 +85,44 @@ impl Default for HttpResponseLogFieldsConfig {
             status_code: true,
             duration_ms: true,
             headers: vec![],
+            payload_bytes: false,
         }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct GraphQLRequestLogFieldsConfig {
+    pub body_size_bytes: bool,
+    pub client_name: bool,
+    pub client_version: bool,
+    pub operation: bool,
+    pub operation_name: bool,
+    pub variables: bool,
+    pub extensions: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct GraphQLResponseLogFieldsConfig {}
+
+impl Default for GraphQLRequestLogFieldsConfig {
+    fn default() -> Self {
+        GraphQLRequestLogFieldsConfig {
+            client_name: true,
+            client_version: true,
+            operation_name: true,
+            body_size_bytes: false,
+            operation: false,
+            variables: false,
+            extensions: false,
+        }
+    }
+}
+
+impl Default for GraphQLResponseLogFieldsConfig {
+    fn default() -> Self {
+        GraphQLResponseLogFieldsConfig {}
     }
 }
 
