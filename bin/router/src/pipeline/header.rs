@@ -7,7 +7,7 @@ use mediatype::{
 use ntex::web::HttpRequest;
 use std::str::FromStr;
 use std::sync::LazyLock;
-use strum::{AsRefStr, EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
+use strum::{AsRefStr, Display, EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 use tracing::error;
 
 use crate::pipeline::error::PipelineError;
@@ -167,16 +167,20 @@ static ALL_RESPONSE_MODES_CONTENT_TYPE_MEDIA_TYPES: LazyLock<Vec<MediaType<'stat
 
 /// The agreed content types after negotiation. Client may accept only single, only stream, or both,
 /// it's important we convey this message because it affects how we process the response.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, IntoStaticStr, Display)]
 pub enum ResponseMode {
     /// Can only single response, error on subscriptions.
+    #[strum(serialize = "SINGLE")]
     SingleOnly(SingleContentType),
     /// Will always respond, queries are streamed so are subscriptions, errors are also streamed.
+    #[strum(serialize = "STREAM")]
     StreamOnly(StreamContentType),
     /// Will always respond, queries are single responses, subscriptions are streams. errors are single responses.
+    #[strum(serialize = "DUAL")]
     Dual(SingleContentType, StreamContentType),
     /// Render the GraphiQL IDE for the client. Used when the client prefers accepting HTML responses.
     /// It is different from the other modes because it does not represent a GraphQL response mode.
+    #[strum(serialize = "GRAPHIQL")]
     GraphiQL,
 }
 

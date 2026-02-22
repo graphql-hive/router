@@ -1,8 +1,11 @@
 use std::{sync::Arc, time::Instant};
 use tracing::{error, Instrument};
 
-use hive_router_internal::telemetry::traces::spans::{
-    graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+use hive_router_internal::{
+    logging::context::LoggerContext,
+    telemetry::traces::spans::{
+        graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+    },
 };
 use hive_router_plan_executor::execution::{
     client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
@@ -61,6 +64,7 @@ pub async fn graphql_request_handler(
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
     http_server_request_span: &HttpServerRequestSpan,
+    logger_context: Arc<LoggerContext>,
 ) -> Result<web::HttpResponse, PipelineError> {
     let started_at = Instant::now();
     let operation_span = GraphQLOperationSpan::new();
@@ -79,7 +83,8 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
-        http_server_request_span.record_body_size(body_bytes.len());
+        let req_body_size = body_bytes.len();
+        http_server_request_span.record_body_size(req_body_size);
 
         let mut execution_request = get_execution_request_from_http_request(req, body_bytes).await?;
 
@@ -103,6 +108,18 @@ pub async fn graphql_request_handler(
                     .version_header,
             )
             .and_then(|v| v.to_str().ok());
+
+        logger_context.graphql_request_start(
+          req_body_size,
+          client_name,
+          client_version,
+          // TODO: In the future, once we merge crates, we can pass `execution_request` as-is.
+          // At the moment, we can't since it's defined in router, and moving it will cause a major refactoring due to other dependencies.
+          &execution_request.query,
+          execution_request.operation_name.as_deref(),
+          &execution_request.variables,
+          execution_request.extensions.as_ref(),
+        );
 
         let parser_payload = parse_operation_with_cache(shared_state, &execution_request).await?;
         operation_span.record_details(
@@ -228,6 +245,7 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
+
         if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
                     usage_reporting::collect_usage_report(
                         supergraph.supergraph_schema.clone(),
@@ -258,6 +276,8 @@ pub async fn graphql_request_handler(
         if let Some(response_headers_aggregator) = response.response_headers_aggregator {
             response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
         }
+
+        logger_context.graphql_request_end(response.error_count);
 
         Ok(response_builder
             .content_type(single_content_type.as_ref())

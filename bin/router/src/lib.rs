@@ -38,26 +38,57 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
-use hive_router_internal::telemetry::{
-    otel::tracing_opentelemetry::OpenTelemetrySpanExt,
-    traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
+use hive_router_internal::{
+    logging::{context::LoggerContext, logger_span::LoggerRootSpan},
+    telemetry::{
+        otel::tracing_opentelemetry::OpenTelemetrySpanExt,
+        traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
+    },
 };
 use http::header::{CONTENT_TYPE, RETRY_AFTER};
-use ntex::util::{select, Either};
+use ntex::{
+    http::Response,
+    util::{select, Either},
+};
 use ntex::{
     time::sleep,
     web::{self, HttpRequest},
 };
-use tracing::{info, warn, Instrument};
+use tokio::time::Instant;
+use tracing::{debug, info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
+#[inline]
+async fn correlated_graphql_endpoint_handler(
+    request: HttpRequest,
+    body_stream: web::types::Payload,
+    schema_state: web::types::State<Arc<SchemaState>>,
+    app_state: web::types::State<Arc<RouterSharedState>>,
+) -> Response {
+    let root_logging_span = LoggerRootSpan::create(&request);
+
+    async {
+        let start = Instant::now();
+        let logging_context = app_state.logging_context.clone();
+        logging_context.http_request_start(&request);
+        let response =
+            graphql_endpoint_handler(request, body_stream, schema_state, app_state).await;
+        logging_context.http_request_end(start.elapsed(), &response);
+
+        response
+    }
+    .instrument(root_logging_span.span)
+    .await
+}
+
+#[inline]
 async fn graphql_endpoint_handler(
     request: HttpRequest,
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
-) -> impl web::Responder {
+) -> Response {
     if let Some(supergraph) = schema_state.current_supergraph().as_ref() {
         // If an early CORS response is needed, return it immediately.
         if let Some(early_response) = app_state
@@ -65,6 +96,7 @@ async fn graphql_endpoint_handler(
             .as_ref()
             .and_then(|cors| cors.get_early_response(&request))
         {
+            debug!("responding with early cors response");
             return early_response;
         }
 
@@ -75,12 +107,16 @@ async fn graphql_endpoint_handler(
             Err(err) => return err.into_response(None),
         };
 
+        debug!(%response_mode, "response mode set");
+
         if response_mode == ResponseMode::GraphiQL {
             if app_state.router_config.graphiql.enabled {
+                debug!("responding with graphiql");
                 return web::HttpResponse::Ok()
                     .header(CONTENT_TYPE, TEXT_HTML_MIME)
                     .body(GRAPHIQL_HTML);
             } else {
+                debug!("responding with not found, graphiql disabled");
                 return web::HttpResponse::NotFound().into();
             }
         }
@@ -92,13 +128,12 @@ async fn graphql_endpoint_handler(
         let _ = root_http_request_span.set_parent(parent_ctx);
 
         async {
-            let timeout_fut = sleep(
-                app_state
-                    .router_config
-                    .traffic_shaping
-                    .router
-                    .request_timeout,
-            );
+          let timeout_limit = app_state
+              .router_config
+              .traffic_shaping
+              .router
+              .request_timeout;
+            let timeout_fut = sleep(timeout_limit);
             let req_handler_fut = graphql_request_handler(
                 &request,
                 body_stream,
@@ -107,24 +142,23 @@ async fn graphql_endpoint_handler(
                 app_state.get_ref(),
                 schema_state.get_ref(),
                 &root_http_request_span,
+                app_state.logging_context.clone(),
             );
             let mut res = match select(timeout_fut, req_handler_fut).await {
                 // If the timeout future completes first, return a timeout error response.
                 Either::Left(_) => {
                     let err = PipelineError::TimeoutError;
-                    return {
-                        tracing::error!("{}", err);
-                        err.into_response(Some(response_mode))
-                    };
+                    tracing::error!(error = %err, limit_ms = timeout_limit.as_millis(), "request between client and router has timed out");
+
+                    err.into_response(Some(response_mode))
                 }
                 // If the request handler future completes first, return its response.
                 Either::Right(Ok(response)) => response,
                 // If the request handler future completes first with an error, return the error response.
                 Either::Right(Err(err)) => {
-                    return {
-                        tracing::error!("{}", err);
-                        err.into_response(Some(response_mode))
-                    }
+                  tracing::error!(error = %err, "request handler has failed");
+
+                  err.into_response(Some(response_mode))
                 }
             };
 
@@ -152,13 +186,14 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     let telemetry = telemetry::Telemetry::init_global(&router_config)?;
-    info!("hive-router@{} starting...", ROUTER_VERSION);
+    info!(version = ROUTER_VERSION, "hive-router starting...",);
     let http_config = router_config.http.clone();
     let addr = router_config.http.address();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
-        telemetry.context.clone(),
+        telemetry.tracing_context.clone(),
+        telemetry.logging_context.clone(),
         &mut bg_tasks_manager,
     )
     .await?;
@@ -177,7 +212,7 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     .await
     .map_err(RouterInitError::HttpServerStartError);
 
-    info!("server stopped, clearning background tasks");
+    info!("server stopped");
     bg_tasks_manager.shutdown();
     telemetry.graceful_shutdown().await;
 
@@ -187,6 +222,7 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     telemetry_context: TelemetryContext,
+    logger_context: LoggerContext,
     bg_tasks_manager: &mut BackgroundTasksManager,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), RouterInitError> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
@@ -232,13 +268,14 @@ pub async fn configure_app_from_config(
         hive_usage_agent,
         validation_plan,
         telemetry_context_arc,
+        Arc::new(logger_context),
     )?);
 
     Ok((shared_state, schema_state_arc))
 }
 
 pub fn configure_ntex_app(cfg: &mut web::ServiceConfig, graphql_path: &str) {
-    cfg.route(graphql_path, web::to(graphql_endpoint_handler))
+    cfg.route(graphql_path, web::to(correlated_graphql_endpoint_handler))
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }

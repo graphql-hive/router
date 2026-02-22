@@ -3,6 +3,7 @@ use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
+use hive_router_internal::logging::context::LoggerContext;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
@@ -76,6 +77,7 @@ pub struct RouterSharedState {
     pub hive_usage_agent: Option<UsageAgent>,
     pub introspection_policy: BooleanOrProgram,
     pub telemetry_context: Arc<TelemetryContext>,
+    pub logging_context: Arc<LoggerContext>,
 }
 
 impl RouterSharedState {
@@ -85,6 +87,7 @@ impl RouterSharedState {
         hive_usage_agent: Option<UsageAgent>,
         validation_plan: ValidationPlan,
         telemetry_context: Arc<TelemetryContext>,
+        logging_context: Arc<LoggerContext>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan,
@@ -107,6 +110,7 @@ impl RouterSharedState {
             introspection_policy: compile_introspection_policy(&router_config.introspection)
                 .map_err(Box::new)?,
             telemetry_context,
+            logging_context,
         })
     }
 }

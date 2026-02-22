@@ -59,6 +59,7 @@ strum = { workspace = true }
 insta = { workspace = true }
 moka = { workspace = true }
 tokio-util = { workspace = true }
+tracing-appender = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 ulid = "1.2.1"

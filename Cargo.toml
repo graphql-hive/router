@@ -77,11 +77,13 @@ opentelemetry-stdout = "0.31.0"
 opentelemetry-appender-tracing = "0.31.1"
 opentelemetry-jaeger-propagator = "0.31.0"
 opentelemetry-zipkin = { version = "0.31.0", default-features = false, features=["reqwest-rustls", "reqwest-client"] }
-tracing = "0.1.44"
+tracing = { version = "0.1.44", features = ["valuable"] }
 tracing-opentelemetry = "0.32.0"
 tracing-subscriber = { version = "0.3.22", features = [
   "env-filter",
   "time",
   "json",
+  "valuable"
 ] }
 tracing-tree = "0.4.0"
+tracing-appender = "0.2.4"

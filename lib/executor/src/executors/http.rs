@@ -25,6 +25,8 @@ use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 use tracing::debug;
+use tracing::error;
+use tracing::warn;
 use tracing::Instrument;
 
 use crate::executors::common::SubgraphExecutionRequest;
@@ -159,7 +161,7 @@ impl HTTPSubgraphExecutor {
 
         *req.headers_mut() = headers;
 
-        debug!("making http request to {}", self.endpoint.to_string());
+        debug!(endpoint = %self.endpoint, subgraph = %self.subgraph_name, "making http request");
 
         let http_request_span = HttpClientRequestSpan::from_request(&req);
 
@@ -169,6 +171,8 @@ impl HTTPSubgraphExecutor {
             self.telemetry_context
                 .inject_context(&mut TraceHeaderInjector(req.headers_mut()));
             let res_fut = self.http_client.request(req).map_err(|e| {
+                error!(endpoint = %self.endpoint, subgraph = %self.subgraph_name, error = %e, "http request failed");
+
                 SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
             });
 
@@ -176,6 +180,8 @@ impl HTTPSubgraphExecutor {
                 tokio::time::timeout(timeout_duration, res_fut)
                     .await
                     .map_err(|_| {
+                      error!(endpoint = %self.endpoint, subgraph = %self.subgraph_name, limit_ms = timeout_duration.as_millis(), "http request timed out");
+
                         SubgraphExecutorError::RequestTimeout(
                             self.endpoint.to_string(),
                             timeout_duration.as_millis(),
@@ -185,13 +191,14 @@ impl HTTPSubgraphExecutor {
                 res_fut.await
             }?;
 
-            http_request_span.record_response(&res);
-
             debug!(
-                "http request to {} completed, status: {}",
-                self.endpoint.to_string(),
-                res.status()
+              endpoint = %self.endpoint,
+              subgraph = %self.subgraph_name,
+              status = res.status().as_u16(),
+              "http request completed",
             );
+
+            http_request_span.record_response(&res);
 
             let (parts, body) = res.into_parts();
             let body = body
@@ -203,6 +210,8 @@ impl HTTPSubgraphExecutor {
                 .to_bytes();
 
             if body.is_empty() {
+                warn!(subgraph = %self.subgraph_name, "Unexpected empty response body received from subgraph");
+
                 return Err(SubgraphExecutorError::RequestFailure(
                     self.endpoint.to_string(),
                     "Empty response body".to_string(),
