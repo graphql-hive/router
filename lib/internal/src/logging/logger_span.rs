@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 
-use tracing::{debug_span, info_span, Span};
+use tracing::{info_span, Span};
 
 use crate::logging::request_id::obtain_req_correlation_id;
 

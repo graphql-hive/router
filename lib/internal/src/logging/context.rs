@@ -43,8 +43,8 @@ impl LoggerContext {
         client_version: Option<&str>,
         query: &str,
         operation_name: Option<&str>,
-        variables: &HashMap<std::string::String, sonic_rs::Value>,
-        extensions: Option<&HashMap<std::string::String, sonic_rs::Value>>,
+        _variables: &HashMap<std::string::String, sonic_rs::Value>,
+        _extensions: Option<&HashMap<std::string::String, sonic_rs::Value>>,
     ) {
         let cfg = &self.fields_config.graphql.request;
         let body_size_bytes = cfg.body_size_bytes.then(|| body_size as i64);
