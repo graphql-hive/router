@@ -367,15 +367,14 @@ impl TestSubgraphs<Started> {
     /// address replaced with the test subgraphs address.
     ///
     /// The temp file will be automatically deleted when the returned TempPath is dropped.
-    pub fn temp_file_with_subgraphs_addr(&self, supergraph_file: &str) -> TempPath {
+    pub fn supergraph_temp_file_with_addr(&self, supergraph_file: &str) -> TempPath {
         let original =
             std::fs::read_to_string(supergraph_file).expect("failed to read supergraph file");
-        let with_subgraphs_addr = self.with_subgraphs_addr(original);
+        let with_addr = self.supergraph_with_addr(original);
 
         let temp_file =
             NamedTempFile::with_suffix(".graphql").expect("failed to create temp supergraph file");
-        std::fs::write(temp_file.path(), with_subgraphs_addr)
-            .expect("failed to write temp supergraph file");
+        std::fs::write(temp_file.path(), with_addr).expect("failed to write temp supergraph file");
 
         // close the file handle but keep the path for cleanup on drop
         // useful when running many tests in parallel to avoid hitting the open file limit
@@ -396,7 +395,7 @@ impl TestSubgraphs<Started> {
     /// subgraphs address and returns the modified supergraph.
     ///
     /// It will replace all occurrences of `0.0.0.0:4200` with the test subgraphs address.
-    pub fn with_subgraphs_addr(&self, supergraph: impl Into<String>) -> String {
+    pub fn supergraph_with_addr(&self, supergraph: impl Into<String>) -> String {
         let original: String = supergraph.into();
         original.replace("0.0.0.0:4200", self.addr().to_string().as_str())
     }
@@ -455,7 +454,7 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
                     let supergraph_path = path.as_ref().expect("supergraph file path is required");
 
                     let temp_path =
-                        subgraphs.temp_file_with_subgraphs_addr(supergraph_path.absolute.as_str());
+                        subgraphs.supergraph_temp_file_with_addr(supergraph_path.absolute.as_str());
 
                     let supergraph_file_path =
                         hive_router_config::primitives::file_path::FilePath {
