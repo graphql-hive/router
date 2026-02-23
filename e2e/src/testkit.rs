@@ -148,6 +148,7 @@ pub struct TestRouterApp<T> {
 }
 
 impl<S> TestRouterApp<S> {
+    #[allow(unused)]
     pub async fn call<R>(&self, req: R) -> Result<S::Response, S::Error>
     where
         S: Service<R>,
