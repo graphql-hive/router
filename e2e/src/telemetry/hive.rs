@@ -12,6 +12,7 @@ async fn test_hive_http_export() {
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
+    let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
     let subgraphs = TestSubgraphsBuilder::new().build().start().await;
@@ -212,14 +213,11 @@ async fn test_hive_http_export() {
         http.method: POST
         http.route: /accounts
         http.status_code: 200
-        http.url: http://127.0.0.1:4200/accounts
+        http.url: http://127.0.0.1:[port]/accounts
         target: hive-router
     "
     );
 
-    insta::with_settings!({filters => vec![
-      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
-    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -233,12 +231,11 @@ async fn test_hive_http_export() {
         http.request.body.size: 23
         http.response.body.size: 86
         network.protocol.version: 1.1
-        server.port: 4200
+        server.port: [port]
         target: hive-router
         url.scheme: http
     "
     );
-    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -253,10 +250,10 @@ async fn test_hive_http_export() {
         http.response.body.size: 86
         http.response.status_code: 200
         network.protocol.version: 1.1
-        server.address: 0.0.0.0
-        server.port: 4200
+        server.address: [address]
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://[address]:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "

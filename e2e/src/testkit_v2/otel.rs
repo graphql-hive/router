@@ -484,6 +484,21 @@ impl OtlpCollector {
     pub async fn traces(&self) -> Vec<CollectedTrace> {
         self.storage.traces().await
     }
+
+    /// Common insta filter settings for OTLP-related snapshots that filters
+    /// out unstable/dynamic values like ports and random keys.
+    //
+    // P.S. its a method only because of convenience not having to import another module
+    // or function from this file and instead just do `otel_collector.insta_filter_settings()`.
+    pub fn insta_filter_settings(&self) -> insta::Settings {
+        let mut settings = insta::Settings::new();
+        settings.add_filter(r"(server\.address:\s+)[\d.]+", "$1[address]");
+        settings.add_filter(r"(server\.port:\s+)\d+", "$1[port]");
+        settings.add_filter(r"(url\.full:\s+http://)[\d.]+:\d+", "$1[address]:[port]");
+        settings.add_filter(r"(hive\.inflight\.key:\s+)\d+", "$1[random]");
+        settings.add_filter(r"(http\.url:\s+http://127\.0\.0\.1):\d+", "$1:[port]");
+        settings
+    }
 }
 
 impl Drop for OtlpCollector {
