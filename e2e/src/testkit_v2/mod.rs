@@ -1,3 +1,5 @@
+pub mod otel;
+
 use bytes::Bytes;
 use dashmap::DashMap;
 use lazy_static::lazy_static;
