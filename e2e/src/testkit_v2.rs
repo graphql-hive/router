@@ -512,11 +512,36 @@ struct TestRouterHandle {
     schema_state: Arc<SchemaState>,
     serv: test::TestServer,
     bg_tasks_manager: BackgroundTasksManager,
+    telemetry: Telemetry,
 }
 
 impl Drop for TestRouterHandle {
     fn drop(&mut self) {
+        // shut down backgroun tasks
         self.bg_tasks_manager.shutdown();
+
+        // shut down telemetry
+        let Some(provider) = self.telemetry.provider.clone() else {
+            return;
+        };
+        let dispatch = tracing::dispatcher::get_default(|current| current.clone());
+        let handle = std::thread::spawn(move || {
+            tracing::dispatcher::with_default(&dispatch, || {
+                tracing::info!(
+                    component = "telemetry",
+                    layer = "provider",
+                    "shutdown scheduled"
+                );
+                let _ = provider.force_flush();
+                let _ = provider.shutdown();
+                tracing::info!(
+                    component = "telemetry",
+                    layer = "provider",
+                    "shutdown completed"
+                );
+            });
+        });
+        let _ = handle.join();
     }
 }
 
@@ -586,6 +611,7 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
                 schema_state,
                 serv,
                 bg_tasks_manager,
+                telemetry,
             }),
             config: self.config,
             subgraphs: self.subgraphs,
