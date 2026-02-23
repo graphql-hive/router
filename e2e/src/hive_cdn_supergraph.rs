@@ -284,27 +284,12 @@ mod hive_cdn_supergraph_e2e_tests {
                         max_retries: 10
                 "#,
             ))
-            .without_wait_for_ready() // this one will time out after 3 seconds, we need more
+            .skip_wait_for_ready_on_start() // this one will time out after 3 seconds, we need more
             .build()
             .start()
             .await;
 
-        tokio::time::timeout(Duration::from_secs(7), async {
-            loop {
-                match router.serv().get("/readiness").send().await {
-                    Ok(response) => {
-                        if response.status() == 200 {
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                }
-            }
-        })
-        .await
-        .expect("/readiness did not return 200 within 7 seconds");
+        router.wait_for_ready(Some(Duration::from_secs(7))).await;
 
         one.assert();
         two.assert();
@@ -332,8 +317,8 @@ mod hive_cdn_supergraph_e2e_tests {
                         max_retries: 3
                 "#,
             ))
-            .without_wait_for_health()
-            .without_wait_for_ready()
+            .skip_wait_for_healthy_on_start()
+            .skip_wait_for_ready_on_start()
             .build()
             .start()
             .await;

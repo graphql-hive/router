@@ -410,8 +410,8 @@ impl Drop for TestSubgraphsHandle {
 // router
 
 pub struct TestRouterBuilder<'subgraphs> {
-    wait_for_health: bool,
-    wait_for_ready: bool,
+    wait_for_healthy_on_start: bool,
+    wait_for_ready_on_start: bool,
     config: Option<HiveRouterConfig>,
     subgraphs: Option<&'subgraphs TestSubgraphs<Started>>,
 }
@@ -419,8 +419,8 @@ pub struct TestRouterBuilder<'subgraphs> {
 impl<'subgraphs> TestRouterBuilder<'subgraphs> {
     pub fn new() -> Self {
         Self {
-            wait_for_health: true,
-            wait_for_ready: true,
+            wait_for_healthy_on_start: true,
+            wait_for_ready_on_start: true,
             config: None,
             subgraphs: None,
         }
@@ -446,13 +446,13 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
         self
     }
 
-    pub fn without_wait_for_health(mut self) -> Self {
-        self.wait_for_health = false;
+    pub fn skip_wait_for_healthy_on_start(mut self) -> Self {
+        self.wait_for_healthy_on_start = false;
         self
     }
 
-    pub fn without_wait_for_ready(mut self) -> Self {
-        self.wait_for_ready = false;
+    pub fn skip_wait_for_ready_on_start(mut self) -> Self {
+        self.wait_for_ready_on_start = false;
         self
     }
 
@@ -489,8 +489,8 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
         }
 
         TestRouter {
-            wait_for_health: self.wait_for_health,
-            wait_for_ready: self.wait_for_ready,
+            wait_for_healthy_on_start: self.wait_for_healthy_on_start,
+            wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: config.graphql_path().to_string(),
             websocket_path: config.websocket_path().map(|p| p.to_string()),
             config: Some(config),
@@ -521,8 +521,8 @@ impl Drop for TestRouterHandle {
 }
 
 pub struct TestRouter<'subgraphs, State> {
-    wait_for_health: bool,
-    wait_for_ready: bool,
+    wait_for_healthy_on_start: bool,
+    wait_for_ready_on_start: bool,
     graphql_path: String,
     websocket_path: Option<String>,
     config: Option<HiveRouterConfig>,
@@ -574,53 +574,12 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
         })
         .await;
 
-        if self.wait_for_health {
-            info!("Waiting for healthcheck to pass...");
-            tokio::time::timeout(Duration::from_secs(3), async {
-                loop {
-                    match serv.get("/health").send().await {
-                        Ok(response) => {
-                            if response.status() == 200 {
-                                break;
-                            }
-                        }
-                        Err(_) => {
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                    }
-                }
-            })
-            .await
-            .expect("/health did not return 200 within 3 seconds");
-        }
-
-        if self.wait_for_ready {
-            info!("Waiting for readiness check to pass...");
-            tokio::time::timeout(Duration::from_secs(3), async {
-                loop {
-                    match serv.get("/readiness").send().await {
-                        Ok(response) => {
-                            if response.status() == 200 {
-                                break;
-                            }
-                        }
-                        Err(_) => {
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                    }
-                }
-            })
-            .await
-            .expect("/readiness did not return 200 within 3 seconds");
-        }
-
         let mut hold_until_drop = self._hold_until_drop;
         hold_until_drop.push(Box::new(subscription_guard));
         hold_until_drop.push(Box::new(permit));
-
-        TestRouter {
-            wait_for_health: self.wait_for_health,
-            wait_for_ready: self.wait_for_ready,
+        let started = TestRouter {
+            wait_for_healthy_on_start: self.wait_for_healthy_on_start,
+            wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: self.graphql_path,
             websocket_path: self.websocket_path,
             handle: Some(TestRouterHandle {
@@ -632,7 +591,19 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
             subgraphs: self.subgraphs,
             _hold_until_drop: hold_until_drop,
             _state: PhantomData,
+        };
+
+        if self.wait_for_healthy_on_start {
+            info!("Waiting for healthcheck to pass...");
+            started.wait_for_healthy(None).await;
         }
+
+        if self.wait_for_ready_on_start {
+            info!("Waiting for readiness check to pass...");
+            started.wait_for_ready(None).await;
+        }
+
+        started
     }
 }
 
@@ -652,6 +623,46 @@ impl<'subgraphs> TestRouter<'subgraphs, Started> {
 
     pub fn serv(&self) -> &test::TestServer {
         &self.handle.as_ref().unwrap().serv
+    }
+
+    /// Waits for the /health endpoint to return 200 OK, with an optional timeout (defaults to 3 seconds).
+    pub async fn wait_for_healthy(&self, timeout: Option<Duration>) {
+        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(3)), async {
+            loop {
+                match self.serv().get("/health").send().await {
+                    Ok(response) => {
+                        if response.status() == 200 {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("healthcheck timed out");
+    }
+
+    /// Waits for the /readiness endpoint to return 200 OK, with an optional timeout (defaults to 3 seconds).
+    pub async fn wait_for_ready(&self, timeout: Option<Duration>) {
+        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(3)), async {
+            loop {
+                match self.serv().get("/readiness").send().await {
+                    Ok(response) => {
+                        if response.status() == 200 {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("readiness timed out");
     }
 
     pub fn graphql_path(&self) -> &str {
