@@ -9,9 +9,12 @@ mod supergraph_e2e_tests {
     use ntex::{time, web::test};
     use sonic_rs::{from_slice, to_string_pretty, JsonValueTrait, Value};
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness, EnvVarGuard,
-        SubgraphsServer,
+    use crate::{
+        testkit::{
+            init_graphql_request, init_router_from_config_inline, wait_for_readiness, EnvVarGuard,
+            SubgraphsServer,
+        },
+        testkit_v2::TestRouterBuilder,
     };
 
     #[ntex::test]
@@ -34,49 +37,49 @@ mod supergraph_e2e_tests {
             .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
             .create();
 
-        let test_app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-              source: hive
-              endpoint: http://{host}/supergraph
-              key: dummy_key
-              poll_interval: 500ms
-        "#,
-        ))
-        .await
-        .expect("failed to start router");
+        let router = TestRouterBuilder::new()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                  source: hive
+                  endpoint: http://{host}/supergraph
+                  key: dummy_key
+                  poll_interval: 500ms
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&test_app.app).await;
         mock1.assert();
 
-        assert_eq!(test_app.schema_state.validate_cache.entry_count(), 0);
-        assert_eq!(test_app.schema_state.plan_cache.entry_count(), 0);
-        assert_eq!(test_app.schema_state.normalize_cache.entry_count(), 0);
+        assert_eq!(router.schema_state().validate_cache.entry_count(), 0);
+        assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
+        assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
 
-        let resp = test::call_service(
-            &test_app.app,
-            init_graphql_request("{ __schema { types { name } } }", None).to_request(),
-        )
-        .await;
+        let res = router
+            .send_graphql_request("{ __schema { types { name } } }", None, None)
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        assert!(res.status().is_success(), "Expected 200 OK");
 
         // Flush the caches
-        test_app.flush_internal_cache().await;
+        router.flush_internal_cache().await;
 
         // Now it should have the record
-        assert_eq!(test_app.schema_state.validate_cache.entry_count(), 1);
-        assert_eq!(test_app.schema_state.plan_cache.entry_count(), 1);
-        assert_eq!(test_app.schema_state.normalize_cache.entry_count(), 1);
+        assert_eq!(router.schema_state().validate_cache.entry_count(), 1);
+        assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
+        assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
 
         // Now let's wait a bit and let the service re-load and get the new supergraph
         time::sleep(Duration::from_millis(600)).await;
         mock2.assert();
-        test_app.flush_internal_cache().await;
+        router.flush_internal_cache().await;
 
         // Now cache should be empty again, if supergraph has changes
-        assert_eq!(test_app.schema_state.validate_cache.entry_count(), 0);
-        assert_eq!(test_app.schema_state.plan_cache.entry_count(), 0);
-        assert_eq!(test_app.schema_state.normalize_cache.entry_count(), 0);
+        assert_eq!(router.schema_state().validate_cache.entry_count(), 0);
+        assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
+        assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
     }
 
     /// In this test we are testing that the supergraph is not changed for in-flight requests.

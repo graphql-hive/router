@@ -169,6 +169,7 @@ impl<S> TestRouterApp<S> {
         self.app.call(req).await
     }
 
+    #[allow(unused)]
     pub async fn flush_internal_cache(&self) {
         self.schema_state.normalize_cache.run_pending_tasks().await;
         self.schema_state.plan_cache.run_pending_tasks().await;

@@ -13,7 +13,7 @@ use std::{
     any::Any, marker::PhantomData, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc,
     time::Duration,
 };
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempPath};
 use tokio::{
     net::TcpListener,
     sync::{oneshot, Semaphore},
@@ -22,7 +22,7 @@ use tracing::{info, warn};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider, telemetry::Telemetry,
+    init_rustls_crypto_provider, telemetry::Telemetry, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use hive_router_plan_executor::executors::websocket_client;
@@ -362,6 +362,44 @@ impl TestSubgraphs<Started> {
             .get(subgraph)
             .map(|entry| entry.value().to_vec())
     }
+
+    /// Creates a temporary supergraph file with the content of the given file but with the subgraphs
+    /// address replaced with the test subgraphs address.
+    ///
+    /// The temp file will be automatically deleted when the returned TempPath is dropped.
+    pub fn temp_file_with_subgraphs_addr(&self, supergraph_file: &str) -> TempPath {
+        let original =
+            std::fs::read_to_string(supergraph_file).expect("failed to read supergraph file");
+        let with_subgraphs_addr = self.with_subgraphs_addr(original);
+
+        let temp_file =
+            NamedTempFile::with_suffix(".graphql").expect("failed to create temp supergraph file");
+        std::fs::write(temp_file.path(), with_subgraphs_addr)
+            .expect("failed to write temp supergraph file");
+
+        // close the file handle but keep the path for cleanup on drop
+        // useful when running many tests in parallel to avoid hitting the open file limit
+        let temp_path = temp_file.into_temp_path();
+
+        info!(
+            "Using supergraph at {} to use test subgraphs with address {}",
+            temp_path
+                .to_str()
+                .expect("failed to convert temp path to string"),
+            self.addr()
+        );
+
+        temp_path
+    }
+
+    /// Replaces the subgraphs address in the given supergraph string with the test
+    /// subgraphs address and returns the modified supergraph.
+    ///
+    /// It will replace all occurrences of `0.0.0.0:4200` with the test subgraphs address.
+    pub fn with_subgraphs_addr(&self, supergraph: impl Into<String>) -> String {
+        let original: String = supergraph.into();
+        original.replace("0.0.0.0:4200", self.addr().to_string().as_str())
+    }
 }
 
 impl Drop for TestSubgraphsHandle {
@@ -412,43 +450,26 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
 
         // change the supergraph to use the test subgraphs address
         if let Some(subgraphs) = subgraphs {
-            let addr = subgraphs.addr();
             match &config.supergraph {
                 hive_router_config::supergraph::SupergraphSource::File { path, .. } => {
-                    let path = path.as_ref().expect("supergraph file path is required");
+                    let supergraph_path = path.as_ref().expect("supergraph file path is required");
 
-                    let original = std::fs::read_to_string(&path.absolute)
-                        .expect("failed to read supergraph file");
-                    let with_subgraphs_addr =
-                        original.replace("0.0.0.0:4200", addr.to_string().as_str());
+                    let temp_path =
+                        subgraphs.temp_file_with_subgraphs_addr(supergraph_path.absolute.as_str());
 
-                    let temp_file = NamedTempFile::with_suffix(".graphql")
-                        .expect("failed to create temp supergraph file");
-                    std::fs::write(temp_file.path(), with_subgraphs_addr)
-                        .expect("failed to write temp supergraph file");
-
-                    let temp_path = hive_router_config::primitives::file_path::FilePath {
-                        relative: temp_file.path().to_str().unwrap().to_string(),
-                        absolute: temp_file.path().to_str().unwrap().to_string(),
-                    };
-                    let temp_absolute_path = temp_path.absolute.clone();
-
-                    // close the file handle but keep the path for cleanup on drop
-                    // useful when running many tests in parallel to avoid hitting the open file limit
-                    let temp_path_handle = temp_file.into_temp_path();
+                    let supergraph_file_path =
+                        hive_router_config::primitives::file_path::FilePath {
+                            relative: temp_path.to_str().unwrap().to_string(),
+                            absolute: temp_path.to_str().unwrap().to_string(),
+                        };
 
                     config.supergraph = hive_router_config::supergraph::SupergraphSource::File {
-                        path: Some(temp_path),
+                        path: Some(supergraph_file_path),
                         // TODO: we disable polling, but what if it was enabled?
                         poll_interval: None,
                     };
 
-                    _hold_until_drop.push(Box::new(temp_path_handle));
-
-                    info!(
-                        "Using supergraph at {} to use test subgraphs with address {}",
-                        temp_absolute_path, addr
-                    );
+                    _hold_until_drop.push(Box::new(temp_path));
                 }
                 _ => warn!("Only file-based supergraph sources are supported in tests"),
             }
@@ -473,6 +494,7 @@ impl Default for TestRouterBuilder<'_> {
 }
 
 struct TestRouterHandle {
+    schema_state: Arc<SchemaState>,
     serv: test::TestServer,
     bg_tasks_manager: BackgroundTasksManager,
 }
@@ -512,11 +534,12 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
                 .await
                 .expect("failed to configure hive router from config");
 
+        let serv_schema_state = schema_state.clone();
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
         let serv = test::server(move || {
             let shared_state = shared_state.clone();
-            let schema_state = schema_state.clone();
+            let schema_state = serv_schema_state.clone();
             let serv_graphql_path = serv_graphql_path.clone();
             let serv_websocket_path = serv_websocket_path.clone();
             async move {
@@ -580,6 +603,7 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
             graphql_path: self.graphql_path,
             websocket_path: self.websocket_path,
             handle: Some(TestRouterHandle {
+                schema_state,
                 serv,
                 bg_tasks_manager,
             }),
@@ -592,6 +616,19 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
 }
 
 impl<'subgraphs> TestRouter<'subgraphs, Started> {
+    pub fn schema_state(&self) -> &Arc<SchemaState> {
+        &self.handle.as_ref().unwrap().schema_state
+    }
+
+    pub async fn flush_internal_cache(&self) {
+        self.schema_state()
+            .normalize_cache
+            .run_pending_tasks()
+            .await;
+        self.schema_state().plan_cache.run_pending_tasks().await;
+        self.schema_state().validate_cache.run_pending_tasks().await;
+    }
+
     pub fn serv(&self) -> &test::TestServer {
         &self.handle.as_ref().unwrap().serv
     }
