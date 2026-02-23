@@ -576,6 +576,11 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
                 .await
                 .expect("failed to configure hive router from config");
 
+        // capture the current tracing dispatch so it can be propagated to the
+        // server thread spawned by test::server (which runs on a separate thread
+        // and would otherwise use the no-op global subscriber)
+        let serv_dispatch = tracing::dispatcher::get_default(|d| d.clone());
+
         let serv_schema_state = schema_state.clone();
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
@@ -584,6 +589,17 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
             let schema_state = serv_schema_state.clone();
             let serv_graphql_path = serv_graphql_path.clone();
             let serv_websocket_path = serv_websocket_path.clone();
+
+            // set the tracing dispatch on the server thread. the guard is
+            // intentionally leaked: dropping it would restore the no-op default
+            // dispatch, undoing what we just set. the guard is `!send` (thread-
+            // local), so we can't move it back to the test thread. this is fine
+            // because when the server thread exits (on testserver drop) the
+            // thread-local storage is reclaimed by the os, and there is no prior
+            // dispatch to restore
+            let guard = tracing::dispatcher::set_default(&serv_dispatch);
+            std::mem::forget(guard);
+
             async move {
                 web::App::new()
                     .state(shared_state)
