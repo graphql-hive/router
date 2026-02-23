@@ -1,10 +1,8 @@
-use ntex::{util::join_all, web::test};
 use std::time::Duration;
 
-use crate::testkit::{
-    init_graphql_request, init_router_from_config_inline,
+use crate::testkit_v2::{
     otel::{CollectedSpan, OtlpCollector},
-    wait_for_readiness, SubgraphsServer,
+    TestRouterBuilder, TestSubgraphsBuilder,
 };
 
 /// Verify OTLP exporter works with HTTP protocol
@@ -12,43 +10,44 @@ use crate::testkit::{
 async fn test_otlp_http_export_with_graphql_request() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
+    let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
 
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
@@ -82,6 +81,8 @@ async fn test_otlp_http_export_with_graphql_request() {
         http.response.status_code: 200
         http.route: /graphql
         network.protocol.version: 1.1
+        server.address: localhost
+        server.port: [port]
         target: hive-router
         url.full: /graphql
         url.path: /graphql
@@ -196,9 +197,6 @@ async fn test_otlp_http_export_with_graphql_request() {
     "
     );
 
-    insta::with_settings!({filters => vec![
-      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
-    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -214,15 +212,14 @@ async fn test_otlp_http_export_with_graphql_request() {
         http.response.body.size: 86
         http.response.status_code: 200
         network.protocol.version: 1.1
-        server.address: 0.0.0.0
-        server.port: 4200
+        server.address: [address]
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://[address]:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
-    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -237,16 +234,14 @@ async fn test_otlp_http_export_with_graphql_request() {
         http.response.body.size: 86
         http.response.status_code: 200
         network.protocol.version: 1.1
-        server.address: 0.0.0.0
-        server.port: 4200
+        server.address: [address]
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://[address]:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify OTLP exporter works with gRPC protocol
@@ -254,43 +249,44 @@ async fn test_otlp_http_export_with_graphql_request() {
 async fn test_otlp_grpc_export_with_graphql_request() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
+    let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: grpc
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
 
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
@@ -324,6 +320,8 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         http.response.status_code: 200
         http.route: /graphql
         network.protocol.version: 1.1
+        server.address: localhost
+        server.port: [port]
         target: hive-router
         url.full: /graphql
         url.path: /graphql
@@ -438,9 +436,6 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     "
     );
 
-    insta::with_settings!({filters => vec![
-      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
-    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -456,15 +451,14 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         http.response.body.size: 86
         http.response.status_code: 200
         network.protocol.version: 1.1
-        server.address: 0.0.0.0
-        server.port: 4200
+        server.address: [address]
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://[address]:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
-    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -479,16 +473,14 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         http.response.body.size: 86
         http.response.status_code: 200
         network.protocol.version: 1.1
-        server.address: 0.0.0.0
-        server.port: 4200
+        server.address: [address]
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://[address]:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify OTLP exporters do not export telemetry when disabled
@@ -496,6 +488,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
 async fn test_otlp_disabled() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
@@ -503,46 +496,44 @@ async fn test_otlp_disabled() {
     let otlp_grpc_endpoint = otlp_collector.grpc_endpoint();
     let otlp_http_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_grpc_endpoint}
                   protocol: grpc
                   enabled: false
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_http_endpoint}
                   enabled: false
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_grpc_endpoint,
-            otlp_http_endpoint,
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
 
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
@@ -552,8 +543,6 @@ async fn test_otlp_disabled() {
         true,
         "Expected no traces to be exported"
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify custom headers are sent with HTTP OTLP requests
@@ -561,25 +550,27 @@ async fn test_otlp_disabled() {
 async fn test_otlp_http_headers() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let _subgraphs = SubgraphsServer::start().await;
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let app = init_router_from_config_inline(
-        format!(
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   http:
                     headers:
@@ -588,18 +579,17 @@ async fn test_otlp_http_headers() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
 
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -624,25 +614,27 @@ async fn test_otlp_http_headers() {
 async fn test_otlp_grpc_metadata() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let _subgraphs = SubgraphsServer::start().await;
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: grpc
                   grpc:
                     metadata:
@@ -651,18 +643,17 @@ async fn test_otlp_grpc_metadata() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
 
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -680,8 +671,6 @@ async fn test_otlp_grpc_metadata() {
         Some(&("custom-header".to_string(), "custom-value".to_string())),
         "Custom header not found in request headers"
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify cache.hit attributes are reported correctly
@@ -689,50 +678,52 @@ async fn test_otlp_grpc_metadata() {
 async fn test_otlp_cache_hits() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
+    let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
-
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
 
     // Should hit the caches
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
@@ -768,8 +759,6 @@ async fn test_otlp_cache_hits() {
     assert_cache_hit(second_validate_span);
     assert_cache_hit(second_normalization_span);
     assert_cache_hit(second_plan_span);
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify cache.hit attributes are reported correctly
@@ -777,54 +766,42 @@ async fn test_otlp_cache_hits() {
 async fn test_otlp_no_trace_id_collision() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
-
-    join_all(vec![
-        test::call_service(
-            &app.app,
-            init_graphql_request("{ users { id } }", None).to_request(),
-        ),
-        test::call_service(
-            &app.app,
-            init_graphql_request("{ users { id } }", None).to_request(),
-        ),
-        test::call_service(
-            &app.app,
-            init_graphql_request("{ users { id } }", None).to_request(),
-        ),
+    futures::future::join_all(vec![
+        router.send_graphql_request("{ users { id } }", None, None),
+        router.send_graphql_request("{ users { id } }", None, None),
+        router.send_graphql_request("{ users { id } }", None, None),
     ])
     .await;
 
@@ -840,6 +817,4 @@ async fn test_otlp_no_trace_id_collision() {
     assert_ne!(first_trace.id, second_trace.id);
     assert_ne!(second_trace.id, third_trace.id);
     assert_ne!(first_trace.id, third_trace.id);
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }

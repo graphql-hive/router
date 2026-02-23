@@ -1,30 +1,29 @@
-use ntex::web::test;
 use std::time::Duration;
 
-use crate::testkit::{
-    init_graphql_request, init_router_from_config_inline,
+use crate::testkit_v2::{
     otel::{Baggage, OtlpCollector, TraceParent},
-    wait_for_readiness, SubgraphsServer,
+    some_header_map, TestRouterBuilder, TestSubgraphsBuilder,
 };
 
 #[ntex::test]
 async fn test_otlp_http_trace_context_propagation() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
@@ -32,21 +31,17 @@ async fn test_otlp_http_trace_context_propagation() {
                 trace_context: true
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
-
-    wait_for_readiness(&app.app).await;
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
     let upstream_trace_id = TraceParent::random_trace_id();
     let upstream_span_id = TraceParent::random_span_id();
@@ -56,9 +51,15 @@ async fn test_otlp_http_trace_context_propagation() {
         sampled: true,
     };
 
-    let req = init_graphql_request("{ users { id } }", None)
-        .header("traceparent", upstream_traceparent.to_string());
-    test::call_service(&app.app, req.to_request()).await;
+    let res = router
+        .send_graphql_request(
+            "{ users { id } }",
+            None,
+            some_header_map!("traceparent" => upstream_traceparent.to_string()),
+        )
+        .await;
+
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
@@ -83,8 +84,7 @@ async fn test_otlp_http_trace_context_propagation() {
     );
 
     let account_requests = subgraphs
-        .get_subgraph_requests_log("accounts")
-        .await
+        .get_requests_log("accounts")
         .expect("Expected at least one request to account subgraph");
 
     assert!(
@@ -117,28 +117,27 @@ async fn test_otlp_http_trace_context_propagation() {
         downstream_traceparent.trace_id, upstream_traceparent.trace_id,
         "Expected trace_id to match"
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 #[ntex::test]
 async fn test_otlp_http_baggage_propagation() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
@@ -147,21 +146,17 @@ async fn test_otlp_http_baggage_propagation() {
                 baggage: true
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
-
-    wait_for_readiness(&app.app).await;
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
     let upstream_trace_id = TraceParent::random_trace_id();
     let upstream_span_id = TraceParent::random_span_id();
@@ -176,17 +171,24 @@ async fn test_otlp_http_baggage_propagation() {
         ("user_id".into(), "123".into()),
     ]);
 
-    let req = init_graphql_request("{ users { id } }", None)
-        .header("traceparent", upstream_traceparent.to_string())
-        .header("baggage", upstream_baggage.to_string());
-    test::call_service(&app.app, req.to_request()).await;
+    let res = router
+        .send_graphql_request(
+            "{ users { id } }",
+            None,
+            some_header_map!(
+                "traceparent" => upstream_traceparent.to_string(),
+                "baggage" => upstream_baggage.to_string(),
+            ),
+        )
+        .await;
+
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
 
     let account_requests = subgraphs
-        .get_subgraph_requests_log("accounts")
-        .await
+        .get_requests_log("accounts")
         .expect("Expected at least one request to account subgraph");
 
     assert!(
@@ -208,28 +210,27 @@ async fn test_otlp_http_baggage_propagation() {
         upstream_baggage, subgraph_baggage,
         "Expected baggage to match"
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 #[ntex::test]
 async fn test_otlp_http_b3_propagation() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
@@ -237,29 +238,34 @@ async fn test_otlp_http_b3_propagation() {
                 b3: true
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
-
-    wait_for_readiness(&app.app).await;
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
     let upstream_trace_id = TraceParent::random_trace_id();
     let upstream_span_id = TraceParent::random_span_id();
-    let req = init_graphql_request("{ users { id } }", None)
-        .header("X-B3-TraceId", upstream_trace_id.clone())
-        .header("X-B3-SpanId", upstream_span_id.clone())
-        .header("X-B3-Sampled", "1");
-    test::call_service(&app.app, req.to_request()).await;
+
+    let res = router
+        .send_graphql_request(
+            "{ users { id } }",
+            None,
+            some_header_map!(
+                "X-B3-TraceId" => upstream_trace_id.clone(),
+                "X-B3-SpanId" => upstream_span_id.clone(),
+                "X-B3-Sampled" => "1",
+            ),
+        )
+        .await;
+
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
@@ -284,8 +290,7 @@ async fn test_otlp_http_b3_propagation() {
     );
 
     let account_requests = subgraphs
-        .get_subgraph_requests_log("accounts")
-        .await
+        .get_requests_log("accounts")
         .expect("Expected at least one request to account subgraph");
 
     assert!(
@@ -326,28 +331,27 @@ async fn test_otlp_http_b3_propagation() {
     );
 
     assert_eq!(subgraph_b3_sampled, "1");
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 #[ntex::test]
 async fn test_otlp_http_jaeger_propagation() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
@@ -355,29 +359,30 @@ async fn test_otlp_http_jaeger_propagation() {
                 jaeger: true
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
-
-    wait_for_readiness(&app.app).await;
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
     let upstream_trace_id = TraceParent::random_trace_id();
     let upstream_span_id = TraceParent::random_span_id();
-    let req = init_graphql_request("{ users { id } }", None).header(
-        "uber-trace-id",
-        format!("{}:{}:0:1", upstream_trace_id, upstream_span_id,),
-    );
-    test::call_service(&app.app, req.to_request()).await;
+
+    let res = router
+        .send_graphql_request(
+            "{ users { id } }",
+            None,
+            some_header_map!("uber-trace-id" => format!("{}:{}:0:1", upstream_trace_id, upstream_span_id)),
+        )
+        .await;
+
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
@@ -402,8 +407,7 @@ async fn test_otlp_http_jaeger_propagation() {
     );
 
     let account_requests = subgraphs
-        .get_subgraph_requests_log("accounts")
-        .await
+        .get_requests_log("accounts")
         .expect("Expected at least one request to account subgraph");
 
     assert!(
@@ -438,6 +442,4 @@ async fn test_otlp_http_jaeger_propagation() {
         "Expect http_client span to be parent of subgraph's upstram request"
     );
     assert_eq!(downstream_flags, "1");
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
