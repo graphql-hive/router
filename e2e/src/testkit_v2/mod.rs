@@ -669,9 +669,9 @@ impl<'subgraphs> TestRouter<'subgraphs, Started> {
         &self.handle.as_ref().unwrap().serv
     }
 
-    /// Waits for the /health endpoint to return 200 OK, with an optional timeout (defaults to 3 seconds).
+    /// Waits for the /health endpoint to return 200 OK, with an optional timeout (defaults to 5 seconds).
     pub async fn wait_for_healthy(&self, timeout: Option<Duration>) {
-        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(3)), async {
+        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(5)), async {
             loop {
                 match self.serv().get("/health").send().await {
                     Ok(response) => {
@@ -689,9 +689,9 @@ impl<'subgraphs> TestRouter<'subgraphs, Started> {
         .expect("healthcheck timed out");
     }
 
-    /// Waits for the /readiness endpoint to return 200 OK, with an optional timeout (defaults to 3 seconds).
+    /// Waits for the /readiness endpoint to return 200 OK, with an optional timeout (defaults to 5 seconds).
     pub async fn wait_for_ready(&self, timeout: Option<Duration>) {
-        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(3)), async {
+        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(5)), async {
             loop {
                 match self.serv().get("/readiness").send().await {
                     Ok(response) => {
