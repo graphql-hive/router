@@ -213,7 +213,7 @@ async fn test_hive_http_export() {
         http.method: POST
         http.route: /accounts
         http.status_code: 200
-        http.url: http://127.0.0.1:[port]/accounts
+        http.url: http://[address]:[port]/accounts
         target: hive-router
     "
     );
