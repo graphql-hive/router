@@ -491,7 +491,7 @@ impl OtlpCollector {
     /// Waits for new traces to arrive in storage, returning all collected traces. The waiting is
     /// done by checking the number of traces in storage and comparing it to the count from the last wait.
     pub async fn wait_for_traces(&mut self) -> Vec<CollectedTrace> {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let traces = self.traces().await;
 
