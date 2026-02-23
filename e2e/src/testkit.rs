@@ -1,10 +1,10 @@
-use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
+use std::{any::Any, sync::Arc, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
     init_rustls_crypto_provider, telemetry::Telemetry, RouterSharedState, SchemaState,
 };
-use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
+use hive_router_config::{parse_yaml_config, HiveRouterConfig};
 
 use ntex::{
     http::Request,
@@ -123,20 +123,6 @@ impl SubgraphsServer {
             .get(&format!("/{}", subgraph_name))
             .map(|entry| entry.value().clone())
     }
-}
-
-pub async fn init_router_from_config_file(
-    config_path: &str,
-) -> Result<
-    TestRouterApp<
-        impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
-    >,
-    Box<dyn std::error::Error>,
-> {
-    let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(config_path);
-    let router_config = load_config(Some(supergraph_path.to_str().unwrap().to_string()))?;
-
-    init_router_from_config(router_config).await
 }
 
 pub async fn init_router_from_config_inline(
