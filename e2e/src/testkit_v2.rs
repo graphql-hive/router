@@ -410,6 +410,8 @@ impl Drop for TestSubgraphsHandle {
 // router
 
 pub struct TestRouterBuilder<'subgraphs> {
+    wait_for_health: bool,
+    wait_for_ready: bool,
     config: Option<HiveRouterConfig>,
     subgraphs: Option<&'subgraphs TestSubgraphs<Started>>,
 }
@@ -417,6 +419,8 @@ pub struct TestRouterBuilder<'subgraphs> {
 impl<'subgraphs> TestRouterBuilder<'subgraphs> {
     pub fn new() -> Self {
         Self {
+            wait_for_health: true,
+            wait_for_ready: true,
             config: None,
             subgraphs: None,
         }
@@ -439,6 +443,16 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
 
     pub fn with_subgraphs(mut self, subgraphs: &'subgraphs TestSubgraphs<Started>) -> Self {
         self.subgraphs = Some(subgraphs);
+        self
+    }
+
+    pub fn without_wait_for_health(mut self) -> Self {
+        self.wait_for_health = false;
+        self
+    }
+
+    pub fn without_wait_for_ready(mut self) -> Self {
+        self.wait_for_ready = false;
         self
     }
 
@@ -475,6 +489,8 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
         }
 
         TestRouter {
+            wait_for_health: self.wait_for_health,
+            wait_for_ready: self.wait_for_ready,
             graphql_path: config.graphql_path().to_string(),
             websocket_path: config.websocket_path().map(|p| p.to_string()),
             config: Some(config),
@@ -505,6 +521,8 @@ impl Drop for TestRouterHandle {
 }
 
 pub struct TestRouter<'subgraphs, State> {
+    wait_for_health: bool,
+    wait_for_ready: bool,
     graphql_path: String,
     websocket_path: Option<String>,
     config: Option<HiveRouterConfig>,
@@ -556,49 +574,53 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
         })
         .await;
 
-        info!("Waiting for health check to pass...");
-
-        tokio::time::timeout(Duration::from_secs(3), async {
-            loop {
-                match serv.get("/health").send().await {
-                    Ok(response) => {
-                        if response.status() == 200 {
-                            break;
+        if self.wait_for_health {
+            info!("Waiting for healthcheck to pass...");
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    match serv.get("/health").send().await {
+                        Ok(response) => {
+                            if response.status() == 200 {
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                         }
                     }
-                    Err(_) => {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
                 }
-            }
-        })
-        .await
-        .expect("/health did not return 200 within 3 seconds");
+            })
+            .await
+            .expect("/health did not return 200 within 3 seconds");
+        }
 
-        info!("Waiting for readiness check to pass...");
-
-        tokio::time::timeout(Duration::from_secs(3), async {
-            loop {
-                match serv.get("/readiness").send().await {
-                    Ok(response) => {
-                        if response.status() == 200 {
-                            break;
+        if self.wait_for_ready {
+            info!("Waiting for readiness check to pass...");
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    match serv.get("/readiness").send().await {
+                        Ok(response) => {
+                            if response.status() == 200 {
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                         }
                     }
-                    Err(_) => {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
                 }
-            }
-        })
-        .await
-        .expect("/readiness did not return 200 within 3 seconds");
+            })
+            .await
+            .expect("/readiness did not return 200 within 3 seconds");
+        }
 
         let mut hold_until_drop = self._hold_until_drop;
         hold_until_drop.push(Box::new(subscription_guard));
         hold_until_drop.push(Box::new(permit));
 
         TestRouter {
+            wait_for_health: self.wait_for_health,
+            wait_for_ready: self.wait_for_ready,
             graphql_path: self.graphql_path,
             websocket_path: self.websocket_path,
             handle: Some(TestRouterHandle {
