@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::testkit_v2::{
     otel::{Baggage, OtlpCollector, TraceParent},
     some_header_map, TestRouterBuilder, TestSubgraphsBuilder,
@@ -11,7 +9,7 @@ async fn test_otlp_http_trace_context_propagation() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let otlp_collector = OtlpCollector::start()
+    let mut otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -62,9 +60,7 @@ async fn test_otlp_http_trace_context_propagation() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    tokio::time::sleep(Duration::from_millis(60)).await;
-
-    let all_traces = otlp_collector.traces().await;
+    let all_traces = otlp_collector.wait_for_traces().await;
     let trace = all_traces.first().expect("Failed to get first trace");
 
     let http_server_span = trace.span_by_hive_kind_one("http.server");
@@ -125,7 +121,7 @@ async fn test_otlp_http_baggage_propagation() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let otlp_collector = OtlpCollector::start()
+    let mut otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -185,7 +181,7 @@ async fn test_otlp_http_baggage_propagation() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    otlp_collector.wait_for_traces().await;
 
     let account_requests = subgraphs
         .get_requests_log("accounts")
@@ -218,7 +214,7 @@ async fn test_otlp_http_b3_propagation() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let otlp_collector = OtlpCollector::start()
+    let mut otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -268,9 +264,7 @@ async fn test_otlp_http_b3_propagation() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    tokio::time::sleep(Duration::from_millis(60)).await;
-
-    let all_traces = otlp_collector.traces().await;
+    let all_traces = otlp_collector.wait_for_traces().await;
     let trace = all_traces.first().expect("Failed to get first trace");
 
     let http_server_span = trace.span_by_hive_kind_one("http.server");
@@ -339,7 +333,7 @@ async fn test_otlp_http_jaeger_propagation() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let otlp_collector = OtlpCollector::start()
+    let mut otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -385,9 +379,7 @@ async fn test_otlp_http_jaeger_propagation() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    tokio::time::sleep(Duration::from_millis(60)).await;
-
-    let all_traces = otlp_collector.traces().await;
+    let all_traces = otlp_collector.wait_for_traces().await;
     let trace = all_traces.first().expect("Failed to get first trace");
 
     let http_server_span = trace.span_by_hive_kind_one("http.server");

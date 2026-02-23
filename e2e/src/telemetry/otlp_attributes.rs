@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::testkit_v2::{
     otel::OtlpCollector, some_header_map, TestRouterBuilder, TestSubgraphsBuilder,
 };
@@ -11,7 +9,7 @@ async fn test_deprecated_span_attributes() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let otlp_collector = OtlpCollector::start()
+    let mut otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -54,9 +52,7 @@ async fn test_deprecated_span_attributes() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    tokio::time::sleep(Duration::from_millis(60)).await;
-
-    let all_traces = otlp_collector.traces().await;
+    let all_traces = otlp_collector.wait_for_traces().await;
     let trace = all_traces.first().expect("Failed to get first trace");
 
     let http_server_span = trace.span_by_hive_kind_one("http.server");
@@ -139,7 +135,7 @@ async fn test_spec_and_deprecated_span_attributes() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let otlp_collector = OtlpCollector::start()
+    let mut otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -182,9 +178,7 @@ async fn test_spec_and_deprecated_span_attributes() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    tokio::time::sleep(Duration::from_millis(60)).await;
-
-    let all_traces = otlp_collector.traces().await;
+    let all_traces = otlp_collector.wait_for_traces().await;
     let trace = all_traces.first().expect("Failed to get first trace");
 
     let http_server_span = trace.span_by_hive_kind_one("http.server");
@@ -291,7 +285,7 @@ async fn test_default_client_identification() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let otlp_collector = OtlpCollector::start()
+    let mut otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -339,9 +333,7 @@ async fn test_default_client_identification() {
     assert!(res.status().is_success());
 
     // Wait for exports
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let all_traces = otlp_collector.traces().await;
+    let all_traces = otlp_collector.wait_for_traces().await;
     let trace = all_traces.first().expect("Failed to get first trace");
 
     let operation_span = trace.span_by_hive_kind_one("graphql.operation");
@@ -371,7 +363,7 @@ async fn test_custom_client_identification() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let otlp_collector = OtlpCollector::start()
+    let mut otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -422,9 +414,7 @@ async fn test_custom_client_identification() {
     assert!(res.status().is_success());
 
     // Wait for exports
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let all_traces = otlp_collector.traces().await;
+    let all_traces = otlp_collector.wait_for_traces().await;
     let trace = all_traces.first().expect("Failed to get first trace");
 
     let operation_span = trace.span_by_hive_kind_one("graphql.operation");
@@ -454,7 +444,7 @@ async fn test_default_resource_attributes() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let otlp_collector = OtlpCollector::start()
+    let mut otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -491,9 +481,7 @@ async fn test_default_resource_attributes() {
     assert!(res.status().is_success());
 
     // Wait for exports
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let all_traces = otlp_collector.traces().await;
+    let all_traces = otlp_collector.wait_for_traces().await;
     let trace = all_traces.first().expect("Failed to get first trace");
 
     let resource_attributes = trace.merged_resource_attributes();
@@ -524,7 +512,7 @@ async fn test_custom_resource_attributes() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let otlp_collector = OtlpCollector::start()
+    let mut otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -564,9 +552,7 @@ async fn test_custom_resource_attributes() {
     assert!(res.status().is_success());
 
     // Wait for exports
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let all_traces = otlp_collector.traces().await;
+    let all_traces = otlp_collector.wait_for_traces().await;
     let trace = all_traces.first().expect("Failed to get first trace");
 
     let resource_attributes = trace.merged_resource_attributes();

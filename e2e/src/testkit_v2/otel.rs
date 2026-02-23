@@ -2,6 +2,7 @@ use opentelemetry_proto::tonic::resource::v1::Resource;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{oneshot, Mutex};
 
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::{
@@ -339,6 +340,7 @@ pub struct OtlpCollector {
     _http_handle: Option<std::thread::JoinHandle<()>>,
     _grpc_handle: Option<tokio::task::JoinHandle<()>>,
     grpc_shutdown_tx: Option<oneshot::Sender<()>>,
+    last_wait_for_traces_count: usize,
 }
 
 impl OtlpCollector {
@@ -359,6 +361,7 @@ impl OtlpCollector {
             _http_handle: Some(http_handle),
             _grpc_handle: Some(grpc_handle),
             grpc_shutdown_tx: Some(grpc_shutdown_tx),
+            last_wait_for_traces_count: 0,
         })
     }
 
@@ -483,6 +486,26 @@ impl OtlpCollector {
 
     pub async fn traces(&self) -> Vec<CollectedTrace> {
         self.storage.traces().await
+    }
+
+    /// Waits for new traces to arrive in storage, returning all collected traces. The waiting is
+    /// done by checking the number of traces in storage and comparing it to the count from the last wait.
+    pub async fn wait_for_traces(&mut self) -> Vec<CollectedTrace> {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let traces = self.traces().await;
+
+                if traces.len() > self.last_wait_for_traces_count {
+                    // more traces came in since the last check
+                    self.last_wait_for_traces_count = traces.len();
+                    return traces;
+                }
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("waiting for traces timed out")
     }
 
     /// Common insta filter settings for OTLP-related snapshots that filters
