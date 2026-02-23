@@ -1,9 +1,7 @@
-use ntex::web::test;
 use std::time::Duration;
 
-use crate::testkit::{
-    init_graphql_request, init_router_from_config_inline, otel::OtlpCollector, wait_for_readiness,
-    SubgraphsServer,
+use crate::testkit_v2::{
+    otel::OtlpCollector, some_header_map, TestRouterBuilder, TestSubgraphsBuilder,
 };
 
 /// Verify only deprecated attributes are emitted for deprecated mode
@@ -11,20 +9,22 @@ use crate::testkit::{
 async fn test_deprecated_span_attributes() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
+    let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
@@ -35,24 +35,23 @@ async fn test_deprecated_span_attributes() {
                 trace_context: true
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: grpc
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
 
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
@@ -73,6 +72,7 @@ async fn test_deprecated_span_attributes() {
       Attributes:
         hive.kind: http.server
         http.flavor: 1.1
+        http.host: localhost
         http.method: POST
         http.request_content_length: 45
         http.response_content_length: 86
@@ -80,13 +80,11 @@ async fn test_deprecated_span_attributes() {
         http.status_code: 200
         http.target: /graphql
         http.url: /graphql
+        server.port: [port]
         target: hive-router
     "
     );
 
-    insta::with_settings!({filters => vec![
-      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
-    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -102,15 +100,14 @@ async fn test_deprecated_span_attributes() {
         http.request_content_length: 23
         http.response_content_length: 86
         http.status_code: 200
-        http.url: http://0.0.0.0:4200/accounts
-        net.peer.name: 0.0.0.0
-        net.peer.port: 4200
+        http.url: http://[address]:[port]/accounts
+        net.peer.name: [address]
+        net.peer.port: [port]
         target: hive-router
         url.path: /accounts
         url.scheme: http
     "
     );
-    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -125,16 +122,14 @@ async fn test_deprecated_span_attributes() {
         http.request_content_length: 23
         http.response_content_length: 86
         http.status_code: 200
-        http.url: http://0.0.0.0:4200/accounts
-        net.peer.name: 0.0.0.0
-        net.peer.port: 4200
+        http.url: http://[address]:[port]/accounts
+        net.peer.name: [address]
+        net.peer.port: [port]
         target: hive-router
         url.path: /accounts
         url.scheme: http
     "
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify both spec-compliant and deprecated attributes are emitted for spec_and_deprecated mode
@@ -142,20 +137,22 @@ async fn test_deprecated_span_attributes() {
 async fn test_spec_and_deprecated_span_attributes() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
+    let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
@@ -166,24 +163,23 @@ async fn test_spec_and_deprecated_span_attributes() {
                 trace_context: true
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: grpc
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
 
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports to be sent
     tokio::time::sleep(Duration::from_millis(60)).await;
@@ -204,6 +200,7 @@ async fn test_spec_and_deprecated_span_attributes() {
       Attributes:
         hive.kind: http.server
         http.flavor: 1.1
+        http.host: localhost
         http.method: POST
         http.request.body.size: 45
         http.request.method: POST
@@ -216,15 +213,14 @@ async fn test_spec_and_deprecated_span_attributes() {
         http.target: /graphql
         http.url: /graphql
         network.protocol.version: 1.1
+        server.address: localhost
+        server.port: [port]
         target: hive-router
         url.full: /graphql
         url.path: /graphql
     "
     );
 
-    insta::with_settings!({filters => vec![
-      (r"(hive\.inflight\.key:\s+)\d+", "$1[random]"),
-    ]}, {
     insta::assert_snapshot!(
       http_inflight_span,
       @r"
@@ -244,19 +240,18 @@ async fn test_spec_and_deprecated_span_attributes() {
         http.response.status_code: 200
         http.response_content_length: 86
         http.status_code: 200
-        http.url: http://0.0.0.0:4200/accounts
-        net.peer.name: 0.0.0.0
-        net.peer.port: 4200
+        http.url: http://[address]:[port]/accounts
+        net.peer.name: [address]
+        net.peer.port: [port]
         network.protocol.version: 1.1
-        server.address: 0.0.0.0
-        server.port: 4200
+        server.address: [address]
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://[address]:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
-    });
 
     insta::assert_snapshot!(
       http_client_span,
@@ -275,20 +270,18 @@ async fn test_spec_and_deprecated_span_attributes() {
         http.response.status_code: 200
         http.response_content_length: 86
         http.status_code: 200
-        http.url: http://0.0.0.0:4200/accounts
-        net.peer.name: 0.0.0.0
-        net.peer.port: 4200
+        http.url: http://[address]:[port]/accounts
+        net.peer.name: [address]
+        net.peer.port: [port]
         network.protocol.version: 1.1
-        server.address: 0.0.0.0
-        server.port: 4200
+        server.address: [address]
+        server.port: [port]
         target: hive-router
-        url.full: http://0.0.0.0:4200/accounts
+        url.full: http://[address]:[port]/accounts
         url.path: /accounts
         url.scheme: http
     "
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify default client identification
@@ -296,26 +289,28 @@ async fn test_spec_and_deprecated_span_attributes() {
 async fn test_default_client_identification() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
+    let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   http:
                     headers:
@@ -324,20 +319,24 @@ async fn test_default_client_identification() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_graphql_request(
+            "{ users { id } }",
+            None,
+            some_header_map!(
+                http::header::HeaderName::from_static("graphql-client-name") => "e2e",
+                http::header::HeaderName::from_static("graphql-client-version") => "tests"
+            ),
         )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        .await;
 
-    wait_for_readiness(&app.app).await;
-
-    let req = init_graphql_request("{ users { id } }", None)
-        .header("graphql-client-name", "e2e")
-        .header("graphql-client-version", "tests");
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -363,8 +362,6 @@ async fn test_default_client_identification() {
         target: hive-router
     "
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify custom client identification
@@ -372,20 +369,22 @@ async fn test_default_client_identification() {
 async fn test_custom_client_identification() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
+    let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             client_identification:
@@ -394,7 +393,7 @@ async fn test_custom_client_identification() {
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   http:
                     headers:
@@ -403,20 +402,24 @@ async fn test_custom_client_identification() {
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_graphql_request(
+            "{ users { id } }",
+            None,
+            some_header_map!(
+                http::header::HeaderName::from_static("x-client-name") => "e2e",
+                http::header::HeaderName::from_static("x-client-version") => "tests"
+            ),
         )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        .await;
 
-    wait_for_readiness(&app.app).await;
-
-    let req = init_graphql_request("{ users { id } }", None)
-        .header("x-client-name", "e2e")
-        .header("x-client-version", "tests");
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -442,8 +445,6 @@ async fn test_custom_client_identification() {
         target: hive-router
     "
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify default resource attributes
@@ -451,43 +452,43 @@ async fn test_custom_client_identification() {
 async fn test_default_resource_attributes() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
 
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -514,8 +515,6 @@ async fn test_default_resource_attributes() {
         Some(&"opentelemetry".to_string()),
         "Expected 'telemetry.sdk.name' resource attribute to be 'opentelemetry'"
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify custom resource attributes
@@ -523,20 +522,21 @@ async fn test_default_resource_attributes() {
 async fn test_custom_resource_attributes() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             resource:
@@ -545,24 +545,23 @@ async fn test_custom_resource_attributes() {
             tracing:
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
 
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -577,6 +576,4 @@ async fn test_custom_resource_attributes() {
         Some(&"bar".to_string()),
         "Expected 'custom.foo' resource attribute to be 'bar'"
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
