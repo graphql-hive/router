@@ -11,7 +11,7 @@
     "ci:test:graphql-over-http": "start-server-and-test start:test-router http://localhost:4000 test-junit:graphql-over-http"
   },
   "devDependencies": {
-    "graphql-federation-gateway-audit": "graphql-hive/federation-gateway-audit#36b2246",
+    "graphql-federation-gateway-audit": "graphql-hive/federation-gateway-audit#ff02a3c",
     "graphql-http": "1.22.4",
     "typescript": "5.9.3",
     "start-server-and-test": "2.1.3"
