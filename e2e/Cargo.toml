@@ -27,7 +27,7 @@ tonic = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 dashmap = { workspace = true }
-axum = "0.8.4"
+axum = { workspace = true }
 bytes = "1.10.1"
 
 hive-router = { path = "../bin/router", features = ["testing"] }
