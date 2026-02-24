@@ -123,32 +123,6 @@ impl Drop for EnvVarsGuard {
 pub struct Built;
 pub struct Started;
 
-// concurrency limiter
-
-lazy_static! {
-    /// Limits concurrent test routers to avoid hitting the OS open-file-descriptor limit.
-    /// Hive Router and the subgraphs opens about 30 file descriptors per instance (event queues
-    /// for tokio, dyn libs, port bindings, domain sockets), so we divide the system's
-    /// `RLIMIT_NOFILE` by that number to get a safe concurrency limit. Increasing the OS ulimit
-    /// will increase the concurrency of tests.
-    static ref CONCURRENCY_SEMAPHORE: Arc<Semaphore> = {
-        let limit = {
-            let mut rlimit = libc::rlimit {
-                rlim_cur: 0,
-                rlim_max: 0,
-            };
-            let nofile = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlimit) } == 0 {
-                rlimit.rlim_cur as usize
-            } else {
-                256 // fallback, about the default ulimit on many sysstms
-            };
-            (nofile / 30).max(1)
-        };
-        info!("Concurrency semaphore initialized with {} permits", limit);
-        Arc::new(Semaphore::new(limit))
-    };
-}
-
 // subgraphs
 
 #[derive(Clone)]
@@ -561,11 +535,6 @@ pub struct TestRouter<'subgraphs, State> {
 
 impl<'subgraphs> TestRouter<'subgraphs, Built> {
     pub async fn start(mut self) -> TestRouter<'subgraphs, Started> {
-        let permit = Arc::clone(&CONCURRENCY_SEMAPHORE)
-            .acquire_owned()
-            .await
-            .expect("concurrency semaphore closed");
-
         init_rustls_crypto_provider();
         let config = self.config.take().unwrap();
         let (telemetry, subscriber) =
@@ -619,7 +588,6 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
 
         let mut hold_until_drop = self._hold_until_drop;
         hold_until_drop.push(Box::new(subscription_guard));
-        hold_until_drop.push(Box::new(permit));
         let started = TestRouter {
             wait_for_healthy_on_start: self.wait_for_healthy_on_start,
             wait_for_ready_on_start: self.wait_for_ready_on_start,

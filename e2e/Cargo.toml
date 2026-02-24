@@ -40,4 +40,3 @@ mockito = { workspace = true }
 tempfile = "3.23.0"
 hex = "0.4"
 tiny_http = "0.12"
-libc = "0.2"

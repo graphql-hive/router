@@ -1461,7 +1461,6 @@ dependencies = [
  "insta",
  "jsonwebtoken",
  "lazy_static",
- "libc",
  "mockito",
  "ntex",
  "opentelemetry-otlp",
