@@ -508,6 +508,30 @@ impl OtlpCollector {
         .expect("waiting for traces timed out")
     }
 
+    pub async fn wait_for_span_by_hive_kind_one(&self, hive_kind: &str) -> CollectedSpan {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let traces = self.traces().await;
+
+                let found = traces.into_iter().find_map(|trace| {
+                    trace.spans.into_iter().find(|span| {
+                        span.attributes
+                            .get("hive.kind")
+                            .map(|v| v == hive_kind)
+                            .unwrap_or(false)
+                    })
+                });
+                if let Some(span) = found {
+                    return span;
+                }
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("waiting for span by hive kind timed out")
+    }
+
     /// Common insta filter settings for OTLP-related snapshots that filters
     /// out unstable/dynamic values like ports and random keys.
     //

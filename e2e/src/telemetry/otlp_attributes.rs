@@ -9,7 +9,7 @@ async fn test_deprecated_span_attributes() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -52,12 +52,15 @@ async fn test_deprecated_span_attributes() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    let all_traces = otlp_collector.wait_for_traces().await;
-    let trace = all_traces.first().expect("Failed to get first trace");
-
-    let http_server_span = trace.span_by_hive_kind_one("http.server");
-    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
-    let http_client_span = trace.span_by_hive_kind_one("http.client");
+    let http_server_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.server")
+        .await;
+    let http_inflight_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.inflight")
+        .await;
+    let http_client_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.client")
+        .await;
 
     insta::assert_snapshot!(
       http_server_span,
@@ -135,7 +138,7 @@ async fn test_spec_and_deprecated_span_attributes() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -178,12 +181,15 @@ async fn test_spec_and_deprecated_span_attributes() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    let all_traces = otlp_collector.wait_for_traces().await;
-    let trace = all_traces.first().expect("Failed to get first trace");
-
-    let http_server_span = trace.span_by_hive_kind_one("http.server");
-    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
-    let http_client_span = trace.span_by_hive_kind_one("http.client");
+    let http_server_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.server")
+        .await;
+    let http_inflight_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.inflight")
+        .await;
+    let http_client_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.client")
+        .await;
 
     insta::assert_snapshot!(
       http_server_span,
@@ -285,7 +291,7 @@ async fn test_default_client_identification() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -333,10 +339,9 @@ async fn test_default_client_identification() {
     assert!(res.status().is_success());
 
     // Wait for exports
-    let all_traces = otlp_collector.wait_for_traces().await;
-    let trace = all_traces.first().expect("Failed to get first trace");
-
-    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
+    let operation_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.operation")
+        .await;
 
     insta::assert_snapshot!(
       operation_span,
@@ -363,7 +368,7 @@ async fn test_custom_client_identification() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -414,10 +419,9 @@ async fn test_custom_client_identification() {
     assert!(res.status().is_success());
 
     // Wait for exports
-    let all_traces = otlp_collector.wait_for_traces().await;
-    let trace = all_traces.first().expect("Failed to get first trace");
-
-    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
+    let operation_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.operation")
+        .await;
 
     insta::assert_snapshot!(
       operation_span,
