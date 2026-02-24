@@ -3,7 +3,7 @@ mod hive_cdn_supergraph_e2e_tests {
     use std::time::Duration;
 
     use ntex::time;
-    use sonic_rs::{from_slice, JsonContainerTrait, JsonValueTrait, Value};
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
     use tokio::time::sleep;
 
     use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
@@ -161,7 +161,7 @@ mod hive_cdn_supergraph_e2e_tests {
 
         // make sure schema now loaded and has new types
         assert!(res.status().is_success(), "Expected 200 OK");
-        let json_body: Value = from_slice(&res.body().await.unwrap()).unwrap();
+        let json_body = res.json_body().await;
         let types_arr = json_body
             .get("data")
             .unwrap()
@@ -219,7 +219,7 @@ mod hive_cdn_supergraph_e2e_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let json_body: Value = from_slice(&res.body().await.unwrap()).unwrap();
+        let json_body = res.json_body().await;
         let types_arr = json_body
             .get("data")
             .unwrap()
@@ -240,7 +240,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .await;
 
         assert!(res.status().is_success(), "Expected 200 OK");
-        let json_body: Value = from_slice(&res.body().await.unwrap()).unwrap();
+        let json_body = res.json_body().await;
         let types_arr = json_body
             .get("data")
             .unwrap()

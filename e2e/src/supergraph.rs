@@ -4,9 +4,11 @@ mod supergraph_e2e_tests {
 
     use mockito::Mock;
     use ntex::time;
-    use sonic_rs::{from_slice, JsonValueTrait, Value};
+    use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{
+        ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
+    };
 
     #[ntex::test]
     async fn should_clear_internal_caches_when_supergraph_changes() {
@@ -216,8 +218,7 @@ mod supergraph_e2e_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let body_json: Value = from_slice(&body).unwrap();
+        let body_json = res.json_body().await;
 
         assert!(body_json["data"].is_object());
         assert!(body_json["errors"].is_null());
@@ -228,8 +229,7 @@ mod supergraph_e2e_tests {
             .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
             .await;
 
-        let body = res_new_supergraph.body().await.unwrap();
-        let body_json: Value = from_slice(&body).unwrap();
+        let body_json = res_new_supergraph.json_body().await;
 
         assert!(body_json["data"].is_null());
         assert!(body_json["errors"].is_array());

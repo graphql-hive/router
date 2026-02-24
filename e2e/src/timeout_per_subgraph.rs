@@ -1,8 +1,10 @@
 #[cfg(test)]
 mod override_subgraph_urls_e2e_tests {
-    use sonic_rs::{json, Value};
+    use sonic_rs::json;
 
-    use crate::testkit::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{
+        some_header_map, ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder,
+    };
 
     #[ntex::test]
     async fn should_not_deadlock_when_overriding_subgraph_timeout_statically() {
@@ -40,8 +42,7 @@ mod override_subgraph_urls_e2e_tests {
         });
 
         for res in [res1, res2, res3, res4] {
-            let body = res.body().await.unwrap();
-            let json_body: Value = sonic_rs::from_slice(&body).unwrap();
+            let json_body = res.json_body().await;
             assert_eq!(json_body, expected_json);
         }
     }
@@ -108,8 +109,7 @@ mod override_subgraph_urls_e2e_tests {
         });
 
         for res in [res1, res2, res3, res4] {
-            let body = res.body().await.unwrap();
-            let json_body: Value = sonic_rs::from_slice(&body).unwrap();
+            let json_body = res.json_body().await;
             assert_eq!(json_body, expected_json);
         }
     }

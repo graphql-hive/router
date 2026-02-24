@@ -3,7 +3,9 @@ mod http_tests {
     use hive_router::pipeline::execution::EXPOSE_QUERY_PLAN_HEADER;
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{
+        some_header_map, ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder,
+    };
 
     #[ntex::test]
     async fn should_allow_to_customize_graphql_endpoint() {
@@ -94,8 +96,7 @@ mod http_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: sonic_rs::Value = sonic_rs::from_slice(&body).unwrap();
+        let json_body = res.json_body().await;
 
         assert!(json_body["data"].is_object());
         assert!(json_body["errors"].is_null());
@@ -144,8 +145,7 @@ mod http_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: sonic_rs::Value = sonic_rs::from_slice(&body).unwrap();
+        let json_body = res.json_body().await;
 
         assert!(json_body["data"].is_object());
         assert!(json_body["errors"].is_null());
@@ -195,8 +195,7 @@ mod http_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: sonic_rs::Value = sonic_rs::from_slice(&body).unwrap();
+        let json_body = res.json_body().await;
 
         assert!(json_body["data"].is_null());
         assert!(json_body["errors"].is_null());
