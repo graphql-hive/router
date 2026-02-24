@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod authorization_directives_in_filter_mode_e2e_tests {
     use jsonwebtoken::{encode, EncodingKey};
-    use sonic_rs::{json, to_string_pretty, Value};
+    use sonic_rs::{json, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::testkit::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{some_header_map, ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
 
     fn generate_jwt(payload: &Value) -> String {
         let pem = include_str!("../jwks.rsa512.pem");
@@ -61,9 +61,6 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
         let subgraph_requests = subgraphs.get_requests_log("accounts");
         assert_eq!(
             subgraph_requests.map(|r| r.len()).unwrap_or(0),
@@ -71,7 +68,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             "expected 0 requests to accounts subgraph"
         );
 
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": null,
@@ -112,9 +109,6 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
         let subgraph_requests = subgraphs.get_requests_log("accounts");
         assert_eq!(
             subgraph_requests.map(|r| r.len()).unwrap_or(0),
@@ -122,7 +116,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             "expected 0 requests to accounts subgraph"
         );
 
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": null
@@ -161,9 +155,6 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
         let subgraph_requests = subgraphs.get_requests_log("accounts").unwrap_or_default();
         assert_eq!(
             subgraph_requests.len(),
@@ -171,7 +162,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             "expected 1 request to accounts subgraph"
         );
 
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -204,9 +195,6 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
         let subgraph_requests = subgraphs.get_requests_log("accounts").unwrap_or_default();
         assert_eq!(
             subgraph_requests.len(),
@@ -214,7 +202,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             "expected 1 request to accounts subgraph"
         );
 
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -259,10 +247,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": null,
@@ -323,10 +308,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -405,10 +387,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -464,10 +443,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -506,10 +482,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -548,10 +521,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -585,10 +555,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -620,10 +587,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -654,10 +618,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -688,10 +649,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -722,10 +680,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -757,10 +712,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -810,10 +762,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -843,10 +792,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -900,10 +846,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -933,10 +876,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -966,10 +906,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -1012,10 +949,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": null
@@ -1052,10 +986,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": null
@@ -1082,10 +1013,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": {
@@ -1131,10 +1059,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": null
@@ -1161,10 +1086,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": null
@@ -1193,10 +1115,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": {
@@ -1233,10 +1152,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": null
@@ -1263,10 +1179,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": null
@@ -1295,10 +1208,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": {
@@ -1343,10 +1253,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -1371,10 +1278,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": null
@@ -1415,10 +1319,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": {
@@ -1443,10 +1344,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": null
@@ -1488,10 +1386,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": null
@@ -1518,10 +1413,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": null
@@ -1550,10 +1442,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": {
@@ -1594,10 +1483,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": {
@@ -1637,10 +1523,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": {
@@ -1679,10 +1562,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": {
@@ -1725,10 +1605,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": null
@@ -1757,10 +1634,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": {

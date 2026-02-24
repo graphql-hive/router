@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod body_limit_e2e_tests {
-    use crate::testkit::TestRouterBuilder;
+    use crate::testkit::{ClientResponseExt, TestRouterBuilder};
     #[ntex::test]
     async fn should_return_payload_too_large_if_limit_exceeds_while_reading_the_stream() {
         let router = TestRouterBuilder::new()
@@ -32,11 +32,7 @@ mod body_limit_e2e_tests {
 
         assert_eq!(res.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
 
-        let body = res.body().await.unwrap();
-        let json_body: sonic_rs::Value =
-            sonic_rs::from_slice(&body).expect("The response body should be valid JSON");
-
-        insta::assert_snapshot!(sonic_rs::to_string_pretty(&json_body).expect("The JSON body should be serializable to a pretty string"), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -73,11 +69,7 @@ mod body_limit_e2e_tests {
 
         assert_eq!(res.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
 
-        let body = res.body().await.unwrap();
-        let json_body: sonic_rs::Value =
-            sonic_rs::from_slice(&body).expect("The response body should be valid JSON");
-
-        insta::assert_snapshot!(sonic_rs::to_string_pretty(&json_body).expect("The JSON body should be serializable to a pretty string"), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {

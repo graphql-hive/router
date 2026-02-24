@@ -1,10 +1,8 @@
 #[cfg(test)]
 mod override_subgraph_urls_e2e_tests {
-    use sonic_rs::{from_slice, Value};
-
     use crate::{
         some_header_map,
-        testkit::{TestRouterBuilder, TestSubgraphsBuilder},
+        testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder},
     };
 
     #[ntex::test]
@@ -108,9 +106,8 @@ mod override_subgraph_urls_e2e_tests {
             .await;
 
         assert!(res.status().is_success(), "Expected 200 OK");
-        let json_body: Value = from_slice(&res.body().await.unwrap()).unwrap();
 
-        insta::assert_snapshot!(sonic_rs::to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "users": null

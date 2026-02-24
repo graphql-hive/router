@@ -4,9 +4,9 @@ mod supergraph_e2e_tests {
 
     use mockito::Mock;
     use ntex::time;
-    use sonic_rs::{from_slice, to_string_pretty, JsonValueTrait, Value};
+    use sonic_rs::{from_slice, JsonValueTrait, Value};
 
-    use crate::testkit::{EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn should_clear_internal_caches_when_supergraph_changes() {
@@ -275,9 +275,7 @@ mod supergraph_e2e_tests {
             .await;
 
         assert_eq!(res.status(), 200);
-        let body = res.body().await.unwrap();
-        let json: Value = from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "__type": {
@@ -314,9 +312,7 @@ mod supergraph_e2e_tests {
             )
             .await;
         assert_eq!(res.status(), 200);
-        let body = res.body().await.unwrap();
-        let json: Value = from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "__type": {
@@ -356,9 +352,7 @@ mod supergraph_e2e_tests {
             )
             .await;
         assert_eq!(res.status(), 200);
-        let body = res.body().await.unwrap();
-        let json: Value = from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "__type": {

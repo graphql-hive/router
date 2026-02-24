@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod env_vars_e2e_tests {
-    use sonic_rs::{from_slice, Value};
-
-    use crate::testkit::{EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{
+        ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
+    };
 
     #[ntex::test]
     /// Test that a dynamic URL override for a subgraph based on an env var is respected.
@@ -30,8 +30,7 @@ mod env_vars_e2e_tests {
 
             assert!(res.status().is_success(), "Expected 200 OK");
 
-            let body = res.body().await.unwrap();
-            let json_body: Value = from_slice(&body).unwrap();
+            let json_body = res.json_body().await;
             assert_eq!(json_body["data"]["users"][0]["id"], "1");
 
             let subgraph_requests = subgraphs
@@ -66,10 +65,7 @@ mod env_vars_e2e_tests {
 
             assert!(res.status().is_success(), "Expected 200 OK");
 
-            let body = res.body().await.unwrap();
-            let json_body: Value = from_slice(&body).unwrap();
-
-            insta::assert_snapshot!(sonic_rs::to_string_pretty(&json_body).unwrap(), @r#"
+            insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
             {
               "data": {
                 "users": null
