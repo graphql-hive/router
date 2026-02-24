@@ -13,7 +13,9 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionOpts};
+use hive_router_plan_executor::execution::plan::{
+    PlanExecutionOutput, QueryPlanExecutionOpts, QueryPlanExecutionResult,
+};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
@@ -44,7 +46,7 @@ pub async fn execute_plan(
     expose_query_plan: &ExposeQueryPlanMode,
     planned_request: PlannedRequest<'_>,
     span: &GraphQLOperationSpan,
-) -> Result<PlanExecutionOutput, PipelineError> {
+) -> Result<QueryPlanExecutionResult, PipelineError> {
     let execute_span = GraphQLExecuteSpan::new();
     async {
         let introspection_context = IntrospectionContext {
@@ -74,10 +76,10 @@ pub async fn execute_plan(
             }))
             .map_err(PipelineError::QueryPlanSerializationFailed)?;
 
-            return Ok(PlanExecutionOutput {
+            return Ok(QueryPlanExecutionResult::Single(PlanExecutionOutput {
                 body,
                 ..Default::default()
-            });
+            }));
         }
 
         let jwt_auth_forwarding: Option<JwtAuthForwardingPlan> = if app_state

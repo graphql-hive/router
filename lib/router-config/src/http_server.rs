@@ -6,13 +6,13 @@ use serde::{Deserialize, Serialize};
 pub struct HttpServerConfig {
     /// The endpoint to serve GraphQL requests. By default, `/graphql` is used.
     #[serde(default = "graphql_endpoint_default")]
-    graphql_endpoint: String,
+    pub graphql_endpoint: String,
 
     /// The host address to bind the HTTP server to.
     ///
     /// Can also be set via the `HOST` environment variable.
     #[serde(default = "http_server_host_default")]
-    host: String,
+    pub host: String,
 
     /// The port to bind the HTTP server to.
     ///
@@ -20,7 +20,7 @@ pub struct HttpServerConfig {
     ///
     /// If you are running the router inside a Docker container, please ensure that the port is exposed correctly using `-p <host_port>:<container_port>` flag.
     #[serde(default = "http_server_port_default")]
-    port: u16,
+    pub port: u16,
 }
 
 impl Default for HttpServerConfig {
@@ -43,14 +43,4 @@ fn graphql_endpoint_default() -> String {
 
 fn http_server_port_default() -> u16 {
     4000
-}
-
-impl HttpServerConfig {
-    pub fn address(&self) -> String {
-        format!("{}:{}", self.host, self.port)
-    }
-
-    pub fn graphql_endpoint(&self) -> &str {
-        &self.graphql_endpoint
-    }
 }

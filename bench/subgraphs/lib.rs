@@ -1,9 +1,10 @@
 pub mod accounts;
+pub mod graphql_with_subscriptions;
 pub mod inventory;
 pub mod products;
 pub mod reviews;
 
-use async_graphql_axum::GraphQL;
+use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use axum::{
     body::{to_bytes, Bytes},
     extract::{Request, State},
@@ -110,30 +111,12 @@ pub fn start_subgraphs_server(
         health_check_url: format!("http://{}:{}/health", host, port),
     });
 
-    let app = Router::new()
-        .route(
-            "/accounts",
-            post_service(GraphQL::new(accounts::get_subgraph())),
-        )
-        .route(
-            "/inventory",
-            post_service(GraphQL::new(inventory::get_subgraph())),
-        )
-        .route(
-            "/products",
-            post_service(GraphQL::new(products::get_subgraph())),
-        )
-        .route(
-            "/reviews",
-            post_service(GraphQL::new(reviews::get_subgraph())),
-        )
-        .layer(middleware::from_fn_with_state(
-            shared_state.clone(),
-            track_requests,
-        ))
-        .route("/health", get(health_check_handler))
-        .route_layer(middleware::from_fn(add_subgraph_header))
-        .route_layer(middleware::from_fn(delay_middleware));
+    let mut app = subgraphs_app(SubscriptionProtocol::default());
+    app = app.layer(middleware::from_fn_with_state(
+        shared_state.clone(),
+        track_requests,
+    ));
+    app = app.route("/health", get(health_check_handler));
 
     println!("Starting server on http://{}:{}", host, port);
 
@@ -153,4 +136,41 @@ pub fn start_subgraphs_server(
     });
 
     (server_handle, shutdown_tx, shared_state)
+}
+
+#[derive(Clone, Default)]
+pub enum SubscriptionProtocol {
+    #[default]
+    PreferMultipartFallbackSse,
+    MultipartOnly,
+    SseOnly,
+}
+
+pub fn subgraphs_app(subscriptions_protocol: SubscriptionProtocol) -> Router<()> {
+    Router::new()
+        .route(
+            "/accounts",
+            post_service(GraphQL::new(accounts::get_subgraph())),
+        )
+        .route(
+            "/inventory",
+            post_service(GraphQL::new(inventory::get_subgraph())),
+        )
+        .route(
+            "/products",
+            post_service(GraphQL::new(products::get_subgraph())),
+        )
+        .route_service(
+            "/reviews/ws",
+            GraphQLSubscription::new(reviews::get_subgraph()),
+        )
+        .route(
+            "/reviews",
+            post_service(graphql_with_subscriptions::GraphQL::new(
+                reviews::get_subgraph(),
+                subscriptions_protocol,
+            )),
+        )
+        .route_layer(middleware::from_fn(add_subgraph_header))
+        .route_layer(middleware::from_fn(delay_middleware))
 }

@@ -13,10 +13,12 @@ pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
+pub mod subscriptions;
 pub mod supergraph;
 pub mod telemetry;
 pub mod traffic_shaping;
 pub mod usage_reporting;
+pub mod websocket;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
@@ -112,6 +114,36 @@ pub struct HiveRouterConfig {
 
     #[serde(default)]
     pub telemetry: telemetry::TelemetryConfig,
+
+    /// Configuration for subscriptions.
+    #[serde(default)]
+    pub subscriptions: subscriptions::SubscriptionsConfig,
+
+    /// Configuration of router's WebSocket server.
+    #[serde(default)]
+    pub websocket: websocket::WebSocketConfig,
+}
+
+impl HiveRouterConfig {
+    pub fn address(&self) -> String {
+        format!("{}:{}", self.http.host, self.http.port)
+    }
+
+    pub fn graphql_path(&self) -> &str {
+        &self.http.graphql_endpoint
+    }
+
+    pub fn websocket_path(&self) -> Option<&str> {
+        if !self.websocket.enabled {
+            return None;
+        }
+        Some(
+            self.websocket
+                .path
+                .as_deref()
+                .unwrap_or_else(|| self.graphql_path()),
+        )
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

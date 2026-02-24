@@ -1,11 +1,7 @@
 #[cfg(test)]
 mod max_depth_e2e_tests {
-    use ntex::web::test;
-    use sonic_rs::{from_slice, to_string_pretty, Value};
+    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
-    };
     const QUERY: &'static str = r#"
             query {
                 me {
@@ -19,23 +15,25 @@ mod max_depth_e2e_tests {
 
     #[ntex::test]
     async fn allows_query_within_max_depth() {
-        let _subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_inline(
-            r#"
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+            source: file
+            path: supergraph.graphql
         limits:
             max_depth:
                 n: 3
         "#,
-        )
-        .await
-        .unwrap();
-        wait_for_readiness(&app.app).await;
-        let req = init_graphql_request(QUERY, None);
+            )
+            .build()
+            .start()
+            .await;
 
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        let res = router.send_graphql_request(QUERY, None, None).await;
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
         {
           "data": {
             "me": {
@@ -56,23 +54,25 @@ mod max_depth_e2e_tests {
 
     #[ntex::test]
     async fn rejects_query_exceeding_max_depth() {
-        let _subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_inline(
-            r#"
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+            source: file
+            path: supergraph.graphql
         limits:
             max_depth:
                 n: 1
         "#,
-        )
-        .await
-        .unwrap();
-        wait_for_readiness(&app.app).await;
+            )
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(QUERY, None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        let res = router.send_graphql_request(QUERY, None, None).await;
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
         {
           "errors": [
             {
@@ -88,32 +88,37 @@ mod max_depth_e2e_tests {
 
     #[ntex::test]
     async fn unknown_fragments() {
-        let _subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_inline(
-            r#"
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+            source: file
+            path: supergraph.graphql
         limits:
             max_depth:
                 n: 3
         "#,
-        )
-        .await
-        .unwrap();
-        wait_for_readiness(&app.app).await;
-        let req = init_graphql_request(
-            r#"
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
             query {
                 me {
                     ...UnknownFragment
                 }
             }
             "#,
-            None,
-        );
-
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+                None,
+                None,
+            )
+            .await;
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
         {
           "errors": [
             {

@@ -41,6 +41,12 @@ pub enum SubgraphExecutorError {
     #[error("Failed to initialize or load native TLS root certificates: {0}")]
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     NativeTlsCertificatesError(String),
+    #[error("Unsupported content-type {0} for subgraph '{1}'")]
+    #[strum(serialize = "SUBGRAPH_UNSUPPORTED_CONTENT_TYPE")]
+    UnsupportedContentTypeError(String, String),
+    #[error("Failed to handle subscription stream from '{0}': {1}")]
+    #[strum(serialize = "SUBGRAPH_SUBSCRIPTION_STREAM_ERROR")]
+    SubscriptionStreamError(String, String),
 }
 
 impl SubgraphExecutorError {

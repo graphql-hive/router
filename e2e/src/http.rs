@@ -1,107 +1,102 @@
 #[cfg(test)]
-mod hive_cdn_supergraph_e2e_tests {
+mod http_tests {
     use hive_router::pipeline::execution::EXPOSE_QUERY_PLAN_HEADER;
-    use ntex::web::test;
-    use sonic_rs::{from_slice, json, JsonValueTrait, Value};
-    use std::fs;
-    use tempfile::NamedTempFile;
+    use sonic_rs::JsonValueTrait;
 
     use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
+        some_header_map, ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder,
     };
 
     #[ntex::test]
     async fn should_allow_to_customize_graphql_endpoint() {
-        let file = NamedTempFile::new().expect("failed to create temp file");
-        let supergraph_file_path = file
-            .path()
-            .to_str()
-            .expect("failed to convert path to string")
-            .to_string();
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                http:
+                    graphql_endpoint: /custom
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-        let first_supergraph = include_str!("../supergraph.graphql");
-        fs::write(&supergraph_file_path, first_supergraph).expect("failed to write supergraph");
-
-        let app = init_router_from_config_inline(&format!(
-            r#"
-            supergraph:
-              source: file
-              path: {supergraph_file_path}
-            http:
-              graphql_endpoint: /custom
-        "#,
-        ))
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
-
-        let body = json!({
+        let json_body = sonic_rs::json!({
           "query": "{ __schema { types { name } } }",
         });
 
-        let req = test::TestRequest::post()
-            .uri("/custom")
-            .header("content-type", "application/json")
-            .set_payload(body.to_string());
+        let res = router
+            .serv()
+            // even though testrouter will pick up the changed graphql route
+            // we use a custom post anyways just to be extra sure
+            .post("/custom")
+            .content_type("application/json")
+            .send_json(&json_body)
+            .await
+            .expect("failed to send graphql request");
 
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        assert_eq!(res.status(), 200, "Expected 200 OK");
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .serv()
+            // we changed and dont use the default
+            .post("/graphql")
+            .content_type("application/json")
+            .send_json(&json_body)
+            .await
+            .expect("failed to send graphql request");
 
-        let req = test::TestRequest::post()
-            .uri("/graphql")
-            .header("content-type", "application/json")
-            .set_payload(body.to_string());
-
-        let resp = test::call_service(&app.app, req.to_request()).await;
-
-        assert_eq!(resp.status(), 404);
+        assert_eq!(res.status(), 404);
     }
 
     #[ntex::test]
     async fn should_not_expose_query_plan_when_disabled() {
-        let _subgraphs_server = SubgraphsServer::start().await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                # default is false
+                # query_planner:
+                #     allow_expose: false
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-        let router = init_router_from_config_inline(&format!(
-            r#"
-            supergraph:
-                source: file
-                path: supergraph.graphql
-            # default is false
-            # query_planner:
-            #     allow_expose: false
-            "#
-        ))
-        .await
-        .unwrap();
-
-        wait_for_readiness(&router.app).await;
-
-        let req = init_graphql_request(
-            r#"
-            {
-                topProducts {
-                    name
-                    price
-                    reviews {
-                        author {
-                            name
+        let res = router
+            .send_graphql_request(
+                r#"
+                {
+                    topProducts {
+                        name
+                        price
+                        reviews {
+                            author {
+                                name
+                            }
                         }
                     }
                 }
-            }
-            "#,
-            None,
-        )
-        .header(EXPOSE_QUERY_PLAN_HEADER.as_str(), "true")
-        .to_request();
-
-        let res = test::call_service(&router.app, req).await;
+                "#,
+                None,
+                some_header_map! {
+                    http::header::HeaderName::from_static(EXPOSE_QUERY_PLAN_HEADER.as_str()) => "true"
+                },
+            )
+            .await;
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(res).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let json_body = res.json_body().await;
 
         assert!(json_body["data"].is_object());
         assert!(json_body["errors"].is_null());
@@ -110,47 +105,47 @@ mod hive_cdn_supergraph_e2e_tests {
 
     #[ntex::test]
     async fn should_execute_and_expose_query_plan() {
-        let _subgraphs_server = SubgraphsServer::start().await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                query_planner:
+                    allow_expose: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-        let router = init_router_from_config_inline(&format!(
-            r#"
-            supergraph:
-                source: file
-                path: supergraph.graphql
-            query_planner:
-                allow_expose: true
-            "#
-        ))
-        .await
-        .unwrap();
-
-        wait_for_readiness(&router.app).await;
-
-        let req = init_graphql_request(
-            r#"
-            {
-                topProducts {
-                    name
-                    price
-                    reviews {
-                        author {
-                            name
+        let res = router
+            .send_graphql_request(
+                r#"
+                {
+                    topProducts {
+                        name
+                        price
+                        reviews {
+                            author {
+                                name
+                            }
                         }
                     }
                 }
-            }
-            "#,
-            None,
-        )
-        .header(EXPOSE_QUERY_PLAN_HEADER.as_str(), "true")
-        .to_request();
-
-        let res = test::call_service(&router.app, req).await;
+                "#,
+                None,
+                some_header_map! {
+                    http::header::HeaderName::from_static(EXPOSE_QUERY_PLAN_HEADER.as_str()) => "true"
+                },
+            )
+            .await;
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(res).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let json_body = res.json_body().await;
 
         assert!(json_body["data"].is_object());
         assert!(json_body["errors"].is_null());
@@ -160,47 +155,47 @@ mod hive_cdn_supergraph_e2e_tests {
 
     #[ntex::test]
     async fn should_dry_run_and_expose_query_plan() {
-        let subgraphs_server = SubgraphsServer::start().await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                query_planner:
+                    allow_expose: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-        let router = init_router_from_config_inline(&format!(
-            r#"
-            supergraph:
-                source: file
-                path: supergraph.graphql
-            query_planner:
-                allow_expose: true
-            "#
-        ))
-        .await
-        .unwrap();
-
-        wait_for_readiness(&router.app).await;
-
-        let req = init_graphql_request(
-            r#"
-            {
-                topProducts {
-                    name
-                    price
-                    reviews {
-                        author {
-                            name
+        let res = router
+            .send_graphql_request(
+                r#"
+                {
+                    topProducts {
+                        name
+                        price
+                        reviews {
+                            author {
+                                name
+                            }
                         }
                     }
                 }
-            }
-            "#,
-            None,
-        )
-        .header(EXPOSE_QUERY_PLAN_HEADER.as_str(), "dry-run")
-        .to_request();
-
-        let res = test::call_service(&router.app, req).await;
+                "#,
+                None,
+                some_header_map! {
+                    http::header::HeaderName::from_static(EXPOSE_QUERY_PLAN_HEADER.as_str()) => "dry-run"
+                },
+            )
+            .await;
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(res).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let json_body = res.json_body().await;
 
         assert!(json_body["data"].is_null());
         assert!(json_body["errors"].is_null());
@@ -208,11 +203,8 @@ mod hive_cdn_supergraph_e2e_tests {
         assert!(json_body["extensions"]["queryPlan"].is_object());
 
         assert!(
-            subgraphs_server
-                .get_subgraph_requests_log("products") // we check products because our root query is topProducts
-                .await
-                .is_none(),
+            subgraphs.get_requests_log("products").is_none(),
             "expected no requests to products subgraph"
-        )
+        );
     }
 }

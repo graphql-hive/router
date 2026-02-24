@@ -1,3 +1,4 @@
+use futures::Stream;
 use std::{sync::Arc, time::Instant};
 use tracing::{error, Instrument};
 
@@ -6,7 +7,7 @@ use hive_router_internal::telemetry::traces::spans::{
 };
 use hive_router_plan_executor::execution::{
     client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-    plan::PlanExecutionOutput,
+    plan::QueryPlanExecutionResult,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -23,8 +24,11 @@ use crate::{
         error::PipelineError,
         execution::{execute_plan, ExposeQueryPlanMode, PlannedRequest, EXPOSE_QUERY_PLAN_HEADER},
         execution_request::get_execution_request_from_http_request,
-        header::ResponseMode,
+        header::{ResponseMode, StreamContentType},
         introspection_policy::handle_introspection_policy,
+        multipart_subscribe::{
+            APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
+        },
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::parse_operation_with_cache,
         progressive_override::request_override_context,
@@ -45,12 +49,15 @@ pub mod execution;
 pub mod execution_request;
 pub mod header;
 pub mod introspection_policy;
+pub mod multipart_subscribe;
 pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
+pub mod sse;
 pub mod usage_reporting;
 pub mod validation;
+pub mod websocket_server;
 
 #[inline]
 pub async fn graphql_request_handler(
@@ -139,20 +146,11 @@ pub async fn graphql_request_handler(
         );
 
         if is_subscription
-        // coming soon
-        // && !response_mode.can_stream()
+            && (!shared_state.router_config.subscriptions.enabled || !response_mode.can_stream())
         {
+            // check early, even though we check again after pipeline execution below
             return Err(PipelineError::SubscriptionsNotSupported);
         }
-
-        let single_content_type = match response_mode {
-            ResponseMode::SingleOnly(single) => single,
-            ResponseMode::Dual(single, _) => single,
-            _ => {
-                // streaming responses coming soon
-                return Err(PipelineError::UnsupportedContentType);
-            }
-        };
 
         let jwt_request_details = match &shared_state.jwt_auth_runtime {
             Some(jwt_auth_runtime) => match jwt_auth_runtime
@@ -215,7 +213,7 @@ pub async fn graphql_request_handler(
             }
         }
 
-        let response = execute_pipeline(
+        match execute_pipeline(
             &query_plan_cancellation_token,
             &client_request_details,
             &normalize_payload,
@@ -226,9 +224,59 @@ pub async fn graphql_request_handler(
             schema_state,
             &operation_span,
         )
-        .await?;
+        .await?
+        {
+            QueryPlanExecutionResult::Stream(result) => {
+                let stream_content_type = response_mode.
+                    stream_content_type().
+                    ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
 
-        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                let content_type_header = match stream_content_type {
+                    StreamContentType::IncrementalDelivery => {
+                        http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE)
+                    }
+                    StreamContentType::SSE => http::HeaderValue::from_static("text/event-stream"),
+                    StreamContentType::ApolloMultipartHTTP => {
+                        http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE)
+                    }
+                };
+
+                // TODO: why exactly do we need a type cast here?
+                let body: std::pin::Pin<
+                    Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
+                > = match stream_content_type {
+                    StreamContentType::IncrementalDelivery => Box::pin(
+                        multipart_subscribe::create_incremental_delivery_stream(result.body),
+                    ),
+                    StreamContentType::SSE => Box::pin(sse::create_stream(
+                        result.body,
+                        std::time::Duration::from_secs(10),
+                    )),
+                    StreamContentType::ApolloMultipartHTTP => {
+                        Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
+                            result.body,
+                            std::time::Duration::from_secs(10),
+                        ))
+                    }
+                };
+
+                let mut response_builder = web::HttpResponse::Ok();
+
+                if let Some(response_headers_aggregator) = result.response_headers_aggregator {
+                    response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
+                }
+
+                Ok(response_builder
+                    .header(http::header::CONTENT_TYPE, content_type_header)
+                    .streaming(body))
+            },
+            QueryPlanExecutionResult::Single(result) => {
+                let single_content_type = response_mode.
+                    single_content_type().
+                    // TODO: streaming single responses
+                    ok_or(PipelineError::UnsupportedContentType)?;
+
+                if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
                     usage_reporting::collect_usage_report(
                         supergraph.supergraph_schema.clone(),
                         started_at.elapsed(),
@@ -237,31 +285,33 @@ pub async fn graphql_request_handler(
                         &client_request_details,
                         hive_usage_agent,
                         shared_state
-                                            .router_config
-                                            .telemetry
-                                            .hive
-                                            .as_ref()
-                                            .map(|c| &c.usage_reporting)
-                                            .expect(
-                                                // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
-                                                // the UsageAgent is only created when usage reporting is enabled.
-                                                // Thus, this expect should never panic.
-                                                "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
-                                            ),
-                        response.error_count,
+                            .router_config
+                            .telemetry
+                            .hive
+                            .as_ref()
+                            .map(|c| &c.usage_reporting)
+                            .expect(
+                                // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
+                                // the UsageAgent is only created when usage reporting is enabled.
+                                // Thus, this expect should never panic.
+                                "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
+                            ),
+                        result.error_count,
                     )
                     .await;
                 }
 
-        let mut response_builder = web::HttpResponse::Ok();
+                let mut response_builder = web::HttpResponse::Ok();
 
-        if let Some(response_headers_aggregator) = response.response_headers_aggregator {
-            response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
+                if let Some(response_headers_aggregator) = result.response_headers_aggregator {
+                    response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
+                }
+
+                Ok(response_builder
+                    .content_type(single_content_type.as_ref())
+                    .body(result.body))
+            },
         }
-
-        Ok(response_builder
-            .content_type(single_content_type.as_ref())
-            .body(response.body))
     }
     .instrument(operation_span.clone())
     .await
@@ -279,7 +329,7 @@ pub async fn execute_pipeline<'exec>(
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
     operation_span: &GraphQLOperationSpan,
-) -> Result<PlanExecutionOutput, PipelineError> {
+) -> Result<QueryPlanExecutionResult, PipelineError> {
     let progressive_override_ctx = request_override_context(
         &shared_state.override_labels_evaluator,
         client_request_details,

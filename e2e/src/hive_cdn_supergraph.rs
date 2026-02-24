@@ -2,17 +2,16 @@
 mod hive_cdn_supergraph_e2e_tests {
     use std::time::Duration;
 
-    use ntex::{time, web::test};
-    use sonic_rs::{from_slice, JsonContainerTrait, JsonValueTrait, Value};
+    use ntex::time;
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
     use tokio::time::sleep;
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
-    };
+    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn should_load_supergraph_from_endpoint() {
-        let subgraphs_server = SubgraphsServer::start().await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+
         let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
 
@@ -21,32 +20,30 @@ mod hive_cdn_supergraph_e2e_tests {
             .match_header("x-hive-cdn-key", "dummy_key")
             .with_status(200)
             .with_header("content-type", "text/plain")
-            .with_body(include_str!("../supergraph.graphql"))
+            .with_body(subgraphs.supergraph_with_addr(include_str!("../supergraph.graphql")))
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-                source: hive
-                endpoint: http://{host}/supergraph
-                key: dummy_key
-          "#,
-        ))
-        .await
-        .expect("failed to start router");
+        let router = TestRouterBuilder::new()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: hive
+                    endpoint: http://{host}/supergraph
+                    key: dummy_key
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&app.app).await;
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
 
-        let resp = test::call_service(
-            &app.app,
-            init_graphql_request("{ users { id } }", None).to_request(),
-        )
-        .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
-
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
             .expect("expected requests sent to accounts subgraph");
         assert_eq!(
             subgraph_requests.len(),
@@ -77,18 +74,19 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_status(304)
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-              source: hive
-              endpoint: http://{host}/supergraph
-              key: dummy_key
-              poll_interval: 100ms
-        "#,
-        ))
-        .await
-        .expect("failed to start router");
-
-        wait_for_readiness(&app.app).await;
+        let _router = TestRouterBuilder::new()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: hive
+                    endpoint: http://{host}/supergraph
+                    key: dummy_key
+                    poll_interval: 100ms
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
         sleep(Duration::from_millis(500)).await;
         mock2.assert();
@@ -135,18 +133,20 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_status(304)
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-              source: hive
-              endpoint: http://{host}/supergraph
-              key: dummy_key
-              poll_interval: 100ms
-        "#,
-        ))
-        .await
-        .expect("failed to start router");
+        let router = TestRouterBuilder::new()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: hive
+                    endpoint: http://{host}/supergraph
+                    key: dummy_key
+                    poll_interval: 100ms
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&app.app).await;
         mock1.assert();
         sleep(Duration::from_millis(150)).await;
         mock2.assert();
@@ -155,15 +155,13 @@ mod hive_cdn_supergraph_e2e_tests {
         sleep(Duration::from_millis(150)).await;
         mock4.assert();
 
-        let resp = test::call_service(
-            &app.app,
-            init_graphql_request("{ __schema { types { name } } }", None).to_request(),
-        )
-        .await;
+        let res = router
+            .send_graphql_request("{ __schema { types { name } } }", None, None)
+            .await;
 
         // make sure schema now loaded and has new types
-        assert!(resp.status().is_success(), "Expected 200 OK");
-        let json_body: Value = from_slice(&test::read_body(resp).await).unwrap();
+        assert!(res.status().is_success(), "Expected 200 OK");
+        let json_body = res.json_body().await;
         let types_arr = json_body
             .get("data")
             .unwrap()
@@ -199,29 +197,29 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body(include_str!("../supergraph.graphql"))
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-              source: hive
-              endpoint: http://{host}/supergraph
-              key: dummy_key
-              poll_interval: 800ms
-        "#,
-        ))
-        .await
-        .expect("failed to start router");
+        let router = TestRouterBuilder::new()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: hive
+                    endpoint: http://{host}/supergraph
+                    key: dummy_key
+                    poll_interval: 800ms
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&app.app).await;
         mock1.assert();
 
-        let resp = test::call_service(
-            &app.app,
-            init_graphql_request("{ __schema { types { name } } }", None).to_request(),
-        )
-        .await;
+        let res = router
+            .send_graphql_request("{ __schema { types { name } } }", None, None)
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let json_body: Value = from_slice(&test::read_body(resp).await).unwrap();
+        let json_body = res.json_body().await;
         let types_arr = json_body
             .get("data")
             .unwrap()
@@ -237,14 +235,12 @@ mod hive_cdn_supergraph_e2e_tests {
         sleep(Duration::from_millis(900)).await;
         mock2.assert();
 
-        let resp = test::call_service(
-            &app.app,
-            init_graphql_request("{ __schema { types { name } } }", None).to_request(),
-        )
-        .await;
+        let res = router
+            .send_graphql_request("{ __schema { types { name } } }", None, None)
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
-        let json_body: Value = from_slice(&test::read_body(resp).await).unwrap();
+        assert!(res.status().is_success(), "Expected 200 OK");
+        let json_body = res.json_body().await;
         let types_arr = json_body
             .get("data")
             .unwrap()
@@ -254,7 +250,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .unwrap()
             .as_array()
             .unwrap();
-        assert_eq!(types_arr.len(), 17);
+        assert_eq!(types_arr.len(), 18);
     }
 
     #[ntex::test]
@@ -276,20 +272,25 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body("type Query { dummy: String }")
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-              source: hive
-              endpoint: http://{host}/supergraph
-              key: dummy_key
-              request_timeout: 100ms
-              retry_policy:
-                max_retries: 10
-        "#,
-        ))
-        .await
-        .expect("failed to start router");
+        let router = TestRouterBuilder::new()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: hive
+                    endpoint: http://{host}/supergraph
+                    key: dummy_key
+                    request_timeout: 100ms
+                    retry_policy:
+                        max_retries: 10
+                "#,
+            ))
+            .skip_wait_for_ready_on_start() // this one will time out after 3 seconds, we need more
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&app.app).await;
+        router.wait_for_ready(Some(Duration::from_secs(7))).await;
+
         one.assert();
         two.assert();
     }
@@ -304,28 +305,34 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_status(500)
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-              source: hive
-              endpoint: http://{host}/supergraph
-              key: dummy_key
-              poll_interval: 100ms
-              retry_policy:
-                max_retries: 3
-        "#,
-        ))
-        .await
-        .expect("failed to start router");
+        let router = TestRouterBuilder::new()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: hive
+                    endpoint: http://{host}/supergraph
+                    key: dummy_key
+                    poll_interval: 100ms
+                    retry_policy:
+                        max_retries: 3
+                "#,
+            ))
+            .skip_wait_for_healthy_on_start()
+            .skip_wait_for_ready_on_start()
+            .build()
+            .start()
+            .await;
 
+        // TODO: waiting for 7 seconds is hella long
         time::sleep(Duration::from_secs(7)).await;
 
-        // Health should be ok, readiness not
-        let req = test::TestRequest::get().uri("/health").to_request();
-        let response = app.call(req).await.expect("failed to check health");
-        assert!(response.status().is_success());
-        let req = test::TestRequest::get().uri("/readiness").to_request();
-        let response = app.call(req).await.expect("failed to check readiness");
-        assert!(response.status().is_server_error());
+        // Health should be ok,
+        let res = router.serv().get("/health").send().await.unwrap();
+        assert!(res.status().is_success());
+
+        // readiness not
+        let res = router.serv().get("/readiness").send().await.unwrap();
+        assert!(res.status().is_server_error());
 
         mock.assert();
     }
@@ -355,33 +362,29 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body(include_str!("../supergraph.graphql"))
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-              source: hive
-              endpoint:
-                - http://{host1}/supergraph
-                - http://{host2}/supergraph
-              key: dummy_key
-              retry_policy:
-                max_retries: 1
-        "#,
-        ))
-        .await
-        .expect("failed to start router");
+        let router = TestRouterBuilder::new()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: hive
+                    endpoint:
+                        - http://{host1}/supergraph
+                        - http://{host2}/supergraph
+                    key: dummy_key
+                    retry_policy:
+                        max_retries: 1
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&app.app).await;
+        let res = router
+            .send_graphql_request("{ __type(name: \"Product\") { name } }", None, None)
+            .await;
 
-        let resp = test::call_service(
-            &app.app,
-            init_graphql_request("{ __type(name: \"Product\") { name } }", None).to_request(),
-        )
-        .await;
-
-        assert!(resp.status().is_success(), "Expected 200 OK");
-        let json_body: Value =
-            from_slice(&test::read_body(resp).await).expect("failed to read body");
-        let json_str = sonic_rs::to_string_pretty(&json_body).expect("bad response");
-        insta::assert_snapshot!(json_str, @r#"
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "__type": {

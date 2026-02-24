@@ -1,6 +1,7 @@
-use async_graphql::{
-    ComplexObject, EmptyMutation, EmptySubscription, Object, Schema, SimpleObject, ID,
-};
+use std::time::Duration;
+
+use async_graphql::{ComplexObject, EmptyMutation, Object, Schema, SimpleObject, Subscription, ID};
+use futures::stream::{self, Stream};
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -167,8 +168,76 @@ impl Query {
     }
 }
 
-pub fn get_subgraph() -> Schema<Query, EmptyMutation, EmptySubscription> {
-    Schema::build(Query, EmptyMutation, EmptySubscription)
+pub struct Subscription;
+
+#[Subscription]
+impl Subscription {
+    async fn review_added(
+        &self,
+        #[graphql(default = 1)] step: usize,
+        #[graphql(default = 1_000)] interval_in_ms: u64,
+    ) -> impl Stream<Item = Review> {
+        stream::unfold(
+            (
+                0,
+                if interval_in_ms > 0 {
+                    Some(tokio::time::interval(Duration::from_millis(interval_in_ms)))
+                } else {
+                    None
+                },
+            ),
+            move |(i, mut interval)| async move {
+                match REVIEWS.get(i) {
+                    Some(review) => {
+                        if let Some(int) = &mut interval {
+                            int.tick().await;
+                        }
+                        Some((review.clone(), (i + step, interval)))
+                    }
+                    None => None,
+                }
+            },
+        )
+    }
+
+    async fn review_added_for_product(
+        &self,
+        product_upc: String,
+        #[graphql(default = 1_000)] interval_in_ms: u64,
+    ) -> impl Stream<Item = Review> {
+        let reviews_for_product: Vec<Review> = REVIEWS
+            .iter()
+            .filter(move |r| r.product.as_ref().unwrap().upc == product_upc)
+            .cloned()
+            .collect();
+
+        stream::unfold(
+            (
+                reviews_for_product,
+                0,
+                if interval_in_ms > 0 {
+                    Some(tokio::time::interval(Duration::from_millis(interval_in_ms)))
+                } else {
+                    None
+                },
+            ),
+            move |(reviews_for_product, i, mut interval)| async move {
+                match reviews_for_product.get(i) {
+                    Some(review) => {
+                        if let Some(int) = &mut interval {
+                            int.tick().await;
+                        }
+                        Some((review.clone(), (reviews_for_product, i + 1, interval)))
+                    }
+                    None => None,
+                }
+            },
+        )
+    }
+}
+
+pub fn get_subgraph() -> Schema<Query, EmptyMutation, Subscription> {
+    Schema::build(Query, EmptyMutation, Subscription)
         .enable_federation()
         .finish()
 }

@@ -2,6 +2,7 @@ use opentelemetry_proto::tonic::resource::v1::Resource;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{oneshot, Mutex};
 
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::{
@@ -483,6 +484,75 @@ impl OtlpCollector {
 
     pub async fn traces(&self) -> Vec<CollectedTrace> {
         self.storage.traces().await
+    }
+
+    /// Waits for at least `count` traces to be collected, returning all collected traces.
+    pub async fn wait_for_traces_count(&self, count: usize) -> Vec<CollectedTrace> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let traces = self.traces().await;
+
+                if traces.len() >= count {
+                    return traces;
+                }
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("waiting for traces with count timed out")
+    }
+
+    pub async fn wait_for_span_by_hive_kind_one(&self, hive_kind: &str) -> CollectedSpan {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let traces = self.traces().await;
+
+                let found = traces.into_iter().find_map(|trace| {
+                    trace.spans.into_iter().find(|span| {
+                        span.attributes
+                            .get("hive.kind")
+                            .map(|v| v == hive_kind)
+                            .unwrap_or(false)
+                    })
+                });
+                if let Some(span) = found {
+                    return span;
+                }
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("waiting for span by hive kind timed out")
+    }
+
+    /// Common insta filter settings for OTLP-related snapshots that filters
+    /// out unstable/dynamic values like ports and random keys.
+    //
+    // P.S. its a method only because of convenience not having to import another module
+    // or function from this file and instead just do `otel_collector.insta_filter_settings()`.
+    pub fn insta_filter_settings(&self) -> insta::Settings {
+        let mut settings = insta::Settings::new();
+
+        // keys
+        settings.add_filter(r"(hive\.inflight\.key:\s+)\d+", "$1[random]");
+
+        // addresses and ports
+        settings.add_filter(r"(server\.address:\s+)[\d.]+", "$1[address]");
+        settings.add_filter(r"(server\.port:\s+)\d+", "$1[port]");
+        settings.add_filter(
+            r"(url\.full:\s+http:\/\/)[\d.]+:\d+(.*)",
+            "$1[address]:[port]$2",
+        );
+        settings.add_filter(
+            r"(http\.url:\s+http:\/\/)[\d.]+:\d+(.*)",
+            "$1[address]:[port]$2",
+        );
+        settings.add_filter(r"(net\.peer\.name:\s+)[\d.]+", "$1[address]");
+        settings.add_filter(r"(net\.peer\.port:\s+)\d+", "$1[port]");
+
+        settings
     }
 }
 

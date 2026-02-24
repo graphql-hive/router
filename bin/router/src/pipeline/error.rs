@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use futures_util::stream;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_internal::graphql::ObservedError;
 use hive_router_plan_executor::{
@@ -10,7 +11,7 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
 };
-use http::{HeaderName, Method, StatusCode};
+use http::{header, HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError},
@@ -23,8 +24,12 @@ use crate::{
     pipeline::{
         authorization::AuthorizationError,
         body_read::ReadBodyStreamError,
-        header::{ResponseMode, SingleContentType},
+        header::{ResponseMode, SingleContentType, StreamContentType},
+        multipart_subscribe::{
+            self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
+        },
         progressive_override::LabelEvaluationError,
+        sse,
     },
 };
 
@@ -202,46 +207,81 @@ impl PipelineError {
     }
 
     pub fn into_response(self, response_mode: Option<ResponseMode>) -> web::HttpResponse {
-        let response_mode = response_mode.unwrap_or_default();
-        let prefer_ok = matches!(
-            response_mode,
-            ResponseMode::SingleOnly(SingleContentType::JSON)
-                | ResponseMode::Dual(SingleContentType::JSON, _)
-        );
-
-        let status = self.default_status_code(prefer_ok);
-
-        if let PipelineError::ValidationErrors(validation_errors) = self {
-            let validation_error_result = FailedExecutionResult {
-                errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-            };
-
-            return ResponseBuilder::new(status).json(&validation_error_result);
-        }
-
-        if let PipelineError::AuthorizationFailed(authorization_errors) = self {
-            let authorization_error_result = FailedExecutionResult {
-                errors: Some(
-                    authorization_errors
-                        .into_iter()
-                        .map(|error| error.into())
-                        .collect(),
-                ),
-            };
-
-            return ResponseBuilder::new(status).json(&authorization_error_result);
-        }
-
-        let code = self.graphql_error_code();
-        let message = self.graphql_error_message();
-
-        let graphql_error = GraphQLError::from_message_and_code(message, code);
-
-        let result = FailedExecutionResult {
-            errors: Some(vec![graphql_error]),
+        let errors = if let PipelineError::ValidationErrors(ref validation_errors) = self {
+            Some(validation_errors.iter().map(|error| error.into()).collect())
+        } else if let PipelineError::AuthorizationFailed(ref authorization_errors) = self {
+            Some(
+                authorization_errors
+                    .iter()
+                    .map(|error| error.clone().into())
+                    .collect(),
+            )
+        } else {
+            let code = self.graphql_error_code();
+            let message = self.graphql_error_message();
+            let graphql_error = GraphQLError::from_message_and_code(message, code);
+            Some(vec![graphql_error])
         };
 
-        ResponseBuilder::new(status).json(&result)
+        let data = sonic_rs::to_vec(&FailedExecutionResult { errors }).unwrap_or_else(|_| {
+            // should never happen. result should always serialize - but hey, no unwraps
+            tracing::error!("Failed to serialize pipeline error to response: {}", self);
+            sonic_rs::to_vec(&FailedExecutionResult {
+                errors: Some(vec![GraphQLError::from_message_and_code(
+                    "Failed to serialize error response",
+                    "INTERNAL_SERVER_ERROR",
+                )]),
+            })
+            .unwrap()
+        });
+
+        match response_mode.unwrap_or_default() {
+            ResponseMode::SingleOnly(single_content_type)
+            | ResponseMode::Dual(single_content_type, _) => {
+                let status =
+                    self.default_status_code(single_content_type == SingleContentType::JSON);
+                ResponseBuilder::new(status)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(data)
+            }
+            ResponseMode::StreamOnly(StreamContentType::IncrementalDelivery) => {
+                ResponseBuilder::new(StatusCode::OK)
+                    .header(
+                        header::CONTENT_TYPE,
+                        http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE),
+                    )
+                    .streaming(multipart_subscribe::create_incremental_delivery_stream(
+                        Box::pin(stream::once(async move { data })),
+                    ))
+            }
+            ResponseMode::StreamOnly(StreamContentType::SSE) => {
+                ResponseBuilder::new(StatusCode::OK)
+                    .header(
+                        header::CONTENT_TYPE,
+                        http::HeaderValue::from_static("text/event-stream"),
+                    )
+                    .streaming(sse::create_stream(
+                        Box::pin(stream::once(async move { data })),
+                        std::time::Duration::from_secs(10),
+                    ))
+            }
+            ResponseMode::StreamOnly(StreamContentType::ApolloMultipartHTTP) => {
+                ResponseBuilder::new(StatusCode::OK)
+                    .header(
+                        header::CONTENT_TYPE,
+                        http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE),
+                    )
+                    .streaming(multipart_subscribe::create_apollo_multipart_http_stream(
+                        Box::pin(stream::once(async move { data })),
+                        std::time::Duration::from_secs(10),
+                    ))
+            }
+            ResponseMode::GraphiQL => {
+                unreachable!(
+                    "GraphiQL can not be a response mode because GraphiQL requests can not execute operations"
+                )
+            }
+        }
     }
 }
 
