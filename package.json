@@ -7,7 +7,7 @@
     "lib/node-addon",
     "docs/generator"
   ],
-  "packageManager": "npm@11.10.0",
+  "packageManager": "npm@11.10.1",
   "devDependencies": {
     "cross-spawn": "7.0.6",
     "qs": "6.15.0"
