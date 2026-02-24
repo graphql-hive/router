@@ -33,7 +33,7 @@ use subgraphs::subgraphs_app;
 macro_rules! some_header_map {
     ($($key:expr => $val:expr),* $(,)?) => {{
         let mut map = ::http::HeaderMap::new();
-        $(map.insert($key, $val.parse().unwrap());)*
+        $(map.insert($key, $val.parse().expect("failed to parse header value"));)*
         Some(map)
     }};
 }
@@ -389,7 +389,8 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
     }
 
     pub fn inline_config(mut self, config_yaml: impl Into<String>) -> Self {
-        let router_config = parse_yaml_config(config_yaml.into()).unwrap();
+        let router_config =
+            parse_yaml_config(config_yaml.into()).expect("failed to parse inline YAML config");
         self.config = Some(router_config);
         self
     }
@@ -690,11 +691,12 @@ pub trait ClientResponseExt {
 
 impl ClientResponseExt for ClientResponse {
     async fn json_body(&self) -> sonic_rs::Value {
-        let body = self.body().await.unwrap();
-        sonic_rs::from_slice(&body).unwrap()
+        let body = self.body().await.expect("failed to read request body");
+        sonic_rs::from_slice(&body).expect("failed to parse request body to JSON")
     }
 
     async fn json_body_string_pretty(&self) -> String {
-        sonic_rs::to_string_pretty(&self.json_body().await).unwrap()
+        sonic_rs::to_string_pretty(&self.json_body().await)
+            .expect("failed to pretty print JSON body")
     }
 }
