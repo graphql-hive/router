@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -25,27 +25,37 @@
       type="image/x-icon"
       href="https://the-guild.dev/favicon.ico"
     />
-    <link
-      crossorigin
-      rel="stylesheet"
-      href="https://unpkg.com/@graphql-yoga/graphiql/dist/graphiql.css"
-    />
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+      }
+    </style>
   </head>
   <body id="body" class="no-focus-outline">
     <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root">Loading GraphiQL...</div>
+    <div id="root"></div>
     <script>
       function prepareBlob(workerContent) {
-        const blob = new Blob([workerContent], { type: 'application/javascript' });
+        const blob = new Blob([workerContent], {
+          type: "application/javascript",
+        });
         return URL.createObjectURL(blob);
       }
       const workers = {};
       const workerUrls = {
         editorWorkerService:
-          'https://unpkg.com/@graphql-yoga/graphiql/dist/monacoeditorwork/editor.worker.bundle.js',
-        json: 'https://unpkg.com/@graphql-yoga/graphiql/dist/monacoeditorwork/json.worker.bundle.js',
+          "https://unpkg.com/@graphql-hive/laboratory@1.0.0-alpha-20260224193414-92a02da385cd5d3be81cf73fe81737e00836eacd/dist/monacoeditorwork/editor.worker.bundle.js",
+        typescript:
+          "https://unpkg.com/@graphql-hive/laboratory@1.0.0-alpha-20260224193414-92a02da385cd5d3be81cf73fe81737e00836eacd/dist/monacoeditorwork/ts.worker.bundle.js",
+        json: "https://unpkg.com/@graphql-hive/laboratory@1.0.0-alpha-20260224193414-92a02da385cd5d3be81cf73fe81737e00836eacd/dist/monacoeditorwork/json.worker.bundle.js",
         graphql:
-          'https://unpkg.com/@graphql-yoga/graphiql/dist/monacoeditorwork/graphql.worker..bundle.js',
+          "https://unpkg.com/@graphql-hive/laboratory@1.0.0-alpha-20260224193414-92a02da385cd5d3be81cf73fe81737e00836eacd/dist/monacoeditorwork/graphql.worker..bundle.js",
       };
       function prepareWorkers() {
         return Promise.all(
@@ -53,22 +63,20 @@
             const res = await fetch(url);
             const text = await res.text();
             workers[label] = prepareBlob(text);
-          }),
+          })
         );
       }
-      self['MonacoEnvironment'] = {
+      self["MonacoEnvironment"] = {
         globalAPI: false,
         getWorkerUrl: function (moduleId, label) {
           return workers[label];
         },
       };
     </script>
-    <script src="https://unpkg.com/@graphql-yoga/graphiql/dist/yoga-graphiql.umd.js"></script>
+    <script src="https://unpkg.com/@graphql-hive/laboratory@1.0.0-alpha-20260224193414-92a02da385cd5d3be81cf73fe81737e00836eacd/dist/hive-laboratory.umd.js"></script>
     <script>
       prepareWorkers().finally(() => {
-        YogaGraphiQL.renderYogaGraphiQL(root, {
-          title: "Hive Router GraphiQL",
-        });
+        HiveLaboratory.renderLaboratory(root);
       });
     </script>
   </body>
