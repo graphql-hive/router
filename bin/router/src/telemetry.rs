@@ -77,7 +77,7 @@ impl Telemetry {
     /// Used only for tests because of the global static MAX_LEVEL in tracing, which makes it
     /// impossible to have concurrent telemetry-enabled and telemetry-disabled tests without
     /// affecting each other.
-    #[cfg(test)]
+    #[cfg(feature = "testing")]
     pub fn init_testing_subscriber(
         config: &HiveRouterConfig,
     ) -> Result<(Self, impl tracing::Subscriber), TelemetryInitError> {

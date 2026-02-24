@@ -60,11 +60,12 @@ async fn test_otlp_http_trace_context_propagation() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    let all_traces = otlp_collector.wait_for_traces_count(1).await;
-    let trace = all_traces.first().unwrap();
-
-    let http_server_span = trace.span_by_hive_kind_one("http.server");
-    let http_client_span = trace.span_by_hive_kind_one("http.client");
+    let http_server_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.server")
+        .await;
+    let http_client_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.client")
+        .await;
 
     // Verify that http.server has corrent parent span,
     // the one from upstream traceparent

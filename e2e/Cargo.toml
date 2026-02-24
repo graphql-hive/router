@@ -30,7 +30,7 @@ dashmap = { workspace = true }
 axum = "0.8.4"
 bytes = "1.10.1"
 
-hive-router = { path = "../bin/router" }
+hive-router = { path = "../bin/router", features = ["testing"] }
 hive-router-config = { path = "../lib/router-config" }
 hive-router-plan-executor = { path = "../lib/executor" }
 hive-router-internal = { path = "../lib/internal" }
