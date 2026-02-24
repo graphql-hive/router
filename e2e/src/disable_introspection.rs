@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod disable_introspection_e2e_tests {
-    use sonic_rs::{to_string_pretty, Value};
-
-    use crate::testkit::{some_header_map, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{
+        some_header_map, ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
+    };
 
     #[ntex::test]
     async fn should_disable_based_on_env_var() {
@@ -23,10 +23,7 @@ mod disable_introspection_e2e_tests {
             .send_graphql_request("{ __schema { queryType { name } } }", None, None)
             .await;
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
         {
           "errors": [
             {
@@ -59,10 +56,7 @@ mod disable_introspection_e2e_tests {
             .send_graphql_request("{ __schema { queryType { name } } }", None, None)
             .await;
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "__schema": {
@@ -95,10 +89,7 @@ mod disable_introspection_e2e_tests {
             )
             .await;
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
         {
           "errors": [
             {
@@ -132,10 +123,7 @@ mod disable_introspection_e2e_tests {
             )
             .await;
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "__schema": {
