@@ -90,7 +90,7 @@ impl Telemetry {
                 (Some(layer), Some(provider))
             }
             None => {
-                // skip calling disabling tracing when config has no telemetry enabled.
+                // skip disabling tracing when config has no telemetry enabled.
                 // set_tracing_enabled() writes to a global static atomic (MAX_LEVEL). when
                 // runnin no-telemetry tests, it will disable span creation process-wide and
                 // break any concurrent yes-telemetry tests that expect traces.
@@ -98,6 +98,10 @@ impl Telemetry {
                 // yeah this is hacky but it's necessary because of the MAX_LEVEL global static,
                 // if we were to make MAX_LEVEL thread-local, it would hurt performance and
                 // the only place we need MAX_LEVEL to be thread-local is in tests...
+                //
+                // instead, we simply leave the MAX_LEVEL untouched, even when telemetry is disabled.
+                // this has no impact because when telemetry is disabled, the otel_layer will be None
+                // and wont create or export any traces/spans
                 //
                 // set_tracing_enabled(false);
                 (None, None)
