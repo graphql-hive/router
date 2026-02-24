@@ -783,7 +783,7 @@ async fn test_otlp_no_trace_id_collision() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -821,11 +821,10 @@ async fn test_otlp_no_trace_id_collision() {
     .await;
 
     // Wait for exports to be sent
-    let all_traces = otlp_collector.wait_for_traces().await;
-    println!("all_traces: {}", all_traces.len());
-    let first_trace = all_traces.first().expect("Failed to get first trace");
-    let second_trace = all_traces.get(1).expect("Failed to get second trace");
-    let third_trace = all_traces.get(2).expect("Failed to get third trace");
+    let all_traces = otlp_collector.wait_for_traces_count(3).await;
+    let first_trace = all_traces.first().unwrap();
+    let second_trace = all_traces.get(1).unwrap();
+    let third_trace = all_traces.get(2).unwrap();
 
     assert_ne!(first_trace.id, second_trace.id);
     assert_ne!(second_trace.id, third_trace.id);

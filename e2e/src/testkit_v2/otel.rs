@@ -508,6 +508,23 @@ impl OtlpCollector {
         .expect("waiting for traces timed out")
     }
 
+    /// Waits for at least `count` traces to be collected, returning all collected traces.
+    pub async fn wait_for_traces_count(&self, count: usize) -> Vec<CollectedTrace> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let traces = self.traces().await;
+
+                if traces.len() >= count {
+                    return traces;
+                }
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("waiting for traces with count timed out")
+    }
+
     pub async fn wait_for_span_by_hive_kind_one(&self, hive_kind: &str) -> CollectedSpan {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
