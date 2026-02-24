@@ -12,7 +12,7 @@ use hive_router_internal::telemetry::{
     TelemetryContext,
 };
 use tracing_subscriber::{filter::filter_fn, util::SubscriberInitExt};
-use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, Layer, Registry};
+use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, Layer};
 use tracing_subscriber::{
     fmt::{self},
     layer::SubscriberExt,
@@ -81,6 +81,8 @@ impl Telemetry {
     pub fn init_testing_subscriber(
         config: &HiveRouterConfig,
     ) -> Result<(Self, impl tracing::Subscriber), TelemetryInitError> {
+        use tracing_subscriber::Registry;
+
         let otel_layer_result =
             build_otel_layer_from_config(&config.telemetry, RandomIdGenerator::default())?;
 
