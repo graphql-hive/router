@@ -537,8 +537,8 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
     pub async fn start(mut self) -> TestRouter<'subgraphs, Started> {
         init_rustls_crypto_provider();
         let config = self.config.take().unwrap();
-        let (telemetry, subscriber) =
-            Telemetry::init_subscriber(&config).expect("failed to initialize telemetry subscriber");
+        let (telemetry, subscriber) = Telemetry::init_testing_subscriber(&config)
+            .expect("failed to initialize telemetry subscriber");
         let subscription_guard = tracing::subscriber::set_default(subscriber);
 
         let mut bg_tasks_manager = BackgroundTasksManager::new();

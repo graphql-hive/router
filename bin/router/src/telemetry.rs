@@ -12,7 +12,7 @@ use hive_router_internal::telemetry::{
     TelemetryContext,
 };
 use tracing_subscriber::{filter::filter_fn, util::SubscriberInitExt};
-use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, Layer, Registry};
+use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, Layer};
 use tracing_subscriber::{
     fmt::{self},
     layer::SubscriberExt,
@@ -73,10 +73,16 @@ impl Telemetry {
         })
     }
 
-    /// Initializes telemetry for cases where the subscriber should not be set globally
-    pub fn init_subscriber(
+    /// Initializes telemetry for cases where the subscriber should not be set globally.
+    /// Used only for tests because of the global static MAX_LEVEL in tracing, which makes it
+    /// impossible to have concurrent telemetry-enabled and telemetry-disabled tests without
+    /// affecting each other.
+    #[cfg(test)]
+    pub fn init_testing_subscriber(
         config: &HiveRouterConfig,
     ) -> Result<(Self, impl tracing::Subscriber), TelemetryInitError> {
+        use tracing_subscriber::Registry;
+
         let otel_layer_result =
             build_otel_layer_from_config(&config.telemetry, RandomIdGenerator::default())?;
 
@@ -86,7 +92,16 @@ impl Telemetry {
                 (Some(layer), Some(provider))
             }
             None => {
-                set_tracing_enabled(false);
+                // skip calling disabling tracing when config has no telemetry enabled.
+                // set_tracing_enabled() writes to a global static atomic (MAX_LEVEL). when
+                // runnin no-telemetry tests, it will disable span creation process-wide and
+                // break any concurrent yes-telemetry tests that expect traces.
+                //
+                // yeah this is hacky but it's necessary because of the MAX_LEVEL global static,
+                // if we were to make MAX_LEVEL thread-local, it would hurt performance and
+                // the only place we need MAX_LEVEL to be thread-local is in tests...
+                //
+                // set_tracing_enabled(false);
                 (None, None)
             }
         };
