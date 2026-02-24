@@ -1,34 +1,48 @@
 #[cfg(test)]
 mod error_handling_e2e_tests {
-    use ntex::web::test;
     use sonic_rs::{from_slice, to_string_pretty, Value};
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
-    };
+    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn should_continue_execution_when_a_subgraph_is_down() {
-        let subgraphs_server = SubgraphsServer::start_with_port(4100).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs_addr = subgraphs.addr();
 
-        // In the config file, we point the `products` subgraph to a non-existing server
-        // to simulate a subgraph being down.
-        let app = init_router_from_config_file("configs/error_handling.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            // we dont set subgraphs avoiding the port change in the supergrph.
+            // we want this because we are here testing the overrides
+            // .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  override_subgraph_urls:
+                    accounts:
+                      url: "http://{subgraphs_addr}/accounts"
+                    reviews:
+                      url: "http://{subgraphs_addr}/reviews"
+                    products:
+                      url: "http://0.0.0.0:1000/products"
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request("{ me { reviews { id product { upc name } } } }", None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request("{ me { reviews { id product { upc name } } } }", None, None)
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
-        let resp_body_bytes = test::read_body(resp).await;
-        let resp_json: Value = from_slice(&resp_body_bytes).expect("expected valid JSON response");
+        assert!(res.status().is_success(), "Expected 200 OK");
+        let body = res.body().await.unwrap();
+        let body_json: Value = from_slice(&body).expect("expected valid JSON response");
 
         // Router cannot fetch `name` field from `products` subgraph because it's down,
         // but it should still return the rest of the data from `accounts` subgraph.
         insta::assert_snapshot!(
-            to_string_pretty(&resp_json).unwrap(),
+            to_string_pretty(&body_json).unwrap(),
             @r###"
         {
           "data": {
@@ -53,7 +67,7 @@ mod error_handling_e2e_tests {
           },
           "errors": [
             {
-              "message": "Failed to send request to subgraph \"http://0.0.0.0:9876/products\": client error (Connect)",
+              "message": "Failed to send request to subgraph \"http://0.0.0.0:1000/products\": client error (Connect)",
               "extensions": {
                 "code": "SUBGRAPH_REQUEST_FAILURE",
                 "serviceName": "products",
@@ -66,9 +80,8 @@ mod error_handling_e2e_tests {
         );
 
         assert_eq!(
-            subgraphs_server
-                .get_subgraph_requests_log("accounts")
-                .await
+            subgraphs
+                .get_requests_log("accounts")
                 .expect("expected requests sent to accounts subgraph")
                 .len(),
             1,

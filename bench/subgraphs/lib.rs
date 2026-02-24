@@ -22,8 +22,6 @@ use tokio::{
     task::JoinHandle,
 };
 
-extern crate lazy_static;
-
 async fn delay_middleware(req: Request, next: Next) -> Response {
     let delay_ms: Option<u64> = std::env::var("SUBGRAPH_DELAY_MS")
         .ok()
@@ -110,30 +108,12 @@ pub fn start_subgraphs_server(
         health_check_url: format!("http://{}:{}/health", host, port),
     });
 
-    let app = Router::new()
-        .route(
-            "/accounts",
-            post_service(GraphQL::new(accounts::get_subgraph())),
-        )
-        .route(
-            "/inventory",
-            post_service(GraphQL::new(inventory::get_subgraph())),
-        )
-        .route(
-            "/products",
-            post_service(GraphQL::new(products::get_subgraph())),
-        )
-        .route(
-            "/reviews",
-            post_service(GraphQL::new(reviews::get_subgraph())),
-        )
-        .layer(middleware::from_fn_with_state(
-            shared_state.clone(),
-            track_requests,
-        ))
-        .route("/health", get(health_check_handler))
-        .route_layer(middleware::from_fn(add_subgraph_header))
-        .route_layer(middleware::from_fn(delay_middleware));
+    let mut app = subgraphs_app();
+    app = app.layer(middleware::from_fn_with_state(
+        shared_state.clone(),
+        track_requests,
+    ));
+    app = app.route("/health", get(health_check_handler));
 
     println!("Starting server on http://{}:{}", host, port);
 
@@ -153,4 +133,26 @@ pub fn start_subgraphs_server(
     });
 
     (server_handle, shutdown_tx, shared_state)
+}
+
+pub fn subgraphs_app() -> Router<()> {
+    Router::new()
+        .route(
+            "/accounts",
+            post_service(GraphQL::new(accounts::get_subgraph())),
+        )
+        .route(
+            "/inventory",
+            post_service(GraphQL::new(inventory::get_subgraph())),
+        )
+        .route(
+            "/products",
+            post_service(GraphQL::new(products::get_subgraph())),
+        )
+        .route(
+            "/reviews",
+            post_service(GraphQL::new(reviews::get_subgraph())),
+        )
+        .route_layer(middleware::from_fn(add_subgraph_header))
+        .route_layer(middleware::from_fn(delay_middleware))
 }

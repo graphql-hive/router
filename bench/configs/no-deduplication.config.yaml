@@ -1,9 +1,0 @@
-# yaml-language-server: $schema=../../router-config.schema.json
-supergraph:
-  source: file
-  path: ../supergraph.graphql
-log:
-  level: info
-traffic_shaping:
-  all:
-    dedupe_enabled: false

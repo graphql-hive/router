@@ -1,14 +1,10 @@
 #[cfg(test)]
 mod jwt_e2e_tests {
     use jsonwebtoken::{encode, Algorithm, EncodingKey};
-    use ntex::http::header;
-    use ntex::web::test;
-    use sonic_rs::{from_slice, json, JsonValueTrait, Value};
+    use sonic_rs::{json, JsonValueTrait, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
-    };
+    use crate::testkit::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder};
 
     fn generate_jwt(payload: &Value) -> String {
         generate_jwt_with_alg(payload, jsonwebtoken::Algorithm::RS512)
@@ -31,11 +27,14 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn should_forward_claims_to_subgraph_via_extensions() {
-        let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth_forward.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth_forward.router.yaml")
+            .build()
+            .start()
+            .await;
+
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -48,17 +47,20 @@ mod jwt_e2e_tests {
         });
         let token = generate_jwt(&claims);
 
-        let req = init_graphql_request("{ users { id } }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request(
+                "{ users { id } }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
             .expect("expected requests sent to accounts subgraph");
         assert_eq!(
             subgraph_requests.len(),
@@ -66,18 +68,28 @@ mod jwt_e2e_tests {
             "expected 1 request to accounts subgraph"
         );
 
-        let extensions = subgraph_requests[0].request_body.get("extensions").unwrap();
+        let body: Value = sonic_rs::from_slice(
+            subgraph_requests[0]
+                .body
+                .as_ref()
+                .expect("expected request body"),
+        )
+        .expect("expected valid JSON body");
+        let extensions = body.get("extensions").unwrap();
 
         assert_eq!(extensions.get("jwt").unwrap(), &claims);
     }
 
     #[ntex::test]
     async fn should_allow_expressions_to_access_jwt_details() {
-        let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth_header_expression.router.yaml")
+            .build()
+            .start()
+            .await;
+
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -91,21 +103,25 @@ mod jwt_e2e_tests {
         let token = generate_jwt(&claims);
 
         // First request with a valid token
-        let req = init_graphql_request("{ users { id } }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ users { id } }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
         // Second request that is not authenticated at all
-        let req = init_graphql_request("{ users { id } }", None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
             .expect("expected requests sent to accounts subgraph");
         assert_eq!(
             subgraph_requests.len(),
@@ -136,77 +152,87 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn should_allow_expressions_to_access_jwt_scopes() {
-        let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth_header_expression.router.yaml")
+            .build()
+            .start()
+            .await;
 
         // First request with a token and "scope: read:accounts"
-        let req = init_graphql_request("{ users { id } }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!(
-                "Bearer {}",
-                generate_jwt(&json!({
-                    "sub": "user1",
-                    "iat": 1516239022,
-                    "exp": SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        + 3600,
-                    "scope": "read:accounts write:accounts"
-                }))
-            ))
-            .unwrap(),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ users { id } }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!(
+                        "Bearer {}",
+                        generate_jwt(&json!({
+                            "sub": "user1",
+                            "iat": 1516239022,
+                            "exp": SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs()
+                                + 3600,
+                            "scope": "read:accounts write:accounts"
+                        }))
+                    )
+                },
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
         // Second request with other scopes
-        let req = init_graphql_request("{ users { id } }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!(
-                "Bearer {}",
-                generate_jwt(&json!({
-                    "sub": "user2",
-                    "iat": 1516239022,
-                    "exp": SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        + 3600,
-                    "scope": "do:something_else"
-                }))
-            ))
-            .unwrap(),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ users { id } }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!(
+                        "Bearer {}",
+                        generate_jwt(&json!({
+                            "sub": "user2",
+                            "iat": 1516239022,
+                            "exp": SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs()
+                                + 3600,
+                            "scope": "do:something_else"
+                        }))
+                    )
+                },
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
         // Third request with no scopes
-        let req = init_graphql_request("{ users { id } }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!(
-                "Bearer {}",
-                generate_jwt(&json!({
-                    "sub": "user3",
-                    "iat": 1516239022,
-                    "exp": SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        + 3600,
-                }))
-            ))
-            .unwrap(),
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request(
+                "{ users { id } }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!(
+                        "Bearer {}",
+                        generate_jwt(&json!({
+                            "sub": "user3",
+                            "iat": 1516239022,
+                            "exp": SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs()
+                                + 3600,
+                        }))
+                    )
+                },
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
             .expect("expected requests sent to accounts subgraph");
         assert_eq!(
             subgraph_requests.len(),
@@ -248,20 +274,23 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_without_token_when_auth_is_required() {
-        let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
-        let req = init_graphql_request("{ __typename }", None).to_request();
-        let resp = test::call_service(&app.app, req).await;
+        let router = TestRouterBuilder::new()
+            .file_config("configs/jwt_auth.router.yaml")
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ __typename }", None, None)
+            .await;
 
         assert_eq!(
-            resp.status(),
+            res.status(),
             ntex::http::StatusCode::UNAUTHORIZED,
             "Expected 401 Unauthorized"
         );
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         assert_eq!(
             json_body["errors"][0]["message"],
@@ -275,24 +304,29 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_malformed_token() {
-        let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
-        let req = init_graphql_request("{ __typename }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_static("Bearer not-a-valid-jwt"),
-        );
+        let router = TestRouterBuilder::new()
+            .file_config("configs/jwt_auth.router.yaml")
+            .build()
+            .start()
+            .await;
 
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request(
+                "{ __typename }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => "Bearer not-a-valid-jwt"
+                },
+            )
+            .await;
 
         assert_eq!(
-            resp.status(),
+            res.status(),
             ntex::http::StatusCode::FORBIDDEN,
             "Expected 403 Forbidden"
         );
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         assert_eq!(
             json_body["errors"][0]["message"],
@@ -306,22 +340,27 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_invalid_signature() {
-        let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            .file_config("configs/jwt_auth.router.yaml")
+            .build()
+            .start()
+            .await;
+
         // This token is valid but signed with a different, unknown key.
         let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
 
-        let req = init_graphql_request("{ __typename }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
-
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request(
+                "{ __typename }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
 
         assert_eq!(
-            resp.status(),
+            res.status(),
             ntex::http::StatusCode::FORBIDDEN,
             "Expected 403 Forbidden"
         );
@@ -329,10 +368,12 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn accepts_request_with_valid_token() {
-        let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            .file_config("configs/jwt_auth.router.yaml")
+            .build()
+            .start()
+            .await;
+
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -345,28 +386,33 @@ mod jwt_e2e_tests {
         });
         let token = generate_jwt(&claims);
 
-        let req = init_graphql_request("{ __typename }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
-
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request(
+                "{ __typename }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
 
         assert!(
-            resp.status().is_success(),
+            res.status().is_success(),
             "Expected 2xx status for valid token"
         );
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
         assert_eq!(json_body["data"]["__typename"], "Query");
     }
 
     #[ntex::test]
     async fn accepts_request_with_valid_token_jwk_with_alg() {
-        let app = init_router_from_config_file("configs/jwt_auth_jwk_with_alg.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            .file_config("configs/jwt_auth_jwk_with_alg.router.yaml")
+            .build()
+            .start()
+            .await;
+
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -379,29 +425,32 @@ mod jwt_e2e_tests {
         });
         let token = generate_jwt(&claims);
 
-        let req = init_graphql_request("{ __typename }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
-
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request(
+                "{ __typename }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
 
         assert!(
-            resp.status().is_success(),
+            res.status().is_success(),
             "Expected 2xx status for valid token with JWK that specifies alg"
         );
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
         assert_eq!(json_body["data"]["__typename"], "Query");
     }
 
     #[ntex::test]
     async fn rejects_request_with_expired_token() {
-        let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
-            .await
-            .unwrap();
-
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            .file_config("configs/jwt_auth.router.yaml")
+            .build()
+            .start()
+            .await;
 
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -415,14 +464,18 @@ mod jwt_e2e_tests {
         });
         let token = generate_jwt(&claims);
 
-        let req = init_graphql_request("{ __typename }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
+        let res = router
+            .send_graphql_request(
+                "{ __typename }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
 
-        let resp = test::call_service(&app.app, req.to_request()).await;
         assert_eq!(
-            resp.status(),
+            res.status(),
             ntex::http::StatusCode::FORBIDDEN,
             "Expected 403 for expired token"
         );
@@ -430,21 +483,30 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_wrong_issuer() {
-        let app = init_router_from_config_file("configs/jwt_auth_issuer.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
-        let claims = json!({ "iss": "wrong-issuer", "exp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600 });
+        let router = TestRouterBuilder::new()
+            .file_config("configs/jwt_auth_issuer.router.yaml")
+            .build()
+            .start()
+            .await;
+
+        let claims = json!({
+            "iss": "wrong-issuer",
+            "exp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600,
+        });
         let token = generate_jwt(&claims);
 
-        let req = init_graphql_request("{ __typename }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
+        let res = router
+            .send_graphql_request(
+                "{ __typename }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
 
-        let resp = test::call_service(&app.app, req.to_request()).await;
         assert_eq!(
-            resp.status(),
+            res.status(),
             ntex::http::StatusCode::FORBIDDEN,
             "Expected 403 for wrong issuer"
         );
@@ -452,21 +514,30 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_wrong_audience() {
-        let app = init_router_from_config_file("configs/jwt_auth_audience.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
-        let claims = json!({ "aud": "wrong-audience", "exp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600 });
+        let router = TestRouterBuilder::new()
+            .file_config("configs/jwt_auth_audience.router.yaml")
+            .build()
+            .start()
+            .await;
+
+        let claims = json!({
+            "aud": "wrong-audience",
+            "exp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600,
+        });
         let token = generate_jwt(&claims);
 
-        let req = init_graphql_request("{ __typename }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
+        let res = router
+            .send_graphql_request(
+                "{ __typename }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
 
-        let resp = test::call_service(&app.app, req.to_request()).await;
         assert_eq!(
-            resp.status(),
+            res.status(),
             ntex::http::StatusCode::FORBIDDEN,
             "Expected 403 for wrong audience"
         );
@@ -474,10 +545,12 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_wrong_algorithm() {
-        let app = init_router_from_config_file("configs/jwt_auth_jwk_with_alg.router.yaml")
-            .await
-            .unwrap();
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            .file_config("configs/jwt_auth_jwk_with_alg.router.yaml")
+            .build()
+            .start()
+            .await;
+
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -492,14 +565,18 @@ mod jwt_e2e_tests {
         // Expects valid alg to be RS512 from config
         let token = generate_jwt_with_alg(&claims, jsonwebtoken::Algorithm::RS256);
 
-        let req = init_graphql_request("{ __typename }", None).header(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
+        let res = router
+            .send_graphql_request(
+                "{ __typename }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
 
-        let resp = test::call_service(&app.app, req.to_request()).await;
         assert_eq!(
-            resp.status(),
+            res.status(),
             ntex::http::StatusCode::FORBIDDEN,
             "Expected 403 for wrong algorithm"
         );

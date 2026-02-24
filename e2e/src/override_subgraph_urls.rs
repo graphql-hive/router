@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod override_subgraph_urls_e2e_tests {
-    use ntex::web::test;
     use sonic_rs::{from_slice, Value};
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
+    use crate::{
+        some_header_map,
+        testkit::{TestRouterBuilder, TestSubgraphsBuilder},
     };
 
     #[ntex::test]
@@ -13,22 +13,32 @@ mod override_subgraph_urls_e2e_tests {
     /// The router config overrides the URL for the "accounts" subgraph to point to 4100.
     /// This way we can verify that the override is applied correctly.
     async fn should_override_subgraph_url_based_on_static_value() {
-        let subgraphs_server = SubgraphsServer::start_with_port(4100).await;
-        let app = init_router_from_config_file(
-            "configs/override_subgraph_urls/override_static.router.yaml",
-        )
-        .await
-        .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs_addr = subgraphs.addr();
 
-        let req = init_graphql_request("{ users { id } }", None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let router = TestRouterBuilder::new()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{subgraphs_addr}/accounts"
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
             .expect("expected requests sent to accounts subgraph");
         assert_eq!(
             subgraph_requests.len(),
@@ -45,22 +55,45 @@ mod override_subgraph_urls_e2e_tests {
     /// This way we can verify that the override is applied correctly.
     /// Without the header, the request goes to 4200 and fail (thanks to `.default`).
     async fn should_override_subgraph_url_based_on_header_value() {
-        let subgraphs_server = SubgraphsServer::start_with_port(4100).await;
-        let app = init_router_from_config_file(
-            "configs/override_subgraph_urls/override_dynamic_header.router.yaml",
-        )
-        .await
-        .unwrap();
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs_addr = subgraphs.addr();
+
+        let router = TestRouterBuilder::new()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                override_subgraph_urls:
+                    accounts:
+                        url:
+                            expression: |
+                                if .request.headers."x-accounts-port" == "4100" {{
+                                    "http://{subgraphs_addr}/accounts"
+                                }} else {{
+                                    .default
+                                }}
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
+
         // Makes the expression to evaluate to port 4100
-        let req = init_graphql_request("{ users { id } }", None).header("x-accounts-port", "4100");
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request(
+                "{ users { id } }",
+                None,
+                some_header_map! {
+                    "x-accounts-port" => "4100"
+                },
+            )
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
             .expect("expected requests sent to accounts subgraph");
         assert_eq!(
             subgraph_requests.len(),
@@ -70,12 +103,12 @@ mod override_subgraph_urls_e2e_tests {
 
         // Makes the expression to evaluate to port 4200 (value of .default)
         // which is not running, so the request fails
-        let req = init_graphql_request("{ users { id } }", None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        assert!(res.status().is_success(), "Expected 200 OK");
+        let json_body: Value = from_slice(&res.body().await.unwrap()).unwrap();
 
         insta::assert_snapshot!(sonic_rs::to_string_pretty(&json_body).unwrap(), @r#"
         {
@@ -94,9 +127,8 @@ mod override_subgraph_urls_e2e_tests {
         }
         "#);
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
             .expect("expected requests sent to accounts subgraph");
         assert_eq!(
             subgraph_requests.len(),

@@ -1,27 +1,31 @@
 #[cfg(test)]
 mod max_directives_e2e_tests {
-    use ntex::web::test;
-    use sonic_rs::{from_slice, to_string_pretty, Value};
+    use sonic_rs::{to_string_pretty, Value};
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
-    };
+    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn allows_query_within_max_directives() {
-        let _subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_inline(
-            r#"
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+            source: file
+            path: supergraph.graphql
         limits:
             max_directives:
                 n: 8
         "#,
-        )
-        .await
-        .unwrap();
-        wait_for_readiness(&app.app).await;
-        let req = init_graphql_request(
-            "query { 
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                "query {
                 __typename @include(if: true)
                 me @skip(if: false) {
                     __typename @include(if: true)
@@ -31,13 +35,14 @@ mod max_directives_e2e_tests {
                     }
                 }
             }",
-            None,
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
         {
           "data": {
@@ -61,20 +66,26 @@ mod max_directives_e2e_tests {
 
     #[ntex::test]
     async fn rejects_query_exceeding_max_directives() {
-        let _subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_inline(
-            r#"
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+            source: file
+            path: supergraph.graphql
         limits:
             max_directives:
                 n: 5
         "#,
-        )
-        .await
-        .unwrap();
-        wait_for_readiness(&app.app).await;
+            )
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(
-            "query { 
+        let res = router
+            .send_graphql_request(
+                "query {
                 __typename @include(if: true)
                 me @skip(if: false) {
                     __typename @include(if: true)
@@ -84,12 +95,13 @@ mod max_directives_e2e_tests {
                     }
                 }
             }",
-            None,
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
+                None,
+                None,
+            )
+            .await;
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let body = res.body().await.unwrap();
+        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
         {

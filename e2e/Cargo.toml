@@ -22,10 +22,14 @@ opentelemetry-otlp = { workspace = true, features = ["http-proto"] }
 opentelemetry-proto = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
-serde_json = "1.0"
+serde_json = { workspace = true }
 tonic = { workspace = true }
+http = { workspace = true }
+dashmap = { workspace = true }
+axum = "0.8.4"
+bytes = "1.10.1"
 
-hive-router = { path = "../bin/router" }
+hive-router = { path = "../bin/router", features = ["testing"] }
 hive-router-config = { path = "../lib/router-config" }
 hive-router-internal = { path = "../lib/internal" }
 subgraphs = { path = "../bench/subgraphs" }
