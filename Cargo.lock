@@ -1433,6 +1433,7 @@ dependencies = [
  "axum",
  "bytes",
  "dashmap",
+ "futures",
  "hex",
  "hive-router",
  "hive-router-config",

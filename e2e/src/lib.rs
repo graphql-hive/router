@@ -35,8 +35,6 @@ mod probes;
 #[cfg(test)]
 mod router_timeout;
 #[cfg(test)]
-mod subscriptions;
-#[cfg(test)]
 mod supergraph;
 #[cfg(test)]
 mod telemetry;
@@ -44,5 +42,3 @@ mod telemetry;
 mod testkit;
 #[cfg(test)]
 mod timeout_per_subgraph;
-#[cfg(test)]
-mod websocket;

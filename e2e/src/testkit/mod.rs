@@ -5,15 +5,12 @@ use dashmap::DashMap;
 use lazy_static::lazy_static;
 use ntex::{
     client::ClientResponse,
-    io::Sealed,
     web::{self, test},
-    ws::WsConnection,
 };
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
 use std::{
-    any::Any, marker::PhantomData, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc,
-    time::Duration,
+    any::Any, marker::PhantomData, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration,
 };
 use tempfile::{NamedTempFile, TempPath};
 use tokio::{
@@ -27,7 +24,7 @@ use hive_router::{
     init_rustls_crypto_provider, telemetry::Telemetry, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
-use subgraphs::{subgraphs_app, SubscriptionProtocol};
+use subgraphs::subgraphs_app;
 
 // utilities
 
@@ -140,6 +137,7 @@ pub struct ResponseLike {
 }
 
 impl ResponseLike {
+    #[allow(unused)]
     pub fn new(
         status: axum::http::StatusCode,
         body: Option<String>,
@@ -156,23 +154,15 @@ impl ResponseLike {
 type OnRequest = dyn Fn(RequestLike) -> Option<ResponseLike> + Send + Sync;
 
 pub struct TestSubgraphsBuilder {
-    subscriptions_protocol: SubscriptionProtocol,
     on_request: Option<Arc<OnRequest>>,
 }
 
 impl TestSubgraphsBuilder {
     pub fn new() -> Self {
-        Self {
-            on_request: None,
-            subscriptions_protocol: SubscriptionProtocol::default(),
-        }
+        Self { on_request: None }
     }
 
-    pub fn with_subscriptions_protocol(mut self, protocol: SubscriptionProtocol) -> Self {
-        self.subscriptions_protocol = protocol;
-        self
-    }
-
+    #[allow(unused)]
     pub fn with_on_request(
         mut self,
         on_request: impl Fn(RequestLike) -> Option<ResponseLike> + Send + Sync + 'static,
@@ -183,7 +173,6 @@ impl TestSubgraphsBuilder {
 
     pub fn build(self) -> TestSubgraphs<Built> {
         TestSubgraphs {
-            subscriptions_protocol: self.subscriptions_protocol,
             on_request: self.on_request,
             handle: None,
             _state: PhantomData,
@@ -204,7 +193,6 @@ struct TestSubgraphsHandle {
 }
 
 pub struct TestSubgraphs<State> {
-    subscriptions_protocol: SubscriptionProtocol,
     on_request: Option<Arc<OnRequest>>,
     handle: Option<TestSubgraphsHandle>,
     _state: PhantomData<State>,
@@ -282,7 +270,7 @@ impl TestSubgraphs<Built> {
             .expect("failed to bind tcp listener");
         let addr = listener.local_addr().expect("failed to get local address");
 
-        let mut app = subgraphs_app(self.subscriptions_protocol.clone());
+        let mut app = subgraphs_app();
 
         let middleware_state = Arc::new(TestSubgraphsMiddlewareState {
             request_log: DashMap::new(),
@@ -309,7 +297,6 @@ impl TestSubgraphs<Built> {
         });
 
         TestSubgraphs {
-            subscriptions_protocol: self.subscriptions_protocol,
             on_request: self.on_request,
             handle: Some(TestSubgraphsHandle {
                 shutdown_tx: Some(shutdown_tx),
@@ -466,8 +453,7 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
         TestRouter {
             wait_for_healthy_on_start: self.wait_for_healthy_on_start,
             wait_for_ready_on_start: self.wait_for_ready_on_start,
-            graphql_path: config.graphql_path().to_string(),
-            websocket_path: config.websocket_path().map(|p| p.to_string()),
+            graphql_path: config.http.graphql_endpoint().to_string(),
             config: Some(config),
             subgraphs,
             handle: None,
@@ -524,7 +510,6 @@ pub struct TestRouter<'subgraphs, State> {
     wait_for_healthy_on_start: bool,
     wait_for_ready_on_start: bool,
     graphql_path: String,
-    websocket_path: Option<String>,
     config: Option<HiveRouterConfig>,
     subgraphs: Option<&'subgraphs TestSubgraphs<Started>>,
     handle: Option<TestRouterHandle>,
@@ -553,12 +538,10 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
 
         let serv_schema_state = schema_state.clone();
         let serv_graphql_path = self.graphql_path.clone();
-        let serv_websocket_path = self.websocket_path.clone();
         let serv = test::server(move || {
             let shared_state = shared_state.clone();
             let schema_state = serv_schema_state.clone();
             let serv_graphql_path = serv_graphql_path.clone();
-            let serv_websocket_path = serv_websocket_path.clone();
 
             // set the tracing dispatch on the server thread. the guard is
             // intentionally leaked: dropping it would restore the no-op default
@@ -574,13 +557,7 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
                 web::App::new()
                     .state(shared_state)
                     .state(schema_state)
-                    .configure(|m| {
-                        configure_ntex_app(
-                            m,
-                            serv_graphql_path.as_ref(),
-                            serv_websocket_path.as_deref(),
-                        )
-                    })
+                    .configure(|m| configure_ntex_app(m, serv_graphql_path.as_ref()))
             }
         })
         .await;
@@ -591,7 +568,6 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
             wait_for_healthy_on_start: self.wait_for_healthy_on_start,
             wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: self.graphql_path,
-            websocket_path: self.websocket_path,
             handle: Some(TestRouterHandle {
                 schema_state,
                 serv,
@@ -704,18 +680,5 @@ impl<'subgraphs> TestRouter<'subgraphs, Started> {
         }))
         .await
         .expect("Failed to send graphql request")
-    }
-
-    pub async fn ws(&self) -> WsConnection<Sealed> {
-        let url = self.handle.as_ref().unwrap().serv.url(
-            self.websocket_path
-                .as_ref()
-                .expect("Websocket path not set"),
-        );
-        let ws_url = url.as_str().replace("http://", "ws://");
-        let ws_uri = http::Uri::from_str(&ws_url).expect("Failed to parse ws url");
-        websocket_client::connect(&ws_uri)
-            .await
-            .expect("Failed to connect to websocket")
     }
 }
