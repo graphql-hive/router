@@ -2,7 +2,6 @@ pub mod otel;
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use hive_router_internal::telemetry::TelemetryContext;
 use lazy_static::lazy_static;
 use ntex::{
     client::ClientResponse,
@@ -21,7 +20,7 @@ use tokio::{
     net::TcpListener,
     sync::{oneshot, Semaphore},
 };
-use tracing::{info, subscriber::DefaultGuard, warn};
+use tracing::{info, warn};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
@@ -489,7 +488,7 @@ struct TestRouterHandle {
     schema_state: Arc<SchemaState>,
     serv: test::TestServer,
     bg_tasks_manager: BackgroundTasksManager,
-    telemetry: Option<Telemetry>,
+    telemetry: Telemetry,
 }
 
 impl Drop for TestRouterHandle {
@@ -497,8 +496,8 @@ impl Drop for TestRouterHandle {
         // shut down backgroun tasks
         self.bg_tasks_manager.shutdown();
 
-        // shut down telemetry, if enabled and if has provider
-        let Some(provider) = self.telemetry.as_ref().and_then(|t| t.provider.clone()) else {
+        // shut down telemetry
+        let Some(provider) = self.telemetry.provider.clone() else {
             return;
         };
         let dispatch = tracing::dispatcher::get_default(|current| current.clone());
@@ -538,31 +537,13 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
     pub async fn start(mut self) -> TestRouter<'subgraphs, Started> {
         init_rustls_crypto_provider();
         let config = self.config.take().unwrap();
-
-        // skip calling init_subscriber when config has no telemetry enabled.
-        // init_subscriber calls set_tracing_enabled() which writes to a global
-        // static atomic (MAX_LEVEL). when runnin no-telemetry tests, it will disable span
-        // creation process-wide and break any concurrent yes-telemetry tests that
-        // expect traces.
-        //
-        // yeah this is all ugly but it's necessary because of the MAX_LEVEL static,
-        // if we were to make MAX_LEVEL thread-local, it would hurt performance and
-        // the only place we need MAX_LEVEL to be thread-local is in tests...
-        let mut telemetry: Option<Telemetry> = None;
-        let mut subscription_guard: Option<DefaultGuard> = None;
-        if config.telemetry.is_tracing_enabled() {
-            let init = Telemetry::init_subscriber(&config)
-                .expect("failed to initialize telemetry subscriber");
-            telemetry = Some(init.0);
-            subscription_guard = Some(tracing::subscriber::set_default(init.1));
-        }
-        let telemetry_context = telemetry.as_ref().map(|t| t.context.clone()).unwrap_or(
-            TelemetryContext::from_propagation_config(&config.telemetry.tracing.propagation),
-        );
+        let (telemetry, subscriber) =
+            Telemetry::init_subscriber(&config).expect("failed to initialize telemetry subscriber");
+        let subscription_guard = tracing::subscriber::set_default(subscriber);
 
         let mut bg_tasks_manager = BackgroundTasksManager::new();
         let (shared_state, schema_state) =
-            configure_app_from_config(config, telemetry_context, &mut bg_tasks_manager)
+            configure_app_from_config(config, telemetry.context.clone(), &mut bg_tasks_manager)
                 .await
                 .expect("failed to configure hive router from config");
 
