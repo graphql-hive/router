@@ -249,7 +249,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -287,20 +287,39 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    let all_traces = otlp_collector.wait_for_traces().await;
-    let trace = all_traces.first().expect("Failed to get first trace");
-
-    let http_server_span = trace.span_by_hive_kind_one("http.server");
-    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
-    let parse_span = trace.span_by_hive_kind_one("graphql.parse");
-    let validate_span = trace.span_by_hive_kind_one("graphql.validate");
-    let variable_coercion_span = trace.span_by_hive_kind_one("graphql.variable_coercion");
-    let normalization_span = trace.span_by_hive_kind_one("graphql.normalize");
-    let plan_span = trace.span_by_hive_kind_one("graphql.plan");
-    let execution_span = trace.span_by_hive_kind_one("graphql.execute");
-    let subgraph_operation_span = trace.span_by_hive_kind_one("graphql.subgraph.operation");
-    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
-    let http_client_span = trace.span_by_hive_kind_one("http.client");
+    let http_server_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.server")
+        .await;
+    let operation_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.operation")
+        .await;
+    let parse_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.parse")
+        .await;
+    let validate_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.validate")
+        .await;
+    let variable_coercion_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.variable_coercion")
+        .await;
+    let normalization_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.normalize")
+        .await;
+    let plan_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.plan")
+        .await;
+    let execution_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.execute")
+        .await;
+    let subgraph_operation_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.subgraph.operation")
+        .await;
+    let http_inflight_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.inflight")
+        .await;
+    let http_client_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.client")
+        .await;
 
     insta::assert_snapshot!(
       http_server_span,

@@ -42,7 +42,7 @@ jobs:
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: test e2e
-        run: cargo test_e2e
+        run: cargo test -p e2e
         timeout-minutes: 60
         env:
           RUST_BACKTRACE: full

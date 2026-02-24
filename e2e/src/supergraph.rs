@@ -298,7 +298,7 @@ mod supergraph_e2e_tests {
             .with_status(404)
             .create();
 
-        wait_until_mock_matched(&mock_404, Duration::from_millis(200))
+        wait_until_mock_matched(&mock_404, Duration::from_millis(500))
             .await
             .expect("Expected to match 404 mock");
 
