@@ -47,7 +47,7 @@ mod file_supergraph_e2e_tests {
             .unwrap()
             .as_array()
             .unwrap();
-        assert_eq!(types_arr.len(), 18);
+        assert_eq!(types_arr.len(), 17);
     }
 
     #[ntex::test]
