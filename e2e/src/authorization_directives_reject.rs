@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod authorization_directives_in_reject_mode_e2e_tests {
     use jsonwebtoken::{encode, EncodingKey};
-    use sonic_rs::{json, to_string_pretty, Value};
+    use sonic_rs::{json, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::testkit::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{some_header_map, ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
 
     fn generate_jwt(payload: &Value) -> String {
         let pem = include_str!("../jwks.rsa512.pem");
@@ -61,9 +61,6 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
         let subgraph_requests = subgraphs.get_requests_log("accounts");
         assert_eq!(
             subgraph_requests.map(|r| r.len()).unwrap_or(0),
@@ -71,7 +68,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             "expected 0 requests to accounts subgraph"
         );
 
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -107,10 +104,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -143,10 +137,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -178,9 +169,6 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
         assert_eq!(
             subgraphs
                 .get_requests_log("accounts")
@@ -203,7 +191,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             0
         );
 
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -253,10 +241,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -294,10 +279,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -405,10 +387,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             "Expected 200 OK because the unauthorized field is not included"
         );
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "me": {
@@ -440,10 +419,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -482,10 +458,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -509,10 +482,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "topProducts": [
@@ -550,10 +520,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "topProducts": [
@@ -572,10 +539,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
             "data": {
               "topProducts": [
@@ -598,10 +562,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -635,10 +596,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -662,10 +620,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -711,10 +666,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -738,10 +690,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -767,10 +716,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -813,10 +759,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -841,10 +784,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -882,10 +822,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -910,10 +847,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -952,10 +886,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -979,10 +910,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -1008,10 +936,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {
@@ -1052,10 +977,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert_eq!(res.status().as_u16(), 403, "Expected 403 Forbidden");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
@@ -1081,10 +1003,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "me": {

@@ -6,7 +6,7 @@ mod hive_cdn_supergraph_e2e_tests {
     use sonic_rs::{from_slice, JsonContainerTrait, JsonValueTrait, Value};
     use tokio::time::sleep;
 
-    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn should_load_supergraph_from_endpoint() {
@@ -384,9 +384,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .await;
 
         assert!(res.status().is_success(), "Expected 200 OK");
-        let json_body: Value = from_slice(&res.body().await.unwrap()).expect("failed to read body");
-        let json_str = sonic_rs::to_string_pretty(&json_body).expect("bad resonse");
-        insta::assert_snapshot!(json_str, @r#"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "__type": {

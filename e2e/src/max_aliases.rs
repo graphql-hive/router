@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod max_aliases_e2e_tests {
-    use sonic_rs::{to_string_pretty, Value};
-
-    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn allows_query_within_max_aliases() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,9 +34,7 @@ mod max_aliases_e2e_tests {
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body)?;
-        insta::assert_snapshot!(to_string_pretty(&json_body)?, @r###"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
         {
           "data": {
             "myInfo": {
@@ -85,10 +81,7 @@ mod max_aliases_e2e_tests {
             )
             .await;
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body)?;
-
-        insta::assert_snapshot!(to_string_pretty(&json_body)?, @r###"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
         {
           "errors": [
             {

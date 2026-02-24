@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod error_handling_e2e_tests {
-    use sonic_rs::{from_slice, to_string_pretty, Value};
-
-    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn should_continue_execution_when_a_subgraph_is_down() {
@@ -36,13 +34,11 @@ mod error_handling_e2e_tests {
             .await;
 
         assert!(res.status().is_success(), "Expected 200 OK");
-        let body = res.body().await.unwrap();
-        let body_json: Value = from_slice(&body).expect("expected valid JSON response");
 
         // Router cannot fetch `name` field from `products` subgraph because it's down,
         // but it should still return the rest of the data from `accounts` subgraph.
         insta::assert_snapshot!(
-            to_string_pretty(&body_json).unwrap(),
+            res.json_body_string_pretty().await,
             @r###"
         {
           "data": {

@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod max_depth_e2e_tests {
-    use sonic_rs::{to_string_pretty, Value};
-
-    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
 
     const QUERY: &'static str = r#"
             query {
@@ -35,9 +33,7 @@ mod max_depth_e2e_tests {
             .await;
 
         let res = router.send_graphql_request(QUERY, None, None).await;
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
         {
           "data": {
             "me": {
@@ -76,9 +72,7 @@ mod max_depth_e2e_tests {
             .await;
 
         let res = router.send_graphql_request(QUERY, None, None).await;
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
         {
           "errors": [
             {
@@ -124,9 +118,7 @@ mod max_depth_e2e_tests {
                 None,
             )
             .await;
-        let body = res.body().await.unwrap();
-        let json_body: Value = sonic_rs::from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r###"
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
         {
           "errors": [
             {
