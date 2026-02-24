@@ -4,7 +4,7 @@ use hive_router_config::log::{service::StdoutExporterConfig, shared::LogFormat};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::time::UtcTime, Layer};
 
-use crate::logging::utils::{create_env_filter, DynLayer};
+use crate::logging::utils::{create_targets_filter, DynLayer};
 
 pub fn build_stdout_layer<S>(config: &StdoutExporterConfig) -> (DynLayer<S>, WorkerGuard)
 where
@@ -16,7 +16,7 @@ where
     let stdout_stream = std::io::stdout();
     let is_terminal = stdout_stream.is_terminal();
     let (stdout_writer, stdout_guard) = tracing_appender::non_blocking(stdout_stream);
-    let filter = create_env_filter(&config.level, config.log_internals);
+    let filter = create_targets_filter(&config.level, config.log_internals);
     let stdout_layer = tracing_subscriber::fmt::layer().with_writer(stdout_writer);
     let timer = UtcTime::rfc_3339();
 

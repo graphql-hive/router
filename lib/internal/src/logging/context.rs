@@ -47,11 +47,11 @@ impl LoggerContext {
         _extensions: Option<&HashMap<std::string::String, sonic_rs::Value>>,
     ) {
         let cfg = &self.fields_config.graphql.request;
-        let body_size_bytes = cfg.body_size_bytes.then(|| body_size as i64);
-        let client_name = cfg.client_name.then(|| client_name);
-        let client_version = cfg.client_version.then(|| client_version);
-        let operation = cfg.operation.then(|| query);
-        let operation_name = cfg.operation_name.then(|| operation_name.unwrap_or(""));
+        let body_size_bytes = cfg.body_size_bytes.then_some(body_size as i64);
+        let client_name = cfg.client_name.then_some(client_name);
+        let client_version = cfg.client_version.then_some(client_version);
+        let operation = cfg.operation.then_some(query);
+        let operation_name = cfg.operation_name.then_some(operation_name.unwrap_or(""));
         // let variables = cfg.variables.then(|| variables);
         // let extensions = cfg.extensions.then(|| extensions);
 

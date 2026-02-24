@@ -3,8 +3,7 @@ supergraph:
   source: file
   path: ./bench/supergraph.graphql
 log:
-  service:
-    exporters:
-      - kind: stdout
-        level: info
-        format: text
+  exporters:
+    - kind: stdout
+      level: info
+      format: text

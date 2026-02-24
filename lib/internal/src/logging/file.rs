@@ -7,7 +7,7 @@ use hive_router_config::log::{
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::time::UtcTime, Layer};
 
-use crate::logging::utils::{create_env_filter, DynLayer};
+use crate::logging::utils::{create_targets_filter, DynLayer};
 
 pub fn build_file_layer<S>(config: &FileExporterConfig) -> (DynLayer<S>, WorkerGuard)
 where
@@ -32,7 +32,7 @@ where
         },
     });
 
-    let filter = create_env_filter(&config.level, config.log_internals);
+    let filter = create_targets_filter(&config.level, config.log_internals);
     let timer = UtcTime::rfc_3339();
     let file_layer = tracing_subscriber::fmt::layer().with_writer(file_writer);
 

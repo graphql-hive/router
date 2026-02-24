@@ -1,5 +1,6 @@
 use hive_router_config::log::shared::LogLevel;
-use tracing_subscriber::{EnvFilter, Layer};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::{filter::Targets, Layer};
 
 static INTERNAL_CRATES: &[&str] = &[
     "ntex_server",
@@ -12,22 +13,25 @@ static INTERNAL_CRATES: &[&str] = &[
     "hyper_util",
 ];
 
-pub fn create_env_filter(log_level: &LogLevel, internals: bool) -> EnvFilter {
-    let mut filters: Vec<String> = Vec::new();
+pub fn create_targets_filter(log_level: &LogLevel, internals: bool) -> Targets {
+    let level_filter: LevelFilter = log_level.into();
 
-    filters.push(log_level.as_str().to_string());
-
-    for crate_name in INTERNAL_CRATES {
-        if internals {
-            filters.push(format!("{}={}", crate_name, log_level.as_str()));
-        } else {
-            filters.push(format!("{}=off", crate_name));
-        }
-    }
-
-    EnvFilter::builder()
-        .parse(filters.join(","))
-        .expect("Failed to parse logging filters")
+    Targets::new()
+        .with_targets(
+            INTERNAL_CRATES
+                .iter()
+                .map(|crate_name| {
+                    (
+                        *crate_name,
+                        match internals {
+                            true => level_filter,
+                            false => LevelFilter::OFF,
+                        },
+                    )
+                })
+                .collect::<Vec<(&str, LevelFilter)>>(),
+        )
+        .with_default(level_filter)
 }
 
 pub type DynLayer<S> = Box<dyn Layer<S> + Send + Sync + 'static>;
