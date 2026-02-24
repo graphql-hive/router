@@ -1,4 +1,4 @@
-use crate::testkit_v2::{
+use crate::testkit::{
     otel::{Baggage, OtlpCollector, TraceParent},
     some_header_map, TestRouterBuilder, TestSubgraphsBuilder,
 };

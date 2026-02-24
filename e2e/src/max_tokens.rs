@@ -2,7 +2,7 @@
 mod max_tokens_e2e_tests {
     use sonic_rs::{to_string_pretty, Value};
 
-    use crate::testkit_v2::{TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
 
     static QUERY: &str = r#"
         query {

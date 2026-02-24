@@ -4,7 +4,7 @@ mod websocket_e2e_tests {
     use sonic_rs::json;
     use std::collections::HashMap;
 
-    use crate::testkit_v2::{TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
     use hive_router_plan_executor::executors::{
         graphql_transport_ws::ConnectionInitPayload, websocket_client::WsClient,
     };

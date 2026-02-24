@@ -2,9 +2,7 @@
 mod disable_introspection_e2e_tests {
     use sonic_rs::{to_string_pretty, Value};
 
-    use crate::testkit_v2::{
-        some_header_map, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
-    };
+    use crate::testkit::{some_header_map, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn should_disable_based_on_env_var() {

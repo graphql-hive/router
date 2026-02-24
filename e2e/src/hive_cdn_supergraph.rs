@@ -6,7 +6,7 @@ mod hive_cdn_supergraph_e2e_tests {
     use sonic_rs::{from_slice, JsonContainerTrait, JsonValueTrait, Value};
     use tokio::time::sleep;
 
-    use crate::testkit_v2::{TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn should_load_supergraph_from_endpoint() {

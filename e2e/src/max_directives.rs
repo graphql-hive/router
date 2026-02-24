@@ -2,7 +2,7 @@
 mod max_directives_e2e_tests {
     use sonic_rs::{to_string_pretty, Value};
 
-    use crate::testkit_v2::{TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn allows_query_within_max_directives() {
@@ -25,7 +25,7 @@ mod max_directives_e2e_tests {
 
         let res = router
             .send_graphql_request(
-                "query { 
+                "query {
                 __typename @include(if: true)
                 me @skip(if: false) {
                     __typename @include(if: true)
@@ -85,7 +85,7 @@ mod max_directives_e2e_tests {
 
         let res = router
             .send_graphql_request(
-                "query { 
+                "query {
                 __typename @include(if: true)
                 me @skip(if: false) {
                     __typename @include(if: true)

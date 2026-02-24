@@ -4,7 +4,7 @@ mod jwt_e2e_tests {
     use sonic_rs::{json, JsonValueTrait, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::testkit_v2::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder};
 
     fn generate_jwt(payload: &Value) -> String {
         generate_jwt_with_alg(payload, jsonwebtoken::Algorithm::RS512)

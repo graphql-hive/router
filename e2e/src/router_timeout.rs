@@ -2,7 +2,7 @@
 mod router_timeout_e2e_tests {
     use std::{thread::sleep, time::Duration};
 
-    use crate::testkit_v2::TestRouterBuilder;
+    use crate::testkit::TestRouterBuilder;
 
     #[ntex::test]
     async fn should_timeout_request_when_exceeding_router_timeout() {

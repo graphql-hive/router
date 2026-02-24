@@ -1,4 +1,4 @@
-use crate::testkit_v2::{otel::OtlpCollector, TestRouterBuilder, TestSubgraphsBuilder};
+use crate::testkit::{otel::OtlpCollector, TestRouterBuilder, TestSubgraphsBuilder};
 
 /// Verify Hive Console exporter works with HTTP protocol
 #[ntex::test]

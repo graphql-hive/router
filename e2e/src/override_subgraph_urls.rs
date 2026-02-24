@@ -4,7 +4,7 @@ mod override_subgraph_urls_e2e_tests {
 
     use crate::{
         some_header_map,
-        testkit_v2::{TestRouterBuilder, TestSubgraphsBuilder},
+        testkit::{TestRouterBuilder, TestSubgraphsBuilder},
     };
 
     #[ntex::test]

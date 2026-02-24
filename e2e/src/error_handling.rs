@@ -2,7 +2,7 @@
 mod error_handling_e2e_tests {
     use sonic_rs::{from_slice, to_string_pretty, Value};
 
-    use crate::testkit_v2::{TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn should_continue_execution_when_a_subgraph_is_down() {

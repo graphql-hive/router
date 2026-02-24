@@ -2,7 +2,7 @@
 mod max_aliases_e2e_tests {
     use sonic_rs::{to_string_pretty, Value};
 
-    use crate::testkit_v2::{TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn allows_query_within_max_aliases() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,7 +25,7 @@ mod max_aliases_e2e_tests {
 
         let res = router
             .send_graphql_request(
-                "query { 
+                "query {
                 myInfo: me {
                     myName: name
                 }
@@ -71,7 +71,7 @@ mod max_aliases_e2e_tests {
 
         let res = router
             .send_graphql_request(
-                "query { 
+                "query {
                 typeName: __typename
                 userInfo: me {
                     userName: name

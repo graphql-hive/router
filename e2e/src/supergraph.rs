@@ -6,7 +6,7 @@ mod supergraph_e2e_tests {
     use ntex::time;
     use sonic_rs::{from_slice, to_string_pretty, JsonValueTrait, Value};
 
-    use crate::testkit_v2::{EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder};
 
     #[ntex::test]
     async fn should_clear_internal_caches_when_supergraph_changes() {

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::testkit_v2::{
+use crate::testkit::{
     otel::{OtlpCollector, TraceParent},
     some_header_map, TestRouterBuilder, TestSubgraphsBuilder,
 };

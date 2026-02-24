@@ -41,7 +41,7 @@ mod supergraph;
 #[cfg(test)]
 mod telemetry;
 #[cfg(test)]
-mod testkit_v2;
+mod testkit;
 #[cfg(test)]
 mod timeout_per_subgraph;
 #[cfg(test)]

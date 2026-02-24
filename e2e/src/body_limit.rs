@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod body_limit_e2e_tests {
-    use crate::testkit_v2::TestRouterBuilder;
+    use crate::testkit::TestRouterBuilder;
     #[ntex::test]
     async fn should_return_payload_too_large_if_limit_exceeds_while_reading_the_stream() {
         let router = TestRouterBuilder::new()

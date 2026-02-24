@@ -6,7 +6,7 @@ mod subscriptions_e2e_tests {
     use reqwest::StatusCode;
     use sonic_rs::json;
 
-    use crate::testkit_v2::{
+    use crate::testkit::{
         some_header_map, ResponseLike, TestRouterBuilder, TestSubgraphsBuilder,
     };
 

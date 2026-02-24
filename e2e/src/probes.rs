@@ -5,7 +5,7 @@ mod probes_e2e_tests {
         time::Duration,
     };
 
-    use crate::testkit_v2::TestRouterBuilder;
+    use crate::testkit::TestRouterBuilder;
 
     #[ntex::test]
     async fn should_respond_to_probes_correctly() {
