@@ -448,7 +448,7 @@ async fn test_default_resource_attributes() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -485,8 +485,8 @@ async fn test_default_resource_attributes() {
     assert!(res.status().is_success());
 
     // Wait for exports
-    let all_traces = otlp_collector.wait_for_traces().await;
-    let trace = all_traces.first().expect("Failed to get first trace");
+    let all_traces = otlp_collector.wait_for_traces_count(1).await;
+    let trace = all_traces.first().unwrap();
 
     let resource_attributes = trace.merged_resource_attributes();
 
@@ -516,7 +516,7 @@ async fn test_custom_resource_attributes() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -556,8 +556,8 @@ async fn test_custom_resource_attributes() {
     assert!(res.status().is_success());
 
     // Wait for exports
-    let all_traces = otlp_collector.wait_for_traces().await;
-    let trace = all_traces.first().expect("Failed to get first trace");
+    let all_traces = otlp_collector.wait_for_traces_count(1).await;
+    let trace = all_traces.first().unwrap();
 
     let resource_attributes = trace.merged_resource_attributes();
 

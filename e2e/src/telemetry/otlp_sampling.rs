@@ -13,7 +13,7 @@ async fn test_otlp_parent_based_sampler() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -96,10 +96,8 @@ async fn test_otlp_parent_based_sampler() {
     assert!(res.status().is_success());
 
     // Verify trace was collected
-    let all_traces = otlp_collector.wait_for_traces().await;
-    let trace = all_traces
-        .first()
-        .expect("Failed to find trace with sampled parent");
+    let all_traces = otlp_collector.wait_for_traces_count(1).await;
+    let trace = all_traces.first().unwrap();
 
     assert_eq!(
         trace.id, upstream_trace_id,

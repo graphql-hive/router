@@ -12,7 +12,7 @@ async fn test_otlp_http_export_with_graphql_request() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -50,8 +50,8 @@ async fn test_otlp_http_export_with_graphql_request() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    let all_traces = otlp_collector.wait_for_traces().await;
-    let trace = all_traces.first().expect("Failed to get first trace");
+    let all_traces = otlp_collector.wait_for_traces_count(1).await;
+    let trace = all_traces.first().unwrap();
 
     let http_server_span = trace.span_by_hive_kind_one("http.server");
     let operation_span = trace.span_by_hive_kind_one("graphql.operation");
@@ -567,7 +567,7 @@ async fn test_otlp_http_headers() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
@@ -607,7 +607,7 @@ async fn test_otlp_http_headers() {
     assert!(res.status().is_success());
 
     // Wait for exports
-    otlp_collector.wait_for_traces().await;
+    otlp_collector.wait_for_traces_count(1).await;
 
     let first_request = otlp_collector
         .request_at(0)
@@ -631,7 +631,7 @@ async fn test_otlp_grpc_metadata() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.grpc_endpoint();
@@ -671,7 +671,7 @@ async fn test_otlp_grpc_metadata() {
     assert!(res.status().is_success());
 
     // Wait for exports
-    otlp_collector.wait_for_traces().await;
+    otlp_collector.wait_for_traces_count(1).await;
 
     let first_request = otlp_collector
         .request_at(0)
@@ -695,7 +695,7 @@ async fn test_otlp_cache_hits() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -732,7 +732,7 @@ async fn test_otlp_cache_hits() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    otlp_collector.wait_for_traces().await;
+    otlp_collector.wait_for_traces_count(1).await;
 
     // Should hit the caches
     let res = router
@@ -741,11 +741,9 @@ async fn test_otlp_cache_hits() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    otlp_collector.wait_for_traces().await;
-
-    let all_traces = otlp_collector.traces().await;
-    let first_trace = all_traces.first().expect("Failed to get first trace");
-    let second_trace = all_traces.get(1).expect("Failed to get second trace");
+    let all_traces = otlp_collector.wait_for_traces_count(2).await;
+    let first_trace = all_traces.first().unwrap();
+    let second_trace = all_traces.get(1).unwrap();
 
     let first_parse_span = first_trace.span_by_hive_kind_one("graphql.parse");
     let first_validate_span = first_trace.span_by_hive_kind_one("graphql.validate");

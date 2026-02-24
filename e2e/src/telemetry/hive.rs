@@ -7,7 +7,7 @@ async fn test_hive_http_export() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
     let supergraph_path = supergraph_path.to_str().unwrap();
 
-    let mut otlp_collector = OtlpCollector::start()
+    let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
@@ -51,7 +51,7 @@ async fn test_hive_http_export() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    otlp_collector.wait_for_traces().await;
+    otlp_collector.wait_for_traces_count(1).await;
 
     let first_request = otlp_collector
         .request_at(0)
