@@ -170,7 +170,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .get("types")
             .unwrap();
         assert!(sonic_rs::to_string(types_arr)
-            .expect("bad resonse")
+            .expect("bad response")
             .contains("NewType"));
     }
 
