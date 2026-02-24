@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod file_supergraph_e2e_tests {
-    use sonic_rs::{from_slice, JsonContainerTrait, JsonValueTrait, Value};
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
     use std::{fs, time::Duration};
     use tempfile::NamedTempFile;
 
-    use crate::testkit::TestRouterBuilder;
+    use crate::testkit::{ClientResponseExt, TestRouterBuilder};
 
     #[ntex::test]
     async fn should_load_supergraph_from_file() {
@@ -36,8 +36,7 @@ mod file_supergraph_e2e_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = from_slice(&body).unwrap();
+        let json_body = res.json_body().await;
         let types_arr = json_body
             .get("data")
             .unwrap()
@@ -81,8 +80,7 @@ mod file_supergraph_e2e_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = from_slice(&body).unwrap();
+        let json_body = res.json_body().await;
         let types_arr: Vec<String> = json_body
             .get("data")
             .unwrap()
@@ -151,8 +149,7 @@ mod file_supergraph_e2e_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let body = res.body().await.unwrap();
-        let json_body: Value = from_slice(&body).unwrap();
+        let json_body = res.json_body().await;
         let types_arr: Vec<String> = json_body
             .get("data")
             .unwrap()
