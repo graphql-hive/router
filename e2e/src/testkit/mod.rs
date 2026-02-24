@@ -682,3 +682,19 @@ impl<'subgraphs> TestRouter<'subgraphs, Started> {
         .expect("Failed to send graphql request")
     }
 }
+
+pub trait ClientResponseExt {
+    async fn json_body(&self) -> sonic_rs::Value;
+    async fn json_body_string_pretty(&self) -> String;
+}
+
+impl ClientResponseExt for ClientResponse {
+    async fn json_body(&self) -> sonic_rs::Value {
+        let body = self.body().await.unwrap();
+        sonic_rs::from_slice(&body).unwrap()
+    }
+
+    async fn json_body_string_pretty(&self) -> String {
+        sonic_rs::to_string_pretty(&self.json_body().await).unwrap()
+    }
+}
