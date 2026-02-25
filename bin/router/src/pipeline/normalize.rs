@@ -29,7 +29,7 @@ pub struct GraphQLNormalizationPayload {
 #[derive(Debug, Clone)]
 pub struct OperationIdentity {
     pub name: Option<String>,
-    pub operation_type: String,
+    pub operation_type: &'static str,
     /// Hash of the original document sent to the router, by the client.
     pub client_document_hash: String,
 }
@@ -38,7 +38,7 @@ impl<'a> From<&'a OperationIdentity> for GraphQLSpanOperationIdentity<'a> {
     fn from(op_id: &'a OperationIdentity) -> Self {
         GraphQLSpanOperationIdentity {
             name: op_id.name.as_deref(),
-            operation_type: &op_id.operation_type,
+            operation_type: op_id.operation_type,
             client_document_hash: &op_id.client_document_hash,
         }
     }
@@ -102,7 +102,7 @@ pub async fn normalize_request_with_cache(
                         .map(Arc::new),
                     operation_indentity: OperationIdentity {
                         name: doc.operation_name.clone(),
-                        operation_type: parser_payload.operation_type.clone(),
+                        operation_type: parser_payload.operation_type,
                         client_document_hash: parser_payload.cache_key_string.clone(),
                     },
                 };

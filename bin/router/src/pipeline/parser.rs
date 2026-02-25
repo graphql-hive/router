@@ -31,7 +31,7 @@ pub struct GraphQLParserPayload {
     pub parsed_operation: Arc<Document<'static, String>>,
     pub minified_document: Arc<String>,
     pub operation_name: Option<String>,
-    pub operation_type: String,
+    pub operation_type: &'static str,
     pub cache_key: u64,
     pub cache_key_string: String,
     pub hive_operation_hash: Arc<String>,
@@ -41,7 +41,7 @@ impl<'a> From<&'a GraphQLParserPayload> for GraphQLSpanOperationIdentity<'a> {
     fn from(op_id: &'a GraphQLParserPayload) -> Self {
         GraphQLSpanOperationIdentity {
             name: op_id.operation_name.as_deref(),
-            operation_type: &op_id.operation_type,
+            operation_type: op_id.operation_type,
             client_document_hash: &op_id.cache_key_string,
         }
     }
@@ -153,7 +153,7 @@ pub async fn parse_operation_with_cache(
             parsed_operation,
             minified_document: parse_cache_item.document_minified_string,
             operation_name,
-            operation_type: operation_type.to_string(),
+            operation_type,
             cache_key,
             cache_key_string,
             hive_operation_hash: parse_cache_item.hive_operation_hash.clone(),

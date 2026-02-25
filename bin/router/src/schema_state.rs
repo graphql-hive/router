@@ -1,7 +1,6 @@
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
-use graphql_tools::parser::schema::Document;
-use graphql_tools::validation::utils::ValidationError;
+use graphql_tools::{parser::schema::Document, validation::utils::ValidationError};
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::{

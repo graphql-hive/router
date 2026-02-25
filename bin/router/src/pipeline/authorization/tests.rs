@@ -76,7 +76,7 @@ impl SupergraphTestData {
                 .map(Arc::new),
             operation_indentity: OperationIdentity {
                 name: doc.operation_name.clone(),
-                operation_type: "query".to_string(),
+                operation_type: "query",
                 client_document_hash: "".to_string(),
             },
         };
