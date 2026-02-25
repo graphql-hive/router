@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use error::QueryPlanError;
 use fetch::{error::FetchGraphError, fetch_graph::build_fetch_graph_from_query_tree};
 use graphql_tools::parser::schema;
@@ -26,7 +28,7 @@ pub mod walker;
 pub struct Planner {
     graph: Graph,
     pub supergraph: SupergraphState,
-    pub consumer_schema: ConsumerSchema,
+    pub consumer_schema: Arc<ConsumerSchema>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -97,7 +99,7 @@ impl Planner {
 
         Ok(Planner {
             graph,
-            consumer_schema,
+            consumer_schema: Arc::new(consumer_schema),
             supergraph: supergraph_state,
         })
     }

@@ -1,6 +1,6 @@
 [package]
 name = "hive-router"
-version = "0.0.35"
+version = "0.0.39"
 edition = "2021"
 description = "GraphQL router/gateway for Federation"
 license = "MIT"
@@ -15,13 +15,16 @@ homepage = "https://github.com/graphql-hive/router"
 name = "hive_router"
 path = "src/main.rs"
 
+[features]
+noop_otlp_exporter = ["hive-router-internal/noop_otlp_exporter"]
+
 [dependencies]
-hive-router-query-planner = { path = "../../lib/query-planner", version = "2.1.7" }
-hive-router-plan-executor = { path = "../../lib/executor", version = "6.3.6" }
-hive-router-config = { path = "../../lib/router-config", version = "0.0.20" }
-hive-router-internal = { path = "../../lib/internal", version = "0.0.8" }
-hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.5" }
-graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.0" }
+hive-router-query-planner = { path = "../../lib/query-planner", version = "2.2.1" }
+hive-router-plan-executor = { path = "../../lib/executor", version = "6.5.1" }
+hive-router-config = { path = "../../lib/router-config", version = "0.0.23" }
+hive-router-internal = { path = "../../lib/internal", version = "0.0.12" }
+hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.6" }
+graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.1" }
 
 tokio = { workspace = true }
 futures = { workspace = true }
@@ -50,20 +53,23 @@ regex-automata = { workspace = true }
 ahash = { workspace = true }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
 hyper-rustls = { workspace = true, features = ["aws-lc-rs"]}
+dashmap = { workspace = true }
 
-mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { workspace = true }
 ulid = "1.2.1"
 tokio-util = { workspace = true }
 cookie = "0.18.1"
-arc-swap = "1.7.1"
+arc-swap = { workspace = true }
 lasso2 = "0.8.2"
 anyhow = { workspace = true }
 combine = { workspace = true }
 strum = { workspace = true }
 insta = { workspace = true }
+
+mimalloc = { version = "0.1.48", features = ["v3"] }
 mediatype = "0.21.0"
 headers-accept = "0.3.0"
+md5 = "0.8.0"
 
 [dev-dependencies]
 criterion = { workspace = true }

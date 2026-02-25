@@ -2,7 +2,8 @@ use hive_router_config::RouterConfigError;
 
 use crate::{
     jwt::jwks_manager::JwksSourceError, pipeline::usage_reporting::UsageReportingError,
-    schema_state::SupergraphManagerError, shared_state::SharedStateError,
+    plugins::registry::PluginRegistryError, schema_state::SupergraphManagerError,
+    shared_state::SharedStateError, telemetry::TelemetryInitError,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -21,4 +22,8 @@ pub enum RouterInitError {
     UsageReportingError(#[from] UsageReportingError),
     #[error(transparent)]
     SharedStateError(#[from] SharedStateError),
+    #[error(transparent)]
+    TelemetryInitError(#[from] TelemetryInitError),
+    #[error(transparent)]
+    PluginRegistryError(#[from] PluginRegistryError),
 }

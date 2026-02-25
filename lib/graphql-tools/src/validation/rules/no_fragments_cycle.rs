@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::ext::{AstNodeWithName, FragmentSpreadExtraction};
+use crate::ast::ext::AstNodeWithName;
 use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::{FragmentDefinition, FragmentSpread};
 use crate::validation::utils::{ValidationError, ValidationErrorContext};

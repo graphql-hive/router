@@ -1,9 +1,11 @@
 use criterion::{criterion_group, criterion_main, Criterion};
+use hive_router::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use hive_router::pipeline::{
-    authorization::{apply_authorization_to_operation, AuthorizationMetadata},
+    authorization::apply_authorization_to_operation,
     coerce_variables::CoerceVariablesPayload,
-    normalize::GraphQLNormalizationPayload,
+    normalize::{GraphQLNormalizationPayload, OperationIdentity},
 };
+use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_plan_executor::{
     execution::client_request_details::JwtRequestDetails,
     introspection::{
@@ -54,6 +56,11 @@ fn authorization_benchmark(c: &mut Criterion) {
             operation_for_introspection: partitioned_operation
                 .introspection_operation
                 .map(Arc::new),
+            operation_indentity: OperationIdentity {
+                name: None,
+                operation_type: "query",
+                client_document_hash: "".to_string(),
+            },
         }
     }
 

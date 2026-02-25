@@ -1,28 +1,30 @@
-use std::sync::Arc;
+use std::{sync::Arc, vec};
 
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
+    headers::errors::HeaderRuleRuntimeError,
+    hooks::on_graphql_error::handle_graphql_errors_with_plugins,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
 };
-use http::{HeaderName, Method, StatusCode};
+use http::{header::RETRY_AFTER, HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use strum::IntoStaticStr;
 
 use crate::{
     jwt::errors::JwtError,
     pipeline::{
-        authorization::AuthorizationError,
-        header::{ResponseMode, SingleContentType},
+        authorization::AuthorizationError, body_read::ReadBodyStreamError, header::RequestAccepts,
         progressive_override::LabelEvaluationError,
     },
+    RouterSharedState,
 };
 
 #[derive(Debug, thiserror::Error, IntoStaticStr)]
@@ -68,6 +70,9 @@ pub enum PipelineError {
     #[error("Failed to parse GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_FAILED")]
     FailedToParseOperation(#[from] graphql_tools::parser::query::ParseError),
+    #[error("Failed to minify parsed GraphQL operation: {0}")]
+    #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
+    FailedToMinifyParsedOperation(String),
     #[error("Failed to normalize GraphQL operation")]
     #[strum(serialize = "OPERATION_RESOLUTION_FAILURE")]
     NormalizationError(#[from] NormalizationError),
@@ -118,6 +123,26 @@ pub enum PipelineError {
     #[error("Subscriptions are not supported over accepted transport(s)")]
     #[strum(serialize = "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED")]
     SubscriptionsTransportNotSupported,
+
+    #[error(transparent)]
+    #[strum(serialize = "READ_BODY_STREAM_ERROR")]
+    ReadBodyStreamError(#[from] ReadBodyStreamError),
+
+    #[error("Request timed out")]
+    #[strum(serialize = "GATEWAY_TIMEOUT")]
+    TimeoutError,
+
+    #[error(transparent)]
+    #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
+    HeaderPropagation(#[from] HeaderRuleRuntimeError),
+
+    #[error("Failed to serialize the query plan: {0}")]
+    #[strum(serialize = "QUERY_PLAN_SERIALIZATION_FAILED")]
+    QueryPlanSerializationFailed(sonic_rs::Error),
+
+    #[error("No supergraph available yet, unable to process request")]
+    #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
+    NoSupergraphAvailable,
 }
 
 impl PipelineError {
@@ -125,6 +150,7 @@ impl PipelineError {
         match self {
             Self::JwtError(err) => err.error_code(),
             Self::PlanExecutionError(err) => err.error_code(),
+            Self::ReadBodyStreamError(err) => err.error_code(),
             _ => self.into(),
         }
     }
@@ -152,6 +178,8 @@ impl PipelineError {
             (Self::FailedToParseExtensions(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseOperation(_), false) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseOperation(_), true) => StatusCode::OK,
+            (Self::FailedToMinifyParsedOperation(_), false) => StatusCode::BAD_REQUEST,
+            (Self::FailedToMinifyParsedOperation(_), true) => StatusCode::OK,
             (Self::NormalizationError(_), _) => StatusCode::BAD_REQUEST,
             (Self::VariablesCoercionError(_), false) => StatusCode::BAD_REQUEST,
             (Self::VariablesCoercionError(_), true) => StatusCode::OK,
@@ -169,55 +197,73 @@ impl PipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::ReadBodyStreamError(err), _) => err.status_code(),
+            (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
+            (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
         }
-    }
-
-    pub fn into_response(self, response_mode: Option<ResponseMode>) -> web::HttpResponse {
-        let response_mode = response_mode.unwrap_or_default();
-        let prefer_ok = matches!(
-            response_mode,
-            ResponseMode::SingleOnly(SingleContentType::JSON)
-                | ResponseMode::Dual(SingleContentType::JSON, _)
-        );
-
-        let status = self.default_status_code(prefer_ok);
-
-        if let PipelineError::ValidationErrors(validation_errors) = self {
-            let validation_error_result = FailedExecutionResult {
-                errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-            };
-
-            return ResponseBuilder::new(status).json(&validation_error_result);
-        }
-
-        if let PipelineError::AuthorizationFailed(authorization_errors) = self {
-            let authorization_error_result = FailedExecutionResult {
-                errors: Some(
-                    authorization_errors
-                        .into_iter()
-                        .map(|error| error.into())
-                        .collect(),
-                ),
-            };
-
-            return ResponseBuilder::new(status).json(&authorization_error_result);
-        }
-
-        let code = self.graphql_error_code();
-        let message = self.graphql_error_message();
-
-        let graphql_error = GraphQLError::from_message_and_code(message, code);
-
-        let result = FailedExecutionResult {
-            errors: Some(vec![graphql_error]),
-        };
-
-        ResponseBuilder::new(status).json(&result)
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct FailedExecutionResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub errors: Option<Vec<GraphQLError>>,
+impl From<&PipelineError> for GraphQLError {
+    fn from(val: &PipelineError) -> Self {
+        let code = val.graphql_error_code();
+        let message = val.graphql_error_message();
+        GraphQLError::from_message_and_code(message, code)
+    }
+}
+
+#[derive(Serialize)]
+struct FailedExecutionResult {
+    errors: Vec<GraphQLError>,
+}
+
+impl web::error::WebResponseError for PipelineError {
+    fn error_response(&self, req: &web::HttpRequest) -> web::HttpResponse {
+        // Retrieve the negotiated response mode, defaulting to standard if not set
+        let response_mode = req.get_response_mode();
+        let single_content_type = response_mode.single_content_type();
+
+        let prefer_ok = response_mode.prefer_status_ok_for_errors();
+
+        let status = self.default_status_code(prefer_ok);
+
+        let mut res = ResponseBuilder::new(status);
+
+        if let Some(single_content_type) = single_content_type {
+            res.content_type(single_content_type.as_ref());
+        }
+
+        let mut errors = match self {
+            Self::ValidationErrors(validation_errors) => {
+                validation_errors.iter().map(|error| error.into()).collect()
+            }
+            Self::AuthorizationFailed(authorization_errors) => authorization_errors
+                .iter()
+                .map(|error| error.into())
+                .collect(),
+            _ => {
+                let graphql_error: GraphQLError = self.into();
+
+                if matches!(self, PipelineError::NoSupergraphAvailable) {
+                    res.header(RETRY_AFTER, "10");
+                }
+
+                vec![graphql_error]
+            }
+        };
+
+        if let Some(plugins) = req
+            .app_state::<Arc<RouterSharedState>>()
+            .and_then(|shared_state| shared_state.plugins.clone())
+        {
+            let (new_errors, new_status_code) =
+                handle_graphql_errors_with_plugins(&plugins, errors, status);
+            errors = new_errors;
+            res.status(new_status_code);
+        }
+
+        res.json(&FailedExecutionResult { errors })
+    }
 }

@@ -22,10 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: test all
         run: cargo test_all
         timeout-minutes: 5
@@ -37,12 +35,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - name: test e2e
+        run: cargo test_e2e
+        timeout-minutes: 60
+        env:
+          RUST_BACKTRACE: full
+          RUST_LOG: debug
+
+  plugin_examples:
+    name: test / plugin examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
-      - name: test e2e
-        run: cargo test_e2e
+      - name: test plugin examples
+        run: cargo test_plugin_examples
         timeout-minutes: 60
         env:
           RUST_BACKTRACE: full
@@ -69,10 +81,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: build
         run: cargo build --release
 
@@ -81,15 +91,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         with:
           components: rustfmt
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: cargo fmt
         uses: actions-rust-lang/rustfmt@4066006ec54a31931b9b1fddfd38f2fdf2d27143 # v1
 
@@ -98,12 +103,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: cargo clippy
         run: cargo clippy --all
 
@@ -121,10 +124,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - if: matrix.name == 'executor'
         name: Build subgraphs
         run: cargo build --release -p subgraphs
@@ -142,7 +143,43 @@ jobs:
           path: ${{matrix.package}}/target/criterion
 
   router-benchmark:
-    name: benchmark / router
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "default"
+            args: ""
+            package: "hive-router"
+            binary: "hive_router"
+            config: "bench/configs/default.config.yaml"
+            compare_with_default: true
+          - name: "no-dedupe"
+            args: ""
+            package: "hive-router"
+            binary: "hive_router"
+            config: bench/configs/no-deduplication.config.yaml
+            compare_with_default: false
+          - name: "hive-tracing"
+            # turns otlp http/grpc to noop
+            args: "--features noop_otlp_exporter"
+            package: "hive-router"
+            binary: "hive_router"
+            config: bench/configs/hive-tracing.config.yaml
+            compare_with_default: false
+          - name: "otlp-tracing"
+            # turns otlp http/grpc to noop
+            args: "--features noop_otlp_exporter"
+            package: "hive-router"
+            binary: "hive_router"
+            config: bench/configs/otlp-tracing.config.yaml
+            compare_with_default: false
+          - name: "plugins"
+            args: ""
+            package: "plugin-template"
+            binary: "hive_router_with_plugin"
+            config: "bench/configs/plugins.config.yaml"
+            compare_with_default: true
+    name: benchmark / router / ${{ matrix.name }}
     runs-on: ubuntu-latest
     env:
       NODE_NO_WARNINGS: true
@@ -152,10 +189,8 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: Setup K6
         run: |
           wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
@@ -166,20 +201,15 @@ jobs:
       - name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
       - name: Build router
-        run: cargo build --release -p hive-router
+        run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
       - name: Run router
         run: |
-          ./target/release/hive_router &
+          ./target/release/${{ matrix.binary }} &
           echo "$!" > router.pid
           sleep 5
         env:
-          SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
-      # run only on main
-      - name: Run k6 benchmark for Pull Request
-        if: github.event_name == 'push'
-        run: k6 run bench/k6.js
-      # run only on PR
-      - name: Run k6 benchmark for Pull Request
+          ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
+      - name: Run k6 benchmark for ${{ github.ref }}
         if: github.event_name == 'pull_request'
         run: k6 run -e SUMMARY_PATH=./bench/results/pr bench/k6.js
       - name: Checkout main branch in a separate directory
@@ -188,21 +218,36 @@ jobs:
         with:
           ref: main
           path: main-branch
-      - name: Build router
-        if: github.event_name == 'pull_request'
+
+      - name: Build router from main branch w/ default config
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == true
         run: cargo build --release -p hive-router
         working-directory: main-branch
-      - name: Run router
-        if: github.event_name == 'pull_request'
+      - name: Run router from main branch w/ default config
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == true
         run: |
           kill $(cat router.pid)
           ./main-branch/target/release/hive_router &
           sleep 5
         env:
-          SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
+          ROUTER_CONFIG_FILE_PATH: bench/configs/default.config.yaml
+
+      - name: Build router from main branch w/ ${{ matrix.config }} config
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == false
+        run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
+        working-directory: main-branch
+      - name: Run router from main branch w/ ${{ matrix.config }} config
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == false
+        run: |
+          kill $(cat router.pid)
+          ./main-branch/target/release/${{ matrix.binary }} &
+          sleep 5
+        env:
+          ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
+
       - name: Run k6 benchmark for main
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./bench/results/main -e NO_GITHUB_COMMENT=true bench/k6.js
+        run: k6 run -e SUMMARY_PATH=./bench/results/main bench/k6.js
       - name: Compare benchmark results
         if: github.event_name == 'pull_request'
         run: |
@@ -214,18 +259,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1
         with:
           node-version-file: .node-version
-      - run: npm run ci:test:graphql-over-http
+      - name: Run Audits
+        run: npm run ci:test:graphql-over-http
         working-directory: audits
       - name: Publish Test Results for comparison
-        uses: EnricoMi/publish-unit-test-result-action@27d65e188ec43221b20d26de30f4892fad91df2f # v2
+        uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2
         if: (!cancelled())
         with:
           check_name: test / graphql-over-http
@@ -233,42 +277,22 @@ jobs:
           comment_mode: off
           files: |
             audits/reports/*.xml
-      - name: Publish Test Results for details
-        uses: mikepenz/action-junit-report@74626db7353a25a20a72816467ebf035f674c5f8 # v6
-        if: (!cancelled())
-        with:
-          report_paths: "audits/reports/*.xml"
-          group_reports: false
-          job_name: test / graphql-over-http
-          check_name: test / graphql-over-http
-          annotate_only: true
-          fail_on_failure: true
-          fail_on_parse_error: true
-          job_summary: true
-          verbose_summary: false
-          skip_success_summary: true
-          include_empty_in_summary: false
-          include_time_in_summary: true
-          simplified_summary: true
-          group_suite: true
-          comment: false
-          exclude_sources: /lib/,/audits/node_modules/
 
   federation-audit:
     name: test / federation-audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
-      - run: cargo build --package hive-router
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1
         with:
           node-version-file: .node-version
-      - run: npm run test:federation-all
+      - name: Run Audits
+        run: npm run test:federation-all
+        env:
+          GATEWAY_TIMEOUT: 1800000 # 30 minutes, to prevent CI timeout for long-running tests
         working-directory: audits
         continue-on-error: true # continue even if the test fails
       - name: Upload logs
@@ -279,33 +303,11 @@ jobs:
           path: |
             ./audits/logs/*.log
       - name: Publish Test Results for comparison
-        uses: EnricoMi/publish-unit-test-result-action@27d65e188ec43221b20d26de30f4892fad91df2f # v2
+        uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2
         if: (!cancelled())
         with:
-          fail_on: "nothing"
           check_name: test / federation-audit
           comment_title: Federation Audit Results
           comment_mode: off
           files: |
             audits/reports/*.xml
-      - name: Publish Test Results for details
-        uses: mikepenz/action-junit-report@74626db7353a25a20a72816467ebf035f674c5f8 # v6
-        if: (!cancelled())
-        with:
-          report_paths: "audits/reports/*.xml"
-          group_reports: false
-          job_name: test / federation-audit
-          check_name: test / federation-audit
-          check_title_template: "{{FILE_NAME}}"
-          fail_on_failure: true
-          fail_on_parse_error: true
-          annotate_only: true
-          job_summary: true
-          verbose_summary: false
-          skip_success_summary: true
-          include_empty_in_summary: false
-          include_time_in_summary: true
-          simplified_summary: true
-          group_suite: true
-          comment: false
-          exclude_sources: /lib/,/audits/node_modules/

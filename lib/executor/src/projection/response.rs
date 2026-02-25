@@ -80,7 +80,7 @@ impl<'a> TypeName<'a> {
 pub fn project_by_operation(
     data: &Value,
     errors: Vec<GraphQLError>,
-    extensions: &Option<HashMap<String, sonic_rs::Value>>,
+    extensions: &HashMap<String, sonic_rs::Value>,
     operation_type_name: &str,
     selections: &[FieldProjectionPlan],
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
@@ -131,24 +131,22 @@ pub fn project_by_operation(
         );
     }
 
-    if let Some(ext) = extensions.as_ref() {
-        if !ext.is_empty() {
-            let serialized_extensions = sonic_rs::to_vec(ext)
-                .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
-            buffer.put(COMMA);
-            buffer.put(QUOTE);
-            buffer.put("extensions".as_bytes());
-            buffer.put(QUOTE);
-            buffer.put(COLON);
-            buffer.put_slice(&serialized_extensions);
-        }
+    if !extensions.is_empty() {
+        let serialized_extensions = sonic_rs::to_vec(extensions)
+            .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
+        buffer.put(COMMA);
+        buffer.put(QUOTE);
+        buffer.put("extensions".as_bytes());
+        buffer.put(QUOTE);
+        buffer.put(COLON);
+        buffer.put_slice(&serialized_extensions);
     }
 
     buffer.put(CLOSE_BRACE);
     Ok(buffer)
 }
 
-fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
+pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
     match data {
         Value::Null => buffer.put(NULL),
         Value::Bool(true) => buffer.put(TRUE),
@@ -166,7 +164,7 @@ fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
                 }
                 write_and_escape_string(buffer, key);
                 buffer.put(COLON);
-                project_without_selection_set(val, buffer);
+                serialize_value_to_buffer(val, buffer);
                 first = false;
             }
             buffer.put(CLOSE_BRACE);
@@ -178,7 +176,7 @@ fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
                 if !first {
                     buffer.put(COMMA);
                 }
-                project_without_selection_set(item, buffer);
+                serialize_value_to_buffer(item, buffer);
                 first = false;
             }
             buffer.put(CLOSE_BRACKET);
@@ -247,7 +245,7 @@ fn project_selection_set<'a>(
                 }
                 ProjectionValueSource::ResponseData { selections: None } => {
                     // If the selection has no sub-selections, we serialize the whole object
-                    project_without_selection_set(data, buffer);
+                    serialize_value_to_buffer(data, buffer);
                 }
                 ProjectionValueSource::Null => {
                     // This should not happen as we are in an object case, but just in case
@@ -257,7 +255,7 @@ fn project_selection_set<'a>(
         }
         _ => {
             // If the data is not an object or array, we serialize it directly
-            project_without_selection_set(data, buffer);
+            serialize_value_to_buffer(data, buffer);
         }
     };
     Ok(())
@@ -540,6 +538,8 @@ fn resolve_type_name<'a>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use graphql_tools::parser::query::Definition;
     use hive_router_query_planner::{
         ast::{document::NormalizedDocument, normalization::create_normalized_document},
@@ -620,7 +620,7 @@ mod tests {
         let projection = project_by_operation(
             &data,
             vec![],
-            &None,
+            &HashMap::new(),
             operation_type_name,
             &selections,
             &None,
@@ -726,7 +726,7 @@ mod tests {
         let projection = project_by_operation(
             &data,
             vec![],
-            &None,
+            &HashMap::new(),
             operation_type_name,
             &selections,
             &None,

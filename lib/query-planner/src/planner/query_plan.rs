@@ -72,6 +72,8 @@ impl<'a> InDegree<'a> {
     }
 }
 
+pub static QUERY_PLAN_KIND: &str = "QueryPlan";
+
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn build_query_plan_from_fetch_graph(
     fetch_graph: FetchGraph,
@@ -175,7 +177,7 @@ pub fn build_query_plan_from_fetch_graph(
     };
 
     Ok(QueryPlan {
-        kind: "QueryPlan".to_string(),
+        kind: QUERY_PLAN_KIND,
         node: Some(root_node),
     })
 }

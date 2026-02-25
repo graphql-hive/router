@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-plan-executor"
-version = "6.3.6"
+version = "6.5.1"
 edition = "2021"
 description = "GraphQL query planner executor for Federation specification"
 license = "MIT"
@@ -12,10 +12,10 @@ authors = ["The Guild"]
 [lib]
 
 [dependencies]
-hive-router-query-planner = { path = "../query-planner", version = "2.1.7" }
-hive-router-config = { path = "../router-config", version = "0.0.20" }
-hive-router-internal = { path = "../internal", version = "0.0.8" }
-graphql-tools =  { path = "../graphql-tools", version = "0.5.0" }
+hive-router-query-planner = { path = "../query-planner", version = "2.2.1" }
+hive-router-config = { path = "../router-config", version = "0.0.23" }
+hive-router-internal = { path = "../internal", version = "0.0.12" }
+graphql-tools =  { path = "../graphql-tools", version = "0.5.1" }
 
 async-trait = { workspace = true }
 futures = { workspace = true }
@@ -29,11 +29,12 @@ thiserror = { workspace = true }
 xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
+serde_json = { workspace = true }
 
 regex-automata = { workspace = true }
-
+bytes = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
 ahash = { workspace = true }
-strum = { workspace = true }
 ntex = { workspace = true }
 hyper-rustls = { workspace = true}
 
@@ -44,7 +45,6 @@ hyper-util = { version = "0.1.16", features = [
   "http2",
   "tokio",
 ] }
-bytes = { workspace = true }
 itoa = "1.0.15"
 ryu = "1.0.20"
 indexmap = "2.10.0"
@@ -56,6 +56,8 @@ subgraphs = { path = "../../bench/subgraphs" }
 criterion = { workspace = true }
 tokio = { workspace = true }
 insta = { workspace = true }
+mockito = { workspace = true }
+rustls = { workspace = true }
 
 [[bench]]
 name = "executor_benches"

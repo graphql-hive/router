@@ -36,10 +36,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - name: generate config schema
         run: cargo router-config
       - name: setup node
@@ -56,7 +54,7 @@ jobs:
           path: router-config.schema.json
           if-no-files-found: error
       - name: Upload config to release
-        uses: svenstaro/upload-release-action@6b7fa9f267e90b50a19fef07b3596790bb941741 # v2
+        uses: svenstaro/upload-release-action@b98a3b12e86552593f3e4e577ca8a62aa2f3f22b # v2
         if: ${{ github.event_name == 'release' }}
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -101,14 +99,11 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         name: checkout
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-        name: rust toolchain (${{ matrix.rust_target }})
+      - name: setup rust (${{ matrix.rust_target }})
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         with:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ${{ hashFiles('**/Cargo.lock') }}
 
       # Only if using Zigbuild
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -155,7 +150,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload binaries to router release
-        uses: svenstaro/upload-release-action@6b7fa9f267e90b50a19fef07b3596790bb941741 # v2
+        uses: svenstaro/upload-release-action@b98a3b12e86552593f3e4e577ca8a62aa2f3f22b # v2
         if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router/v')
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -198,7 +193,7 @@ jobs:
         working-directory: lib/node-addon
         run: npm pack
       - name: upload pack to release
-        uses: svenstaro/upload-release-action@6b7fa9f267e90b50a19fef07b3596790bb941741 # v2
+        uses: svenstaro/upload-release-action@b98a3b12e86552593f3e4e577ca8a62aa2f3f22b # v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file_glob: true
@@ -254,7 +249,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: build and push
         id: docker
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           file: ./docker/router.Dockerfile
           context: .

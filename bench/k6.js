@@ -1,7 +1,6 @@
 import http from "k6/http";
 import { check } from "k6";
 import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
-import { githubComment } from "https://raw.githubusercontent.com/dotansimha/k6-github-pr-comment/master/lib.js";
 
 const endpoint = __ENV.ROUTER_ENDPOINT || "http://0.0.0.0:4000/graphql";
 const vus = __ENV.BENCH_VUS ? parseInt(__ENV.BENCH_VUS) : 50;
@@ -20,44 +19,6 @@ export function setup() {
 
 export default function () {
   makeGraphQLRequest();
-}
-
-export function handleSummary(data) {
-  if (__ENV.GITHUB_TOKEN && __ENV.NO_GITHUB_COMMENT !== 'true') {
-    githubComment(data, {
-      token: __ENV.GITHUB_TOKEN,
-      commit: __ENV.GITHUB_SHA,
-      pr: __ENV.GITHUB_PR,
-      org: "graphql-hive",
-      repo: "router",
-      commentKey: `k6-benchmark`,
-      renderTitle({ passes }) {
-        return passes
-          ? `✅ \`k6-benchmark\` results`
-          : `❌ \`k6-benchmark\` failed`;
-      },
-      renderMessage({ passes, checks, thresholds }) {
-        const result = [];
-
-        if (thresholds.failures) {
-          result.push(`**Performance regression detected**`);
-        }
-
-        if (checks.failures) {
-          result.push("**Failed assertions detected**");
-        }
-
-        if (!passes) {
-          result.push(
-            `> If the performance regression is expected, please increase the failing threshold.`
-          );
-        }
-
-        return result.join("\n");
-      },
-    });
-  }
-  return handleBenchmarkSummary(data, { vus, duration });
 }
 
 let printIdentifiersMap = {};
@@ -149,7 +110,7 @@ const graphqlRequest = {
   },
 };
 
-function handleBenchmarkSummary(data, additionalContext = {}) {
+export function handleSummary(data) {
   const out = {
     stdout: textSummary(data, { indent: " ", enableColors: true }),
   };
@@ -159,7 +120,7 @@ function handleBenchmarkSummary(data, additionalContext = {}) {
       `Writing summary to ${__ENV.SUMMARY_PATH}/k6_summary.json and .txt`,
     );
     out[`${__ENV.SUMMARY_PATH}/k6_summary.json`] = JSON.stringify(
-      Object.assign(data, additionalContext),
+      Object.assign(data, { vus, duration }),
     );
     out[`${__ENV.SUMMARY_PATH}/k6_summary.txt`] = textSummary(data, {
       indent: " ",
@@ -171,17 +132,11 @@ function handleBenchmarkSummary(data, additionalContext = {}) {
 }
 
 function sendGraphQLRequest() {
-  const res = http.post(
+  return http.post(
     endpoint,
     graphqlRequest.payload,
     graphqlRequest.params,
   );
-
-  if (res.status !== 200) {
-    console.log(`‼️ Failed to run HTTP request:`, res);
-  }
-
-  return res;
 }
 
 function makeGraphQLRequest() {
@@ -191,11 +146,10 @@ function makeGraphQLRequest() {
     "no graphql errors": (resp) => {
       let has_errors = resp.body.includes(`"errors"`);
       if (has_errors) {
-        printOnce(
-          "graphql_errors",
-          `‼️ Got GraphQL errors, here's a sample:`,
-          res.body,
-        );
+        const json = resp.json();
+        for (const error of json.errors) {
+          printOnce(error.message, `‼️ Got GraphQL error:`, error);
+        }
       }
 
       return !has_errors;

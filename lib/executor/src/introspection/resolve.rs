@@ -1,8 +1,7 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 
 use graphql_tools::parser::query::Value as QueryValue;
-use graphql_tools::parser::schema::{
+use graphql_tools::static_graphql::schema::{
     Definition, Directive, DirectiveDefinition, Document, EnumValue, Field, InputValue, Type,
     TypeDefinition,
 };
@@ -18,15 +17,13 @@ use hive_router_query_planner::state::supergraph_state::OperationKind;
 use crate::introspection::schema::SchemaMetadata;
 use crate::response::value::Value;
 
-pub struct IntrospectionContext<'exec, 'schema> {
+pub struct IntrospectionContext<'exec> {
     pub query: Option<&'exec OperationDefinition>,
-    pub schema: &'exec Document<'schema, String>,
+    pub schema: &'exec Document,
     pub metadata: &'exec SchemaMetadata,
 }
 
-fn get_deprecation_reason<'exec, 'schema>(
-    directives: &'exec [Directive<'schema, String>],
-) -> Option<&'exec str> {
+fn get_deprecation_reason(directives: &[Directive]) -> Option<&str> {
     directives
         .iter()
         .find(|d| d.name == "deprecated")
@@ -44,17 +41,15 @@ fn get_deprecation_reason<'exec, 'schema>(
         })
 }
 
-fn is_deprecated<'exec, 'schema: 'exec>(directives: &'exec [Directive<'schema, String>]) -> bool {
+fn is_deprecated(directives: &[Directive]) -> bool {
     directives.iter().any(|d| d.name == "deprecated")
 }
 
-fn is_deprecated_enum<'exec, 'schema: 'exec>(enum_val: &'exec EnumValue<'schema, String>) -> bool {
+fn is_deprecated_enum(enum_val: &EnumValue) -> bool {
     is_deprecated(&enum_val.directives)
 }
 
-fn kind_to_str<'exec, 'schema: 'exec>(
-    type_def: &'exec TypeDefinition<'schema, String>,
-) -> Cow<'exec, str> {
+fn kind_to_str<'exec>(type_def: &'exec TypeDefinition) -> Cow<'exec, str> {
     (match type_def {
         TypeDefinition::Scalar(_) => "SCALAR",
         TypeDefinition::Object(_) => "OBJECT",
@@ -66,20 +61,20 @@ fn kind_to_str<'exec, 'schema: 'exec>(
     .into()
 }
 
-fn resolve_input_value<'exec, 'schema: 'exec>(
-    iv: &'exec InputValue<'schema, String>,
+fn resolve_input_value<'exec>(
+    iv: &'exec InputValue,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
     let mut iv_data = resolve_input_value_selections(iv, &selections.items, ctx);
     iv_data.sort_by_key(|(k, _)| *k);
     Value::Object(iv_data)
 }
 
-fn resolve_input_value_selections<'exec, 'schema: 'exec>(
-    iv: &'exec InputValue<'schema, String>,
+fn resolve_input_value_selections<'exec>(
+    iv: &'exec InputValue,
     selection_items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut iv_data: Vec<(&str, Value<'_>)> = Vec::with_capacity(selection_items.len());
     for item in selection_items {
@@ -107,20 +102,20 @@ fn resolve_input_value_selections<'exec, 'schema: 'exec>(
     iv_data
 }
 
-fn resolve_field<'exec, 'schema: 'exec>(
-    f: &'exec Field<'schema, String>,
+fn resolve_field<'exec>(
+    f: &'exec Field,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
     let mut field_data = resolve_field_selections(f, &selections.items, ctx);
     field_data.sort_by_key(|(k, _)| *k);
     Value::Object(field_data)
 }
 
-fn resolve_field_selections<'exec, 'schema: 'exec>(
-    f: &'exec Field<'schema, String>,
+fn resolve_field_selections<'exec>(
+    f: &'exec Field,
     selection_items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut field_data = Vec::with_capacity(selection_items.len());
     for item in selection_items {
@@ -158,8 +153,8 @@ fn resolve_field_selections<'exec, 'schema: 'exec>(
     field_data
 }
 
-fn resolve_enum_value<'exec, 'schema: 'exec>(
-    ev: &'exec EnumValue<'schema, String>,
+fn resolve_enum_value<'exec>(
+    ev: &'exec EnumValue,
     selections: &'exec SelectionSet,
 ) -> Value<'exec> {
     let mut ev_data = resolve_enum_value_selections(ev, &selections.items);
@@ -167,8 +162,8 @@ fn resolve_enum_value<'exec, 'schema: 'exec>(
     Value::Object(ev_data)
 }
 
-fn resolve_enum_value_selections<'exec, 'schema: 'exec>(
-    ev: &'exec EnumValue<'schema, String>,
+fn resolve_enum_value_selections<'exec>(
+    ev: &'exec EnumValue,
     selection_items: &'exec Vec<SelectionItem>,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut ev_data = Vec::with_capacity(selection_items.len());
@@ -198,20 +193,20 @@ fn resolve_enum_value_selections<'exec, 'schema: 'exec>(
     ev_data
 }
 
-fn resolve_type_definition<'exec, 'schema: 'exec>(
-    type_def: &'exec TypeDefinition<'schema, String>,
+fn resolve_type_definition<'exec>(
+    type_def: &'exec TypeDefinition,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
     let mut type_data = resolve_type_definition_selections(type_def, &selections.items, ctx);
     type_data.sort_by_key(|(k, _)| *k);
     Value::Object(type_data)
 }
 
-fn resolve_type_definition_selections<'exec, 'schema: 'exec>(
-    type_def: &'exec TypeDefinition<'schema, String>,
+fn resolve_type_definition_selections<'exec>(
+    type_def: &'exec TypeDefinition,
     selection_items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut type_data = Vec::with_capacity(selection_items.len());
 
@@ -352,22 +347,22 @@ fn resolve_type_definition_selections<'exec, 'schema: 'exec>(
     }
     type_data
 }
-fn resolve_wrapper_type<'exec, 'schema: 'exec>(
+fn resolve_wrapper_type<'exec>(
     kind: &'exec str,
-    inner_type: &'exec Type<'schema, String>,
+    inner_type: &'exec Type,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
     let mut type_data = resolve_wrapper_type_selections(kind, inner_type, &selections.items, ctx);
     type_data.sort_by_key(|(k, _)| *k);
     Value::Object(type_data)
 }
 
-fn resolve_wrapper_type_selections<'exec, 'schema: 'exec>(
+fn resolve_wrapper_type_selections<'exec>(
     kind: &'exec str,
-    inner_type: &'exec Type<'schema, String>,
+    inner_type: &'exec Type,
     selection_items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut type_data = Vec::with_capacity(selection_items.len());
     for item in selection_items {
@@ -392,10 +387,10 @@ fn resolve_wrapper_type_selections<'exec, 'schema: 'exec>(
     type_data
 }
 
-fn resolve_type<'exec, 'schema: 'exec>(
-    t: &'exec Type<'schema, String>,
+fn resolve_type<'exec>(
+    t: &'exec Type,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
     match t {
         Type::NamedType(name) => {
@@ -412,20 +407,20 @@ fn resolve_type<'exec, 'schema: 'exec>(
     }
 }
 
-fn resolve_directive<'exec, 'schema: 'exec>(
-    d: &'exec DirectiveDefinition<'schema, String>,
+fn resolve_directive<'exec>(
+    d: &'exec DirectiveDefinition,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
     let mut directive_data = resolve_directive_selections(d, &selections.items, ctx);
     directive_data.sort_by_key(|(k, _)| *k);
     Value::Object(directive_data)
 }
 
-fn resolve_directive_selections<'exec, 'schema: 'exec>(
-    d: &'exec DirectiveDefinition<'schema, String>,
+fn resolve_directive_selections<'exec>(
+    d: &'exec DirectiveDefinition,
     selection_items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut directive_data = Vec::with_capacity(selection_items.len());
     for item in selection_items {
@@ -468,9 +463,9 @@ fn resolve_directive_selections<'exec, 'schema: 'exec>(
     directive_data
 }
 
-fn resolve_schema_field<'exec, 'schema: 'exec>(
+fn resolve_schema_field<'exec>(
     field: &'exec FieldSelection,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
     let mut schema_data = resolve_schema_selections(&field.selections.items, ctx);
 
@@ -478,9 +473,9 @@ fn resolve_schema_field<'exec, 'schema: 'exec>(
     Value::Object(schema_data)
 }
 
-fn resolve_schema_selections<'exec, 'schema: 'exec>(
+fn resolve_schema_selections<'exec>(
     items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut schema_data = Vec::with_capacity(items.len());
 
@@ -546,9 +541,9 @@ fn resolve_schema_selections<'exec, 'schema: 'exec>(
     schema_data
 }
 
-pub fn resolve_introspection<'exec, 'schema: 'exec>(
+pub fn resolve_introspection<'exec>(
     operation_definition: &'exec OperationDefinition,
-    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+    ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
     let root_selection_set = &operation_definition.selection_set;
 
@@ -572,8 +567,8 @@ pub fn resolve_introspection<'exec, 'schema: 'exec>(
     Value::Object(data)
 }
 
-fn resolve_root_introspection_selections<'exec, 'schema: 'exec>(
-    root_type_name: &'schema str,
+fn resolve_root_introspection_selections<'exec>(
+    root_type_name: &'exec str,
     items: &'exec Vec<SelectionItem>,
     ctx: &'exec IntrospectionContext,
 ) -> Vec<(&'exec str, Value<'exec>)> {
@@ -609,110 +604,4 @@ fn resolve_root_introspection_selections<'exec, 'schema: 'exec>(
         }
     }
     data
-}
-
-trait TypeDefinitionExtension {
-    fn name(&self) -> &str;
-}
-
-/// Kamil: I couldn't use SchemaDocumentExtension of graphql_tools,
-///        due to lack of strict 'lifetimes.
-///        All methods of TypeDefinitionExtension and SchemaDocumentExtension
-///        had `&self` and `&T` as return types.
-trait SchemaDocumentExtension<'schema> {
-    fn type_by_name<'a>(&'a self, name: &str) -> Option<&'a TypeDefinition<'schema, String>>;
-    fn type_map<'a>(&'a self) -> HashMap<&'a str, &'a TypeDefinition<'schema, String>>;
-    fn query_type_name(&self) -> &str;
-    fn mutation_type_name(&self) -> Option<&str>;
-    fn subscription_type_name(&self) -> Option<&str>;
-}
-
-impl<'schema> SchemaDocumentExtension<'schema> for Document<'schema, String> {
-    fn type_by_name<'a>(&'a self, name: &str) -> Option<&'a TypeDefinition<'schema, String>> {
-        for def in &self.definitions {
-            if let Definition::TypeDefinition(type_def) = def {
-                if type_def.name().eq(name) {
-                    return Some(type_def);
-                }
-            }
-        }
-
-        None
-    }
-
-    fn type_map<'a>(&'a self) -> HashMap<&'a str, &'a TypeDefinition<'schema, String>> {
-        let mut type_map = HashMap::new();
-
-        for def in &self.definitions {
-            if let Definition::TypeDefinition(type_def) = def {
-                type_map.insert(type_def.name(), type_def);
-            }
-        }
-
-        type_map
-    }
-
-    fn query_type_name(&self) -> &str {
-        for def in &self.definitions {
-            if let Definition::SchemaDefinition(schema_def) = def {
-                if let Some(name) = schema_def.query.as_ref() {
-                    return name.as_str();
-                }
-            }
-        }
-
-        root_type_name(self, "Query").unwrap_or("Query")
-    }
-
-    fn mutation_type_name(&self) -> Option<&str> {
-        for def in &self.definitions {
-            if let Definition::SchemaDefinition(schema_def) = def {
-                if let Some(name) = schema_def.mutation.as_ref() {
-                    return Some(name.as_str());
-                }
-            }
-        }
-
-        root_type_name(self, "Mutation")
-    }
-
-    fn subscription_type_name(&self) -> Option<&str> {
-        for def in &self.definitions {
-            if let Definition::SchemaDefinition(schema_def) = def {
-                if let Some(name) = schema_def.subscription.as_ref() {
-                    return Some(name.as_str());
-                }
-            }
-        }
-
-        root_type_name(self, "Subscription")
-    }
-}
-
-fn root_type_name<'a, 'schema>(
-    schema: &'a Document<'schema, String>,
-    name: &'a str,
-) -> Option<&'a str> {
-    for def in &schema.definitions {
-        if let Definition::TypeDefinition(TypeDefinition::Object(obj)) = def {
-            if obj.name.as_str() == name {
-                return Some(obj.name.as_str());
-            }
-        }
-    }
-
-    None
-}
-
-impl<'schema> TypeDefinitionExtension for TypeDefinition<'schema, String> {
-    fn name(&self) -> &str {
-        match self {
-            TypeDefinition::Object(o) => &o.name,
-            TypeDefinition::Interface(i) => &i.name,
-            TypeDefinition::Union(u) => &u.name,
-            TypeDefinition::Scalar(s) => &s.name,
-            TypeDefinition::Enum(e) => &e.name,
-            TypeDefinition::InputObject(i) => &i.name,
-        }
-    }
 }

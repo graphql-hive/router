@@ -59,7 +59,6 @@ mod env_vars_e2e_tests {
             let req = init_graphql_request("{ users { id } }", None);
             let resp = test::call_service(&app.app, req.to_request()).await;
 
-            assert!(resp.status().is_success(), "Expected 200 OK");
             let body = test::read_body(resp).await;
             let json_body: Value = from_slice(&body).unwrap();
 
@@ -70,7 +69,7 @@ mod env_vars_e2e_tests {
               },
               "errors": [
                 {
-                  "message": "Failed to send request to subgraph \"http://0.0.0.0:4100/accounts\": client error (Connect)",
+                  "message": "Failed to send request to subgraph: client error (Connect)",
                   "extensions": {
                     "code": "SUBGRAPH_REQUEST_FAILURE",
                     "serviceName": "accounts"

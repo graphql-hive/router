@@ -3,6 +3,8 @@ mod authorization_directives_filter;
 #[cfg(test)]
 mod authorization_directives_reject;
 #[cfg(test)]
+mod body_limit;
+#[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
 mod env_vars;
@@ -19,6 +21,8 @@ mod http;
 #[cfg(test)]
 mod jwt;
 #[cfg(test)]
+mod max_aliases;
+#[cfg(test)]
 mod max_depth;
 #[cfg(test)]
 mod max_directives;
@@ -29,8 +33,14 @@ mod override_subgraph_urls;
 #[cfg(test)]
 mod probes;
 #[cfg(test)]
+mod router_timeout;
+#[cfg(test)]
 mod supergraph;
 #[cfg(test)]
-mod testkit;
+mod telemetry;
+
 #[cfg(test)]
 mod timeout_per_subgraph;
+pub use insta;
+pub use mockito;
+pub mod testkit;

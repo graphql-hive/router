@@ -94,6 +94,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.5.1 (2026-02-12)
+
+### Fixes
+
+- Make `hive.inflight.key` span attribute unique per inflight group, for better identification of the leader and joiners in a distributed system.
+
+## 6.5.0 (2026-02-11)
+
+### Features
+
+#### Move `telemetry.hive.endpoint` to `telemetry.hive.tracing.endpoint`.
+
+The endpoint is tracing-specific, but its current placement at `telemetry.hive.endpoint` suggests it applies globally to all Hive telemetry features. This becomes misleading now that usage reporting also defines its own endpoint configuration (`telemetry.hive.usage_reporting.endpoint`).
+
+```diff
+telemetry:
+  hive:
+-   endpoint: "<value>"
++   tracing:
++     endpoint: "<value>"
+```
+
+## 6.4.1 (2026-02-10)
+
+### Fixes
+
+#### Hive telemetry (tracing and usage reporting) is now explicitly opt-in.
+
+Two new environment variables are available to control telemetry:
+  - `HIVE_TRACING_ENABLED` controls `telemetry.hive.tracing.enabled` config value
+  - `HIVE_USAGE_REPORTING_ENABLED` controls `telemetry.hive.usage_reporting.enabled` config value
+  
+The accepted values are `true` or `false`.
+
+If you only set `HIVE_ACCESS_TOKEN` and `HIVE_TARGET`, usage reporting stays disabled until explicitly enabled with environment variables or configuration file.
+
+#### Tracing with OpenTelemetry
+
+Introducing comprehensive OpenTelemetry-based tracing to the Hive Router, providing deep visibility into the GraphQL request lifecycle and subgraph communications.
+
+- **OpenTelemetry Integration**: Support for OTLP exporters (gRPC and HTTP) and standard propagation formats (Trace Context, Baggage, Jaeger, B3/Zipkin).
+- **GraphQL-Specific Spans**: Detailed spans for every phase of the GraphQL lifecycle
+- **Hive Console Tracing**: Native integration with Hive Console for trace visualization and analysis.
+- **Semantic Conventions**: Support for both stable and deprecated OpenTelemetry HTTP semantic conventions to ensure compatibility with a wide range of observability tools.
+- **Optimized Performance**: Tracing is designed with a "pay only for what you use" approach. Overhead is near-zero when disabled, and allocations/computations are minimized when enabled.
+- **Rich Configuration**: New configuration options for telemetry exporters, batching, and resource attributes.
+
+#### Unified Hive Telemetry Configuration
+
+Refactored the configuration structure to unify Hive-specific telemetry (tracing and usage reporting) and centralize client identification.
+
+- **Unified Hive Config**: Moved `usage_reporting` under `telemetry.hive.usage_reporting`. Usage reporting now shares the `token` and `target` configuration with Hive tracing, eliminating redundant settings.
+- **Centralized Client Identification**: Introduced `telemetry.client_identification` to define client name and version headers once. These are now propagated to both OpenTelemetry spans and Hive usage reports.
+- **Enhanced Expression Support**: Both Hive token and target ID now support VRL expressions for usage reporting, matching the existing behavior of tracing.
+
+#### Breaking Changes:
+
+The top-level `usage_reporting` block has been moved. 
+
+**Before:**
+```yaml
+usage_reporting:
+  enabled: true
+  access_token: "..."
+  target_id: "..."
+  client_name_header: "..."
+  client_version_header: "..."
+```
+
+**After:**
+```yaml
+telemetry:
+  client_identification:
+    name_header: "..."
+    version_header: "..."
+  hive:
+    token: "..."
+    target: "..."
+    usage_reporting:
+      enabled: true
+```
+
+## 6.4.0 (2026-02-06)
+
+### Features
+
+- Operation Complexity - Limit Aliases (#746)
+- Operation Complexity - Limit Aliases (#749)
+
 ## 6.3.6 (2026-01-27)
 
 ### Fixes
