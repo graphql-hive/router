@@ -54,7 +54,7 @@ jobs:
           path: router-config.schema.json
           if-no-files-found: error
       - name: Upload config to release
-        uses: svenstaro/upload-release-action@6b7fa9f267e90b50a19fef07b3596790bb941741 # v2
+        uses: svenstaro/upload-release-action@b98a3b12e86552593f3e4e577ca8a62aa2f3f22b # v2
         if: ${{ github.event_name == 'release' }}
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -150,7 +150,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload binaries to router release
-        uses: svenstaro/upload-release-action@6b7fa9f267e90b50a19fef07b3596790bb941741 # v2
+        uses: svenstaro/upload-release-action@b98a3b12e86552593f3e4e577ca8a62aa2f3f22b # v2
         if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router/v')
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -193,7 +193,7 @@ jobs:
         working-directory: lib/node-addon
         run: npm pack
       - name: upload pack to release
-        uses: svenstaro/upload-release-action@6b7fa9f267e90b50a19fef07b3596790bb941741 # v2
+        uses: svenstaro/upload-release-action@b98a3b12e86552593f3e4e577ca8a62aa2f3f22b # v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file_glob: true
