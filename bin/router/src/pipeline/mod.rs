@@ -23,7 +23,7 @@ use crate::{
         error::PipelineError,
         execution::{execute_plan, ExposeQueryPlanMode, PlannedRequest, EXPOSE_QUERY_PLAN_HEADER},
         execution_request::get_execution_request_from_http_request,
-        header::ResponseMode,
+        header::RequestAccepts,
         introspection_policy::handle_introspection_policy,
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::parse_operation_with_cache,
@@ -56,7 +56,6 @@ pub mod validation;
 pub async fn graphql_request_handler(
     req: &HttpRequest,
     body_stream: web::types::Payload,
-    response_mode: &ResponseMode,
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
@@ -145,13 +144,11 @@ pub async fn graphql_request_handler(
             return Err(PipelineError::SubscriptionsNotSupported);
         }
 
-        let single_content_type = match response_mode {
-            ResponseMode::SingleOnly(single) => single,
-            ResponseMode::Dual(single, _) => single,
-            _ => {
-                // streaming responses coming soon
-                return Err(PipelineError::UnsupportedContentType);
-            }
+        let response_mode = req.get_response_mode();
+
+        let Some(single_content_type) = response_mode.single_content_type() else {
+            // streaming responses coming soon
+            return Err(PipelineError::UnsupportedContentType);
         };
 
         let jwt_request_details = match &shared_state.jwt_auth_runtime {
