@@ -4,6 +4,7 @@ mod ast;
 mod error;
 mod format;
 mod grammar;
+pub mod hash;
 
 pub use self::ast::*;
 pub use self::error::ParseError;

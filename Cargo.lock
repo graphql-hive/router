@@ -121,6 +121,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
+name = "apollo-sandbox-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
+]
+
+[[package]]
+name = "apq-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
+]
+
+[[package]]
 name = "arc-swap"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -170,6 +188,15 @@ checksum = "47e4f2b81832e72834d7518d8487a0396a28cc408186a2e8854c0f98011faf12"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "async-auth-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
 ]
 
 [[package]]
@@ -536,6 +563,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "bollard"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "227aa051deec8d16bd9c34605e7aaf153f240e35483dd42f6f78903847934738"
+dependencies = [
+ "base64",
+ "bollard-stubs",
+ "bytes",
+ "futures-core",
+ "futures-util",
+ "hex",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-named-pipe",
+ "hyper-util",
+ "hyperlocal",
+ "log",
+ "pin-project-lite",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "serde_urlencoded",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tower-service",
+ "url",
+ "winapi",
+]
+
+[[package]]
+name = "bollard-stubs"
+version = "1.52.1-rc.29.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f0a8ca8799131c1837d1282c3f81f31e76ceb0ce426e04a7fe1ccee3287c066"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_repr",
+]
+
+[[package]]
 name = "borrow-or-share"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -881,6 +951,15 @@ dependencies = [
  "getrandom 0.2.17",
  "once_cell",
  "tiny-keccak",
+]
+
+[[package]]
+name = "context-data-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
 ]
 
 [[package]]
@@ -1430,14 +1509,21 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 name = "e2e"
 version = "0.0.1"
 dependencies = [
+ "arc-swap",
+ "async-trait",
  "axum",
+ "bollard",
  "bytes",
  "dashmap",
  "futures",
+ "futures-util",
+ "graphql-tools",
  "hex",
  "hive-router",
  "hive-router-config",
  "hive-router-internal",
+ "hive-router-plan-executor",
+ "hive-router-query-planner",
  "http",
  "insta",
  "jsonwebtoken",
@@ -1626,6 +1712,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "error-mapping-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
+]
+
+[[package]]
 name = "event-listener"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1685,6 +1780,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "feature-flags-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
+]
+
+[[package]]
 name = "ff"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1699,6 +1803,20 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
+name = "fibre"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c976007c0ab861e2e60bcd8771a9ac845ec781f4efc739f587119498efa0e0cd"
+dependencies = [
+ "futures-core",
+ "futures-intrusive",
+ "futures-util",
+ "lazy_static",
+ "papaya",
+ "parking_lot 0.12.5",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -1750,6 +1868,15 @@ name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
+name = "forbid-anonymous-operations-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
+]
 
 [[package]]
 name = "form_urlencoded"
@@ -1816,6 +1943,17 @@ dependencies = [
  "futures-core",
  "futures-task",
  "futures-util",
+]
+
+[[package]]
+name = "futures-intrusive"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d930c203dd0b6ff06e0201a4a2fe9149b43c684fd4420555b26d21b1a02956f"
+dependencies = [
+ "futures-core",
+ "lock_api",
+ "parking_lot 0.12.5",
 ]
 
 [[package]]
@@ -1942,6 +2080,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "thiserror 2.0.18",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -2139,6 +2278,7 @@ dependencies = [
  "combine",
  "cookie",
  "criterion",
+ "dashmap",
  "futures",
  "graphql-tools",
  "headers-accept",
@@ -2218,6 +2358,7 @@ dependencies = [
  "humantime",
  "hyper",
  "insta",
+ "lasso2",
  "ntex",
  "opentelemetry",
  "opentelemetry-appender-tracing",
@@ -2231,6 +2372,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tonic",
  "tracing",
  "tracing-opentelemetry",
@@ -2267,6 +2409,7 @@ dependencies = [
  "rustls",
  "ryu",
  "serde",
+ "serde_json",
  "sonic-rs",
  "sonic-simd",
  "strum 0.28.0",
@@ -2422,6 +2565,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-named-pipe"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73b7d8abf35697b81a825e386fc151e0d503e8cb5fcb93cc8669c376dfd6f278"
+dependencies = [
+ "hex",
+ "hyper",
+ "hyper-util",
+ "pin-project-lite",
+ "tokio",
+ "tower-service",
+ "winapi",
+]
+
+[[package]]
 name = "hyper-rustls"
 version = "0.27.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2474,6 +2632,21 @@ dependencies = [
  "tokio",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "hyperlocal"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "986c5ce3b994526b3cd75578e62554abd09f0899d6206de48b3e96ab34ccc8c7"
+dependencies = [
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "pin-project-lite",
+ "tokio",
+ "tower-service",
 ]
 
 [[package]]
@@ -2612,6 +2785,18 @@ checksum = "3acae9609540aa318d1bc588455225fb2085b9ed0c4f6bd0d9d5bcd86f1a0344"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "incoming-request-deduplication-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "fibre",
+ "futures",
+ "hive-router",
+ "serde",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -2825,6 +3010,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "jwt-cookie-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "e2e",
+ "hive-router",
+ "reqwest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "keccak"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3027,6 +3224,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "mime_guess"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
+dependencies = [
+ "mime",
+ "unicase",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3113,6 +3320,18 @@ dependencies = [
  "mime",
  "spin",
  "version_check",
+]
+
+[[package]]
+name = "multipart-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "futures-util",
+ "hive-router",
+ "multer",
+ "reqwest",
+ "serde",
 ]
 
 [[package]]
@@ -3269,6 +3488,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2de2bc5b451bfedaef92c90b8939a8fff5770bdcc1fafd6239d086aab8fa6b29"
 dependencies = [
  "nom 8.0.0",
+]
+
+[[package]]
+name = "non-standard-request-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
 ]
 
 [[package]]
@@ -3725,6 +3953,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
+name = "one-of-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
+]
+
+[[package]]
 name = "oneshot"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3957,6 +4194,16 @@ checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "papaya"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f92dd0b07c53a0a0c764db2ace8c541dc47320dad97c2200c2a637ab9dd2328f"
+dependencies = [
+ "equivalent",
+ "seize",
 ]
 
 [[package]]
@@ -4236,6 +4483,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-template"
+version = "0.0.1"
+dependencies = [
+ "hive-router",
+]
+
+[[package]]
 name = "poly1305"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4327,6 +4581,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "propagate-status-code-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
 ]
 
 [[package]]
@@ -4544,6 +4807,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
+name = "r2d2"
+version = "0.8.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51de85fb3fb6524929c8a2eb85e6b6d363de4e8c48f9e2c2eac4944abc181c93"
+dependencies = [
+ "log",
+ "parking_lot 0.12.5",
+ "scheduled-thread-pool",
+]
+
+[[package]]
 name = "rancor"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4648,6 +4922,23 @@ checksum = "40ac0d06281c3556fea72cef9e5372d9ac172335be0d71c3b4f3db900483e0eb"
 dependencies = [
  "crossbeam-epoch",
  "pin-project",
+]
+
+[[package]]
+name = "redis"
+version = "0.32.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "014cc767fefab6a3e798ca45112bccad9c6e0e218fbd49720042716c73cfef44"
+dependencies = [
+ "combine",
+ "itoa",
+ "num-bigint",
+ "percent-encoding",
+ "r2d2",
+ "ryu",
+ "sha1_smol",
+ "socket2",
+ "url",
 ]
 
 [[package]]
@@ -4782,6 +5073,7 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -4859,6 +5151,17 @@ dependencies = [
  "tokio",
  "tracing",
  "wasmtimer",
+]
+
+[[package]]
+name = "response-cache-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "r2d2",
+ "redis",
+ "serde",
 ]
 
 [[package]]
@@ -4944,6 +5247,15 @@ dependencies = [
  "serde_derive",
  "typeid",
  "unicode-ident",
+]
+
+[[package]]
+name = "root-field-limit-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
 ]
 
 [[package]]
@@ -5119,6 +5431,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scheduled-thread-pool"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cbc66816425a074528352f5789333ecff06ca41b36b0b0efdfbb29edc391a19"
+dependencies = [
+ "parking_lot 0.12.5",
+]
+
+[[package]]
 name = "schemars"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5235,6 +5556,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "seize"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5319,6 +5650,17 @@ dependencies = [
  "itoa",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "serde_repr"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.116",
 ]
 
 [[package]]
@@ -5419,6 +5761,12 @@ dependencies = [
  "cpufeatures",
  "digest",
 ]
+
+[[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"
@@ -5728,6 +6076,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.116",
+]
+
+[[package]]
+name = "subgraph-response-cache-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
 ]
 
 [[package]]
@@ -6436,6 +6793,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
 
 [[package]]
+name = "unicase"
+version = "2.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
+
+[[package]]
 name = "unicode-general-category"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6497,6 +6860,17 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+]
+
+[[package]]
+name = "usage-reporting-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "reqwest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

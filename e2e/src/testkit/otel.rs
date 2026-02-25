@@ -71,14 +71,16 @@ pub struct TraceParent<'a> {
     pub sampled: bool,
 }
 
-impl<'a> TraceParent<'a> {
+impl Display for TraceParent<'_> {
     /// Generates W3C Trace Context traceparent header value.
     /// Format: "00-{trace_id}-{span_id}-{trace_flags}"
-    pub fn to_string(&self) -> String {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let flags = if self.sampled { "01" } else { "00" };
-        format!("00-{}-{}-{}", self.trace_id, self.span_id, flags)
+        write!(f, "00-{}-{}-{}", self.trace_id, self.span_id, flags)
     }
+}
 
+impl<'a> TraceParent<'a> {
     pub fn parse(traceparent: &'a str) -> Self {
         let parts: Vec<&str> = traceparent.split('-').collect();
         assert_eq!(parts.len(), 4, "traceparent should have 4 parts");
@@ -172,15 +174,12 @@ impl CollectedTrace {
     }
 
     pub fn has_span_by_hive_kind(&self, hive_kind: &str) -> bool {
-        self.spans
-            .iter()
-            .find(|span| {
-                span.attributes
-                    .get("hive.kind")
-                    .map(|v| v == hive_kind)
-                    .unwrap_or(false)
-            })
-            .is_some()
+        self.spans.iter().any(|span| {
+            span.attributes
+                .get("hive.kind")
+                .map(|v| v == hive_kind)
+                .unwrap_or(false)
+        })
     }
 }
 
@@ -663,11 +662,7 @@ fn format_attribute_value(value: &opentelemetry_proto::tonic::common::v1::AnyVal
         Some(Value::DoubleValue(d)) => d.to_string(),
         Some(Value::BoolValue(b)) => b.to_string(),
         Some(Value::ArrayValue(arr)) => {
-            let values: Vec<String> = arr
-                .values
-                .iter()
-                .map(|v| format_attribute_value(v))
-                .collect();
+            let values: Vec<String> = arr.values.iter().map(format_attribute_value).collect();
             format!("[{}]", values.join(", "))
         }
         Some(Value::KvlistValue(kvlist)) => {

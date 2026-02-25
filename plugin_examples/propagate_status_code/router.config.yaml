@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+override_subgraph_urls:
+  accounts:
+    url:
+      expression: env("ACCOUNTS_URL_OVERRIDE", string!(.default))
+  products:
+    url:
+      expression: env("PRODUCTS_URL_OVERRIDE", string!(.default))
+plugins:
+  propagate_status_code:
+    enabled: true
+    config:
+        status_codes: [206, 207]

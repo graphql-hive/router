@@ -1,9 +1,6 @@
-use graphql_tools::{
-    ast::OperationDefinitionExtension,
-    static_graphql::query::{
-        Directive, Field, FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition,
-        Selection, SelectionSet,
-    },
+use graphql_tools::static_graphql::query::{
+    Directive, Field, FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition,
+    Selection, SelectionSet,
 };
 
 /**
@@ -58,12 +55,7 @@ impl<'a> CountableNode<'a> {
             CountableNode::Field(field) => Some(&field.directives),
             CountableNode::FragmentDefinition(fragment_def) => Some(&fragment_def.directives),
             CountableNode::InlineFragment(inline_fragment) => Some(&inline_fragment.directives),
-            CountableNode::OperationDefinition(op_def) => match op_def {
-                OperationDefinition::Query(query) => Some(&query.directives),
-                OperationDefinition::Mutation(mutation) => Some(&mutation.directives),
-                OperationDefinition::Subscription(subscription) => Some(&subscription.directives),
-                OperationDefinition::SelectionSet(_) => None,
-            },
+            CountableNode::OperationDefinition(op_def) => Some(op_def.directives()),
             CountableNode::FragmentSpread(fragment_spread) => Some(&fragment_spread.directives),
         }
     }

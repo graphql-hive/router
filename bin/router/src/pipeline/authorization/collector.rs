@@ -1,11 +1,13 @@
+use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::utils::StrByAddr;
 use ahash::{HashMap, HashSet};
+use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_plan_executor::introspection::schema::{FieldTypeInfo, SchemaMetadata};
 use hive_router_query_planner::ast::selection_set::{FieldSelection, InlineFragmentSelection};
 use hive_router_query_planner::ast::{selection_item::SelectionItem, selection_set::SelectionSet};
 
-use super::metadata::{AuthorizationMetadata, UserAuthContext};
+use super::metadata::UserAuthContext;
 use super::AuthorizationError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

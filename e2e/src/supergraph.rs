@@ -2,6 +2,7 @@
 mod supergraph_e2e_tests {
     use std::time::{Duration, Instant};
 
+    use hive_router::invoke_shutdown_hooks;
     use mockito::Mock;
     use ntex::time;
     use sonic_rs::JsonValueTrait;
@@ -46,7 +47,6 @@ mod supergraph_e2e_tests {
 
         mock1.assert();
 
-        assert_eq!(router.schema_state().validate_cache.entry_count(), 0);
         assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
 
@@ -57,10 +57,15 @@ mod supergraph_e2e_tests {
         assert!(res.status().is_success(), "Expected 200 OK");
 
         // Flush the caches
-        router.flush_internal_cache().await;
+        router
+            .schema_state()
+            .normalize_cache
+            .run_pending_tasks()
+            .await;
+        router.schema_state().plan_cache.run_pending_tasks().await;
+        invoke_shutdown_hooks(router.shared_state()).await;
 
         // Now it should have the record
-        assert_eq!(router.schema_state().validate_cache.entry_count(), 1);
         assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
 
@@ -70,7 +75,6 @@ mod supergraph_e2e_tests {
         router.flush_internal_cache().await;
 
         // Now cache should be empty again, if supergraph has changes
-        assert_eq!(router.schema_state().validate_cache.entry_count(), 0);
         assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
     }

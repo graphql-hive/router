@@ -1,18 +1,14 @@
-use hive_router::{error::RouterInitError, init_rustls_crypto_provider, router_entrypoint};
+use hive_router::{
+    error::RouterInitError, init_rustls_crypto_provider, router_entrypoint, DefaultGlobalAllocator,
+    PluginRegistry,
+};
 
 #[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static GLOBAL: DefaultGlobalAllocator = DefaultGlobalAllocator;
 
-#[ntex::main]
+#[hive_router::main]
 async fn main() -> Result<(), RouterInitError> {
     init_rustls_crypto_provider();
 
-    match router_entrypoint().await {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            eprintln!("Failed to start Hive Router:\n  {}", err);
-
-            Err(err)
-        }
-    }
+    router_entrypoint(PluginRegistry::new()).await
 }

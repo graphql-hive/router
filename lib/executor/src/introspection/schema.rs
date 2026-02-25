@@ -1,6 +1,5 @@
 use ahash::{HashMap, HashSet};
 
-use graphql_tools::ast::TypeExtension;
 use graphql_tools::parser::{
     query::Type,
     schema::{Definition, TypeDefinition},

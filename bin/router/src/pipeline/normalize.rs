@@ -4,6 +4,8 @@ use std::sync::Arc;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLNormalizeSpan, GraphQLSpanOperationIdentity,
 };
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_query_planner::ast::normalization::normalize_operation;
@@ -11,9 +13,8 @@ use hive_router_query_planner::ast::operation::OperationDefinition;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::parser::GraphQLParserPayload;
-use crate::schema_state::{SchemaState, SupergraphData};
+use crate::schema_state::SchemaState;
 use tracing::{trace, Instrument};
 
 #[derive(Debug, Clone)]
@@ -29,7 +30,7 @@ pub struct GraphQLNormalizationPayload {
 #[derive(Debug, Clone)]
 pub struct OperationIdentity {
     pub name: Option<String>,
-    pub operation_type: String,
+    pub operation_type: &'static str,
     /// Hash of the original document sent to the router, by the client.
     pub client_document_hash: String,
 }
@@ -38,7 +39,7 @@ impl<'a> From<&'a OperationIdentity> for GraphQLSpanOperationIdentity<'a> {
     fn from(op_id: &'a OperationIdentity) -> Self {
         GraphQLSpanOperationIdentity {
             name: op_id.name.as_deref(),
-            operation_type: &op_id.operation_type,
+            operation_type: op_id.operation_type,
             client_document_hash: &op_id.client_document_hash,
         }
     }
@@ -48,15 +49,15 @@ impl<'a> From<&'a OperationIdentity> for GraphQLSpanOperationIdentity<'a> {
 pub async fn normalize_request_with_cache(
     supergraph: &SupergraphData,
     schema_state: &SchemaState,
-    execution_params: &ExecutionRequest,
+    graphql_params: &GraphQLParams,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<Arc<GraphQLNormalizationPayload>, PipelineError> {
     let normalize_span = GraphQLNormalizeSpan::new();
     async {
-        let cache_key = match &execution_params.operation_name {
+        let cache_key = match &graphql_params.operation_name {
             Some(operation_name) => {
                 let mut hasher = Xxh3::new();
-                execution_params.query.hash(&mut hasher);
+                graphql_params.query.hash(&mut hasher);
                 operation_name.hash(&mut hasher);
                 hasher.finish()
             }
@@ -79,7 +80,7 @@ pub async fn normalize_request_with_cache(
                 let doc = normalize_operation(
                     &supergraph.planner.supergraph,
                     &parser_payload.parsed_operation,
-                    execution_params.operation_name.as_deref(),
+                    graphql_params.operation_name.as_deref(),
                 )?;
 
                 trace!(
@@ -102,7 +103,7 @@ pub async fn normalize_request_with_cache(
                         .map(Arc::new),
                     operation_indentity: OperationIdentity {
                         name: doc.operation_name.clone(),
-                        operation_type: parser_payload.operation_type.clone(),
+                        operation_type: parser_payload.operation_type,
                         client_document_hash: parser_payload.cache_key_string.clone(),
                     },
                 };

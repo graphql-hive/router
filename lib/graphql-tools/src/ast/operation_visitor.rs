@@ -7,9 +7,6 @@ use crate::static_graphql::{
     schema::{self},
 };
 
-use super::{
-    FieldByNameExtension, OperationDefinitionExtension, SchemaDocumentExtension, TypeExtension,
-};
 /// OperationVisitor
 pub struct OperationVisitorContext<'a> {
     pub schema: &'a schema::Document,

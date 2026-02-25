@@ -105,8 +105,6 @@ mod override_subgraph_urls_e2e_tests {
             .send_graphql_request("{ users { id } }", None, None)
             .await;
 
-        assert!(res.status().is_success(), "Expected 200 OK");
-
         insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
@@ -114,7 +112,7 @@ mod override_subgraph_urls_e2e_tests {
           },
           "errors": [
             {
-              "message": "Failed to send request to subgraph \"http://0.0.0.0:4200/accounts\": client error (Connect)",
+              "message": "Failed to send request to subgraph: client error (Connect)",
               "extensions": {
                 "code": "SUBGRAPH_REQUEST_FAILURE",
                 "serviceName": "accounts"

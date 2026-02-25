@@ -1,20 +1,21 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLExecuteSpan, GraphQLOperationSpan,
 };
-use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionOpts};
+use hive_router_plan_executor::execution::plan::{
+    execute_query_plan, PlanExecutionOutput, QueryPlanExecutionOpts,
+};
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
+use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use sonic_rs::json;
@@ -31,17 +32,17 @@ pub enum ExposeQueryPlanMode {
 
 pub struct PlannedRequest<'req> {
     pub normalized_payload: &'req GraphQLNormalizationPayload,
-    pub query_plan_payload: &'req Arc<QueryPlan>,
+    pub query_plan_payload: &'req QueryPlan,
     pub variable_payload: &'req CoerceVariablesPayload,
     pub client_request_details: &'req ClientRequestDetails<'req>,
     pub authorization_errors: Vec<AuthorizationError>,
+    pub plugin_req_state: &'req Option<PluginRequestState<'req>>,
 }
 
 #[inline]
 pub async fn execute_plan(
     supergraph: &SupergraphData,
-    app_state: &Arc<RouterSharedState>,
-    expose_query_plan: &ExposeQueryPlanMode,
+    app_state: &RouterSharedState,
     planned_request: PlannedRequest<'_>,
     span: &GraphQLOperationSpan,
 ) -> Result<PlanExecutionOutput, PipelineError> {
@@ -57,6 +58,23 @@ pub async fn execute_plan(
         };
 
         let mut extensions = HashMap::new();
+
+        let mut expose_query_plan = ExposeQueryPlanMode::No;
+        if app_state.router_config.query_planner.allow_expose {
+            if let Some(expose_qp_header) = planned_request
+                .client_request_details
+                .headers
+                .get(&EXPOSE_QUERY_PLAN_HEADER)
+            {
+                let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
+                match str_value {
+                    "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
+                    "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
+                    _ => {}
+                }
+            }
+        }
+
         if matches!(
             expose_query_plan,
             ExposeQueryPlanMode::Yes | ExposeQueryPlanMode::DryRun
@@ -101,6 +119,7 @@ pub async fn execute_plan(
 
         let result = execute_query_plan(QueryPlanExecutionOpts {
             query_plan: planned_request.query_plan_payload,
+            operation_for_plan: &planned_request.normalized_payload.operation_for_plan,
             projection_plan: &planned_request.normalized_payload.projection_plan,
             headers_plan: &app_state.headers_plan,
             variable_values: &planned_request.variable_payload.variables_map,
@@ -112,10 +131,11 @@ pub async fn execute_plan(
             executors: &supergraph.subgraph_executor_map,
             initial_errors: planned_request
                 .authorization_errors
-                .into_iter()
+                .iter()
                 .map(|e| e.into())
                 .collect(),
             span,
+            plugin_req_state: planned_request.plugin_req_state,
         })
         .await?;
 

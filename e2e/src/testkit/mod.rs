@@ -21,7 +21,7 @@ use tracing::{info, warn};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider, telemetry::Telemetry, SchemaState,
+    init_rustls_crypto_provider, telemetry::Telemetry, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use subgraphs::subgraphs_app;
@@ -472,6 +472,7 @@ impl Default for TestRouterBuilder<'_> {
 
 struct TestRouterHandle {
     schema_state: Arc<SchemaState>,
+    shared_state: Arc<RouterSharedState>,
     serv: test::TestServer,
     bg_tasks_manager: BackgroundTasksManager,
     telemetry: Telemetry,
@@ -527,20 +528,25 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
         let subscription_guard = tracing::subscriber::set_default(subscriber);
 
         let mut bg_tasks_manager = BackgroundTasksManager::new();
-        let (shared_state, schema_state) =
-            configure_app_from_config(config, telemetry.context.clone(), &mut bg_tasks_manager)
-                .await
-                .expect("failed to configure hive router from config");
+        let (shared_state, schema_state) = configure_app_from_config(
+            config,
+            telemetry.context.clone(),
+            &mut bg_tasks_manager,
+            todo!(),
+        )
+        .await
+        .expect("failed to configure hive router from config");
 
         // capture the current tracing dispatch so it can be propagated to the
         // server thread spawned by test::server (which runs on a separate thread
         // and would otherwise use the no-op global subscriber)
         let serv_dispatch = tracing::dispatcher::get_default(|d| d.clone());
 
+        let serv_shared_state = shared_state.clone();
         let serv_schema_state = schema_state.clone();
         let serv_graphql_path = self.graphql_path.clone();
         let serv = test::server(move || {
-            let shared_state = shared_state.clone();
+            let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
             let serv_graphql_path = serv_graphql_path.clone();
 
@@ -571,6 +577,7 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
             graphql_path: self.graphql_path,
             handle: Some(TestRouterHandle {
                 schema_state,
+                shared_state,
                 serv,
                 bg_tasks_manager,
                 telemetry,
@@ -600,13 +607,8 @@ impl<'subgraphs> TestRouter<'subgraphs, Started> {
         &self.handle.as_ref().unwrap().schema_state
     }
 
-    pub async fn flush_internal_cache(&self) {
-        self.schema_state()
-            .normalize_cache
-            .run_pending_tasks()
-            .await;
-        self.schema_state().plan_cache.run_pending_tasks().await;
-        self.schema_state().validate_cache.run_pending_tasks().await;
+    pub fn shared_state(&self) -> &Arc<RouterSharedState> {
+        &self.handle.as_ref().unwrap().shared_state
     }
 
     pub fn serv(&self) -> &test::TestServer {

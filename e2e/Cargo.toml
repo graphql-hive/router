@@ -17,25 +17,33 @@ sonic-rs = { workspace = true }
 lazy_static = { workspace = true }
 jsonwebtoken = { workspace = true }
 insta = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["json"]}
 opentelemetry-otlp = { workspace = true, features = ["http-proto"] }
 opentelemetry-proto = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tonic = { workspace = true }
+async-trait = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 dashmap = { workspace = true }
 axum = { workspace = true }
-bytes = "1.10.1"
+bytes = { workspace = true }
+arc-swap = { workspace = true }
 
 hive-router = { path = "../bin/router", features = ["testing"] }
 hive-router-config = { path = "../lib/router-config" }
+hive-router-plan-executor = { path = "../lib/executor" }
+hive-router-query-planner = { path = "../lib/query-planner" }
 hive-router-internal = { path = "../lib/internal" }
 subgraphs = { path = "../bench/subgraphs" }
+graphql-tools = { path = "../lib/graphql-tools" }
 
 mockito = { workspace = true }
 tempfile = "3.23.0"
 hex = "0.4"
 tiny_http = "0.12"
+futures-util = { workspace = true }
+bollard = "0.20.0"
+

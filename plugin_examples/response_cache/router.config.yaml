@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+plugins:
+  response_cache_plugin:
+    enabled: true
+    config:
+        redis_url: "redis://0.0.0.0:6379"
+        default_ttl_seconds: 2
