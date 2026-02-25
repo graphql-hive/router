@@ -1,17 +1,14 @@
 use ahash::{HashMap, HashSet};
+use hive_router_internal::authorization::metadata::{
+    AuthorizationMetadata, AuthorizationRule, FieldRulesMap, RequiredScopes, ScopeAndGroup,
+    ScopeId, ScopeInterner, TypeFieldRulesMap, TypeRulesMap,
+};
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
 use hive_router_query_planner::ast::value::Value;
 use hive_router_query_planner::federation_spec::authorization::{
     AuthenticatedDirective, RequiresScopesDirective,
 };
 use hive_router_query_planner::state::supergraph_state::{SupergraphDefinition, SupergraphState};
-use lasso2::{Rodeo, Spur};
-
-/// Unique identifier for a scope string, interned for fast comparisons.
-pub type ScopeId = Spur;
-
-/// String interner for scope values, enabling O(1) comparisons.
-pub type ScopeInterner = Rodeo;
 
 /// Authorization context for a single incoming request.
 #[derive(Debug)]
@@ -37,45 +34,6 @@ impl UserAuthContext {
     }
 }
 
-/// Group of scopes required together (AND logic).
-///
-/// Example: `["read:posts", "read:users"]` means user needs both scopes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ScopeAndGroup(pub(crate) Vec<ScopeId>);
-
-/// Full requirements of a `@requiresScopes` directive (OR logic).
-///
-/// Example: `[["admin"], ["read:posts", "write:posts"]]` means user needs
-/// either "admin" OR both "read:posts" and "write:posts".
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RequiredScopes(pub(crate) Vec<ScopeAndGroup>);
-
-/// Authorization rule for a field or type.
-#[derive(Debug, Clone)]
-pub enum AuthorizationRule {
-    /// `@authenticated` - User must have valid JWT token.
-    Authenticated,
-    /// `@requiresScopes` - User must be authenticated with required scopes.
-    RequiresScopes(RequiredScopes),
-}
-
-type TypeRulesMap = HashMap<String, AuthorizationRule>;
-type FieldRulesMap = HashMap<String, AuthorizationRule>;
-type TypeFieldRulesMap = HashMap<String, FieldRulesMap>;
-
-/// Pre-computed authorization metadata built once at router startup.
-#[derive(Debug)]
-pub struct AuthorizationMetadata {
-    /// Type-level authorization rules
-    pub type_rules: TypeRulesMap,
-    /// Field-level authorization rules
-    pub field_rules: TypeFieldRulesMap,
-    /// Interner for scope strings
-    pub scopes: ScopeInterner,
-    /// Type's subtree has any auth rules?
-    pub type_has_any_auth: HashMap<String, bool>,
-}
-
 /// Errors that can occur during authorization metadata construction.
 #[derive(thiserror::Error, Debug)]
 pub enum AuthorizationMetadataError {
@@ -87,10 +45,92 @@ pub enum AuthorizationMetadataError {
     DuplicateRequiresScopesDirective,
 }
 
-impl AuthorizationMetadata {
+pub trait AuthorizationMetadataExt
+where
+    Self: Sized,
+{
     /// Builds authorization metadata from the supergraph schema.
     /// Called once at router startup to extract and normalize all authorization directives.
-    pub fn build(
+    fn build(
+        supergraph: &SupergraphState,
+        schema_metadata: &SchemaMetadata,
+    ) -> Result<Self, AuthorizationMetadataError>;
+
+    fn is_empty(&self) -> bool;
+
+    /// Computes whether each type has auth rules in its subtree.
+    fn compute_type_auth_metadata(
+        definitions: &std::collections::HashMap<String, SupergraphDefinition>,
+        schema_metadata: &SchemaMetadata,
+        type_rules: &TypeRulesMap,
+        field_rules: &TypeFieldRulesMap,
+    ) -> HashMap<String, bool>;
+
+    fn type_has_any_auth_recursive(
+        type_name: &str,
+        schema_metadata: &SchemaMetadata,
+        type_rules: &TypeRulesMap,
+        field_rules: &TypeFieldRulesMap,
+        visited: &mut HashSet<String>,
+    ) -> bool;
+
+    fn is_type_authorized(&self, type_name: &str, user_context: &UserAuthContext) -> bool;
+
+    fn is_field_authorized(
+        &self,
+        type_name: &str,
+        field_name: &str,
+        user_context: &UserAuthContext,
+    ) -> bool;
+
+    /// Computes and adds authorization rules for union types based on their members.
+    /// For each union, combines the authorization requirements of all member types.
+    fn compute_union_type_rules(schema_metadata: &SchemaMetadata, type_rules: &mut TypeRulesMap);
+
+    /// Computes the combined authorization rule for a union from its members.
+    /// Combines member requirements with AND logic (user must have access to all members).
+    fn compute_union_authorization_rule(
+        member_names: &HashSet<String>,
+        type_rules: &TypeRulesMap,
+    ) -> Option<AuthorizationRule>;
+
+    /// Combines multiple RequiredScopes using AND logic via cross product.
+    /// Example: [["a"], ["b"]] AND [["c"], ["d"]] = [["a", "c"], ["a", "d"], ["b", "c"], ["b", "d"]]
+    fn cross_product_required_scopes(member_scopes: &[&RequiredScopes]) -> RequiredScopes;
+
+    fn is_rule_satisfied(&self, rule: &AuthorizationRule, user_context: &UserAuthContext) -> bool;
+
+    /// Processes a type definition, extracting authorization rules for the type and its fields.
+    fn process_type_definition(
+        type_def: &SupergraphDefinition,
+        type_rules: &mut TypeRulesMap,
+        field_rules: &mut TypeFieldRulesMap,
+        scopes_interner: &mut ScopeInterner,
+    ) -> Result<(), AuthorizationMetadataError>;
+
+    /// Extracts authorization rule from directives.
+    fn extract_rule_from_directives(
+        authenticated_directives: &[AuthenticatedDirective],
+        requires_scopes_directives: &[RequiresScopesDirective],
+        interner: &mut ScopeInterner,
+    ) -> Result<Option<AuthorizationRule>, AuthorizationMetadataError>;
+
+    /// Parses and normalizes the `scopes` argument from a `@requiresScopes` directive.
+    fn normalize_scopes_arg(
+        value: &Value,
+        interner: &mut ScopeInterner,
+    ) -> Result<RequiredScopes, AuthorizationMetadataError>;
+
+    fn normalize_and_group(
+        value: &Value,
+        interner: &mut ScopeInterner,
+    ) -> Result<ScopeAndGroup, AuthorizationMetadataError>;
+}
+
+impl AuthorizationMetadataExt for AuthorizationMetadata {
+    /// Builds authorization metadata from the supergraph schema.
+    /// Called once at router startup to extract and normalize all authorization directives.
+    fn build(
         supergraph: &SupergraphState,
         schema_metadata: &SchemaMetadata,
     ) -> Result<Self, AuthorizationMetadataError> {
@@ -126,7 +166,7 @@ impl AuthorizationMetadata {
         })
     }
 
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.type_rules.is_empty() && self.field_rules.is_empty()
     }
 
@@ -209,7 +249,7 @@ impl AuthorizationMetadata {
         false
     }
 
-    pub fn is_type_authorized(&self, type_name: &str, user_context: &UserAuthContext) -> bool {
+    fn is_type_authorized(&self, type_name: &str, user_context: &UserAuthContext) -> bool {
         if let Some(rule) = self.type_rules.get(type_name) {
             return self.is_rule_satisfied(rule, user_context);
         }
@@ -217,7 +257,7 @@ impl AuthorizationMetadata {
         true
     }
 
-    pub fn is_field_authorized(
+    fn is_field_authorized(
         &self,
         type_name: &str,
         field_name: &str,

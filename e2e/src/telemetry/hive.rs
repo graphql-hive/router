@@ -109,7 +109,7 @@ async fn test_hive_http_export() {
       Status: message='' code='0'
       Attributes:
         graphql.document: {users{id}}
-        graphql.document.hash: 1237612228098794304
+        graphql.document.hash: 6258881170828510919
         graphql.operation.type: query
         hive.gateway.operation.subgraph.names: accounts
         hive.graphql: true
@@ -131,7 +131,7 @@ async fn test_hive_http_export() {
       Status: message='' code='0'
       Attributes:
         cache.hit: false
-        graphql.document.hash: 1237612228098794304
+        graphql.document.hash: 6258881170828510919
         graphql.operation.type: query
         hive.kind: graphql.parse
         target: hive-router

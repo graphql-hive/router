@@ -1,8 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{
-    visit_document, OperationVisitor, OperationVisitorContext, SchemaDocumentExtension,
-    TypeDefinitionExtension, TypeExtension,
-};
+use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
 use crate::validation::utils::ValidationError;
 use crate::validation::utils::ValidationErrorContext;
 

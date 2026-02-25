@@ -48,7 +48,6 @@ mod supergraph_e2e_tests {
         wait_for_readiness(&test_app.app).await;
         mock1.assert();
 
-        assert_eq!(test_app.schema_state.validate_cache.entry_count(), 0);
         assert_eq!(test_app.schema_state.plan_cache.entry_count(), 0);
         assert_eq!(test_app.schema_state.normalize_cache.entry_count(), 0);
 
@@ -61,20 +60,18 @@ mod supergraph_e2e_tests {
         assert!(resp.status().is_success(), "Expected 200 OK");
 
         // Flush the caches
-        test_app.flush_internal_cache().await;
+        test_app.shutdown().await;
 
         // Now it should have the record
-        assert_eq!(test_app.schema_state.validate_cache.entry_count(), 1);
         assert_eq!(test_app.schema_state.plan_cache.entry_count(), 1);
         assert_eq!(test_app.schema_state.normalize_cache.entry_count(), 1);
 
         // Now let's wait a bit and let the service re-load and get the new supergraph
         time::sleep(Duration::from_millis(600)).await;
         mock2.assert();
-        test_app.flush_internal_cache().await;
+        test_app.shutdown().await;
 
         // Now cache should be empty again, if supergraph has changes
-        assert_eq!(test_app.schema_state.validate_cache.entry_count(), 0);
         assert_eq!(test_app.schema_state.plan_cache.entry_count(), 0);
         assert_eq!(test_app.schema_state.normalize_cache.entry_count(), 0);
     }

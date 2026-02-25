@@ -1,7 +1,6 @@
 import http from "k6/http";
 import { check } from "k6";
 import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
-import { githubComment } from "https://raw.githubusercontent.com/dotansimha/k6-github-pr-comment/master/lib.js";
 
 const endpoint = __ENV.ROUTER_ENDPOINT || "http://0.0.0.0:4000/graphql";
 const vus = __ENV.BENCH_VUS ? parseInt(__ENV.BENCH_VUS) : 50;
@@ -133,17 +132,11 @@ export function handleSummary(data) {
 }
 
 function sendGraphQLRequest() {
-  const res = http.post(
+  return http.post(
     endpoint,
     graphqlRequest.payload,
     graphqlRequest.params,
   );
-
-  if (res.status !== 200) {
-    console.log(`‼️ Failed to run HTTP request:`, res);
-  }
-
-  return res;
 }
 
 function makeGraphQLRequest() {
@@ -153,11 +146,10 @@ function makeGraphQLRequest() {
     "no graphql errors": (resp) => {
       let has_errors = resp.body.includes(`"errors"`);
       if (has_errors) {
-        printOnce(
-          "graphql_errors",
-          `‼️ Got GraphQL errors, here's a sample:`,
-          res.body,
-        );
+        const json = resp.json();
+        for (const error of json.errors) {
+          printOnce(error.message, `‼️ Got GraphQL error:`, error);
+        }
       }
 
       return !has_errors;

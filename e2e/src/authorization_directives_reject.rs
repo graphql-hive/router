@@ -4,6 +4,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     use ntex::http::header::{self, HeaderValue};
     use ntex::web::test;
     use sonic_rs::{from_slice, json, to_string_pretty, Value};
+    use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::testkit::{
@@ -380,7 +381,10 @@ mod authorization_directives_in_reject_mode_e2e_tests {
                 }
               }
             "#,
-            Some(json!({ "should_include": false })),
+            Some(HashMap::from([(
+                "should_include".to_string(),
+                json!(false),
+            )])),
         )
         .header(
             header::AUTHORIZATION,
@@ -420,7 +424,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
 
         let req = init_graphql_request(
           "query($includeBirthday: Boolean!) { me { id birthday @include(if: $includeBirthday) } }",
-          Some(json!({ "includeBirthday": true })),
+          Some(HashMap::from([("includeBirthday".to_string(), json!(true))])),
         )
         .header(
             header::AUTHORIZATION,

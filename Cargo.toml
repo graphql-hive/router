@@ -11,6 +11,24 @@ members = [
   "bin/router",
   "e2e",
   "bench/subgraphs",
+  "plugin_examples/apollo_sandbox",
+  "plugin_examples/apq",
+  "plugin_examples/async_auth",
+  "plugin_examples/context_data",
+  "plugin_examples/forbid_anonymous_operations",
+  "plugin_examples/multipart",
+  "plugin_examples/one_of",
+  "plugin_examples/propagate_status_code",
+  "plugin_examples/response_cache",
+  "plugin_examples/root_field_limit",
+  "plugin_examples/subgraph_response_cache",
+  "plugin_examples/usage_reporting",
+  "plugin_examples/plugin_template",
+  "plugin_examples/jwt_cookie",
+  "plugin_examples/feature_flags",
+  "plugin_examples/non_standard_request",
+  "plugin_examples/incoming_request_deduplication",
+  "plugin_examples/error_mapping"
 ]
 resolver = "2"
 default-members = ["bin/router"]
@@ -58,12 +76,14 @@ vrl = { version = "0.30.0", features = ["compiler", "parser", "value", "diagnost
 regex-automata = "0.4.10"
 bytes = "1.10.1"
 ahash = "0.8.12"
+arc-swap = "1.7.1"
 anyhow = "1.0.100"
 moka = { version = "0.12.11", features = ["future", "sync"] }
 hyper-rustls = { version = "0.27.7", features = ["http1", "http2"] }
 combine = "4.6.6"
 strum = { version = "0.28.0", features = ["derive"] }
 mockito = "1.7.0"
+futures-util = "0.3.31"
 
 # Telemetry
 opentelemetry = "0.31.0"

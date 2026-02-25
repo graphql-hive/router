@@ -1,6 +1,6 @@
 use super::ValidationRule;
 use crate::{
-    ast::{visit_document, OperationVisitor, OperationVisitorContext, TypeDefinitionExtension},
+    ast::{visit_document, OperationVisitor, OperationVisitorContext},
     validation::utils::{ValidationError, ValidationErrorContext},
 };
 

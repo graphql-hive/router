@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use super::{AbstractTypeDefinitionExtension, OperationVisitorContext, SchemaDocumentExtension};
-use crate::ast::ext::{SubTypeExtension, TypeDefinitionExtension};
+use super::OperationVisitorContext;
 use crate::static_graphql::{
     query::{self, Selection, TypeCondition},
     schema::{self, TypeDefinition},
