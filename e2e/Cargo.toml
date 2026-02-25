@@ -43,5 +43,5 @@ tempfile = "3.23.0"
 hex = "0.4"
 tiny_http = "0.12"
 futures-util = { workspace = true }
-bollard = "0.19.4"
+bollard = "0.20.0"
 
