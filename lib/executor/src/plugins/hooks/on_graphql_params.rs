@@ -22,7 +22,7 @@ use ntex::http::Response;
 pub struct GraphQLParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The GraphQL query string parsed from the HTTP request body by the router
-    /// This contains the source test of a GraphQL query, mutation, or subscription sent by the client in the request body.
+    /// This contains the source text of a GraphQL query, mutation, or subscription sent by the client in the request body.
     /// It can be `None` if the client did not send a query string in the request body.
     pub query: Option<String>,
     #[serde(rename = "operationName", skip_serializing_if = "Option::is_none")]
