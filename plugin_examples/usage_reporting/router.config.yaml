@@ -7,3 +7,4 @@ plugins:
     enabled: true
     config:
       endpoint: http://0.0.0.0:9876/usage_report
+      interval: 15s
