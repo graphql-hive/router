@@ -101,16 +101,66 @@ impl<'a, T: Any + Send + Sync> DerefMut for PluginContextMutEntry<'a, T> {
 }
 
 impl PluginContext {
+    /// Check if the context contains an entry of type T.
+    ///
+    /// This can be used by plugins to check for the presence of other plugins' context entries before trying to access them.
+    ///
+    /// Example:
+    /// ```
+    /// struct ContextData {
+    ///     pub greetings: String
+    /// }
+    ///
+    /// if payload.context.contains::<ContextData>() {
+    ///     /// safe to access ContextData entry
+    /// }
+    /// ```
     pub fn contains<T: Any + Send + Sync>(&self) -> bool {
         let type_id = TypeId::of::<T>();
         self.inner.contains_key(&type_id)
     }
+    /// Insert a value of type T into the context.
+    /// If an entry of that type already exists, it will be replaced and the old value will be returned.
+    ///
+    /// Example:
+    /// ```
+    /// struct ContextData {
+    ///     pub greetings: String
+    /// }
+    ///
+    /// let context_data = ContextData {
+    ///     greetings: "Hello from context!".to_string()
+    /// };
+    ///
+    /// payload.context.insert(context_data);
+    ///
+    /// ```
     pub fn insert<T: Any + Send + Sync>(&self, value: T) -> Option<Box<T>> {
         let type_id = TypeId::of::<T>();
         self.inner
             .insert(type_id, Box::new(value))
             .and_then(|boxed_any| boxed_any.downcast::<T>().ok())
     }
+    /// Get an immutable reference to the entry of type T in the context, if it exists.
+    /// If no entry of that type exists, None is returned.
+    ///
+    /// Example:
+    /// ```
+    /// struct ContextData {
+    ///     pub greetings: String
+    /// }
+    ///
+    /// let context_data = ContextData {
+    ///     greetings: "Hello from context!".to_string()
+    /// };
+    ///
+    /// payload.context.insert(context_data);
+    ///
+    /// let context_data_entry = payload.context.get_ref::<ContextData>();
+    /// if let Some(ref context_data) = context_data_entry {
+    ///    println!("{}", context_data.greetings); // prints "Hello from context!"
+    /// }
+    /// ```
     pub fn get_ref<'a, T: Any + Send + Sync>(&'a self) -> Option<PluginContextRefEntry<'a, T>> {
         let type_id = TypeId::of::<T>();
         self.inner.get(&type_id).map(|entry| PluginContextRefEntry {
@@ -118,6 +168,25 @@ impl PluginContext {
             phantom: std::marker::PhantomData,
         })
     }
+    /// Get a mutable reference to the entry of type T in the context, if it exists.
+    /// If no entry of that type exists, None is returned.
+    ///
+    /// Example:
+    /// ```
+    /// struct ContextData {
+    ///   pub greetings: String
+    /// }
+    ///
+    /// let context_data = ContextData {
+    ///   greetings: "Hello from context!".to_string()
+    /// };
+    ///
+    /// payload.context.insert(context_data);
+    ///
+    /// if let Some(mut context_data_entry) = payload.context.get_mut::<ContextData>() {
+    ///    context_data_entry.greetings = "Hello from mutable reference!".to_string();
+    /// }
+    /// ```
     pub fn get_mut<'a, T: Any + Send + Sync>(&'a self) -> Option<PluginContextMutEntry<'a, T>> {
         let type_id = TypeId::of::<T>();
         self.inner
