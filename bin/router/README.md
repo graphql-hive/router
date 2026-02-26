@@ -1,6 +1,6 @@
 ![Hive GraphQL Platform](https://the-guild.dev/graphql/hive/github-org-image.png)
 
-# `hive-router` 
+# `hive-router`
 
 A fully open-source MIT-licensed GraphQL API router that can act as a [GraphQL federation](https://the-guild.dev/graphql/hive/federation) Router, built with Rust for maximum performance and robustness.
 
