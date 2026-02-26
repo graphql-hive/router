@@ -41,8 +41,9 @@ pub use async_trait::async_trait;
 pub use dashmap::DashMap;
 pub use graphql_tools;
 use graphql_tools::validation::rules::default_rules_validation_plan;
+pub use hive_router_config::humantime_serde;
 use hive_router_config::{load_config, HiveRouterConfig};
-use hive_router_internal::background_tasks::BackgroundTasksManager;
+pub use hive_router_internal::background_tasks;
 use hive_router_internal::telemetry::{
     otel::tracing_opentelemetry::OpenTelemetrySpanExt,
     traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
@@ -54,7 +55,7 @@ pub use hive_router_plan_executor::response::graphql_error::GraphQLError;
 pub use hive_router_query_planner as query_planner;
 pub use http;
 use http::header::CONTENT_TYPE;
-pub use mimalloc::MiMalloc as DefaultGlobalAllocator;
+pub use mimalloc::MiMalloc as RouterGlobalAllocator;
 pub use ntex;
 pub use ntex::main;
 use ntex::util::{select, Either};
@@ -155,7 +156,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     info!("hive-router@{} starting...", ROUTER_VERSION);
     let http_config = router_config.http.clone();
     let addr = router_config.http.address();
-    let mut bg_tasks_manager = BackgroundTasksManager::new();
+    let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
         telemetry.context.clone(),
@@ -202,7 +203,7 @@ pub async fn invoke_shutdown_hooks(shared_state: &RouterSharedState) {
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     telemetry_context: TelemetryContext,
-    bg_tasks_manager: &mut BackgroundTasksManager,
+    bg_tasks_manager: &mut background_tasks::BackgroundTasksManager,
     plugin_registry: PluginRegistry,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), RouterInitError> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
@@ -287,4 +288,12 @@ pub fn init_rustls_crypto_provider() {
     {
         warn!("Rustls crypto provider already installed");
     }
+}
+
+#[macro_export]
+macro_rules! configure_global_allocator {
+    () => {
+        #[global_allocator]
+        static GLOBAL: RouterGlobalAllocator = RouterGlobalAllocator;
+    };
 }
