@@ -72,7 +72,10 @@ impl<'de> Visitor<'de> for FilePathVisitor {
             if let Some(start_path) = ctx.borrow().as_ref() {
                 match FilePath::resolve_relative(start_path, v, true) {
                     Ok(file_path) => Ok(file_path),
-                    Err(err) => Err(E::custom(format!("Failed to canonicalize path: {}", err))),
+                    Err(err) => Err(E::custom(format!(
+                        "Failed to canonicalize path {:#?} on {}: {}",
+                        start_path, v, err
+                    ))),
                 }
             } else {
                 Err(E::custom(

@@ -87,6 +87,7 @@ fn resolve_input_value_selections<'exec>(
                     .map_or(Value::Null, |s| Value::String(s.into())),
                 "type" => resolve_type(&iv.value_type, &field.selections, ctx),
                 "defaultValue" => Value::Null, // TODO: support default values
+                "isDeprecated" => Value::Bool(is_deprecated(&iv.directives)),
                 "__typename" => Value::String("__InputValue".into()),
                 _ => Value::Null,
             };
