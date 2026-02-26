@@ -20,6 +20,7 @@ pub mod usage_reporting;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
+pub use humantime_serde;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
