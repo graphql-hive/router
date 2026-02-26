@@ -49,10 +49,6 @@ where
     ///
     /// Example:
     /// ```
-    /// use hive_router::{
-    ///     plugins::hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
-    /// };
-    ///
     /// async fn on_graphql_params<'exec>(
     ///     &'exec self,
     ///    payload: OnGraphQLParamsStartHookPayload<'exec>,
