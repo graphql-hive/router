@@ -61,11 +61,7 @@ mod tests {
     async fn flushes_reports_on_interval() -> Result<(), BoxError> {
         let query = "query Test {me{name}}";
         let operation_name = "Test";
-        let mut server = mockito::Server::new_with_opts_async(ServerOpts {
-            port: 9876,
-            ..Default::default()
-        })
-        .await;
+        let mut server = mockito::Server::new_async().await;
         let usage_mock = server
             .mock("POST", "/usage_report")
             .with_status(200)
@@ -82,7 +78,8 @@ mod tests {
 
         // Initialize with shorter interval so we can see if reports are flushed without waiting for shutdown
         let test_app = init_router_from_config_inline_with_plugins(
-            r#"
+            &format!(
+                r#"
                 supergraph:
                     source: file
                     path: ../../e2e/supergraph.graphql
@@ -90,9 +87,11 @@ mod tests {
                     usage_reporting:
                         enabled: true
                         config:
-                            endpoint: "http://localhost:9876/usage_report"
+                            endpoint: "http://{}/usage_report"
                             interval: "1s"
                 "#,
+                server.host_with_port()
+            ),
             PluginRegistry::new().register::<crate::plugin::UsageReportingPlugin>(),
         )
         .await?;
