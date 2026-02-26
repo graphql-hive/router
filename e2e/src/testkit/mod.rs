@@ -22,8 +22,8 @@ use tracing::{info, warn};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider, telemetry::Telemetry, PluginRegistry, RouterSharedState,
-    SchemaState,
+    init_rustls_crypto_provider, plugins::plugins_service::PluginService, telemetry::Telemetry,
+    PluginRegistry, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use subgraphs::subgraphs_app;
@@ -579,6 +579,7 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
 
             async move {
                 web::App::new()
+                    .middleware(PluginService)
                     .state(shared_state)
                     .state(schema_state)
                     .configure(|m| configure_ntex_app(m, serv_graphql_path.as_ref()))
