@@ -77,12 +77,20 @@ impl RouterPlugin for UsageReportingPlugin {
 }
 
 async fn flush_reports(endpoint: &str, reports: &Mutex<Vec<UsageReport>>) {
+    let to_send = {
+        let mut lock = reports.lock().await;
+        std::mem::take(&mut *lock)
+    };
+
+    if to_send.is_empty() {
+        return;
+    }
+
     println!("Sending usage report");
     // Here you would gather and send the usage report
-    let reports = reports.lock().await;
     match reqwest::Client::new()
         .post(endpoint)
-        .json(reports.as_slice())
+        .json(to_send.as_slice())
         .send()
         .await
     {
