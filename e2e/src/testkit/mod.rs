@@ -705,11 +705,19 @@ impl<'subgraphs> TestRouter<'subgraphs, Started> {
 }
 
 pub trait ClientResponseExt {
+    async fn str_body(&self) -> String;
     async fn json_body(&self) -> sonic_rs::Value;
     async fn json_body_string_pretty(&self) -> String;
 }
 
 impl ClientResponseExt for ClientResponse {
+    async fn str_body(&self) -> String {
+        let body = self.body().await.expect("failed to read request body");
+        std::str::from_utf8(&body)
+            .expect("body is not valid UTF-8")
+            .to_string()
+    }
+
     async fn json_body(&self) -> sonic_rs::Value {
         let body = self.body().await.expect("failed to read request body");
         sonic_rs::from_slice(&body).expect("failed to parse request body to JSON")
