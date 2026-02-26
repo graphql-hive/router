@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 
 use tracing::{instrument, trace};
 
@@ -134,7 +134,7 @@ fn handle_selection_set<'field, 'schema>(
                         .get(&fragment.type_condition)
                         .unwrap();
                     let fragment_enter_path = path.push(Segment::Cast(
-                        fragment.type_condition.clone(),
+                        BTreeSet::from([fragment.type_condition.clone()]),
                         fragment.into(),
                     ));
 

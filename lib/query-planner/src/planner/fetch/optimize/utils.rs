@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 
 use petgraph::{
     graph::NodeIndex,
@@ -18,6 +18,26 @@ use crate::{
     },
 };
 
+pub fn cast_types_from_response_path<'a>(
+    response_path: &'a MergePath,
+) -> Option<BTreeSet<&'a str>> {
+    let conditioned_types = response_path
+        .inner
+        .iter()
+        .filter_map(|segment| match segment {
+            Segment::Cast(type_names, _) => Some(type_names),
+            _ => None,
+        })
+        .flat_map(|type_names| type_names.iter().map(|s| s.as_str()).clone())
+        .collect::<BTreeSet<_>>();
+
+    if conditioned_types.is_empty() {
+        None
+    } else {
+        Some(conditioned_types)
+    }
+}
+
 // Return true in case an alias was applied during the merge process.
 #[instrument(level = "trace", skip_all)]
 pub(crate) fn perform_fetch_step_merge(
@@ -33,6 +53,19 @@ pub(crate) fn perform_fetch_step_merge(
         self_index.index(),
         other_index.index(),
     );
+
+    // This step has a condition and now includes multiple types.
+    // Apply the condition only to the matching type branches in the output,
+    // not to the whole fetch step.
+    if me.is_entity_call() && me.is_fetching_multiple_types() {
+        if let Some(condition) = me.condition.clone() {
+            if let Some(conditioned_types) = cast_types_from_response_path(&me.response_path) {
+                me.output
+                    .wrap_with_condition_for_types(condition, &conditioned_types);
+                me.condition = None;
+            }
+        }
+    }
 
     if let (true, Some(condition)) = (!me.is_entity_call(), other.condition.clone()) {
         // The "other" fetch step is an entity call,
@@ -61,10 +94,30 @@ pub(crate) fn perform_fetch_step_merge(
             other.output.wrap_with_condition(condition);
         }
     } else if me.is_entity_call() && other.condition.is_some() {
-        // We don't want to pass a condition
-        // to a regular (non-entity call) fetch step,
-        // because the condition is applied on an inline fragment.
-        me.condition = other.condition.take();
+        // `other` can bring a condition from a previous merge.
+        // If this merge involves multiple types, try to apply that condition
+        // only to the types matched by `other.response_path`.
+        // If we can't tell which types safely, keep it as a step-level condition on `me`.
+        if let Some(condition) = other.condition.take() {
+            let maybe_conditioned_types =
+                if me.is_fetching_multiple_types() || other.is_fetching_multiple_types() {
+                    cast_types_from_response_path(&other.response_path)
+                } else {
+                    None
+                };
+
+            if let Some(conditioned_types) = maybe_conditioned_types {
+                other
+                    .output
+                    .wrap_with_condition_for_types(condition, &conditioned_types);
+            } else {
+                // We scope conditions only when `other.response_path` has cast segments
+                // that clearly identify target types (for example `|[Book]`).
+                // If that type info is missing, keep the condition at step
+                // level on `me` so we don't attach it to the wrong type branch.
+                me.condition = Some(condition);
+            }
+        }
     }
 
     let scoped_aliases = me.output.safe_migrate_from_another(

@@ -964,7 +964,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
                   id
                 }
               } =>
-              {
+              ($title:Boolean=true) {
                 ... on Book @include(if: $title) {
                   sku
                 }

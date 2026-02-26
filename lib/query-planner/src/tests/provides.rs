@@ -282,7 +282,9 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
                 "Field": "media"
               },
               {
-                "Cast": "Movie"
+                "Cast": [
+                  "Movie"
+                ]
               }
             ],
             "node": {

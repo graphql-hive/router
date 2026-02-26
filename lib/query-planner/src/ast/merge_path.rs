@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fmt::{Debug, Display, Write};
 use std::rc::Rc;
 
@@ -81,18 +82,19 @@ pub enum Segment {
     // We used this to uniquely identify the field in the selection set.
     Field(SelectionIdentifier, u64, Option<Condition>),
     List,
-    Cast(String, Option<Condition>),
+    Cast(BTreeSet<String>, Option<Condition>),
 }
 
 impl Display for Segment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::List => write!(f, "@"),
-            Self::Cast(type_name, condition) => {
+            Self::Cast(type_names, condition) => {
+                let joined = type_names.iter().cloned().collect::<Vec<_>>().join("|");
                 if let Some(condition) = condition {
-                    write!(f, "|[{}] {}", type_name, condition)
+                    write!(f, "|[{}] {}", joined, condition)
                 } else {
-                    write!(f, "|[{}]", type_name)
+                    write!(f, "|[{}]", joined)
                 }
             }
             Self::Field(field_name, _, condition) => {

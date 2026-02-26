@@ -54,6 +54,27 @@ impl From<&FetchStepSelections<MultiTypeFetchStep>> for SelectionSet {
                 .selections
                 .iter()
                 .map(|(def_name, selections)| {
+                    // If this selection is already a single conditional fragment for
+                    // this exact type, keep it unchanged.
+                    // Wrapping it again can make the condition apply to other
+                    // types too, not just this one.
+                    if let [SelectionItem::InlineFragment(inline_fragment)] =
+                        selections.items.as_slice()
+                    {
+                        if inline_fragment.type_condition == *def_name
+                            && (inline_fragment.include_if.is_some()
+                                || inline_fragment.skip_if.is_some())
+                        {
+                            // Keep scoped @include/@skip on this type branch as-is.
+                            return SelectionItem::InlineFragment(InlineFragmentSelection {
+                                type_condition: def_name.clone(),
+                                include_if: inline_fragment.include_if.clone(),
+                                skip_if: inline_fragment.skip_if.clone(),
+                                selections: inline_fragment.selections.clone(),
+                            });
+                        }
+                    }
+
                     SelectionItem::InlineFragment(InlineFragmentSelection {
                         type_condition: def_name.clone(),
                         include_if: None,
@@ -210,6 +231,34 @@ impl<State> FetchStepSelections<State> {
 }
 
 impl FetchStepSelections<MultiTypeFetchStep> {
+    fn wrap_definition_selection_with_condition(
+        def_name: &str,
+        selection_set: &mut SelectionSet,
+        condition: &Condition,
+    ) {
+        let prev = selection_set.clone();
+        match condition {
+            Condition::Include(var_name) => {
+                selection_set.items =
+                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: def_name.to_string(),
+                        selections: prev,
+                        skip_if: None,
+                        include_if: Some(var_name.clone()),
+                    })];
+            }
+            Condition::Skip(var_name) => {
+                selection_set.items =
+                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: def_name.to_string(),
+                        selections: prev,
+                        skip_if: Some(var_name.clone()),
+                        include_if: None,
+                    })];
+            }
+        }
+    }
+
     pub fn selecting_same_types(&self, other: &Self) -> bool {
         if self.selections.len() != other.selections.len() {
             return false;
@@ -318,26 +367,18 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 
     pub fn wrap_with_condition(&mut self, condition: Condition) {
         for (def_name, selection_set) in self.selections.iter_mut() {
-            let prev = selection_set.clone();
-            match &condition {
-                Condition::Include(var_name) => {
-                    selection_set.items =
-                        vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                            type_condition: def_name.to_string(),
-                            selections: prev,
-                            skip_if: None,
-                            include_if: Some(var_name.clone()),
-                        })];
-                }
-                Condition::Skip(var_name) => {
-                    selection_set.items =
-                        vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                            type_condition: def_name.to_string(),
-                            selections: prev,
-                            skip_if: Some(var_name.clone()),
-                            include_if: None,
-                        })];
-                }
+            Self::wrap_definition_selection_with_condition(def_name, selection_set, &condition);
+        }
+    }
+
+    pub fn wrap_with_condition_for_types(
+        &mut self,
+        condition: Condition,
+        type_names: &BTreeSet<&str>,
+    ) {
+        for (def_name, selection_set) in self.selections.iter_mut() {
+            if type_names.contains(def_name.as_str()) {
+                Self::wrap_definition_selection_with_condition(def_name, selection_set, &condition);
             }
         }
     }

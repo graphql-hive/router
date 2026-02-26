@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use tracing::trace;
 
 use crate::ast::{
@@ -156,7 +158,7 @@ impl SafeSelectionSetMerger {
                             decision = ConflictsLookupResult::Merged;
 
                             let next_path = response_path.push(Segment::Cast(
-                                source_fragment.type_condition.clone(),
+                                BTreeSet::from([source_fragment.type_condition.clone()]),
                                 source_fragment.into(),
                             ));
 

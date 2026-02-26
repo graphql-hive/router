@@ -146,7 +146,56 @@ pub struct KeyRenamer {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FetchNodePathSegment {
     Key(String),
-    TypenameEquals(String),
+    // Internally we keep a set for type-safe matching, but serialize as
+    // the existing string format ("A" or "A|B") for compatibility.
+    TypenameEquals(#[serde(with = "typename_equals_serde")] BTreeSet<String>),
+}
+
+impl FetchNodePathSegment {
+    pub fn typename_equals_from_type(type_name: String) -> Self {
+        Self::TypenameEquals(BTreeSet::from_iter([type_name]))
+    }
+}
+
+mod typename_equals_serde {
+    use std::collections::BTreeSet;
+
+    use serde::{de::Error, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &BTreeSet<String>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Keep wire format stable even though internals are now set-based.
+        if value.is_empty() {
+            return Err(serde::ser::Error::custom(
+                "TypenameEquals cannot serialize an empty type set",
+            ));
+        }
+
+        serializer.serialize_str(&value.iter().cloned().collect::<Vec<_>>().join("|"))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeSet<String>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let type_names = value
+            .split('|')
+            .map(str::trim)
+            .filter(|type_name| !type_name.is_empty())
+            .map(ToString::to_string)
+            .collect::<BTreeSet<_>>();
+
+        if type_names.is_empty() {
+            return Err(D::Error::custom(
+                "TypenameEquals must contain at least one type",
+            ));
+        }
+
+        Ok(type_names)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -158,7 +207,7 @@ pub enum FetchRewrite {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FlattenNodePathSegment {
     Field(String),
-    Cast(String),
+    Cast(BTreeSet<String>),
     #[serde(rename = "@")]
     List,
 }
@@ -169,8 +218,8 @@ impl From<&MergePath> for Vec<FetchNodePathSegment> {
             .inner
             .iter()
             .filter_map(|path_segment| match path_segment {
-                Segment::Cast(type_name, _) => {
-                    Some(FetchNodePathSegment::TypenameEquals(type_name.clone()))
+                Segment::Cast(type_names, _) => {
+                    Some(FetchNodePathSegment::TypenameEquals(type_names.clone()))
                 }
                 Segment::Field(field_name, _args_hash, _) => {
                     Some(FetchNodePathSegment::Key(field_name.clone()))
@@ -203,7 +252,13 @@ impl Display for FlattenNodePathSegment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FlattenNodePathSegment::Field(field_name) => write!(f, "{}", field_name),
-            FlattenNodePathSegment::Cast(type_name) => write!(f, "|[{}]", type_name),
+            FlattenNodePathSegment::Cast(type_names) => {
+                write!(
+                    f,
+                    "|[{}]",
+                    type_names.iter().cloned().collect::<Vec<_>>().join("|")
+                )
+            }
             FlattenNodePathSegment::List => write!(f, "@"),
         }
     }
@@ -234,7 +289,9 @@ impl From<&MergePath> for FlattenNodePath {
             path.inner
                 .iter()
                 .map(|seg| match seg {
-                    Segment::Cast(type_name, _) => FlattenNodePathSegment::Cast(type_name.clone()),
+                    Segment::Cast(type_names, _) => {
+                        FlattenNodePathSegment::Cast(type_names.clone())
+                    }
                     Segment::Field(field_name, _args_hash, _) => {
                         FlattenNodePathSegment::Field(field_name.clone())
                     }
