@@ -125,7 +125,7 @@ pub struct OnGraphQLParamsStartHookPayload<'exec> {
     /// The context object that can be used to share data across different plugin hooks for the same request.
     /// It is unique per request and is dropped after the response is sent.
     ///
-    /// [Learn more about the context data sharing in the docs](https://graphql-hive.com/docs/router/extensibility/plugin_system#context-data-sharing)
+    /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
     /// The raw body of the incoming HTTP request.
     /// This is useful for plugins that want to parse the body in a custom way,
@@ -136,7 +136,7 @@ pub struct OnGraphQLParamsStartHookPayload<'exec> {
     /// This is useful for plugins that want to parse the GraphQL parameters in a custom way,
     /// or want to override the GraphQL parameters for testing or other purposes.
     ///
-    /// [Learn more about overriding the default behavior](https://graphql-hive.com/docs/router/extensibility/plugin_system#overriding-default-behavior)
+    /// [Learn more about overriding the default behavior](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#overriding-default-behavior)
     pub graphql_params: Option<GraphQLParams>,
 }
 
@@ -146,7 +146,7 @@ impl<'exec> OnGraphQLParamsStartHookPayload<'exec> {
     /// This is useful for plugins that want to parse the GraphQL parameters in a custom way,
     /// or want to override the GraphQL parameters for testing or other purposes.
     ///
-    /// [Learn more about overriding the default behavior](https://graphql-hive.com/docs/router/extensibility/plugin_system#overriding-default-behavior)
+    /// [Learn more about overriding the default behavior](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#overriding-default-behavior)
     pub fn with_graphql_params(mut self, graphql_params: GraphQLParams) -> Self {
         self.graphql_params = Some(graphql_params);
         self
@@ -170,12 +170,12 @@ pub struct OnGraphQLParamsEndHookPayload<'exec> {
     /// This is either the result of parsing the HTTP request body by the router,
     /// or the overridden GraphQL parameters set by the plugin in the `OnGraphQLParamsStartHookPayload`.
     ///
-    /// [Learn more about overriding the default behavior](https://graphql-hive.com/docs/router/extensibility/plugin_system#overriding-default-behavior)
+    /// [Learn more about overriding the default behavior](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#overriding-default-behavior)
     pub graphql_params: GraphQLParams,
     /// The context object that can be used to share data across different plugin hooks for the same request.
     /// It is unique per request and is dropped after the response is sent.
     ///
-    /// [Learn more about the context data sharing in the docs](https://graphql-hive.com/docs/router/extensibility/plugin_system#context-data-sharing)
+    /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
 }
 

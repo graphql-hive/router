@@ -26,7 +26,7 @@ pub struct OnGraphQLValidationStartHookPayload<'exec> {
     /// The context object that can be used to share data across different plugin hooks for the same request.
     /// It is unique per request and is dropped after the response is sent.
     ///
-    /// [Learn more about the context data sharing in the docs](https://graphql-hive.com/docs/router/extensibility/plugin_system#context-data-sharing)
+    /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
     /// The GraphQL Schema that the document will be validated against.
     /// This is not the same with the supergraph. This is the public schema exposed by the router to the clients, which is generated from the supergraph and can be modified by the plugins.
@@ -52,7 +52,7 @@ pub struct OnGraphQLValidationStartHookPayload<'exec> {
     /// This is useful for plugins that want to generate custom validation errors in a custom way,
     /// or want to override the validation errors for testing or other purposes.
     ///
-    /// [Learn more about overriding the default behavior](https://graphql-hive.com/docs/router/extensibility/plugin_system#overriding-default-behavior)
+    /// [Learn more about overriding the default behavior](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#overriding-default-behavior)
     pub errors: Option<Arc<Vec<ValidationError>>>,
 }
 

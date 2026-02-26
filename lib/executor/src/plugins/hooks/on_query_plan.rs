@@ -26,7 +26,7 @@ pub struct OnQueryPlanStartHookPayload<'exec> {
     /// The context object that can be used to share data across different plugin hooks for the same request.
     /// It is unique per request and is dropped after the response is sent.
     ///
-    /// [Learn more about the context data sharing in the docs](https://graphql-hive.com/docs/router/extensibility/plugin_system#context-data-sharing)
+    /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
     /// The GraphQL Document AST that will be used for query planning.
     pub filtered_operation_for_plan: &'exec OperationDefinition,

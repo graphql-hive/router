@@ -33,7 +33,7 @@ where
     /// Parse the plugin config into the expected config struct for the plugin.
     /// The plugin can choose when and if to call this method.
     ///
-    /// [Refer to the docs for more details](https://graphql-hive.com/docs/router/extensibility/plugin_system#configuration)
+    /// [Refer to the docs for more details](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#configuration)
     ///
     /// Example:
     /// ```
@@ -51,7 +51,7 @@ where
     /// Register a background task to be run by the router.
     /// The registered task struct should implement the `BackgroundTask` trait.
     ///
-    /// [Refer to the docs for more details](https://graphql-hive.com/docs/router/extensibility/plugin_system#background-tasks)
+    /// [Refer to the docs for more details](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#background-tasks)
     ///
     /// Example:
     /// ```

@@ -23,7 +23,7 @@ pub struct OnGraphQLParseStartHookPayload<'exec> {
     /// The context object that can be used to share data across different plugin hooks for the same request.
     /// It is unique per request and is dropped after the response is sent.
     ///
-    /// [Learn more about the context data sharing in the docs](https://graphql-hive.com/docs/router/extensibility/plugin_system#context-data-sharing)
+    /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
     /// The GraphQL parameters parsed from the HTTP request body by the router.
     /// This includes the `query`, `operationName`, `variables`, and `extensions`
