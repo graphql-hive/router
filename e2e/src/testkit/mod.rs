@@ -2,6 +2,7 @@ pub mod otel;
 
 use bytes::Bytes;
 use dashmap::DashMap;
+use hive_router_plan_executor::plugin_trait::RouterPlugin;
 use lazy_static::lazy_static;
 use ntex::{
     client::ClientResponse,
@@ -21,7 +22,8 @@ use tracing::{info, warn};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider, telemetry::Telemetry, RouterSharedState, SchemaState,
+    init_rustls_crypto_provider, telemetry::Telemetry, PluginRegistry, RouterSharedState,
+    SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use subgraphs::subgraphs_app;
@@ -375,6 +377,7 @@ pub struct TestRouterBuilder<'subgraphs> {
     wait_for_healthy_on_start: bool,
     wait_for_ready_on_start: bool,
     config: Option<HiveRouterConfig>,
+    plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     subgraphs: Option<&'subgraphs TestSubgraphs<Started>>,
 }
 
@@ -384,6 +387,7 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
             wait_for_healthy_on_start: true,
             wait_for_ready_on_start: true,
             config: None,
+            plugins: vec![],
             subgraphs: None,
         }
     }
@@ -416,6 +420,13 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
 
     pub fn skip_wait_for_ready_on_start(mut self) -> Self {
         self.wait_for_ready_on_start = false;
+        self
+    }
+
+    pub fn register_plugin<P: RouterPlugin>(mut self) -> Self {
+        self.plugins.push(Box::new(|registry: PluginRegistry| {
+            registry.register::<P>()
+        }));
         self
     }
 
@@ -456,6 +467,7 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
             wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: config.http.graphql_endpoint().to_string(),
             config: Some(config),
+            plugins: self.plugins,
             subgraphs,
             handle: None,
             _hold_until_drop,
@@ -513,6 +525,7 @@ pub struct TestRouter<'subgraphs, State> {
     wait_for_ready_on_start: bool,
     graphql_path: String,
     config: Option<HiveRouterConfig>,
+    plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     subgraphs: Option<&'subgraphs TestSubgraphs<Started>>,
     handle: Option<TestRouterHandle>,
     _hold_until_drop: Vec<Box<dyn Any>>,
@@ -532,7 +545,11 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
             config,
             telemetry.context.clone(),
             &mut bg_tasks_manager,
-            todo!(),
+            self.plugins
+                .iter()
+                .fold(PluginRegistry::new(), |registry, register_plugin| {
+                    register_plugin(registry)
+                }),
         )
         .await
         .expect("failed to configure hive router from config");
@@ -584,6 +601,7 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
             }),
             config: self.config,
             subgraphs: self.subgraphs,
+            plugins: self.plugins,
             _hold_until_drop: hold_until_drop,
             _state: PhantomData,
         };
