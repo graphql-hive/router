@@ -34,52 +34,17 @@ pub struct Planner {
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PlannerError {
     #[error("failed to initalize relations graph: {0}")]
-    GraphInitError(Box<GraphError>),
+    GraphInitError(#[from] GraphError),
     #[error("failed to locate operation to execute")]
     MissingOperationToExecute,
     #[error("walker failed to locate path: {0}")]
-    PathLocatorError(Box<WalkOperationError>),
+    PathLocatorError(#[from] WalkOperationError),
     #[error("failed to build fetch graph: {0}")]
-    FailedToConstructFetchGraph(Box<FetchGraphError>),
+    FailedToConstructFetchGraph(#[from] FetchGraphError),
     #[error("failed to build plan: {0}")]
-    QueryPlanBuildFailed(Box<QueryPlanError>),
-    #[error("cancelled")]
-    Cancelled,
-    #[error("timedout")]
-    Timedout,
-}
-
-impl From<GraphError> for PlannerError {
-    fn from(value: GraphError) -> Self {
-        PlannerError::GraphInitError(Box::new(value))
-    }
-}
-
-impl From<WalkOperationError> for PlannerError {
-    fn from(value: WalkOperationError) -> Self {
-        PlannerError::PathLocatorError(Box::new(value))
-    }
-}
-
-impl From<FetchGraphError> for PlannerError {
-    fn from(value: FetchGraphError) -> Self {
-        PlannerError::FailedToConstructFetchGraph(Box::new(value))
-    }
-}
-
-impl From<QueryPlanError> for PlannerError {
-    fn from(value: QueryPlanError) -> Self {
-        PlannerError::QueryPlanBuildFailed(Box::new(value))
-    }
-}
-
-impl From<CancellationError> for PlannerError {
-    fn from(value: CancellationError) -> Self {
-        match value {
-            CancellationError::Cancelled => PlannerError::Cancelled,
-            CancellationError::TimedOut => PlannerError::Timedout,
-        }
-    }
+    QueryPlanBuildFailed(#[from] QueryPlanError),
+    #[error(transparent)]
+    CancellationError(#[from] CancellationError),
 }
 
 impl Planner {
