@@ -111,6 +111,9 @@ async fn graphql_endpoint_handler(
         .telemetry_context
         .extract_context(&HeaderExtractor(request.headers()));
     let root_http_request_span = HttpServerRequestSpan::from_request(&request);
+    request
+        .extensions_mut()
+        .insert(root_http_request_span.clone());
     let _ = root_http_request_span.set_parent(parent_ctx);
 
     async {
@@ -145,7 +148,7 @@ async fn graphql_endpoint_handler(
 
         Ok(res)
     }
-    .instrument(root_http_request_span.clone())
+    .instrument(root_http_request_span.clone().span)
     .await
 }
 

@@ -18,6 +18,7 @@ use crate::telemetry::traces::{
     },
 };
 
+#[derive(Clone)]
 pub struct HttpServerRequestSpan {
     pub span: Span,
 }

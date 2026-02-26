@@ -1,6 +1,7 @@
 use std::{sync::Arc, vec};
 
 use graphql_tools::validation::utils::ValidationError;
+use hive_router_internal::telemetry::traces::spans::http_request::HttpServerRequestSpan;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
     headers::errors::HeaderRuleRuntimeError,
@@ -264,6 +265,12 @@ impl web::error::WebResponseError for PipelineError {
             res.status(new_status_code);
         }
 
-        res.json(&FailedExecutionResult { errors })
+        let res = res.json(&FailedExecutionResult { errors });
+
+        if let Some(root_http_request_span) = req.extensions().get::<HttpServerRequestSpan>() {
+            root_http_request_span.record_response(&res);
+        }
+
+        res
     }
 }
