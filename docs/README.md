@@ -19,7 +19,7 @@
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"request_timeout":"1m"}}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -125,6 +125,50 @@ telemetry:
     name_header: graphql-client-name
     version_header: graphql-client-version
   hive: null
+  metrics:
+    exporters: []
+    instrumentation:
+      common:
+        histogram:
+          aggregation: explicit
+          bytes:
+            buckets:
+              - 128
+              - 512
+              - 1024
+              - 2048
+              - 4096
+              - 8192
+              - 16384
+              - 32768
+              - 65536
+              - 131072
+              - 262144
+              - 524288
+              - 1048576
+              - 2097152
+              - 3145728
+              - 4194304
+              - 5242880
+            record_min_max: false
+          seconds:
+            buckets:
+              - 0.005
+              - 0.01
+              - 0.025
+              - 0.05
+              - 0.075
+              - 0.1
+              - 0.25
+              - 0.5
+              - 0.75
+              - 1
+              - 2.5
+              - 5
+              - 7.5
+              - 10
+            record_min_max: false
+      instruments: {}
   resource:
     attributes: {}
   tracing:
@@ -1974,6 +2018,7 @@ max_retries: 10
 |----|----|-----------|--------|
 |[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
 |[**hive**](#telemetryhive)|`object`, `null`|||
+|[**metrics**](#telemetrymetrics)|`object`|Configures metrics collection, processing, and export.<br/>Default: `{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}}`<br/>||
 |[**resource**](#telemetryresource)|`object`|Default: `{"attributes":{}}`<br/>||
 |[**tracing**](#telemetrytracing)|`object`|Default: `{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}`<br/>||
 
@@ -1985,6 +2030,50 @@ client_identification:
   name_header: graphql-client-name
   version_header: graphql-client-version
 hive: null
+metrics:
+  exporters: []
+  instrumentation:
+    common:
+      histogram:
+        aggregation: explicit
+        bytes:
+          buckets:
+            - 128
+            - 512
+            - 1024
+            - 2048
+            - 4096
+            - 8192
+            - 16384
+            - 32768
+            - 65536
+            - 131072
+            - 262144
+            - 524288
+            - 1048576
+            - 2097152
+            - 3145728
+            - 4194304
+            - 5242880
+          record_min_max: false
+        seconds:
+          buckets:
+            - 0.005
+            - 0.01
+            - 0.025
+            - 0.05
+            - 0.075
+            - 0.1
+            - 0.25
+            - 0.5
+            - 0.75
+            - 1
+            - 2.5
+            - 5
+            - 7.5
+            - 10
+          record_min_max: false
+    instruments: {}
 resource:
   attributes: {}
 tracing:
@@ -2146,6 +2235,339 @@ Example: ["IntrospectionQuery", "MeQuery"]
 **Items**
 
 **Item Type:** `string`  
+<a name="telemetrymetrics"></a>
+### telemetry\.metrics: object
+
+Configures metrics collection, processing, and export.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**exporters**](#telemetrymetricsexporters)|`array`|List of metrics exporters.<br/>Default: <br/>||
+|[**instrumentation**](#telemetrymetricsinstrumentation)|`object`|Controls metrics instrumentation behavior, such as histogram aggregation.<br/>Default: `{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+exporters: []
+instrumentation:
+  common:
+    histogram:
+      aggregation: explicit
+      bytes:
+        buckets:
+          - 128
+          - 512
+          - 1024
+          - 2048
+          - 4096
+          - 8192
+          - 16384
+          - 32768
+          - 65536
+          - 131072
+          - 262144
+          - 524288
+          - 1048576
+          - 2097152
+          - 3145728
+          - 4194304
+          - 5242880
+        record_min_max: false
+      seconds:
+        buckets:
+          - 0.005
+          - 0.01
+          - 0.025
+          - 0.05
+          - 0.075
+          - 0.1
+          - 0.25
+          - 0.5
+          - 0.75
+          - 1
+          - 2.5
+          - 5
+          - 7.5
+          - 10
+        record_min_max: false
+  instruments: {}
+
+```
+
+<a name="telemetrymetricsexporters"></a>
+#### telemetry\.metrics\.exporters\[\]: array
+
+List of metrics exporters.
+
+Metrics are enabled when at least one exporter is configured and enabled.
+
+
+**Items**
+
+   
+**Option 1 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Enables or disables this OTLP metrics exporter.<br/><br/>Default: `true`.<br/>Default: `true`<br/>|no|
+|**endpoint**||OTLP endpoint URL.<br/><br/>Can be a static value or an expression.<br/>Default: `""`<br/>|no|
+|[**grpc**](#option1grpc)|`object`, `null`|gRPC-specific OTLP settings.<br/>|no|
+|[**http**](#option1http)|`object`, `null`|HTTP-specific OTLP settings.<br/>|no|
+|**interval**|`string`|Interval between periodic metric export attempts.<br/><br/>Default: `60s`.<br/>Default: `"1m"`<br/>|no|
+|**kind**|`string`|Constant Value: `"otlp"`<br/>|yes|
+|**max\_export\_timeout**|`string`|Maximum time allowed for a single metrics export attempt.<br/><br/>Default: `5s`.<br/>Default: `"5s"`<br/>|no|
+|**protocol**|`string`|Transport protocol used for OTLP metrics export.<br/>Enum: `"grpc"`, `"http"`<br/>|yes|
+|**temporality**||Aggregation temporality used for this OTLP exporter.<br/><br/>Default: `cumulative`.<br/>Default: `"cumulative"`<br/>|no|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+enabled: true
+endpoint: ''
+grpc: null
+http: null
+interval: 1m
+max_export_timeout: 5s
+temporality: cumulative
+
+```
+
+
+   
+**Option 2 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Default: `true`<br/>|no|
+|**kind**|`string`|Constant Value: `"prometheus"`<br/>|yes|
+|**path**|`string`|Default: `"/metrics"`<br/>|no|
+|**port**|`integer`, `null`|Format: `"uint16"`<br/>Minimum: `0`<br/>Maximum: `65535`<br/>|no|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+enabled: true
+path: /metrics
+port: null
+
+```
+
+
+<a name="option1grpc"></a>
+## Option 1: grpc: object,null
+
+gRPC-specific OTLP settings.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**metadata**](#option1grpcmetadata)|`object`|Default: `{}`<br/>||
+|[**tls**](#option1grpctls)|`object`|Default: `{"ca":null,"cert":null,"domain_name":null,"key":null}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option1grpcmetadata"></a>
+### Option 1: grpc\.metadata: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="option1grpctls"></a>
+### Option 1: grpc\.tls: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**ca**|`string`, `null`|The path to the Certificate Authority (CA) certificate file (PEM format) used to verify the server's certificate.<br/>||
+|**cert**|`string`, `null`|The path to the client's certificate file (PEM format).<br/>||
+|**domain\_name**|`string`, `null`|The domain name used to verify the server's TLS certificate.<br/>||
+|**key**|`string`, `null`|The path to the client's private key file.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+ca: null
+cert: null
+domain_name: null
+key: null
+
+```
+
+<a name="option1http"></a>
+## Option 1: http: object,null
+
+HTTP-specific OTLP settings.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**headers**](#option1httpheaders)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option1httpheaders"></a>
+### Option 1: http\.headers: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="telemetrymetricsinstrumentation"></a>
+#### telemetry\.metrics\.instrumentation: object
+
+Controls metrics instrumentation behavior, such as histogram aggregation.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**common**](#telemetrymetricsinstrumentationcommon)|`object`|Default: `{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}}`<br/>||
+|[**instruments**](#telemetrymetricsinstrumentationinstruments)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+common:
+  histogram:
+    aggregation: explicit
+    bytes:
+      buckets:
+        - 128
+        - 512
+        - 1024
+        - 2048
+        - 4096
+        - 8192
+        - 16384
+        - 32768
+        - 65536
+        - 131072
+        - 262144
+        - 524288
+        - 1048576
+        - 2097152
+        - 3145728
+        - 4194304
+        - 5242880
+      record_min_max: false
+    seconds:
+      buckets:
+        - 0.005
+        - 0.01
+        - 0.025
+        - 0.05
+        - 0.075
+        - 0.1
+        - 0.25
+        - 0.5
+        - 0.75
+        - 1
+        - 2.5
+        - 5
+        - 7.5
+        - 10
+      record_min_max: false
+instruments: {}
+
+```
+
+<a name="telemetrymetricsinstrumentationcommon"></a>
+##### telemetry\.metrics\.instrumentation\.common: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**histogram**||Default: `{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+histogram:
+  aggregation: explicit
+  bytes:
+    buckets:
+      - 128
+      - 512
+      - 1024
+      - 2048
+      - 4096
+      - 8192
+      - 16384
+      - 32768
+      - 65536
+      - 131072
+      - 262144
+      - 524288
+      - 1048576
+      - 2097152
+      - 3145728
+      - 4194304
+      - 5242880
+    record_min_max: false
+  seconds:
+    buckets:
+      - 0.005
+      - 0.01
+      - 0.025
+      - 0.05
+      - 0.075
+      - 0.1
+      - 0.25
+      - 0.5
+      - 0.75
+      - 1
+      - 2.5
+      - 5
+      - 7.5
+      - 10
+    record_min_max: false
+
+```
+
+<a name="telemetrymetricsinstrumentationinstruments"></a>
+##### telemetry\.metrics\.instrumentation\.instruments: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
 <a name="telemetryresource"></a>
 ### telemetry\.resource: object
 

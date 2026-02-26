@@ -69,13 +69,13 @@ pub enum PipelineError {
     FailedToParseExtensions(sonic_rs::Error),
     #[error("Failed to parse GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_FAILED")]
-    FailedToParseOperation(#[from] graphql_tools::parser::query::ParseError),
+    FailedToParseOperation(#[from] Arc<graphql_tools::parser::query::ParseError>),
     #[error("Failed to minify parsed GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
     FailedToMinifyParsedOperation(String),
     #[error("Failed to normalize GraphQL operation")]
     #[strum(serialize = "OPERATION_RESOLUTION_FAILURE")]
-    NormalizationError(#[from] NormalizationError),
+    NormalizationError(#[from] Arc<NormalizationError>),
     #[error("Failed to collect GraphQL variables: {0}")]
     #[strum(serialize = "BAD_USER_INPUT")]
     VariablesCoercionError(String),
@@ -143,6 +143,30 @@ pub enum PipelineError {
     #[error("No supergraph available yet, unable to process request")]
     #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
     NoSupergraphAvailable,
+}
+
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum ParserCacheError {
+    #[error("Failed to parse GraphQL operation: {0}")]
+    ParseError(Arc<graphql_tools::parser::query::ParseError>),
+    #[error("Failed to minify parsed GraphQL operation: {0}")]
+    MinifyError(String),
+    #[error("Validation errors")]
+    ValidationErrors(Arc<Vec<ValidationError>>),
+}
+
+impl From<Arc<ParserCacheError>> for PipelineError {
+    fn from(value: Arc<ParserCacheError>) -> Self {
+        match value.as_ref() {
+            ParserCacheError::ParseError(err) => PipelineError::FailedToParseOperation(err.clone()),
+            ParserCacheError::MinifyError(err) => {
+                PipelineError::FailedToMinifyParsedOperation(err.clone())
+            }
+            ParserCacheError::ValidationErrors(errs) => {
+                PipelineError::ValidationErrors(errs.clone())
+            }
+        }
+    }
 }
 
 impl PipelineError {
@@ -221,6 +245,8 @@ struct FailedExecutionResult {
 
 impl web::error::WebResponseError for PipelineError {
     fn error_response(&self, req: &web::HttpRequest) -> web::HttpResponse {
+        let shared_state = req.app_state::<Arc<RouterSharedState>>().cloned();
+
         // Retrieve the negotiated response mode, defaulting to standard if not set
         let response_mode = req.get_response_mode();
         let single_content_type = response_mode.single_content_type();
@@ -254,14 +280,25 @@ impl web::error::WebResponseError for PipelineError {
             }
         };
 
-        if let Some(plugins) = req
-            .app_state::<Arc<RouterSharedState>>()
+        if let Some(plugins) = shared_state
+            .as_ref()
             .and_then(|shared_state| shared_state.plugins.clone())
         {
             let (new_errors, new_status_code) =
                 handle_graphql_errors_with_plugins(&plugins, errors, status);
             errors = new_errors;
             res.status(new_status_code);
+        }
+
+        if let Some(error_recorder) = shared_state.as_ref().and_then(|shared_state| {
+            shared_state
+                .telemetry_context
+                .metrics
+                .graphql
+                .error_recorder()
+        }) {
+            error_recorder
+                .record_errors(|| errors.iter().map(|error| error.extensions.code.as_deref()));
         }
 
         res.json(&FailedExecutionResult { errors })

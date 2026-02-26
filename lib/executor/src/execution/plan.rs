@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use bytes::BufMut;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
@@ -67,6 +68,7 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: Option<JwtAuthForwardingPlan>,
+    pub graphql_error_recorder: Option<GraphQLErrorMetricsRecorder>,
     pub initial_errors: Vec<GraphQLError>,
     pub span: &'exec GraphQLOperationSpan,
     pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
@@ -159,6 +161,15 @@ pub async fn execute_query_plan<'exec>(
         opts.span.record_error_count(error_count);
         opts.span
             .record_errors(|| exec_ctx.errors.iter().map(|e| e.into()).collect());
+
+        if let Some(error_recorder) = opts.graphql_error_recorder.as_ref() {
+            error_recorder.record_errors(|| {
+                exec_ctx
+                    .errors
+                    .iter()
+                    .map(|err| err.extensions.code.as_deref())
+            });
+        }
     }
 
     let mut data = exec_ctx.data;

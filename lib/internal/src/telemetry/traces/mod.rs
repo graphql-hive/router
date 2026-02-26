@@ -13,15 +13,10 @@
 //!
 //! Public helpers like `TracerLayer` and tracing control functions are re-exported here
 //! for the rest of the codebase to use.
-use std::collections::HashMap;
-
-use hive_router_config::{
-    primitives::value_or_expression::ValueOrExpression,
-    telemetry::{
-        hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
-        tracing::{BatchProcessorConfig, OtlpProtocol, TracingExporterConfig},
-        TelemetryConfig,
-    },
+use hive_router_config::telemetry::{
+    hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
+    tracing::{BatchProcessorConfig, OtlpProtocol, TracingExporterConfig},
+    TelemetryConfig,
 };
 use opentelemetry_otlp::{
     Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig,
@@ -34,6 +29,7 @@ use opentelemetry_sdk::{
     },
     Resource,
 };
+use std::collections::HashMap;
 use tracing_opentelemetry::OpenTelemetryLayer;
 
 #[cfg(feature = "noop_otlp_exporter")]
@@ -41,9 +37,8 @@ use self::noop_exporter::NoopExporter;
 use self::standard_pipeline_exporter::StandardPipelineExporter;
 use crate::telemetry::{
     error::TelemetryError,
-    resolve_value_or_expression,
     traces::hive_console_exporter::HiveConsoleExporter,
-    utils::{build_metadata, build_tls_config},
+    utils::{build_metadata, build_tls_config, resolve_string_map, resolve_value_or_expression},
 };
 
 pub use control::{disabled_span, is_level_enabled, is_tracing_enabled, set_tracing_enabled};
@@ -260,7 +255,7 @@ fn setup_hive_exporter(
 
     let headers: HashMap<String, String> = HashMap::from_iter(vec![
         ("authorization".to_string(), format!("Bearer {}", token)),
-        ("x-hive-target-ref".to_string(), target),
+        ("x-hive-target-ref".to_string(), target.clone()),
     ]);
 
     let exporter = SpanExporter::builder()
@@ -285,18 +280,6 @@ fn setup_hive_exporter(
     trace_batching_processor.set_resource(resource);
 
     Ok(tracer_provider_builder.with_span_processor(trace_batching_processor))
-}
-
-pub(crate) fn resolve_string_map(
-    map: &HashMap<String, ValueOrExpression<String>>,
-    context_prefix: &str,
-) -> Result<HashMap<String, String>, TelemetryError> {
-    map.iter()
-        .map(|(k, v)| {
-            let value = resolve_value_or_expression(v, &format!("{} '{}'", context_prefix, k))?;
-            Ok((k.clone(), value))
-        })
-        .collect()
 }
 
 fn ensure_single_protocol_config(

@@ -8,10 +8,12 @@ use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
+use hive_router_query_planner::ast::normalization::error::NormalizationError;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
 use xxhash_rust::xxh3::Xxh3;
 
+use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::SchemaState;
@@ -52,6 +54,8 @@ pub async fn normalize_request_with_cache(
     graphql_params: &GraphQLParams,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<Arc<GraphQLNormalizationPayload>, PipelineError> {
+    let metrics = &schema_state.telemetry_context.metrics;
+    let normalize_cache_capture = metrics.cache.normalize.capture_request();
     let normalize_span = GraphQLNormalizeSpan::new();
     async {
         let cache_key = match &graphql_params.operation_name {
@@ -64,19 +68,10 @@ pub async fn normalize_request_with_cache(
             None => parser_payload.cache_key,
         };
 
-        match schema_state.normalize_cache.get(&cache_key).await {
-            Some(payload) => {
-                trace!(
-                    "Found normalized GraphQL operation in cache (operation name={:?}): {}",
-                    payload.operation_for_plan.name,
-                    payload.operation_for_plan
-                );
-                normalize_span.record_cache_hit(true);
-
-                Ok(payload)
-            }
-            None => {
-                normalize_span.record_cache_hit(false);
+        schema_state
+            .normalize_cache
+            .entry(cache_key)
+            .or_try_insert_with::<_, NormalizationError>(async {
                 let doc = normalize_operation(
                     &supergraph.planner.supergraph,
                     &parser_payload.parsed_operation,
@@ -107,15 +102,21 @@ pub async fn normalize_request_with_cache(
                         client_document_hash: parser_payload.cache_key_string.clone(),
                     },
                 };
-                let payload_arc = Arc::new(payload);
-                schema_state
-                    .normalize_cache
-                    .insert(cache_key, payload_arc.clone())
-                    .await;
 
-                Ok(payload_arc)
-            }
-        }
+                Ok(Arc::new(payload))
+            })
+            .await
+            .map_err(PipelineError::from)
+            .into_result_with_hit_miss(|hit_miss| match hit_miss {
+                CacheHitMiss::Hit => {
+                    normalize_span.record_cache_hit(true);
+                    normalize_cache_capture.finish_hit();
+                }
+                CacheHitMiss::Miss | CacheHitMiss::Error => {
+                    normalize_span.record_cache_hit(false);
+                    normalize_cache_capture.finish_miss();
+                }
+            })
     }
     .instrument(normalize_span.clone())
     .await

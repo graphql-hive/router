@@ -5,6 +5,8 @@ pub enum TelemetryError {
     Internal(String),
     #[error("unable to configure traces exporter: {0}")]
     TracesExporterSetup(String),
+    #[error("unable to configure metrics exporter: {0}")]
+    MetricsExporterSetup(String),
 }
 
 impl From<String> for TelemetryError {

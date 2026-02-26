@@ -26,4 +26,10 @@ pub enum RouterInitError {
     TelemetryInitError(#[from] TelemetryInitError),
     #[error(transparent)]
     PluginRegistryError(#[from] PluginRegistryError),
+    #[error("Endpoints of '{endpoint_name_one}' and '{endpoint_name_two}' cannot both use the same endpoint: {endpoint}")]
+    EndpointConflict {
+        endpoint_name_one: String,
+        endpoint_name_two: String,
+        endpoint: String,
+    },
 }
