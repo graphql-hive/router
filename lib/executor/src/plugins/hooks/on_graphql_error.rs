@@ -8,11 +8,7 @@ pub struct OnGraphQLErrorHookPayload {
     /// The GraphQL error that occurred during the execution of the request.
     /// The plugin can modify the error before proceeding, or it can replace it with a new error.
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///     plugins::hooks::on_graphql_error::{OnGraphQLErrorHookPayload, OnGraphQLErrorHookResult},
-    /// };
-    ///
+    /// ```
     /// fn on_graphql_error(mut payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
     ///     // Add additional information to the error message
     ///     payload.error.message = format!("{} - Additional info from plugin", payload.error.message);
@@ -23,11 +19,7 @@ pub struct OnGraphQLErrorHookPayload {
     /// The HTTP status code that will be sent in the response for this error.
     /// The plugin can modify the status code before proceeding.
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///     plugins::hooks::on_graphql_error::{OnGraphQLErrorHookPayload, OnGraphQLErrorHookResult},
-    /// };
-    ///
+    /// ```
     /// fn on_graphql_error(mut payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
     ///     // Change the status code to 500 Internal Server Error
     ///     payload.status_code = StatusCode::INTERNAL_SERVER_ERROR;

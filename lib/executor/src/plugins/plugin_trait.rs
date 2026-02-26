@@ -48,7 +48,7 @@ where
     /// This is called in most cases when you don't short-circuit the hook with a response or an error.
     ///
     /// Example:
-    /// ```rust
+    /// ```
     /// use hive_router::{
     ///     plugins::hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
     /// };
@@ -83,11 +83,7 @@ where
     /// returning a response with the appropriate error format to the client immediately, skipping the rest of the execution flow.
     ///
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///     plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
-    /// };
-    ///
+    /// ```
     /// fn on_http_request<'req>(
     ///     &'req self,
     ///     payload: OnHttpRequestHookPayload<'req>,
@@ -120,11 +116,7 @@ where
     /// This is useful when you want to execute some logic after the main execution of the hook
     ///
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///     plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
-    /// };
-    ///
+    /// ```
     /// fn on_http_request<'req>(
     ///     &'req self,
     ///     payload: OnHttpRequestHookPayload<'req>,
@@ -187,7 +179,7 @@ where
     /// returning a response with the appropriate error format to the client immediately, skipping the rest of the execution flow.
     ///
     /// Example:
-    /// ```rust
+    /// ```
     /// use hive_router::{
     ///     plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
     /// };

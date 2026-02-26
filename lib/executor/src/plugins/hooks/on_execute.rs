@@ -18,15 +18,10 @@ pub struct OnExecuteStartHookPayload<'exec> {
     /// It includes all the details of the request such as headers, body, etc.
     ///
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///     plugins::hooks::on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
-    /// };
-    /// fn on_execute<'exec>(&'exec self, mut payload: OnExecuteStartHookPayload<'exec>) -> OnExecuteStartHookResult<'exec> {
-    ///     let my_header = payload.router_http_request.headers.get("my-header");
-    ///     // do something with the header...
-    ///     payload.proceed()
-    /// }
+    /// ```
+    ///  let my_header = payload.router_http_request.headers.get("my-header");
+    ///  // do something with the header...
+    ///  payload.proceed()
     /// ```
     pub router_http_request: &'exec RouterHttpRequest<'exec>,
     /// The context object that can be used to share data across different plugin hooks for the same request.
@@ -69,10 +64,7 @@ impl<'exec> OnExecuteStartHookPayload<'exec> {
     /// and `false` for the errors that should be removed.
     ///
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///     plugins::hooks::on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
-    /// };
+    /// ```
     /// fn on_execute<'exec>(&'exec self, mut payload: OnExecuteStartHookPayload<'exec>) -> OnExecuteStartHookResult<'exec> {
     ///    // Remove all errors with the message "Internal error"
     ///    payload.filter_errors(|error| error.message != "Internal error");
@@ -87,12 +79,7 @@ impl<'exec> OnExecuteStartHookPayload<'exec> {
     }
     /// Add a GraphQL extension to the execution result. This extension will be merged into the execution result extensions map.
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///     sonic_rs::json,
-    ///     plugins::hooks::on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
-    /// };
-    ///
+    /// ```
     /// fn on_execute<'exec>(&'exec self, mut payload: OnExecuteStartHookPayload<'exec>) -> OnExecuteStartHookResult<'exec> {
     ///   // Add an extension with the key "my_extension" and value {"foo": "bar"}
     ///   payload.add_extension("my_extension", json!({"foo": "bar"}));

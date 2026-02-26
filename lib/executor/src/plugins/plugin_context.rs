@@ -106,20 +106,13 @@ impl PluginContext {
     /// This can be used by plugins to check for the presence of other plugins' context entries before trying to access them.
     ///
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///    plugins::hooks::on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
-    /// };
-    ///
+    /// ```
     /// struct ContextData {
     ///     pub greetings: String
     /// }
     ///
-    /// async fn on_execute<'exec>(&'exec self, payload: OnExecuteStartHookPayload<'exec>) -> OnExecuteStartHookResult<'exec> {
-    ///     if payload.context.contains::<ContextData>() {
-    ///         // safe to access ContextData entry
-    ///     }
-    ///     payload.proceed()
+    /// if payload.context.contains::<ContextData>() {
+    ///     /// safe to access ContextData entry
     /// }
     /// ```
     pub fn contains<T: Any + Send + Sync>(&self) -> bool {
@@ -130,22 +123,16 @@ impl PluginContext {
     /// If an entry of that type already exists, it will be replaced and the old value will be returned.
     ///
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///    plugins::hooks::on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
-    /// };
-    ///
+    /// ```
     /// struct ContextData {
     ///     pub greetings: String
     /// }
     ///
-    /// async fn on_execute<'exec>(&'exec self, mut payload: OnExecuteStartHookPayload<'exec>) -> OnExecuteStartHookResult<'exec> {
-    ///     let context_data = ContextData {
-    ///         greetings: "Hello from context!".to_string()
-    ///     };
-    ///     payload.context.insert(context_data);
-    ///     payload.proceed()
-    /// }
+    /// let context_data = ContextData {
+    ///     greetings: "Hello from context!".to_string()
+    /// };
+    ///
+    /// payload.context.insert(context_data);
     ///
     /// ```
     pub fn insert<T: Any + Send + Sync>(&self, value: T) -> Option<Box<T>> {
@@ -158,11 +145,7 @@ impl PluginContext {
     /// If no entry of that type exists, None is returned.
     ///
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///    plugins::hooks::on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
-    /// };
-    ///
+    /// ```
     /// struct ContextData {
     ///     pub greetings: String
     /// }
@@ -171,14 +154,11 @@ impl PluginContext {
     ///     greetings: "Hello from context!".to_string()
     /// };
     ///
-    /// async fn on_execute<'exec>(&'exec self, mut payload: OnExecuteStartHookPayload<'exec>) -> OnExecuteStartHookResult<'exec> {
-    ///     payload.context.insert(context_data);
+    /// payload.context.insert(context_data);
     ///
-    ///     let context_data_entry = payload.context.get_ref::<ContextData>();
-    ///     if let Some(ref context_data) = context_data_entry {
-    ///        println!("{}", context_data.greetings); // prints "Hello from context!"
-    ///     }
-    ///     payload.proceed()
+    /// let context_data_entry = payload.context.get_ref::<ContextData>();
+    /// if let Some(ref context_data) = context_data_entry {
+    ///    println!("{}", context_data.greetings); // prints "Hello from context!"
     /// }
     /// ```
     pub fn get_ref<'a, T: Any + Send + Sync>(&'a self) -> Option<PluginContextRefEntry<'a, T>> {
@@ -192,25 +172,19 @@ impl PluginContext {
     /// If no entry of that type exists, None is returned.
     ///
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///    plugins::hooks::on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
-    /// };
-    ///
+    /// ```
     /// struct ContextData {
-    ///     pub greetings: String
+    ///   pub greetings: String
     /// }
     ///
     /// let context_data = ContextData {
-    ///     greetings: "Hello from context!".to_string()
+    ///   greetings: "Hello from context!".to_string()
     /// };
     ///
-    /// async fn on_execute<'exec>(&'exec self, mut payload: OnExecuteStartHookPayload<'exec>) -> OnExecuteStartHookResult<'exec> {
-    ///     payload.context.insert(context_data);
-    ///     if let Some(mut context_data_entry) = payload.context.get_mut::<ContextData>() {
-    ///        context_data_entry.greetings = "Hello from mutable reference!".to_string();
-    ///     }
-    ///     payload.proceed()
+    /// payload.context.insert(context_data);
+    ///
+    /// if let Some(mut context_data_entry) = payload.context.get_mut::<ContextData>() {
+    ///    context_data_entry.greetings = "Hello from mutable reference!".to_string();
     /// }
     /// ```
     pub fn get_mut<'a, T: Any + Send + Sync>(&'a self) -> Option<PluginContextMutEntry<'a, T>> {

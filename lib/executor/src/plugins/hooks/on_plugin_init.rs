@@ -36,7 +36,7 @@ where
     /// [Refer to the docs for more details](https://graphql-hive.com/docs/router/extensibility/plugin_system#configuration)
     ///
     /// Example:
-    /// ```rust
+    /// ```
     /// fn on_plugin_init(mut payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
     ///     let config = payload.config()?;
     ///     // use config to initialize plugin...
@@ -54,7 +54,7 @@ where
     /// [Refer to the docs for more details](https://graphql-hive.com/docs/router/extensibility/plugin_system#background-tasks)
     ///
     /// Example:
-    /// ```rust
+    /// ```
     /// struct MyBackgroundTask {
     ///     // fields for the task...
     /// }
@@ -95,7 +95,7 @@ where
     /// (e.g. due to missing configuration or environment variables).
     ///
     /// Example:
-    /// ```rust
+    /// ```
     /// fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult {
     ///     if some_condition {
     ///        return payload.disable_plugin();
@@ -108,7 +108,7 @@ where
     }
     /// Returning this will initialize the plugin with the provided instance.
     /// Example:
-    /// ```rust
+    /// ```
     /// fn on_plugin_init(mut payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
     ///     let config = payload.config()?;
     ///     let plugin_instance = Self {
@@ -122,7 +122,7 @@ where
     }
     /// If the plugin struct implements `Default`, this method can be used to initialize the plugin with default values.
     /// Example:
-    /// ```rust
+    /// ```
     /// #[derive(Default)]
     /// struct MyPlugin {
     ///   values: Vec<String>,
@@ -144,7 +144,7 @@ where
     /// Returning an error from this method will cause the router to fail initialization and the error will be logged.
     /// This can be used if the plugin encounters an unrecoverable error during initialization.
     /// Example:
-    /// ```rust
+    /// ```
     /// fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
     ///     if let Err(e) = do_some_initialization() {
     ///         return payload.error(e);

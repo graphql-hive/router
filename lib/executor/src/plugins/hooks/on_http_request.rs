@@ -13,7 +13,7 @@ pub struct OnHttpRequestHookPayload<'req> {
     /// It includes all the details of the request such as headers, body, etc.
     ///
     /// Example:
-    /// ```rust
+    /// ```
     /// use hive_router::{
     ///    plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
     /// };
@@ -31,7 +31,7 @@ pub struct OnHttpRequestHookPayload<'req> {
     /// [Learn more about the context data sharing in the docs](https://graphql-hive.com/docs/router/extensibility/plugin_system#context-data-sharing)
     ///
     /// Example:
-    /// ```rust
+    /// ```
     /// use hive_router::{
     ///     plugins::hooks::{
     ///         on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
@@ -89,11 +89,7 @@ impl<'req> OnHttpResponseHookPayload<'req> {
     /// This can be used to modify headers, change the body, etc.
     ///
     /// Example:
-    /// ```rust
-    /// use hive_router::{
-    ///    plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
-    /// };
-    ///
+    /// ```
     /// fn on_http_request<'req>(
     ///     &'req self,
     ///     payload: OnHttpRequestHookPayload<'req>,
