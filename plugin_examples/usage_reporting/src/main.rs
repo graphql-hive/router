@@ -1,17 +1,17 @@
 use hive_router::{
-    error::RouterInitError, init_rustls_crypto_provider, ntex, router_entrypoint,
-    DefaultGlobalAllocator, PluginRegistry,
+    configure_global_allocator, error::RouterInitError, init_rustls_crypto_provider, ntex,
+    router_entrypoint, PluginRegistry, RouterGlobalAllocator,
 };
 
-#[global_allocator]
-static GLOBAL: DefaultGlobalAllocator = DefaultGlobalAllocator;
+configure_global_allocator!();
 
 #[hive_router::main]
 async fn main() -> Result<(), RouterInitError> {
     init_rustls_crypto_provider();
 
     router_entrypoint(
-        PluginRegistry::new().register::<usage_reporting_plugin_example::UsageReportingPlugin>(),
+        PluginRegistry::new()
+            .register::<usage_reporting_plugin_example::plugin::UsageReportingPlugin>(),
     )
     .await
 }

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use ntex::rt::Arbiter;
 use std::future::Future;
-use tokio_util::sync::CancellationToken;
+pub use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 #[async_trait]

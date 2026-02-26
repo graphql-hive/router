@@ -6,5 +6,5 @@ plugins:
   response_cache_plugin:
     enabled: true
     config:
-        redis_url: "redis://0.0.0.0:6379"
+        redis_url: "redis://localhost:6379"
         default_ttl_seconds: 2
