@@ -4,8 +4,16 @@ use std::time::Duration;
 
 use crate::testkit::{
     init_graphql_request, init_router_from_config_inline,
+    init_router_from_config_inline_with_plugins,
     otel::{CollectedMetrics, OtlpCollector},
     wait_for_readiness, SubgraphsServer,
+};
+use hive_router::{
+    async_trait, plugins::hooks::on_graphql_error::OnGraphQLErrorHookPayload,
+    plugins::hooks::on_graphql_error::OnGraphQLErrorHookResult,
+    plugins::hooks::on_plugin_init::OnPluginInitPayload,
+    plugins::hooks::on_plugin_init::OnPluginInitResult, plugins::plugin_trait::RouterPlugin,
+    PluginRegistry,
 };
 use hive_router_internal::telemetry::metrics::catalog::{labels, labels_for, names, values};
 
@@ -834,6 +842,110 @@ async fn test_otlp_graphql_errors_total_for_parsing_error() {
         names::HTTP_SERVER_REQUEST_DURATION,
         &http_attrs,
         1,
+    );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
+}
+
+/// Ensures GraphQL error counters use post-plugin transformed error codes.
+#[ntex::test]
+async fn test_otlp_graphql_errors_total_uses_post_plugin_error_codes() {
+    #[derive(Default)]
+    struct TestGraphQLErrorMappingPlugin;
+
+    #[async_trait]
+    impl RouterPlugin for TestGraphQLErrorMappingPlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_graphql_error_mapping"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        fn on_graphql_error(
+            &self,
+            mut payload: OnGraphQLErrorHookPayload,
+        ) -> OnGraphQLErrorHookResult {
+            payload.error.extensions.code = Some("PLUGIN_MAPPED_ERROR".to_string());
+            payload.proceed()
+        }
+    }
+
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+    let mut app = init_router_from_config_inline_with_plugins(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  interval: 30ms
+                  max_export_timeout: 50ms
+
+          plugins:
+            test_graphql_error_mapping:
+              enabled: true
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+        PluginRegistry::new().register::<TestGraphQLErrorMappingPlugin>(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ fieldThatDoesNotExistA fieldThatDoesNotExistB }", None);
+    let resp = test::call_service(&app.app, req.to_request()).await;
+    let body = test::read_body(resp).await;
+    let json: serde_json::Value =
+        serde_json::from_slice(&body).expect("Response should be valid JSON body");
+
+    let error_count = json["errors"]
+        .as_array()
+        .map(|errors| errors.len())
+        .unwrap_or_default();
+    assert!(error_count >= 2, "Expected multiple validation errors");
+
+    wait_for_metrics_export().await;
+
+    let metrics = otlp_collector.metrics_view().await;
+    let mapped_attrs = [(labels::CODE, "PLUGIN_MAPPED_ERROR")];
+
+    assert!(
+        metrics.has_counter(names::GRAPHQL_ERRORS_TOTAL, &mapped_attrs),
+        "Expected {} with code=PLUGIN_MAPPED_ERROR to exist",
+        names::GRAPHQL_ERRORS_TOTAL
+    );
+    assert_counter_eq(
+        &metrics,
+        names::GRAPHQL_ERRORS_TOTAL,
+        &mapped_attrs,
+        error_count as f64,
+    );
+
+    let legacy_attrs = [(labels::CODE, "GRAPHQL_VALIDATION_FAILED")];
+    assert!(
+        !metrics.has_counter(names::GRAPHQL_ERRORS_TOTAL, &legacy_attrs),
+        "Did not expect legacy pre-plugin code=GRAPHQL_VALIDATION_FAILED",
     );
 
     app.hold_until_shutdown(Box::new(otlp_collector));

@@ -191,11 +191,6 @@ async fn graphql_endpoint_dispatch(
             Ok(response) => response,
             Err(err) => {
                 write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                app_state
-                    .telemetry_context
-                    .metrics
-                    .graphql
-                    .record_error(err.graphql_error_code());
                 err.error_response(request)
             }
         };
