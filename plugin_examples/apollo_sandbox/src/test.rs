@@ -16,7 +16,7 @@ mod apollo_sandbox_tests {
         let status = res.status();
         assert_eq!(status, 200);
 
-        let body = res.str_body().await;
+        let body = res.string_body().await;
         assert!(body.contains("EmbeddedSandbox"));
     }
 }

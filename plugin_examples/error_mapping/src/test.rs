@@ -30,7 +30,7 @@ mod tests {
         assert_eq!(res.status(), StatusCode::from_u16(502).unwrap());
 
         assert!(
-            res.str_body().await.contains(r#""code":"BadGateway""#),
+            res.string_body().await.contains(r#""code":"BadGateway""#),
             "Expected error code to be BadGateway"
         );
 
@@ -53,7 +53,7 @@ mod tests {
         assert!(res.status().is_client_error(), "Expected 4xx status code");
 
         assert!(
-            res.str_body().await.contains(r#""code":"InvalidInput""#),
+            res.string_body().await.contains(r#""code":"InvalidInput""#),
             "Expected error code to be InvalidInput"
         );
     }
