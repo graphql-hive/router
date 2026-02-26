@@ -68,7 +68,7 @@ pub use tokio;
 pub use tracing;
 use tracing::{info, warn, Instrument};
 
-static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
+static GRAPHIQL_HTML: &str = include_str!("../static/laboratory.html");
 
 async fn graphql_endpoint_handler(
     request: HttpRequest,
