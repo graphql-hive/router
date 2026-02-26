@@ -47,7 +47,7 @@ jobs:
       - name: generate documentation
         working-directory: docs/generator
         run: npm run generate
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         name: upload config artifact
         with:
           name: router-config.schema.json
@@ -122,7 +122,7 @@ jobs:
         run: cargo build --release --target ${{ matrix.rust_target }}
         if: ${{ !matrix.zigbuild }}
 
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         name: upload router artifact
         with:
           name: hive_router_${{ matrix.name }}
@@ -141,7 +141,7 @@ jobs:
           CROSS_COMPILE: ${{ matrix.zigbuild }}
           TARGET: ${{ matrix.rust_target }}
         run: npm run build
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         name: upload node addon artifact
         with:
           name: node_addon_${{ matrix.name }}
@@ -173,7 +173,7 @@ jobs:
         with:
           node-version-file: .node-version
       - name: download node addon artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8
         with:
           pattern: node_addon_*
           path: lib/node-addon
@@ -229,7 +229,7 @@ jobs:
             type=sha
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
       - name: download binary artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8
         with:
           path: artifacts
           pattern: hive_router_*
