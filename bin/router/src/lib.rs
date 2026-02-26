@@ -148,7 +148,7 @@ async fn graphql_endpoint_handler(
 
         Ok(res)
     }
-    .instrument(root_http_request_span.clone())
+    .instrument(root_http_request_span.clone().span)
     .await
 }
 
