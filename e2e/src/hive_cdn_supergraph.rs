@@ -20,7 +20,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .match_header("x-hive-cdn-key", "dummy_key")
             .with_status(200)
             .with_header("content-type", "text/plain")
-            .with_body(subgraphs.supergraph_with_addr(include_str!("../supergraph.graphql")))
+            .with_body(subgraphs.supergraph(include_str!("../supergraph.graphql")))
             .create();
 
         let router = TestRouterBuilder::new()

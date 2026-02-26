@@ -102,7 +102,7 @@ mod supergraph_e2e_tests {
         let host = server.host_with_port();
 
         // First supergraph
-        let supergraph1_sdl = subgraphs.supergraph_with_addr(include_str!("../supergraph.graphql"));
+        let supergraph1_sdl = subgraphs.supergraph(include_str!("../supergraph.graphql"));
         let mock1 = server
             .mock("GET", "/supergraph")
             .expect(1)
@@ -113,7 +113,7 @@ mod supergraph_e2e_tests {
             .create();
 
         // Second supergraph
-        let supergraph2_sdl = subgraphs.supergraph_with_addr(
+        let supergraph2_sdl = subgraphs.supergraph(
             r#"schema
                   @link(url: "https://specs.apollo.dev/link/v1.0")
                   @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {

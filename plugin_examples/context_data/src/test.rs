@@ -1,36 +1,28 @@
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{
-        init_graphql_request, init_router_from_config_file_with_plugins, wait_for_readiness,
-        SubgraphsServer,
-    };
+    use e2e::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
     use hive_router::ntex;
-    use hive_router::ntex::web::test;
-    use hive_router::PluginRegistry;
+
     #[ntex::test]
     async fn should_add_context_data_and_modify_subgraph_request() {
-        let subgraphs = SubgraphsServer::start().await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/context_data/router.config.yaml",
-            PluginRegistry::new().register::<crate::plugin::ContextDataPlugin>(),
-        )
-        .await
-        .expect("Router should initialize successfully");
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("../plugin_examples/context_data/router.config.yaml")
+            .register_plugin::<crate::plugin::ContextDataPlugin>()
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&app.app).await;
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
 
-        let resp = test::call_service(
-            &app.app,
-            init_graphql_request("{ users { id } }", None).to_request(),
-        )
-        .await;
-
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        assert!(res.status().is_success(), "Expected 200 OK");
 
         let request_logs = subgraphs
-            .get_subgraph_requests_log("accounts")
-            .await
+            .get_requests_log("accounts")
             .expect("expected requests sent to accounts subgraph");
         assert_eq!(
             request_logs.len(),

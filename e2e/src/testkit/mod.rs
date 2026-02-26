@@ -43,6 +43,51 @@ macro_rules! some_header_map {
 // #[macro_export] always hoists to the crate root so we re-export it here module level
 pub use some_header_map;
 
+/// Replaces the subgraphs address in the given supergraph string with the test
+/// subgraphs address and returns the modified supergraph.
+///
+/// It will replace all occurrences of `0.0.0.0:4200` with the test subgraphs address.
+pub fn supergraph_with_subgraphs(
+    supergraph: impl Into<String>,
+    subgraphs: impl Into<SocketAddr>,
+) -> String {
+    let original: String = supergraph.into();
+    let subgraphs_addr = subgraphs.into();
+    original.replace("0.0.0.0:4200", subgraphs_addr.to_string().as_str())
+}
+
+/// Creates a temporary supergraph file with the content of the given file but with the subgraphs
+/// address replaced with the test subgraphs address.
+///
+/// The temp file will be automatically deleted when the returned TempPath is dropped.
+pub fn supergraph_temp_file_with_subgraphs(
+    supergraph_file: &str,
+    subgraphs: impl Into<SocketAddr>,
+) -> TempPath {
+    let original =
+        std::fs::read_to_string(supergraph_file).expect("failed to read supergraph file");
+    let subgraphs_addr = subgraphs.into();
+    let with_addr = supergraph_with_subgraphs(original, subgraphs_addr.clone());
+
+    let temp_file =
+        NamedTempFile::with_suffix(".graphql").expect("failed to create temp supergraph file");
+    std::fs::write(temp_file.path(), with_addr).expect("failed to write temp supergraph file");
+
+    // close the file handle but keep the path for cleanup on drop
+    // useful when running many tests in parallel to avoid hitting the open file limit
+    let temp_path = temp_file.into_temp_path();
+
+    info!(
+        "Using supergraph at {} to use test subgraphs with address {}",
+        temp_path
+            .to_str()
+            .expect("failed to convert temp path to string"),
+        subgraphs_addr
+    );
+
+    temp_path
+}
+
 lazy_static! {
     /// Ensures only one `EnvVarsGuard` exists at a time, preventing concurrent mutation of
     /// environment variables (which are global process state and not thread-safe to modify).
@@ -327,41 +372,18 @@ impl TestSubgraphs<Started> {
             .map(|entry| entry.value().to_vec())
     }
 
-    /// Creates a temporary supergraph file with the content of the given file but with the subgraphs
-    /// address replaced with the test subgraphs address.
-    ///
-    /// The temp file will be automatically deleted when the returned TempPath is dropped.
-    pub fn supergraph_temp_file_with_addr(&self, supergraph_file: &str) -> TempPath {
-        let original =
-            std::fs::read_to_string(supergraph_file).expect("failed to read supergraph file");
-        let with_addr = self.supergraph_with_addr(original);
-
-        let temp_file =
-            NamedTempFile::with_suffix(".graphql").expect("failed to create temp supergraph file");
-        std::fs::write(temp_file.path(), with_addr).expect("failed to write temp supergraph file");
-
-        // close the file handle but keep the path for cleanup on drop
-        // useful when running many tests in parallel to avoid hitting the open file limit
-        let temp_path = temp_file.into_temp_path();
-
-        info!(
-            "Using supergraph at {} to use test subgraphs with address {}",
-            temp_path
-                .to_str()
-                .expect("failed to convert temp path to string"),
-            self.addr()
-        );
-
-        temp_path
-    }
-
     /// Replaces the subgraphs address in the given supergraph string with the test
     /// subgraphs address and returns the modified supergraph.
     ///
     /// It will replace all occurrences of `0.0.0.0:4200` with the test subgraphs address.
-    pub fn supergraph_with_addr(&self, supergraph: impl Into<String>) -> String {
-        let original: String = supergraph.into();
-        original.replace("0.0.0.0:4200", self.addr().to_string().as_str())
+    pub fn supergraph(&self, supergraph: impl Into<String>) -> String {
+        supergraph_with_subgraphs(supergraph, self.addr())
+    }
+}
+
+impl From<&TestSubgraphs<Started>> for SocketAddr {
+    fn from(subgraphs: &TestSubgraphs<Started>) -> Self {
+        subgraphs.addr()
     }
 }
 
@@ -373,22 +395,22 @@ impl Drop for TestSubgraphsHandle {
 
 // router
 
-pub struct TestRouterBuilder<'subgraphs> {
+pub struct TestRouterBuilder {
     wait_for_healthy_on_start: bool,
     wait_for_ready_on_start: bool,
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
-    subgraphs: Option<&'subgraphs TestSubgraphs<Started>>,
+    subgraphs_addr: Option<SocketAddr>,
 }
 
-impl<'subgraphs> TestRouterBuilder<'subgraphs> {
+impl TestRouterBuilder {
     pub fn new() -> Self {
         Self {
             wait_for_healthy_on_start: true,
             wait_for_ready_on_start: true,
             config: None,
             plugins: vec![],
-            subgraphs: None,
+            subgraphs_addr: None,
         }
     }
 
@@ -408,8 +430,8 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
         self
     }
 
-    pub fn with_subgraphs(mut self, subgraphs: &'subgraphs TestSubgraphs<Started>) -> Self {
-        self.subgraphs = Some(subgraphs);
+    pub fn with_subgraphs(mut self, subgraphs: impl Into<SocketAddr>) -> Self {
+        self.subgraphs_addr = Some(subgraphs.into());
         self
     }
 
@@ -430,19 +452,20 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
         self
     }
 
-    pub fn build(self) -> TestRouter<'subgraphs, Built> {
+    pub fn build(self) -> TestRouter<Built> {
         let mut config = self.config.expect("config is required");
-        let subgraphs = self.subgraphs;
         let mut _hold_until_drop: Vec<Box<dyn Any>> = vec![];
 
         // change the supergraph to use the test subgraphs address
-        if let Some(subgraphs) = subgraphs {
+        if let Some(subgraphs_addr) = self.subgraphs_addr {
             match &config.supergraph {
                 hive_router_config::supergraph::SupergraphSource::File { path, .. } => {
                     let supergraph_path = path.as_ref().expect("supergraph file path is required");
 
-                    let temp_path =
-                        subgraphs.supergraph_temp_file_with_addr(supergraph_path.absolute.as_str());
+                    let temp_path = supergraph_temp_file_with_subgraphs(
+                        supergraph_path.absolute.as_str(),
+                        subgraphs_addr,
+                    );
 
                     let supergraph_file_path =
                         hive_router_config::primitives::file_path::FilePath {
@@ -468,7 +491,6 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
             graphql_path: config.http.graphql_endpoint().to_string(),
             config: Some(config),
             plugins: self.plugins,
-            subgraphs,
             handle: None,
             _hold_until_drop,
             _state: PhantomData,
@@ -476,7 +498,7 @@ impl<'subgraphs> TestRouterBuilder<'subgraphs> {
     }
 }
 
-impl Default for TestRouterBuilder<'_> {
+impl Default for TestRouterBuilder {
     fn default() -> Self {
         Self::new()
     }
@@ -520,20 +542,19 @@ impl Drop for TestRouterHandle {
     }
 }
 
-pub struct TestRouter<'subgraphs, State> {
+pub struct TestRouter<State> {
     wait_for_healthy_on_start: bool,
     wait_for_ready_on_start: bool,
     graphql_path: String,
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
-    subgraphs: Option<&'subgraphs TestSubgraphs<Started>>,
     handle: Option<TestRouterHandle>,
     _hold_until_drop: Vec<Box<dyn Any>>,
     _state: PhantomData<State>,
 }
 
-impl<'subgraphs> TestRouter<'subgraphs, Built> {
-    pub async fn start(mut self) -> TestRouter<'subgraphs, Started> {
+impl TestRouter<Built> {
+    pub async fn start(mut self) -> TestRouter<Started> {
         init_rustls_crypto_provider();
         let config = self.config.take().unwrap();
         let (telemetry, subscriber) = Telemetry::init_testing_subscriber(&config)
@@ -601,7 +622,6 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
                 telemetry,
             }),
             config: self.config,
-            subgraphs: self.subgraphs,
             plugins: self.plugins,
             _hold_until_drop: hold_until_drop,
             _state: PhantomData,
@@ -621,7 +641,7 @@ impl<'subgraphs> TestRouter<'subgraphs, Built> {
     }
 }
 
-impl<'subgraphs> TestRouter<'subgraphs, Started> {
+impl TestRouter<Started> {
     pub fn schema_state(&self) -> &Arc<SchemaState> {
         &self.handle.as_ref().unwrap().schema_state
     }
