@@ -6,6 +6,7 @@ A fully open-source MIT-licensed GraphQL API router that can act as a [GraphQL f
 
 This crate helps you create a custom build of the Hive Router with your own plugins.
 
+- To learn more about the router itself, see the [router documentation](https://graphql-hive.com/docs/router).
 - To learn how to extend the router, see the [extensibility guide](https://graphql-hive.com/docs/router/extensibility/plugin_system).
 - To learn more about the plugin system API, see the [API reference](https://graphql-hive.com/docs/router/extensibility/plugin_system).
 - If you don't need to extend the router, refer to the [getting started guide](https://graphql-hive.com/docs/router/getting-started).
