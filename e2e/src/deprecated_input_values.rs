@@ -54,7 +54,7 @@ mod deprecated_input_values_e2e_tests {
         assert!(resp.status().is_success(), "Expected 200 OK");
 
         let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).unwrap();
+        let json_body: Value = from_slice(&body).expect("Failed to deserialize JSON response");
 
         insta::assert_snapshot!(to_string_pretty(&json_body).unwrap(), @r#"
         {
