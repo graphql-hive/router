@@ -54,7 +54,7 @@ pub use hive_router_plan_executor::response::graphql_error::GraphQLError;
 pub use hive_router_query_planner as query_planner;
 pub use http;
 use http::header::CONTENT_TYPE;
-pub use mimalloc::MiMalloc as DefaultGlobalAllocator;
+pub use mimalloc::MiMalloc as RouterGlobalAllocator;
 pub use ntex;
 pub use ntex::main;
 use ntex::util::{select, Either};
@@ -287,4 +287,12 @@ pub fn init_rustls_crypto_provider() {
     {
         warn!("Rustls crypto provider already installed");
     }
+}
+
+#[macro_export]
+macro_rules! configure_global_allocator {
+    () => {
+        #[global_allocator]
+        static GLOBAL: RouterGlobalAllocator = RouterGlobalAllocator;
+    };
 }
