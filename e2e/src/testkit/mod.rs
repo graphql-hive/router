@@ -23,8 +23,8 @@ use tracing::{info, warn};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider, plugins::plugins_service::PluginService, telemetry::Telemetry,
-    PluginRegistry, RouterSharedState, SchemaState,
+    init_rustls_crypto_provider, invoke_shutdown_hooks, plugins::plugins_service::PluginService,
+    telemetry::Telemetry, PluginRegistry, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use subgraphs::subgraphs_app;
@@ -518,28 +518,40 @@ impl Drop for TestRouterHandle {
         // shut down backgroun tasks
         self.bg_tasks_manager.shutdown();
 
-        // shut down telemetry
-        let Some(provider) = self.telemetry.provider.clone() else {
-            return;
-        };
-        let dispatch = tracing::dispatcher::get_default(|current| current.clone());
-        let handle = std::thread::spawn(move || {
-            tracing::dispatcher::with_default(&dispatch, || {
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "provider",
-                    "shutdown scheduled"
-                );
-                let _ = provider.force_flush();
-                let _ = provider.shutdown();
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "provider",
-                    "shutdown completed"
-                );
-            });
-        });
-        let _ = handle.join();
+        // shutdown hooks and wait for complete (shutdown is async so yeah)
+        let shared_state = self.shared_state.clone();
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build shutdown runtime")
+                .block_on(invoke_shutdown_hooks(&shared_state))
+        })
+        .join()
+        .expect("shutdown hooks panicked");
+
+        // maybe shut down telemetry
+        if let Some(provider) = self.telemetry.provider.clone() {
+            let dispatch = tracing::dispatcher::get_default(|current| current.clone());
+            std::thread::spawn(move || {
+                tracing::dispatcher::with_default(&dispatch, || {
+                    tracing::info!(
+                        component = "telemetry",
+                        layer = "provider",
+                        "shutdown scheduled"
+                    );
+                    let _ = provider.force_flush();
+                    let _ = provider.shutdown();
+                    tracing::info!(
+                        component = "telemetry",
+                        layer = "provider",
+                        "shutdown completed"
+                    );
+                });
+            })
+            .join()
+            .expect("tracing shutdown panicked");
+        }
     }
 }
 
