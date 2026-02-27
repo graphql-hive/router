@@ -5,8 +5,6 @@ mod authorization_directives_reject;
 #[cfg(test)]
 mod body_limit;
 #[cfg(test)]
-mod deprecated_input_values;
-#[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
 mod env_vars;
@@ -20,6 +18,8 @@ mod header_propagation;
 mod hive_cdn_supergraph;
 #[cfg(test)]
 mod http;
+#[cfg(test)]
+mod introspection;
 #[cfg(test)]
 mod jwt;
 #[cfg(test)]
