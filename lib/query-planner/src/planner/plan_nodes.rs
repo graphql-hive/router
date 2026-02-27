@@ -146,55 +146,12 @@ pub struct KeyRenamer {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FetchNodePathSegment {
     Key(String),
-    // Internally we keep a set for type-safe matching, but serialize as
-    // the existing string format ("A" or "A|B") for compatibility.
-    TypenameEquals(#[serde(with = "typename_equals_serde")] BTreeSet<String>),
+    TypenameEquals(BTreeSet<String>),
 }
 
 impl FetchNodePathSegment {
     pub fn typename_equals_from_type(type_name: String) -> Self {
         Self::TypenameEquals(BTreeSet::from_iter([type_name]))
-    }
-}
-
-mod typename_equals_serde {
-    use std::collections::BTreeSet;
-
-    use serde::{de::Error, Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(value: &BTreeSet<String>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        // Keep wire format stable even though internals are now set-based.
-        if value.is_empty() {
-            return Err(serde::ser::Error::custom(
-                "TypenameEquals cannot serialize an empty type set",
-            ));
-        }
-
-        serializer.serialize_str(&value.iter().cloned().collect::<Vec<_>>().join("|"))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeSet<String>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        let type_names = value
-            .split('|')
-            .map(str::trim)
-            .filter(|type_name| !type_name.is_empty())
-            .map(ToString::to_string)
-            .collect::<BTreeSet<_>>();
-
-        if type_names.is_empty() {
-            return Err(D::Error::custom(
-                "TypenameEquals must contain at least one type",
-            ));
-        }
-
-        Ok(type_names)
     }
 }
 
