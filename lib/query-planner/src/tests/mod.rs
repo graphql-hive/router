@@ -34,7 +34,7 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
     );
     let query_plan = build_query_plan("../../bench/supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
         Parallel {
@@ -79,46 +79,40 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
               }
             },
           },
-          Flatten(path: "topProducts.@") {
-            Fetch(service: "reviews") {
-              {
-                ... on Product {
-                  __typename
-                  upc
-                }
-              } =>
-              {
-                ... on Product {
-                  reviews {
-                    id
-                    body
-                    author {
-                      __typename
-                      id
-                      reviews {
-                        id
-                        body
-                        product {
-                          __typename
-                          upc
-                        }
-                      }
-                      username
-                    }
+          BatchFetch(service: "reviews") {
+            entityBatch(originalFetchCount: 2) {
+              _e0 {
+                paths: [
+                  "topProducts.@"
+                ]
+                {
+                  ... on Product {
+                    __typename
+                    upc
                   }
                 }
               }
-            },
-          },
-          Flatten(path: "users.@") {
-            Fetch(service: "reviews") {
-              {
-                ... on User {
-                  __typename
-                  id
+              _e1 {
+                paths: [
+                  "users.@"
+                ]
+                {
+                  ... on User {
+                    __typename
+                    id
+                  }
                 }
-              } =>
-              {
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
+                ... on Product {
+                  reviews {
+                    ...a
+                  }
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_1) {
                 ... on User {
                   reviews {
                     id
@@ -127,115 +121,91 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
                       __typename
                       upc
                       reviews {
-                        id
-                        body
-                        author {
-                          __typename
-                          id
-                          reviews {
-                            id
-                            body
-                            product {
-                              __typename
-                              upc
-                            }
-                          }
-                          username
-                        }
+                        ...a
                       }
                     }
                   }
                 }
               }
-            },
+            }
+            fragment a on Review {
+              id
+              body
+              author {
+                __typename
+                id
+                reviews {
+                  id
+                  body
+                  product {
+                    __typename
+                    upc
+                  }
+                }
+                username
+              }
+            }
           },
         },
         Parallel {
-          Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-            Fetch(service: "products") {
-              {
-                ... on Product {
-                  __typename
-                  upc
+          BatchFetch(service: "products") {
+            entityBatch(originalFetchCount: 3) {
+              _e0 {
+                paths: [
+                  "topProducts.@.reviews.@.author.reviews.@.product"
+                  "users.@.reviews.@.product"
+                  "users.@.reviews.@.product.reviews.@.author.reviews.@.product"
+                ]
+                {
+                  ... on Product {
+                    __typename
+                    upc
+                  }
                 }
-              } =>
-              {
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
                 ... on Product {
                   price
                   weight
                   name
                 }
               }
-            },
+            }
           },
-          Flatten(path: "topProducts.@.reviews.@.author") {
-            Fetch(service: "accounts") {
-              {
-                ... on User {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  name
+          BatchFetch(service: "accounts") {
+            entityBatch(originalFetchCount: 2) {
+              _e0 {
+                paths: [
+                  "topProducts.@.reviews.@.author"
+                  "users.@.reviews.@.product.reviews.@.author"
+                ]
+                {
+                  ... on User {
+                    __typename
+                    id
+                  }
                 }
               }
-            },
-          },
-          Flatten(path: "users.@.reviews.@.product") {
-            Fetch(service: "products") {
-              {
-                ... on Product {
-                  __typename
-                  upc
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                  weight
-                  name
-                }
-              }
-            },
-          },
-          Flatten(path: "users.@.reviews.@.product.reviews.@.author.reviews.@.product") {
-            Fetch(service: "products") {
-              {
-                ... on Product {
-                  __typename
-                  upc
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                  weight
-                  name
-                }
-              }
-            },
-          },
-          Flatten(path: "users.@.reviews.@.product.reviews.@.author") {
-            Fetch(service: "accounts") {
-              {
-                ... on User {
-                  __typename
-                  id
-                }
-              } =>
-              {
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
                 ... on User {
                   name
                 }
               }
-            },
+            }
           },
         },
-        Parallel {
-          Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-            Fetch(service: "inventory") {
+        BatchFetch(service: "inventory") {
+          entityBatch(originalFetchCount: 3) {
+            _e0 {
+              paths: [
+                "topProducts.@.reviews.@.author.reviews.@.product"
+                "users.@.reviews.@.product"
+                "users.@.reviews.@.product.reviews.@.author.reviews.@.product"
+              ]
               {
                 ... on Product {
                   __typename
@@ -243,55 +213,21 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
                   price
                   weight
                 }
-              } =>
-              {
-                ... on Product {
-                  inStock
-                  shippingEstimate
-                }
               }
-            },
-          },
-          Flatten(path: "users.@.reviews.@.product") {
-            Fetch(service: "inventory") {
-              {
-                ... on Product {
-                  __typename
-                  upc
-                  price
-                  weight
-                }
-              } =>
-              {
-                ... on Product {
-                  inStock
-                  shippingEstimate
-                }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                inStock
+                shippingEstimate
               }
-            },
-          },
-          Flatten(path: "users.@.reviews.@.product.reviews.@.author.reviews.@.product") {
-            Fetch(service: "inventory") {
-              {
-                ... on Product {
-                  __typename
-                  upc
-                  price
-                  weight
-                }
-              } =>
-              {
-                ... on Product {
-                  inStock
-                  shippingEstimate
-                }
-              }
-            },
-          },
+            }
+          }
         },
       },
     },
-    "###);
+    "#);
 
     Ok(())
 }

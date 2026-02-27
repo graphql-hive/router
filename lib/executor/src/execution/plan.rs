@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use ahash::{HashMap as AHashMap, HashMapExt};
 use bytes::BufMut;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use hive_router_internal::telemetry::traces::spans::graphql::{
@@ -8,7 +9,8 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        ConditionNode, FetchNode, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
+        BatchFetchNode, ConditionNode, EntityBatch, EntityBatchAlias, FetchNode, FetchRewrite,
+        FlattenNodePath, PlanNode, QueryPlan,
     },
     state::supergraph_state::OperationKind,
 };
@@ -44,7 +46,7 @@ use crate::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
     response::{
-        graphql_error::{GraphQLError, GraphQLErrorPath},
+        graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::deep_merge,
         subgraph_response::SubgraphResponse,
         value::Value,
@@ -135,7 +137,7 @@ pub async fn execute_query_plan<'exec>(
         extensions = start_payload.extensions;
     }
 
-    let mut exec_ctx = ExecutionContext::new(query_plan, data, errors);
+    let mut exec_ctx = ExecutionContext::new(data, errors);
     // No need for `new`, it has too many parameters
     // We can directly create `Executor` instance here
     let executor = Executor {
@@ -242,18 +244,34 @@ pub struct Executor<'exec> {
 
 enum ExecutionJob<'exec> {
     Fetch {
-        fetch_node_id: i64,
         subgraph_name: &'exec str,
         response: SubgraphResponse<'exec>,
+        output_rewrites: Option<&'exec [FetchRewrite]>,
     },
     FlattenFetch {
-        fetch_node_id: i64,
         subgraph_name: &'exec str,
         response: SubgraphResponse<'exec>,
         flatten_node_path: &'exec FlattenNodePath,
         representation_hashes: Vec<u64>,
-        representation_hash_to_index: HashMap<u64, usize>,
+        representation_hash_to_index: AHashMap<u64, usize>,
+        output_rewrites: Option<&'exec [FetchRewrite]>,
     },
+    BatchedFlattenFetch {
+        subgraph_name: &'exec str,
+        response: SubgraphResponse<'exec>,
+        aliases: Vec<BatchedAliasExecutionJob<'exec>>,
+    },
+}
+
+struct BatchedAliasExecutionJob<'exec> {
+    alias_spec: &'exec EntityBatchAlias,
+    representation_hash_to_index: AHashMap<u64, usize>,
+    paths: Vec<BatchedAliasPathExecutionJob<'exec>>,
+}
+
+struct BatchedAliasPathExecutionJob<'exec> {
+    merge_path: &'exec FlattenNodePath,
+    representation_hashes: Vec<u64>,
 }
 
 impl<'exec> ExecutionJob<'exec> {
@@ -261,24 +279,21 @@ impl<'exec> ExecutionJob<'exec> {
         match self {
             ExecutionJob::Fetch { response, .. } => response,
             ExecutionJob::FlattenFetch { response, .. } => response,
+            ExecutionJob::BatchedFlattenFetch { response, .. } => response,
         }
     }
     fn response_ref(&self) -> &SubgraphResponse<'exec> {
         match self {
             ExecutionJob::Fetch { response, .. } => response,
             ExecutionJob::FlattenFetch { response, .. } => response,
-        }
-    }
-    fn fetch_node_id(&self) -> i64 {
-        match self {
-            ExecutionJob::Fetch { fetch_node_id, .. } => *fetch_node_id,
-            ExecutionJob::FlattenFetch { fetch_node_id, .. } => *fetch_node_id,
+            ExecutionJob::BatchedFlattenFetch { response, .. } => response,
         }
     }
     fn subgraph_name(&self) -> &'exec str {
         match self {
             ExecutionJob::Fetch { subgraph_name, .. } => subgraph_name,
             ExecutionJob::FlattenFetch { subgraph_name, .. } => subgraph_name,
+            ExecutionJob::BatchedFlattenFetch { subgraph_name, .. } => subgraph_name,
         }
     }
     fn affected_path(&self) -> Option<&'exec FlattenNodePath> {
@@ -287,6 +302,7 @@ impl<'exec> ExecutionJob<'exec> {
             ExecutionJob::FlattenFetch {
                 flatten_node_path, ..
             } => Some(flatten_node_path),
+            ExecutionJob::BatchedFlattenFetch { .. } => None,
         }
     }
 }
@@ -351,6 +367,25 @@ impl<'exec> Executor<'exec> {
             PlanNode::Fetch(fetch_node) => {
                 Some(self.prepare_fetch_job(fetch_node, None, None).boxed())
             }
+            PlanNode::BatchFetch(batch_fetch_node) => {
+                let (raw_variable_values, aliases) =
+                    self.prepare_batched_aliases(&batch_fetch_node.entity_batch, data);
+
+                Some(
+                    async move {
+                        let response = self
+                            .prepare_batch_fetch_job(batch_fetch_node, raw_variable_values)
+                            .await?;
+
+                        Ok(ExecutionJob::BatchedFlattenFetch {
+                            subgraph_name: batch_fetch_node.service_name.as_str(),
+                            response,
+                            aliases,
+                        })
+                    }
+                    .boxed(),
+                )
+            }
             PlanNode::Flatten(flatten_node) => {
                 let fetch_node = match flatten_node.node.as_ref() {
                     PlanNode::Fetch(fetch_node) => fetch_node,
@@ -364,7 +399,7 @@ impl<'exec> Executor<'exec> {
                 filtered_representations.put(OPEN_BRACKET);
                 let possible_types = &self.schema_metadata.possible_types;
                 let mut representation_hashes: Vec<u64> = Vec::new();
-                let mut representation_hash_to_index: HashMap<u64, usize> = HashMap::new();
+                let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
                 let arena = bumpalo::Bump::new();
 
                 traverse_and_callback(
@@ -422,17 +457,17 @@ impl<'exec> Executor<'exec> {
                         let fetch_job = self
                             .prepare_fetch_job(
                                 fetch_node,
-                                Some(filtered_representations),
+                                Some(vec![("representations", filtered_representations)]),
                                 Some(&flatten_node.path),
                             )
                             .await?;
                         Ok(ExecutionJob::FlattenFetch {
                             flatten_node_path: &flatten_node.path,
                             response: fetch_job.response(),
-                            fetch_node_id: fetch_node.id,
                             subgraph_name: fetch_node.service_name.as_str(),
                             representation_hashes,
                             representation_hash_to_index,
+                            output_rewrites: fetch_node.output_rewrites.as_deref(),
                         })
                     }
                     .boxed(),
@@ -481,11 +516,12 @@ impl<'exec> Executor<'exec> {
                     }
                 }
 
-                let output_rewrites: Option<&[FetchRewrite]> =
-                    ctx.output_rewrites.get(job.fetch_node_id());
-
-                let (errors, entity_index_error_map) = match job {
-                    ExecutionJob::Fetch { mut response, .. } => {
+                match job {
+                    ExecutionJob::Fetch {
+                        mut response,
+                        output_rewrites,
+                        ..
+                    } => {
                         if let Some(response_bytes) = response.bytes {
                             ctx.response_storage.add_response(response_bytes);
                         }
@@ -499,13 +535,14 @@ impl<'exec> Executor<'exec> {
                         }
                         deep_merge(&mut ctx.data, response.data);
 
-                        (response.errors, None)
+                        ctx.handle_errors(subgraph_name, affected_path, response.errors, None);
                     }
                     ExecutionJob::FlattenFetch {
                         mut response,
                         flatten_node_path,
                         representation_hashes,
                         ref representation_hash_to_index,
+                        output_rewrites,
                         ..
                     } => {
                         if let Some(response_bytes) = response.bytes {
@@ -561,14 +598,178 @@ impl<'exec> Executor<'exec> {
                                     index += 1;
                                 },
                             );
-                            (response.errors, entity_index_error_map)
+
+                            ctx.handle_errors(
+                                subgraph_name,
+                                affected_path,
+                                response.errors,
+                                entity_index_error_map,
+                            );
                         } else {
-                            (response.errors, None)
+                            ctx.handle_errors(subgraph_name, affected_path, response.errors, None);
                         }
                     }
-                };
+                    ExecutionJob::BatchedFlattenFetch {
+                        mut response,
+                        aliases,
+                        ..
+                    } => {
+                        if let Some(response_bytes) = response.bytes {
+                            ctx.response_storage.add_response(response_bytes);
+                        }
 
-                ctx.handle_errors(subgraph_name, affected_path, errors, entity_index_error_map);
+                        let mut alias_index_by_name: AHashMap<&str, usize> =
+                            AHashMap::with_capacity(aliases.len());
+                        for (alias_index, alias_job) in aliases.iter().enumerate() {
+                            alias_index_by_name
+                                .insert(alias_job.alias_spec.alias.as_str(), alias_index);
+                        }
+
+                        let mut errors_by_alias_index: AHashMap<usize, Vec<GraphQLError>> =
+                            AHashMap::new();
+                        let mut unscoped_errors: Vec<GraphQLError> = Vec::new();
+
+                        if let Some(response_errors) = response.errors.take() {
+                            for mut error in response_errors {
+                                let maybe_alias = error.path.as_ref().and_then(|path| {
+                                    path.segments.first().and_then(|segment| match segment {
+                                        GraphQLErrorPathSegment::String(alias) => {
+                                            Some(alias.as_str())
+                                        }
+                                        _ => None,
+                                    })
+                                });
+
+                                let Some(alias) = maybe_alias else {
+                                    unscoped_errors.push(error);
+                                    continue;
+                                };
+
+                                let Some(alias_index) = alias_index_by_name.get(alias) else {
+                                    unscoped_errors.push(error);
+                                    continue;
+                                };
+
+                                if let Some(path) = error.path.as_mut() {
+                                    if let Some(GraphQLErrorPathSegment::String(first)) =
+                                        path.segments.first_mut()
+                                    {
+                                        *first = "_entities".to_string();
+                                    }
+                                }
+
+                                errors_by_alias_index
+                                    .entry(*alias_index)
+                                    .or_default()
+                                    .push(error);
+                            }
+                        }
+
+                        for (alias_index, alias_job) in aliases.iter().enumerate() {
+                            let mut alias_errors = errors_by_alias_index.remove(&alias_index);
+                            let mut entity_index_error_map: Option<
+                                HashMap<&usize, Vec<GraphQLErrorPath>>,
+                            > = alias_errors.as_ref().map(|_| HashMap::new());
+
+                            if let Some(mut entities) = response
+                                .data
+                                .take_entities_by_key(alias_job.alias_spec.alias.as_str())
+                            {
+                                if let Some(output_rewrites) =
+                                    alias_job.alias_spec.output_rewrites.as_ref()
+                                {
+                                    for output_rewrite in output_rewrites {
+                                        for entity in &mut entities {
+                                            output_rewrite.rewrite(
+                                                &self.schema_metadata.possible_types,
+                                                entity,
+                                            );
+                                        }
+                                    }
+                                }
+
+                                if !alias_job.representation_hash_to_index.is_empty() {
+                                    for path in &alias_job.paths {
+                                        let mut index = 0;
+                                        let normalized_path = path.merge_path.as_slice();
+                                        let initial_error_path = alias_errors.as_ref().map(|_| {
+                                            GraphQLErrorPath::with_capacity(
+                                                normalized_path.len() + 2,
+                                            )
+                                        });
+
+                                        traverse_and_callback_mut(
+                                            &mut ctx.data,
+                                            normalized_path,
+                                            self.schema_metadata,
+                                            initial_error_path,
+                                            &mut |target_data, error_path| {
+                                                if index >= path.representation_hashes.len() {
+                                                    index += 1;
+                                                    return;
+                                                }
+
+                                                let hash = path.representation_hashes[index];
+                                                if let Some(entity_index) = alias_job
+                                                    .representation_hash_to_index
+                                                    .get(&hash)
+                                                {
+                                                    if let (
+                                                        Some(error_path),
+                                                        Some(entity_index_error_map),
+                                                    ) = (
+                                                        error_path,
+                                                        entity_index_error_map.as_mut(),
+                                                    ) {
+                                                        let error_paths = entity_index_error_map
+                                                            .entry(entity_index)
+                                                            .or_insert_with(Vec::new);
+                                                        error_paths.push(error_path);
+                                                    }
+                                                    if let Some(entity) =
+                                                        entities.get(*entity_index)
+                                                    {
+                                                        // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
+                                                        // The transmute is to satisfy the compiler, but the lifetime
+                                                        // is valid.
+                                                        let new_val: Value<'_> = unsafe {
+                                                            std::mem::transmute(entity.clone())
+                                                        };
+                                                        deep_merge(target_data, new_val);
+                                                    }
+                                                }
+
+                                                index += 1;
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+
+                            let affected_path = if alias_job.paths.len() == 1 {
+                                Some(alias_job.paths[0].merge_path)
+                            } else {
+                                None
+                            };
+
+                            ctx.handle_errors(
+                                subgraph_name,
+                                affected_path,
+                                alias_errors.take(),
+                                entity_index_error_map,
+                            );
+                        }
+
+                        if !unscoped_errors.is_empty() {
+                            ctx.handle_errors(subgraph_name, None, Some(unscoped_errors), None);
+                        }
+
+                        tracing::trace!(
+                            alias_count = aliases.len(),
+                            "Patched entity batch alias results"
+                        );
+                    }
+                }
             }
         }
     }
@@ -585,11 +786,207 @@ impl<'exec> Executor<'exec> {
         }
     }
 
+    fn prepare_batched_aliases(
+        &self,
+        entity_batch: &'exec EntityBatch,
+        data: &Value<'exec>,
+    ) -> (
+        Vec<(&'exec str, Vec<u8>)>,
+        Vec<BatchedAliasExecutionJob<'exec>>,
+    ) {
+        let mut raw_variable_values: Vec<(&'exec str, Vec<u8>)> =
+            Vec::with_capacity(entity_batch.aliases.len());
+        let mut aliases = Vec::with_capacity(entity_batch.aliases.len());
+
+        let possible_types = &self.schema_metadata.possible_types;
+
+        for alias_spec in &entity_batch.aliases {
+            let mut index = 0;
+            let mut filtered_representations = Vec::new();
+            filtered_representations.put(OPEN_BRACKET);
+            let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
+            let arena = bumpalo::Bump::new();
+            let mut path_hashes_by_index: Vec<Vec<u64>> =
+                vec![Vec::new(); alias_spec.merge_paths.len()];
+
+            let mut path_groups: Vec<(&FlattenNodePath, Vec<usize>)> =
+                Vec::with_capacity(alias_spec.merge_paths.len());
+            for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
+                if let Some((_, target_indices)) =
+                    path_groups.iter_mut().find(|(path, _)| *path == merge_path)
+                {
+                    target_indices.push(path_index);
+                } else {
+                    path_groups.push((merge_path, vec![path_index]));
+                }
+            }
+
+            for (merge_path, grouped_target_indices) in path_groups {
+                let mut representation_hashes: Vec<u64> = Vec::new();
+
+                traverse_and_callback(data, merge_path.as_slice(), possible_types, &mut |entity| {
+                    let hash = entity.to_hash(&alias_spec.requires.items, possible_types);
+
+                    if !entity.is_null() {
+                        representation_hashes.push(hash);
+                    }
+
+                    if representation_hash_to_index.contains_key(&hash) {
+                        return;
+                    }
+
+                    let entity = if let Some(input_rewrites) = &alias_spec.input_rewrites {
+                        let new_entity = arena.alloc(entity.clone());
+                        for input_rewrite in input_rewrites {
+                            input_rewrite.rewrite(&self.schema_metadata.possible_types, new_entity);
+                        }
+                        new_entity
+                    } else {
+                        entity
+                    };
+
+                    let is_projected = project_requires(
+                        possible_types,
+                        &alias_spec.requires.items,
+                        entity,
+                        &mut filtered_representations,
+                        representation_hash_to_index.is_empty(),
+                        None,
+                    );
+
+                    if is_projected {
+                        representation_hash_to_index.insert(hash, index);
+                    }
+
+                    index += 1;
+                });
+
+                for path_index in grouped_target_indices {
+                    path_hashes_by_index[path_index] = representation_hashes.clone();
+                }
+            }
+
+            filtered_representations.put(CLOSE_BRACKET);
+
+            let mut paths = Vec::with_capacity(alias_spec.merge_paths.len());
+            for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
+                paths.push(BatchedAliasPathExecutionJob {
+                    merge_path,
+                    representation_hashes: std::mem::take(&mut path_hashes_by_index[path_index]),
+                });
+            }
+
+            raw_variable_values.push((
+                alias_spec.representations_variable_name.as_str(),
+                filtered_representations,
+            ));
+
+            tracing::trace!(
+                alias = alias_spec.alias.as_str(),
+                path_count = alias_spec.merge_paths.len(),
+                representation_count = representation_hash_to_index.len(),
+                "Prepared entity batch alias representations"
+            );
+
+            aliases.push(BatchedAliasExecutionJob {
+                alias_spec,
+                representation_hash_to_index,
+                paths,
+            });
+        }
+
+        (raw_variable_values, aliases)
+    }
+
+    async fn prepare_batch_fetch_job(
+        &self,
+        node: &'exec BatchFetchNode,
+        raw_variable_values: Vec<(&'exec str, Vec<u8>)>,
+    ) -> Result<SubgraphResponse<'exec>, PlanExecutionError> {
+        let subgraph_operation_span = GraphQLSubgraphOperationSpan::new(
+            node.service_name.as_str(),
+            &node.operation.document_str,
+        );
+
+        async {
+            let mut headers_map = HeaderMap::new();
+            let subgraph_name_factory = || Some(node.service_name.clone());
+            let affected_path_factory = || None;
+
+            modify_subgraph_request_headers(
+                self.headers_plan,
+                &node.service_name,
+                self.client_request,
+                &mut headers_map,
+            )
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: subgraph_name_factory,
+                affected_path: affected_path_factory,
+            })?;
+
+            let variable_refs =
+                select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
+
+            let mut subgraph_request = SubgraphExecutionRequest {
+                query: node.operation.document_str.as_str(),
+                dedupe: self.dedupe_subgraph_requests,
+                operation_name: node.operation_name.as_deref(),
+                variables: variable_refs,
+                raw_variable_values: Some(raw_variable_values),
+                headers: headers_map,
+                extensions: None,
+            };
+
+            subgraph_operation_span.record_operation_identity(GraphQLSpanOperationIdentity {
+                name: subgraph_request.operation_name,
+                operation_type: match node.operation_kind {
+                    Some(OperationKind::Query) | None => "query",
+                    Some(OperationKind::Mutation) => "mutation",
+                    Some(OperationKind::Subscription) => "subscription",
+                },
+                client_document_hash: node.operation.hash.to_string().as_str(),
+            });
+
+            if let Some(jwt_forwarding_plan) = &self.jwt_forwarding_plan {
+                subgraph_request.add_request_extensions_field(
+                    jwt_forwarding_plan.extension_field_name.clone(),
+                    jwt_forwarding_plan.extension_field_value.clone(),
+                );
+            }
+
+            let response = self
+                .executors
+                .execute(
+                    &node.service_name,
+                    subgraph_request,
+                    self.client_request,
+                    self.plugin_req_state,
+                )
+                .await
+                .with_plan_context(LazyPlanContext {
+                    subgraph_name: subgraph_name_factory,
+                    affected_path: affected_path_factory,
+                })?;
+
+            if let Some(errors) = &response.errors {
+                if !errors.is_empty() {
+                    subgraph_operation_span.record_error_count(errors.len());
+                    subgraph_operation_span
+                        .record_errors(|| errors.iter().map(|e| e.into()).collect());
+                }
+            }
+
+            Ok(response)
+        }
+        .instrument(subgraph_operation_span.clone())
+        .await
+    }
+
     async fn prepare_fetch_job(
         &self,
         node: &'exec FetchNode,
         // If the fetch job is for a flatten node, we pass the filtered representations,
-        representations: Option<Vec<u8>>,
+        raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
         // and the path to the representations in the original response for error handling and normalization
         affected_path: Option<&FlattenNodePath>,
     ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
@@ -621,7 +1018,7 @@ impl<'exec> Executor<'exec> {
                 dedupe: self.dedupe_subgraph_requests,
                 operation_name: node.operation_name.as_deref(),
                 variables: variable_refs,
-                representations,
+                raw_variable_values,
                 headers: headers_map,
                 extensions: None,
             };
@@ -666,9 +1063,9 @@ impl<'exec> Executor<'exec> {
             }
 
             Ok(ExecutionJob::Fetch {
-                fetch_node_id: node.id,
                 subgraph_name: &node.service_name,
                 response,
+                output_rewrites: node.output_rewrites.as_deref(),
             })
         }
         .instrument(subgraph_operation_span.clone())

@@ -29,59 +29,12 @@ pub struct QueryPlan {
     pub node: Option<PlanNode>,
 }
 
-impl QueryPlan {
-    pub fn fetch_nodes(&self) -> Vec<&FetchNode> {
-        match self.node.as_ref() {
-            Some(node) => {
-                let mut list = vec![];
-                Self::fetch_nodes_from_node(node, &mut list);
-                list
-            }
-            None => vec![],
-        }
-    }
-
-    fn fetch_nodes_from_node<'a>(node: &'a PlanNode, list: &mut Vec<&'a FetchNode>) {
-        match node {
-            PlanNode::Condition(node) => {
-                if let Some(node) = node.else_clause.as_ref() {
-                    Self::fetch_nodes_from_node(node.as_ref(), list);
-                }
-                if let Some(node) = node.if_clause.as_ref() {
-                    Self::fetch_nodes_from_node(node.as_ref(), list);
-                }
-            }
-            PlanNode::Fetch(node) => {
-                list.push(node);
-            }
-            PlanNode::Sequence(node) => {
-                for child in &node.nodes {
-                    Self::fetch_nodes_from_node(child, list);
-                }
-            }
-            PlanNode::Parallel(node) => {
-                for child in &node.nodes {
-                    Self::fetch_nodes_from_node(child, list);
-                }
-            }
-            PlanNode::Flatten(node) => {
-                Self::fetch_nodes_from_node(&node.node, list);
-            }
-            PlanNode::Subscription(node) => {
-                Self::fetch_nodes_from_node(node.primary.as_ref(), list);
-            }
-            PlanNode::Defer(_) => {
-                unreachable!("DeferNode is not supported yet");
-            }
-        }
-    }
-}
-
 #[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
 pub enum PlanNode {
     Fetch(FetchNode),
+    BatchFetch(BatchFetchNode),
     Sequence(SequenceNode),
     Parallel(ParallelNode),
     Flatten(FlattenNode),
@@ -113,6 +66,44 @@ pub struct FetchNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BatchFetchNode {
+    #[serde(skip_serializing)]
+    pub id: i64,
+    pub service_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable_usages: Option<BTreeSet<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_kind: Option<OperationKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_name: Option<String>,
+    pub operation: SubgraphFetchOperation,
+    pub entity_batch: EntityBatch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityBatch {
+    pub original_fetch_count: usize,
+    pub aliases: Vec<EntityBatchAlias>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityBatchAlias {
+    pub alias: String,
+    pub representations_variable_name: String,
+    #[serde(rename = "paths")]
+    pub merge_paths: Vec<FlattenNodePath>,
+    pub requires: SelectionSet,
+    pub entities_selection: SelectionSet,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_rewrites: Option<Vec<FetchRewrite>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_rewrites: Option<Vec<FetchRewrite>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FlattenNode {
     pub path: FlattenNodePath,
     pub node: Box<PlanNode>,
@@ -136,14 +127,51 @@ pub struct ConditionNode {
     pub else_clause: Option<Box<PlanNode>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+impl ConditionNode {
+    /// Checks if this condition node can be merged with another.
+    pub fn can_merge_with(&self, other: &Self) -> bool {
+        if self.condition != other.condition {
+            return false;
+        }
+
+        let both_if = self.else_clause.is_none() && other.else_clause.is_none();
+        let both_else = self.if_clause.is_none() && other.if_clause.is_none();
+
+        both_if || both_else
+    }
+
+    /// Merges another compatible condition node into this one.
+    pub fn merge(&mut self, mut other: Self) {
+        let merge_into_if_clause = self.if_clause.is_some();
+        let mut nodes = self.take_inner_nodes();
+        nodes.extend(other.take_inner_nodes());
+
+        let merged_body = PlanNode::sequence(nodes);
+
+        if merge_into_if_clause {
+            self.if_clause = Some(Box::new(merged_body));
+        } else {
+            self.else_clause = Some(Box::new(merged_body));
+        }
+    }
+
+    fn take_inner_nodes(&mut self) -> Vec<PlanNode> {
+        self.if_clause
+            .take()
+            .or_else(|| self.else_clause.take())
+            .map(|n| n.flatten_sequence())
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyRenamer {
     pub path: Vec<FetchNodePathSegment>,
     pub rename_key_to: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FetchNodePathSegment {
     Key(String),
     TypenameEquals(BTreeSet<String>),
@@ -155,13 +183,13 @@ impl FetchNodePathSegment {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FetchRewrite {
     ValueSetter(ValueSetter),
     KeyRenamer(KeyRenamer),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FlattenNodePathSegment {
     Field(String),
     TypeCondition(BTreeSet<String>),
@@ -196,7 +224,7 @@ impl FlattenNodePathSegment {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FlattenNodePath(Vec<FlattenNodePathSegment>);
 
 impl FlattenNodePath {
@@ -265,7 +293,7 @@ impl From<MergePath> for FlattenNodePath {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct ValueSetter {
     pub path: Vec<FetchNodePathSegment>,
@@ -318,6 +346,53 @@ impl PlanNode {
             PlanNode::Sequence(node) => node.nodes,
             PlanNode::Parallel(node) => node.nodes,
             other => vec![other],
+        }
+    }
+
+    /// If the node is a Sequence, returns its children. Otherwise, returns the node itself in a Vec.
+    /// This is used to "splice" nodes into a parent Sequence without creating nested Sequences.
+    pub fn flatten_sequence(self) -> Vec<PlanNode> {
+        match self {
+            PlanNode::Sequence(node) => node.nodes,
+            other => vec![other],
+        }
+    }
+
+    /// Flattens nested Parallel nodes into a single list of nodes.
+    pub fn flatten_parallel(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
+        let mut flattened = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            match node {
+                PlanNode::Parallel(p) => flattened.extend(p.nodes),
+                other => flattened.push(other),
+            }
+        }
+        flattened
+    }
+
+    pub fn sequence(mut nodes: Vec<PlanNode>) -> PlanNode {
+        if nodes.len() == 1 {
+            nodes.remove(0)
+        } else {
+            PlanNode::Sequence(SequenceNode { nodes })
+        }
+    }
+
+    pub fn parallel(mut nodes: Vec<PlanNode>) -> PlanNode {
+        if nodes.len() == 1 {
+            nodes.remove(0)
+        } else {
+            PlanNode::Parallel(ParallelNode { nodes })
+        }
+    }
+
+    pub fn is_fetching_node(&self) -> bool {
+        match self {
+            PlanNode::Fetch(_) | PlanNode::BatchFetch(_) => true,
+            PlanNode::Flatten(flatten_node) => {
+                matches!(flatten_node.node.as_ref(), PlanNode::Fetch(_))
+            }
+            _ => false,
         }
     }
 }
@@ -492,6 +567,12 @@ impl Display for FetchNode {
     }
 }
 
+impl Display for BatchFetchNode {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
 impl Display for FlattenNode {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
@@ -521,6 +602,39 @@ impl PrettyDisplay for FetchNode {
             requires.pretty_fmt(f, depth + 2)?;
             writeln!(f, "{indent}  }} =>")?;
         }
+        self.operation.pretty_fmt(f, depth)?;
+        writeln!(f, "{indent}}},")?;
+
+        Ok(())
+    }
+}
+
+impl PrettyDisplay for BatchFetchNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(
+            f,
+            "{indent}BatchFetch(service: \"{}\") {{",
+            self.service_name
+        )?;
+        writeln!(
+            f,
+            "{indent}  entityBatch(originalFetchCount: {}) {{",
+            self.entity_batch.original_fetch_count
+        )?;
+        for alias in &self.entity_batch.aliases {
+            writeln!(f, "{indent}    {} {{", alias.alias)?;
+            writeln!(f, "{indent}      paths: [")?;
+            for merge_path in &alias.merge_paths {
+                writeln!(f, "{indent}        \"{}\"", merge_path)?;
+            }
+            writeln!(f, "{indent}      ]")?;
+            writeln!(f, "{indent}      {{")?;
+            alias.requires.pretty_fmt(f, depth + 4)?;
+            writeln!(f, "{indent}      }}")?;
+            writeln!(f, "{indent}    }}")?;
+        }
+        writeln!(f, "{indent}  }}")?;
         self.operation.pretty_fmt(f, depth)?;
         writeln!(f, "{indent}}},")?;
 
@@ -592,6 +706,7 @@ impl PrettyDisplay for PlanNode {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         match self {
             PlanNode::Fetch(node) => node.pretty_fmt(f, depth),
+            PlanNode::BatchFetch(node) => node.pretty_fmt(f, depth),
             PlanNode::Flatten(node) => node.pretty_fmt(f, depth),
             PlanNode::Sequence(node) => node.pretty_fmt(f, depth),
             PlanNode::Parallel(node) => node.pretty_fmt(f, depth),
@@ -601,7 +716,7 @@ impl PrettyDisplay for PlanNode {
     }
 }
 
-fn hash_minified_query(minified_query: &str) -> u64 {
+pub fn hash_minified_query(minified_query: &str) -> u64 {
     let mut hasher = Xxh3::new();
     minified_query.hash(&mut hasher);
     hasher.finish()

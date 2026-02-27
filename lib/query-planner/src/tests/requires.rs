@@ -48,39 +48,45 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             }
           },
         },
-        Parallel {
-          Flatten(path: "products.@") {
-            Fetch(service: "inventory") {
+        BatchFetch(service: "inventory") {
+          entityBatch(originalFetchCount: 2) {
+            _e0 {
+              paths: [
+                "products.@"
+              ]
               {
                 ... on Product {
                   __typename
                   price: _internal_qp_alias_0
                   upc
                 }
-              } =>
-              {
-                ... on Product {
-                  reducedPrice
-                }
               }
-            },
-          },
-          Flatten(path: "products.@") {
-            Fetch(service: "inventory") {
+            }
+            _e1 {
+              paths: [
+                "products.@"
+              ]
               {
                 ... on Product {
                   __typename
                   price
                   upc
                 }
-              } =>
-              {
-                ... on Product {
-                  isExpensive
-                }
               }
-            },
-          },
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                reducedPrice
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                isExpensive
+              }
+            }
+          }
         },
       },
     },
@@ -129,21 +135,24 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             }
           },
           {
-            "kind": "Parallel",
-            "nodes": [
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "products"
-                  },
-                  "@"
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "inventory",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reducedPrice}}}",
+            "kind": "BatchFetch",
+            "serviceName": "inventory",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reducedPrice}} _e1: _entities(representations: $__batch_reps_1){...on Product{isExpensive}}}",
+            "entityBatch": {
+              "originalFetchCount": 2,
+              "aliases": [
+                {
+                  "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
+                  "paths": [
+                    [
+                      {
+                        "Field": "products"
+                      },
+                      "@"
+                    ]
+                  ],
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -164,22 +173,31 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
                         }
                       ]
                     }
+                  ],
+                  "entitiesSelection": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "reducedPrice"
+                        }
+                      ]
+                    }
                   ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "products"
-                  },
-                  "@"
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "inventory",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive}}}",
+                },
+                {
+                  "alias": "_e1",
+                  "representationsVariableName": "__batch_reps_1",
+                  "paths": [
+                    [
+                      {
+                        "Field": "products"
+                      },
+                      "@"
+                    ]
+                  ],
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -199,10 +217,22 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
                         }
                       ]
                     }
+                  ],
+                  "entitiesSelection": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "isExpensive"
+                        }
+                      ]
+                    }
                   ]
                 }
-              }
-            ]
+              ]
+            }
           }
         ]
       }

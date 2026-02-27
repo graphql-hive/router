@@ -635,9 +635,13 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
             size
           }
         },
-        Parallel {
-          Flatten(path: "magazine.@") {
-            Fetch(service: "inventory") {
+        BatchFetch(service: "inventory") {
+          entityBatch(originalFetchCount: 2) {
+            _e0 {
+              paths: [
+                "magazine.@"
+                "book.@"
+              ]
               {
                 ... on Book {
                   __typename
@@ -655,63 +659,29 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
                   }
                   id
                 }
-              } =>
-              {
-                ... on Book {
-                  delivery(zip: "1234") {
-                    ...a
-                  }
-                }
-                ... on Magazine {
-                  delivery(zip: "1234") {
-                    ...a
-                  }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Book {
+                delivery(zip: "1234") {
+                  ...a
                 }
               }
-              fragment a on DeliveryEstimates {
-                fastestDelivery
-                estimatedDelivery
-              }
-            },
-          },
-          Flatten(path: "book.@") {
-            Fetch(service: "inventory") {
-              {
-                ... on Book {
-                  __typename
-                  dimensions {
-                    size
-                    weight
-                  }
-                  id
-                }
-                ... on Magazine {
-                  __typename
-                  dimensions {
-                    size
-                    weight
-                  }
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  delivery(zip: "1234") {
-                    ...a
-                  }
-                }
-                ... on Magazine {
-                  delivery(zip: "1234") {
-                    ...a
-                  }
+              ... on Magazine {
+                delivery(zip: "1234") {
+                  ...a
                 }
               }
-              fragment a on DeliveryEstimates {
-                fastestDelivery
-                estimatedDelivery
-              }
-            },
-          },
+            }
+          }
+          fragment a on DeliveryEstimates {
+            ... on DeliveryEstimates {
+              fastestDelivery
+              estimatedDelivery
+            }
+          }
         },
       },
     },

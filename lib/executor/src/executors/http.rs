@@ -120,15 +120,20 @@ impl HTTPSubgraphExecutor {
                 body.put(value_str.as_bytes());
             }
         }
-        if let Some(representations) = &execution_request.representations {
-            if first_variable {
-                body.put(FIRST_VARIABLE_STR);
-                first_variable = false;
-            } else {
-                body.put(COMMA);
+        if let Some(raw_variable_values) = &execution_request.raw_variable_values {
+            for (variable_name, variable_value) in raw_variable_values {
+                if first_variable {
+                    body.put(FIRST_VARIABLE_STR);
+                    first_variable = false;
+                } else {
+                    body.put(COMMA);
+                }
+                body.put(QUOTE);
+                body.put(variable_name.as_bytes());
+                body.put(QUOTE);
+                body.put(COLON);
+                body.extend_from_slice(variable_value);
             }
-            body.put("\"representations\":".as_bytes());
-            body.extend_from_slice(representations);
         }
         // "first_variable" should be still true if there are no variables
         if !first_variable {
