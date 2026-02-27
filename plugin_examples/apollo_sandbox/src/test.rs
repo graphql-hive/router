@@ -7,6 +7,7 @@ mod apollo_sandbox_tests {
     async fn renders_apollo_sandbox_page() {
         let router = TestRouterBuilder::new()
             .register_plugin::<crate::plugin::ApolloSandboxPlugin>()
+            .skip_wait_for_ready_on_start()
             .build()
             .start()
             .await;
