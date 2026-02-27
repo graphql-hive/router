@@ -1312,6 +1312,11 @@ fn process_plain_field_edge(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+#[instrument(level = "trace",skip_all, fields(
+  parent_fetch_step_index = parent_fetch_step_index.index(),
+  requiring_fetch_step_index = requiring_fetch_step_index.map(|s| s.index()),
+))]
 fn process_requires_field_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,

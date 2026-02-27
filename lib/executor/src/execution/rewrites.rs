@@ -66,7 +66,7 @@ impl RewriteApplier for KeyRenamer {
                         .iter()
                         .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
                         .and_then(|(_, val)| val.as_str());
-                    if type_name.map_or(true, |type_name| {
+                    if type_name.is_none_or(|type_name| {
                         entity_satisfies_any_type_condition(
                             possible_types,
                             type_name,
@@ -128,7 +128,7 @@ impl RewriteApplier for ValueSetter {
                             .iter()
                             .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
                             .and_then(|(_, val)| val.as_str());
-                        if type_name.map_or(true, |type_name| {
+                        if type_name.is_none_or(|type_name| {
                             entity_satisfies_any_type_condition(
                                 possible_types,
                                 type_name,

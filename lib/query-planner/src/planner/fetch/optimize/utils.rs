@@ -18,9 +18,9 @@ use crate::{
     },
 };
 
-pub fn type_condition_types_from_response_path<'a>(
-    response_path: &'a MergePath,
-) -> Option<BTreeSet<&'a str>> {
+pub fn type_condition_types_from_response_path(
+    response_path: &MergePath,
+) -> Option<BTreeSet<&str>> {
     let conditioned_types = response_path
         .inner
         .iter()

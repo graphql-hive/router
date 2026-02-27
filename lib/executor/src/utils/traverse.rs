@@ -91,7 +91,7 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                     .ok()
                     .and_then(|idx| obj[idx].1.as_str());
 
-                if maybe_type_name.map_or(true, |type_name| {
+                if maybe_type_name.is_none_or(|type_name| {
                     entity_satisfies_any_type_condition(
                         &schema_metadata.possible_types,
                         type_name,
@@ -170,7 +170,7 @@ pub fn traverse_and_callback<'a, Callback>(
                     .ok()
                     .and_then(|idx| obj[idx].1.as_str());
 
-                if maybe_type_name.map_or(true, |type_name| {
+                if maybe_type_name.is_none_or(|type_name| {
                     entity_satisfies_any_type_condition(possible_types, type_name, type_condition)
                 }) {
                     let rest_of_path = &remaining_path[1..];
