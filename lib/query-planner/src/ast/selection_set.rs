@@ -8,6 +8,7 @@ use std::{
 
 use crate::{
     ast::merge_path::{Condition, MergePath, Segment},
+    ast::value::Value,
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 
@@ -91,6 +92,17 @@ impl SelectionSet {
                 .map(|item| item.strip_for_plan_input())
                 .collect(),
         }
+    }
+
+    pub fn entities_field(&self) -> Option<&FieldSelection> {
+        self.items.iter().find_map(|item| {
+            if let SelectionItem::Field(field) = item {
+                if field.name == "_entities" {
+                    return Some(field);
+                }
+            }
+            None
+        })
     }
 }
 
@@ -235,6 +247,16 @@ impl FieldSelection {
 
     pub fn is_introspection_field(&self) -> bool {
         self.name.starts_with("__")
+    }
+
+    /// Returns the name of the variable if this field represents a representation variable.
+    pub fn representations_variable_name(&self) -> Option<&str> {
+        let value = self.arguments.as_ref()?.get_argument("representations")?;
+
+        match value {
+            Value::Variable(variable_name) => Some(variable_name.as_str()),
+            _ => None,
+        }
     }
 }
 

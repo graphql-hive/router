@@ -7,6 +7,8 @@ mod body_limit;
 #[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
+mod entity_batching;
+#[cfg(test)]
 mod env_vars;
 #[cfg(test)]
 mod error_handling;

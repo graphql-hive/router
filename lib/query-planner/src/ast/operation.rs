@@ -48,11 +48,11 @@ pub struct SubgraphFetchOperation {
 
 impl SubgraphFetchOperation {
     pub fn get_inner_selection_set(&self) -> &SelectionSet {
-        if let SelectionItem::Field(field) = &self.document.operation.selection_set.items[0] {
-            if field.name == "_entities" {
-                return &field.selections;
-            } else {
-                return &self.document.operation.selection_set;
+        if self.document.operation.selection_set.items.len() == 1 {
+            if let SelectionItem::Field(field) = &self.document.operation.selection_set.items[0] {
+                if field.name == "_entities" && field.alias.is_none() {
+                    return &field.selections;
+                }
             }
         }
 
@@ -171,6 +171,17 @@ pub struct VariableDefinition {
     pub name: String,
     pub variable_type: TypeNode,
     pub default_value: Option<crate::ast::value::Value>,
+}
+
+impl VariableDefinition {
+    /// Checks if this variable definition is compatible with another
+    pub fn can_merge(&self, other: &Self) -> bool {
+        if self.name != other.name {
+            return false;
+        }
+
+        self.variable_type == other.variable_type && self.default_value == other.default_value
+    }
 }
 
 impl Display for VariableDefinition {
