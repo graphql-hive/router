@@ -1,7 +1,9 @@
-use rustc_hash::{FxBuildHasher, FxHasher};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
+use std::cell::RefCell;
 use std::hash::{BuildHasher, Hash, Hasher};
 
 use crate::ast::arguments::ArgumentsMap;
+use crate::ast::fragment::FragmentDefinition;
 use crate::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
@@ -9,8 +11,49 @@ use crate::ast::value::Value;
 use crate::state::supergraph_state::{self, OperationKind, TypeNode};
 
 /// A trait for hashing AST nodes, with support for both order-dependent and order-independent hashing.
+pub struct SemanticShapeHashContext<'a> {
+    fragments: &'a [FragmentDefinition],
+    fragment_indices_by_name: FxHashMap<String, usize>,
+    visiting_fragment_names: RefCell<FxHashSet<String>>,
+}
+
+impl<'a> SemanticShapeHashContext<'a> {
+    pub fn new(fragments: &'a [FragmentDefinition]) -> Self {
+        let mut fragment_indices_by_name = FxHashMap::default();
+        for (index, fragment) in fragments.iter().enumerate() {
+            fragment_indices_by_name.insert(fragment.name.clone(), index);
+        }
+
+        Self {
+            fragments,
+            fragment_indices_by_name,
+            visiting_fragment_names: RefCell::new(FxHashSet::default()),
+        }
+    }
+
+    fn get_fragment_by_name(&self, name: &str) -> Option<&'a FragmentDefinition> {
+        let fragment_index = *self.fragment_indices_by_name.get(name)?;
+        self.fragments.get(fragment_index)
+    }
+
+    fn mark_visiting(&self, name: &str) -> bool {
+        self.visiting_fragment_names
+            .borrow_mut()
+            .insert(name.to_owned())
+    }
+
+    fn unmark_visiting(&self, name: &str) {
+        self.visiting_fragment_names.borrow_mut().remove(name);
+    }
+}
+
 pub trait ASTHash {
     fn ast_hash<H: Hasher, const ORDER_INDEPENDENT: bool>(&self, hasher: &mut H);
+
+    /// Order-independent hashing with fragment spreads inlined
+    fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, _ctx: &SemanticShapeHashContext<'_>) {
+        self.ast_hash::<_, true>(hasher);
+    }
 }
 
 pub fn ast_hash(query: &OperationDefinition) -> u64 {
@@ -79,6 +122,26 @@ impl ASTHash for SelectionSet {
             }
         }
     }
+
+    fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
+        // Use xor + sum + count to avoid collisions like {a b a a} vs {a b c c}
+        let mut xor = 0u64;
+        let mut sum = 0u64;
+        let mut count = 0u64;
+
+        for item in &self.items {
+            let mut item_hasher = FxHasher::default();
+            item.semantic_shape_hash(&mut item_hasher, ctx);
+            let value = item_hasher.finish();
+            xor ^= value;
+            sum = sum.wrapping_add(value);
+            count = count.wrapping_add(1);
+        }
+
+        xor.hash(hasher);
+        sum.hash(hasher);
+        count.hash(hasher);
+    }
 }
 
 impl ASTHash for SelectionItem {
@@ -87,6 +150,23 @@ impl ASTHash for SelectionItem {
             SelectionItem::Field(field) => field.ast_hash::<_, ORDER_INDEPENDENT>(hasher),
             SelectionItem::InlineFragment(frag) => frag.ast_hash::<_, ORDER_INDEPENDENT>(hasher),
             SelectionItem::FragmentSpread(name) => name.hash(hasher),
+        }
+    }
+
+    fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
+        match self {
+            SelectionItem::Field(field) => field.semantic_shape_hash(hasher, ctx),
+            SelectionItem::InlineFragment(inline) => inline.semantic_shape_hash(hasher, ctx),
+            SelectionItem::FragmentSpread(name) => {
+                if !ctx.mark_visiting(name) {
+                    // Cycle detected - hash nothing (unique marker)
+                    return;
+                }
+                if let Some(fragment) = ctx.get_fragment_by_name(name) {
+                    fragment.selection_set.semantic_shape_hash(hasher, ctx);
+                }
+                ctx.unmark_visiting(name);
+            }
         }
     }
 }
@@ -110,12 +190,46 @@ impl ASTHash for &FieldSelection {
             var_name.hash(hasher);
         }
     }
+
+    fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
+        self.name.hash(hasher);
+        self.alias.hash(hasher);
+        self.selections.semantic_shape_hash(hasher, ctx);
+
+        if let Some(args) = &self.arguments {
+            args.ast_hash::<_, true>(hasher);
+        }
+
+        if let Some(var_name) = self.include_if.as_ref() {
+            "@include".hash(hasher);
+            var_name.hash(hasher);
+        }
+        if let Some(var_name) = self.skip_if.as_ref() {
+            "@skip".hash(hasher);
+            var_name.hash(hasher);
+        }
+    }
 }
 
 impl ASTHash for &InlineFragmentSelection {
     fn ast_hash<H: Hasher, const ORDER_INDEPENDENT: bool>(&self, hasher: &mut H) {
         self.type_condition.hash(hasher);
         self.selections.ast_hash::<_, ORDER_INDEPENDENT>(hasher);
+        if let Some(var_name) = self.include_if.as_ref() {
+            "@include".hash(hasher);
+            var_name.hash(hasher);
+        }
+        if let Some(var_name) = self.skip_if.as_ref() {
+            "@skip".hash(hasher);
+            var_name.hash(hasher);
+        }
+    }
+
+    fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
+        // Include type_condition (key for "... on Product" vs "... on User")
+        self.type_condition.hash(hasher);
+        self.selections.semantic_shape_hash(hasher, ctx);
+
         if let Some(var_name) = self.include_if.as_ref() {
             "@include".hash(hasher);
             var_name.hash(hasher);

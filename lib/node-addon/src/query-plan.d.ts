@@ -5,6 +5,7 @@ export interface QueryPlan {
 
 export type PlanNode =
   | FetchNode
+  | BatchFetchNode
   | SequenceNode
   | ParallelNode
   | FlattenNode
@@ -20,6 +21,29 @@ export interface FetchNode {
   operationName?: string;
   operation: string;
   requires?: RequiresSelection[];
+  inputRewrites?: InputRewrite[];
+  outputRewrites?: OutputRewrite[];
+}
+
+export interface BatchFetchNode {
+  kind: "BatchFetch";
+  serviceName: string;
+  variableUsages?: string[];
+  operationKind?: "query" | "mutation" | "subscription";
+  operationName?: string;
+  operation: string;
+  entityBatch: EntityBatch;
+}
+
+export interface EntityBatch {
+  aliases: EntityBatchAlias[];
+}
+
+export interface EntityBatchAlias {
+  alias: string;
+  representationsVariableName: string;
+  paths: FlattenNodePathSegment[][];
+  requires: RequiresSelection[];
   inputRewrites?: InputRewrite[];
   outputRewrites?: OutputRewrite[];
 }
