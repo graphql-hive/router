@@ -49,6 +49,24 @@ fn is_deprecated_enum(enum_val: &EnumValue) -> bool {
     is_deprecated(&enum_val.directives)
 }
 
+fn get_specified_by_url(directives: &[Directive]) -> Option<&str> {
+    directives
+        .iter()
+        .find(|d| d.name == "specifiedBy")
+        .and_then(|d| d.arguments.iter().find(|(name, _)| name.as_str() == "url"))
+        .and_then(|(_, value)| {
+            if let QueryValue::String(s) = value {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        })
+}
+
+fn is_one_of(directives: &[Directive]) -> bool {
+    directives.iter().any(|d| d.name == "oneOf")
+}
+
 fn kind_to_str<'exec>(type_def: &'exec TypeDefinition) -> Cow<'exec, str> {
     (match type_def {
         TypeDefinition::Scalar(_) => "SCALAR",
@@ -86,7 +104,13 @@ fn resolve_input_value_selections<'exec>(
                     .as_ref()
                     .map_or(Value::Null, |s| Value::String(s.into())),
                 "type" => resolve_type(&iv.value_type, &field.selections, ctx),
-                "defaultValue" => Value::Null, // TODO: support default values
+                "defaultValue" => iv
+                    .default_value
+                    .as_ref()
+                    .map_or_else(|| Value::Null, |ast| Value::String(ast.to_string().into())), // TODO: support default values
+                "isDeprecated" => Value::Bool(is_deprecated(&iv.directives)),
+                "deprecationReason" => get_deprecation_reason(&iv.directives)
+                    .map_or(Value::Null, |s| Value::String(s.into())),
                 "__typename" => Value::String("__InputValue".into()),
                 _ => Value::Null,
             };
@@ -233,6 +257,21 @@ fn resolve_type_definition_selections<'exec>(
                     TypeDefinition::InputObject(io) => io.description.as_ref(),
                 }
                 .map_or(Value::Null, |s| Value::String(s.into())),
+                "specifiedByURL" => {
+                    if let TypeDefinition::Scalar(scalar) = type_def {
+                        get_specified_by_url(&scalar.directives)
+                            .map_or(Value::Null, |url| Value::String(url.into()))
+                    } else {
+                        Value::Null
+                    }
+                }
+                "isOneOf" => {
+                    if let TypeDefinition::InputObject(type_def) = type_def {
+                        Value::Bool(is_one_of(&type_def.directives))
+                    } else {
+                        Value::Null
+                    }
+                }
                 "fields" => {
                     let fields = match type_def {
                         TypeDefinition::Object(o) => Some(&o.fields),
