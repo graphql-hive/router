@@ -132,6 +132,13 @@ impl FetchGraph<MultiTypeFetchStep> {
 
                 let merged = self.get_step_data_mut(*child_index_latest)?;
                 // After merge, update the path so Flatten(path) is correct.
+                // Example:
+                //   `me`     path:    products.[Book].reviews
+                //   `other`  path: products.[User].reviews
+                //   `merged` path: products.[Book|User].reviews (or stripped if fully covered)
+                //
+                // Without recomputing this path, merged results can be flattened
+                // at the wrong location.
                 merged.response_path = merge_batched_response_paths(
                     &original_me_path,
                     &original_other_path,
@@ -212,12 +219,23 @@ fn merge_batched_response_paths(
     other: &MergePath,
     requested_type_condition_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
 ) -> MergePath {
+    // Merge rule at each slot (type-condition part only):
+    // - If non-type-condition shape differs -> keep `me` unchanged
+    // - If both sides already have the same type condition -> keep it
+    // - If merged type set fully covers sibling-requested types there -> strip it
+    // - Otherwise -> keep merged type set
+    //
+    // Strip example:
+    //   merged types: {Book, Magazine}
+    //   requested sibling types: {Book, Magazine}
+    //   result: no type-condition segment at this slot.
+    //
+    // Keep example:
+    //   merged types: {Book, User}
+    //   requested sibling types: {Book, User, Magazine}
+    //   result: keep |[Book|User] at this slot.
+    //
     // We merge only type-condition information and keep the rest of the path identical.
-    // If any non-type-condition structure differs, we bail out and keep `me` unchanged.
-    // Consume consecutive TypeCondition segments at the current cursor and return:
-    // - whether we consumed at least one type condition,
-    // - the union of type-condition member names.
-    // The cursor is advanced to the first non-type-condition segment.
     fn consume_type_conditions<'a>(
         path: &'a MergePath,
         idx: &mut usize,
@@ -405,6 +423,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         }
 
         // Paths must have the same length.
+        // Example: a.@.b and a.@.b.c are not compatible.
         if self.response_path.len() != other.response_path.len() {
             return false;
         }
