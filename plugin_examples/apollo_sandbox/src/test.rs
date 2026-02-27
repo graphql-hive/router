@@ -6,8 +6,8 @@ mod apollo_sandbox_tests {
     #[ntex::test]
     async fn renders_apollo_sandbox_page() {
         let router = TestRouterBuilder::new()
+            .file_config("../plugin_examples/apollo_sandbox/router.config.yaml")
             .register_plugin::<crate::plugin::ApolloSandboxPlugin>()
-            .skip_wait_for_ready_on_start()
             .build()
             .start()
             .await;
