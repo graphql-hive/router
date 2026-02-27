@@ -8,12 +8,14 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
         "kind": "Parallel",
         "nodes": [
           {
+            "id": 15,
             "kind": "Fetch",
             "operation": "{topProducts{__typename upc name price weight}}",
             "operationKind": "query",
             "serviceName": "products"
           },
           {
+            "id": 2,
             "kind": "Fetch",
             "operation": "{users{__typename id username name}}",
             "operationKind": "query",
@@ -27,6 +29,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 17,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate inStock}}}",
               "operationKind": "query",
@@ -66,6 +69,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 20,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{id body author{__typename id reviews{id body product{__typename upc}} username}}}}}",
               "operationKind": "query",
@@ -97,6 +101,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 3,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{id body product{__typename upc reviews{id body author{__typename id reviews{id body product{__typename upc}} username}}}}}}}",
               "operationKind": "query",
@@ -133,6 +138,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 25,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
               "operationKind": "query",
@@ -178,6 +184,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 21,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
               "operationKind": "query",
@@ -216,6 +223,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 7,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
               "operationKind": "query",
@@ -254,6 +262,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 13,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
               "operationKind": "query",
@@ -306,6 +315,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 9,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
               "operationKind": "query",
@@ -356,6 +366,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 22,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock shippingEstimate}}}",
               "operationKind": "query",
@@ -409,6 +420,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 4,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock shippingEstimate}}}",
               "operationKind": "query",
@@ -455,6 +467,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           {
             "kind": "Flatten",
             "node": {
+              "id": 10,
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock shippingEstimate}}}",
               "operationKind": "query",
@@ -515,6 +528,25 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
         ]
       }
     ]
+  },
+  "representationReusePlan": {
+    "groups": [
+      [
+        4,
+        10,
+        22
+      ],
+      [
+        7,
+        13,
+        25
+      ],
+      [
+        9,
+        21
+      ]
+    ],
+    "version": 2
   }
 }
 `;
@@ -523,6 +555,7 @@ exports[`fixtures > should plan simple-inaccessible/test-2.graphql 1`] = `
 {
   "kind": "QueryPlan",
   "node": {
+    "id": 2,
     "kind": "Fetch",
     "operation": "{usersInFriends{id friends(type: FRIEND){id}}}",
     "operationKind": "query",

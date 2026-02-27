@@ -145,6 +145,7 @@ fn conflict_list_type_in_interface() -> Result<(), Box<dyn Error>> {
       "kind": "QueryPlan",
       "node": {
         "kind": "Fetch",
+        "id": 2,
         "serviceName": "a",
         "operationKind": "query",
         "operation": "{i{__typename ...on TypeA{strField} ...on TypeB{_internal_qp_alias_0: strField}}}",
@@ -219,6 +220,7 @@ fn multiple_mismtaches_same_level() -> Result<(), Box<dyn Error>> {
       "kind": "QueryPlan",
       "node": {
         "kind": "Fetch",
+        "id": 2,
         "serviceName": "a",
         "operationKind": "query",
         "operation": "{i{__typename ...on TypeA{strField strField2} ...on TypeB{_internal_qp_alias_0: strField _internal_qp_alias_1: strField2}}}",
@@ -426,6 +428,7 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
             "nodes": [
               {
                 "kind": "Fetch",
+                "id": 4,
                 "serviceName": "b",
                 "operationKind": "query",
                 "operation": "{accounts{__typename ...on User{id name} ...on Admin{_internal_qp_alias_0: id name}}}",
@@ -450,6 +453,7 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
               },
               {
                 "kind": "Fetch",
+                "id": 2,
                 "serviceName": "a",
                 "operationKind": "query",
                 "operation": "{users{__typename id}}"
@@ -466,6 +470,7 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
@@ -618,6 +623,7 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
             "nodes": [
               {
                 "kind": "Fetch",
+                "id": 4,
                 "serviceName": "b",
                 "operationKind": "query",
                 "operation": "{accounts{__typename ...on User{id name similarAccounts{...a}} ...on Admin{_internal_qp_alias_0: id name similarAccounts{...a}}}}\n\nfragment a on Account {__typename ...on User{id name} ...on Admin{_internal_qp_alias_0: id name}}\n",
@@ -686,6 +692,7 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
               },
               {
                 "kind": "Fetch",
+                "id": 2,
                 "serviceName": "a",
                 "operationKind": "query",
                 "operation": "{users{__typename id}}"
@@ -702,6 +709,7 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
@@ -911,6 +919,7 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
             "nodes": [
               {
                 "kind": "Fetch",
+                "id": 4,
                 "serviceName": "b",
                 "operationKind": "query",
                 "operation": "{accounts{__typename ...on User{id name similarAccounts{...a}} ...on Admin{_internal_qp_alias_0: id name similarAccounts{...a}}}}\n\nfragment a on Account {__typename ...on User{id name similarAccounts{...b}} ...on Admin{_internal_qp_alias_0: id name similarAccounts{...b}}}\nfragment b on Account {__typename ...on User{id name} ...on Admin{_internal_qp_alias_0: id name}}\n",
@@ -1091,6 +1100,7 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
               },
               {
                 "kind": "Fetch",
+                "id": 2,
                 "serviceName": "a",
                 "operationKind": "query",
                 "operation": "{users{__typename id}}"
@@ -1107,6 +1117,7 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
@@ -1259,6 +1270,7 @@ fn deeply_nested_no_conflicts() -> Result<(), Box<dyn Error>> {
       "kind": "QueryPlan",
       "node": {
         "kind": "Fetch",
+        "id": 2,
         "serviceName": "b",
         "operationKind": "query",
         "operation": "{accounts{__typename ...on User{name similarAccounts{...a}} ...on Admin{name similarAccounts{...a}}}}\n\nfragment a on Account {__typename ...on User{name similarAccounts{...b}} ...on Admin{name similarAccounts{...b}}}\nfragment b on Account {__typename ...on User{name} ...on Admin{name}}\n"

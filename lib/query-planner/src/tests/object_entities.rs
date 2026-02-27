@@ -77,6 +77,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "store",
             "operationKind": "query",
             "operation": "{products{__typename id}}"
@@ -90,6 +91,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "info",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isAvailable uuid}}}",
@@ -120,6 +122,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "cost",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price{amount currency}}}}",
@@ -211,6 +214,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "a",
             "operationKind": "query",
             "operation": "{products{__typename id pid}}"
@@ -225,6 +229,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "c",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details{products}}}}}",
@@ -354,6 +359,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "d",
             "operationKind": "query",
             "operation": "{productFromD(id: \"1\"){__typename id name}}"
@@ -370,6 +376,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 5,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details}}}}",
@@ -400,6 +407,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 3,
                   "serviceName": "b",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{__typename id}}}}",
@@ -435,6 +443,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "c",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Category{name}}}",
@@ -549,6 +558,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "products",
             "operationKind": "query",
             "operation": "{topProducts{products{__typename id category{tag id}}}}"
@@ -566,6 +576,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "link",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{pid}}}",
@@ -600,6 +611,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "price",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price{price}}}}",

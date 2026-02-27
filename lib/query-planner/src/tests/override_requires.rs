@@ -209,18 +209,21 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
             "nodes": [
               {
                 "kind": "Fetch",
+                "id": 20,
                 "serviceName": "c",
                 "operationKind": "query",
                 "operation": "{userInC{__typename id}}"
               },
               {
                 "kind": "Fetch",
+                "id": 11,
                 "serviceName": "b",
                 "operationKind": "query",
                 "operation": "{userInB{__typename id name}}"
               },
               {
                 "kind": "Fetch",
+                "id": 2,
                 "serviceName": "a",
                 "operationKind": "query",
                 "operation": "{userInA{__typename id}}"
@@ -239,6 +242,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 25,
                   "serviceName": "b",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
@@ -269,6 +273,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 17,
                   "serviceName": "c",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{cName}}}",
@@ -303,6 +308,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 13,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{aName}}}",
@@ -337,6 +343,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 6,
                   "serviceName": "b",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
@@ -372,6 +379,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 26,
                   "serviceName": "c",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{cName}}}",
@@ -406,6 +414,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 23,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{aName}}}",
@@ -440,6 +449,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 8,
                   "serviceName": "c",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{cName}}}",
@@ -474,6 +484,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 4,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{aName}}}",
@@ -501,6 +512,25 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               }
             ]
           }
+        ]
+      },
+      "representationReusePlan": {
+        "version": 2,
+        "groups": [
+          [
+            4,
+            13,
+            23
+          ],
+          [
+            6,
+            25
+          ],
+          [
+            8,
+            17,
+            26
+          ]
         ]
       }
     }
@@ -577,6 +607,7 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "c",
             "operationKind": "query",
             "operation": "{userInC{id __typename}}"
@@ -590,6 +621,7 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
@@ -620,6 +652,7 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "c",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{cName}}}",
@@ -721,6 +754,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "a",
             "operationKind": "query",
             "operation": "{userInA{__typename id}}"
@@ -734,6 +768,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 6,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
@@ -764,6 +799,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "c",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{cName}}}",
@@ -865,6 +901,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "a",
             "operationKind": "query",
             "operation": "{userInA{id __typename}}"
@@ -878,6 +915,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
@@ -908,6 +946,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "a",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{aName}}}",

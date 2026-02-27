@@ -27,6 +27,7 @@ static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| {
     Arc::new(QueryPlan {
         kind: QUERY_PLAN_KIND,
         node: None,
+        representation_reuse_plan: None,
     })
 });
 

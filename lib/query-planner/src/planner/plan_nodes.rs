@@ -14,7 +14,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
     hash::{Hash, Hasher},
 };
@@ -26,6 +26,17 @@ pub struct QueryPlan {
     pub kind: &'static str, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node: Option<PlanNode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub representation_reuse_plan: Option<RepresentationReusePlan>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RepresentationReusePlan {
+    pub version: u8,
+    pub groups: Vec<Vec<i64>>,
+    #[serde(skip)]
+    pub fetch_id_to_group_id: HashMap<i64, usize>,
 }
 
 impl QueryPlan {
@@ -92,7 +103,6 @@ pub enum PlanNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FetchNode {
-    #[serde(skip_serializing)]
     pub id: i64,
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]

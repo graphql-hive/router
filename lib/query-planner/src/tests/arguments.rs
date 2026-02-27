@@ -95,6 +95,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "b",
             "operationKind": "query",
             "operation": "{products{__typename upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
@@ -112,6 +113,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 12,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensiveCategory shippingEstimateEUR}}}",
@@ -162,6 +164,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 4,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate}}}",
@@ -304,6 +307,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "c",
             "operationKind": "query",
             "operation": "{feed{__typename id}}"
@@ -318,6 +322,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "d",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: 1){id}}}}",
@@ -353,6 +358,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 6,
               "serviceName": "c",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Comment{authorId}}}",
@@ -384,6 +390,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "d",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{author{id}}}}",
@@ -526,6 +533,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "c",
             "operationKind": "query",
             "operation": "{feed{__typename id}}"
@@ -540,6 +548,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "d",
               "variableUsages": [
                 "limit"
@@ -578,6 +587,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
             ],
             "node": {
               "kind": "Fetch",
+              "id": 6,
               "serviceName": "c",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Comment{authorId}}}",
@@ -609,6 +619,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "d",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{author{id}}}}",
@@ -762,6 +773,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "c",
             "operationKind": "query",
             "operation": "{feed{__typename id}}"
@@ -776,6 +788,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "d",
               "variableUsages": [
                 "limit"
@@ -814,6 +827,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
             ],
             "node": {
               "kind": "Fetch",
+              "id": 6,
               "serviceName": "c",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Comment{authorId}}}",
@@ -845,6 +859,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "d",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{author{id}}}}",
@@ -980,6 +995,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "a",
             "operationKind": "query",
             "operation": "{test{id __typename}}"
@@ -993,6 +1009,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3)}}}",
@@ -1026,6 +1043,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 6,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{anotherWithRequiresAndArgs}}}",
@@ -1061,6 +1079,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 3,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
@@ -1193,6 +1212,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "a",
             "operationKind": "query",
             "operation": "{test{__typename id}}"
@@ -1206,6 +1226,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_1: otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3) otherField(arg: 1)}}}",
@@ -1239,6 +1260,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 6,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{anotherWithRequiresAndArgs}}}",
@@ -1274,6 +1296,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 3,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
@@ -1386,6 +1409,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "a",
             "operationKind": "query",
             "operation": "{test{__typename id}}"
@@ -1399,6 +1423,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 2)}}}",
@@ -1429,6 +1454,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "a",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
@@ -1533,6 +1559,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "a",
             "operationKind": "query",
             "operation": "{test{id __typename}}"
@@ -1546,6 +1573,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 2)}}}",
@@ -1576,6 +1604,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "a",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
@@ -1747,6 +1776,7 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
       "kind": "QueryPlan",
       "node": {
         "kind": "Fetch",
+        "id": 2,
         "serviceName": "spotify",
         "operationKind": "query",
         "operation": "{album(id: \"5\"){albumType name genres tracks(limit: 5, offset: 10){edges{node{name}}}}}"
@@ -1805,6 +1835,7 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
       "kind": "QueryPlan",
       "node": {
         "kind": "Fetch",
+        "id": 2,
         "serviceName": "spotify",
         "variableUsages": [
           "id",
@@ -2142,6 +2173,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "d",
             "variableUsages": [
               "secondProductId"
@@ -2161,6 +2193,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 8,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details}}}}",
@@ -2191,6 +2224,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 6,
                   "serviceName": "b",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{__typename id}}}}",
@@ -2221,6 +2255,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 5,
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details}}}}",
@@ -2251,6 +2286,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 3,
                   "serviceName": "b",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{__typename id}}}}",
@@ -2289,6 +2325,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 7,
                   "serviceName": "c",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Category{name}}}",
@@ -2322,6 +2359,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 4,
                   "serviceName": "c",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Category{name}}}",
@@ -2345,6 +2383,23 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               }
             ]
           }
+        ]
+      },
+      "representationReusePlan": {
+        "version": 2,
+        "groups": [
+          [
+            3,
+            6
+          ],
+          [
+            4,
+            7
+          ],
+          [
+            5,
+            8
+          ]
         ]
       }
     }

@@ -104,7 +104,7 @@ impl RouterPlugin for MultipartPlugin {
             let multipart_ctx = payload.context.get_ref::<MultipartContext>();
             if let Some(multipart_ctx) = multipart_ctx {
                 let mut file_map: HashMap<String, Vec<String>> = HashMap::new();
-                for variable_name in variables.keys() {
+                for (variable_name, _) in variables {
                     // Matching variables that are file references
                     for (files_ref, op_refs) in &multipart_ctx.file_map {
                         for op_ref in op_refs {
