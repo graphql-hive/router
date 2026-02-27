@@ -2,6 +2,8 @@
 hive-router: patch
 hive-router-query-planner: patch
 graphql-tools: patch
+hive-router-plan-executor: patch
+hive-console-sdk: patch
 ---
 
 - `ConsumerSchema` and `ValidationPlan` now implement `hash` property, which is calculated based on the SDL string of the consumer schema and the validation rules when the struct is created or when a new rule is added to the validation plan.

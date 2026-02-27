@@ -4,11 +4,12 @@ use crate::{
         minification::minify_operation,
         operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
-        selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
-        type_aware_selection::TypeAwareSelection,
+        selection_set::{FieldSelection, SelectionSet},
         value::Value,
     },
-    planner::fetch::fetch_step_data::FetchStepData,
+    planner::fetch::{
+        fetch_step_data::FetchStepData, selections::FetchStepSelections, state::MultiTypeFetchStep,
+    },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
@@ -145,7 +146,13 @@ pub struct KeyRenamer {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FetchNodePathSegment {
     Key(String),
-    TypenameEquals(String),
+    TypenameEquals(BTreeSet<String>),
+}
+
+impl FetchNodePathSegment {
+    pub fn typename_equals_from_type(type_name: String) -> Self {
+        Self::TypenameEquals(BTreeSet::from_iter([type_name]))
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -157,7 +164,7 @@ pub enum FetchRewrite {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FlattenNodePathSegment {
     Field(String),
-    Cast(String),
+    TypeCondition(BTreeSet<String>),
     #[serde(rename = "@")]
     List,
 }
@@ -168,8 +175,8 @@ impl From<&MergePath> for Vec<FetchNodePathSegment> {
             .inner
             .iter()
             .filter_map(|path_segment| match path_segment {
-                Segment::Cast(type_name, _) => {
-                    Some(FetchNodePathSegment::TypenameEquals(type_name.clone()))
+                Segment::TypeCondition(type_names, _) => {
+                    Some(FetchNodePathSegment::TypenameEquals(type_names.clone()))
                 }
                 Segment::Field(field_name, _args_hash, _) => {
                     Some(FetchNodePathSegment::Key(field_name.clone()))
@@ -202,7 +209,13 @@ impl Display for FlattenNodePathSegment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FlattenNodePathSegment::Field(field_name) => write!(f, "{}", field_name),
-            FlattenNodePathSegment::Cast(type_name) => write!(f, "|[{}]", type_name),
+            FlattenNodePathSegment::TypeCondition(type_names) => {
+                write!(
+                    f,
+                    "|[{}]",
+                    type_names.iter().cloned().collect::<Vec<_>>().join("|")
+                )
+            }
             FlattenNodePathSegment::List => write!(f, "@"),
         }
     }
@@ -216,8 +229,8 @@ impl Display for FlattenNodePath {
             write!(f, "{}", segment)?;
             if let Some(peeked) = segments_iter.peek() {
                 match peeked {
-                    FlattenNodePathSegment::Cast(_) => {
-                        // Don't add a dot before Cast
+                    FlattenNodePathSegment::TypeCondition(_) => {
+                        // Don't add a dot before TypeCondition
                     }
                     _ => write!(f, ".")?,
                 }
@@ -233,7 +246,9 @@ impl From<&MergePath> for FlattenNodePath {
             path.inner
                 .iter()
                 .map(|seg| match seg {
-                    Segment::Cast(type_name, _) => FlattenNodePathSegment::Cast(type_name.clone()),
+                    Segment::TypeCondition(type_names, _) => {
+                        FlattenNodePathSegment::TypeCondition(type_names.clone())
+                    }
                     Segment::Field(field_name, _args_hash, _) => {
                         FlattenNodePathSegment::Field(field_name.clone())
                     }
@@ -307,22 +322,18 @@ impl PlanNode {
     }
 }
 
-fn create_input_selection_set(input_selections: &TypeAwareSelection) -> SelectionSet {
-    SelectionSet {
-        items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-            selections: input_selections.selection_set.strip_for_plan_input(),
-            type_condition: input_selections.type_name.clone(),
-            skip_if: None,
-            include_if: None,
-        })],
-    }
+fn create_input_selection_set(
+    input_selections: &FetchStepSelections<MultiTypeFetchStep>,
+) -> SelectionSet {
+    let selection_set: SelectionSet = input_selections.into();
+
+    selection_set.strip_for_plan_input()
 }
 
 fn create_output_operation(
-    step: &FetchStepData,
+    step: &FetchStepData<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
 ) -> SubgraphFetchOperation {
-    let type_aware_selection = &step.output;
     let mut variables = vec![VariableDefinition {
         name: "representations".to_string(),
         variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(TypeNode::NonNull(
@@ -342,14 +353,7 @@ fn create_output_operation(
         selection_set: SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
                 name: "_entities".to_string(),
-                selections: SelectionSet {
-                    items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        selections: type_aware_selection.selection_set.clone(),
-                        type_condition: type_aware_selection.type_name.clone(),
-                        skip_if: None,
-                        include_if: None,
-                    })],
-                },
+                selections: (&step.output).into(),
                 alias: None,
                 arguments: Some(
                     (
@@ -376,24 +380,22 @@ fn create_output_operation(
     }
 }
 
-impl From<&FetchStepData> for OperationKind {
-    fn from(step: &FetchStepData) -> Self {
-        let type_name = step.output.type_name.as_str();
-
-        if type_name == "Query" {
-            OperationKind::Query
-        } else if type_name == "Mutation" {
-            OperationKind::Mutation
-        } else if type_name == "Subscription" {
-            OperationKind::Subscription
-        } else {
-            OperationKind::Query
+impl From<&FetchStepData<MultiTypeFetchStep>> for OperationKind {
+    fn from(step: &FetchStepData<MultiTypeFetchStep>) -> Self {
+        match step.input.iter().next().unwrap().0.as_str() {
+            "Query" => OperationKind::Query,
+            "Mutation" => OperationKind::Mutation,
+            "Subscription" => OperationKind::Subscription,
+            _ => OperationKind::Query,
         }
     }
 }
 
 impl FetchNode {
-    pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
+    pub fn from_fetch_step(
+        step: &FetchStepData<MultiTypeFetchStep>,
+        supergraph: &SupergraphState,
+    ) -> Self {
         match step.is_entity_call() {
             true => FetchNode {
                 id: step.id,
@@ -410,7 +412,7 @@ impl FetchNode {
                 let operation_def = OperationDefinition {
                     name: None,
                     operation_kind: Some(step.into()),
-                    selection_set: step.output.selection_set.clone(),
+                    selection_set: (&step.output).into(),
                     variable_definitions: step.variable_definitions.clone(),
                 };
                 let document =
@@ -439,7 +441,10 @@ impl FetchNode {
 }
 
 impl PlanNode {
-    pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
+    pub fn from_fetch_step(
+        step: &FetchStepData<MultiTypeFetchStep>,
+        supergraph: &SupergraphState,
+    ) -> Self {
         let node = if step.response_path.is_empty() {
             PlanNode::Fetch(FetchNode::from_fetch_step(step, supergraph))
         } else {

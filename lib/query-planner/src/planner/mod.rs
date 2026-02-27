@@ -12,7 +12,10 @@ use crate::{
     ast::operation::{OperationDefinition, VariableDefinition},
     consumer_schema::ConsumerSchema,
     graph::{edge::PlannerOverrideContext, error::GraphError, Graph},
-    planner::{best::find_best_combination, fetch::fetch_graph::FetchGraph},
+    planner::{
+        best::find_best_combination,
+        fetch::{fetch_graph::FetchGraph, state::MultiTypeFetchStep},
+    },
     state::supergraph_state::SupergraphState,
     utils::cancellation::{CancellationError, CancellationToken},
 };
@@ -136,7 +139,7 @@ impl Planner {
 }
 
 pub fn add_variables_to_fetch_steps(
-    graph: &mut FetchGraph,
+    graph: &mut FetchGraph<MultiTypeFetchStep>,
     variables: &Option<Vec<VariableDefinition>>,
 ) -> Result<(), PlannerError> {
     if let Some(variables) = variables {

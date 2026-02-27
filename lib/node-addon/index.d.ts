@@ -37,7 +37,9 @@ export interface SubscriptionNode {
   primary: PlanNode;
 }
 
-export type FetchNodePathSegment = { TypenameEquals: string } | { Key: string };
+export type FetchNodePathSegment =
+  | { TypenameEquals: string[] }
+  | { Key: string };
 
 export type FetchRewrite =
   | { ValueSetter: ValueSetter }
@@ -93,7 +95,10 @@ export interface ParallelNode {
   nodes: PlanNode[];
 }
 
-export type FlattenNodePathSegment = { Field: string } | { Cast: string } | "@";
+export type FlattenNodePathSegment =
+  | { Field: string }
+  | { TypeCondition: string[] }
+  | "@";
 
 export interface FlattenNode {
   kind: "Flatten";

@@ -4,9 +4,11 @@ use petgraph::{
 };
 use tracing::instrument;
 
-use crate::planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph};
+use crate::planner::fetch::{
+    error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep,
+};
 
-impl FetchGraph {
+impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn turn_mutations_into_sequence(&mut self) -> Result<(), FetchGraphError> {
         let root_index = self
@@ -63,13 +65,13 @@ impl FetchGraph {
 }
 
 fn is_mutation_fetch_step(
-    fetch_graph: &FetchGraph,
+    fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     fetch_step_index: NodeIndex,
 ) -> Result<bool, FetchGraphError> {
     for edge_ref in fetch_graph.children_of(fetch_step_index) {
         let child = fetch_graph.get_step_data(edge_ref.target().id())?;
 
-        if child.output.type_name.ne("Mutation") {
+        if !child.output.is_selecting_definition("Mutation") {
             return Ok(false);
         }
     }

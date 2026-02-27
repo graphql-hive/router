@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 
 use tracing::{instrument, trace};
 
@@ -7,8 +7,8 @@ use crate::{
         merge_path::{MergePath, Segment},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
-        type_aware_selection::TypeAwareSelection,
     },
+    planner::fetch::{selections::FetchStepSelections, state::MultiTypeFetchStep},
     state::{
         subgraph_state::{SubgraphDefinition, SubgraphState},
         supergraph_state::{SubgraphName, SupergraphState, TypeNode},
@@ -20,46 +20,42 @@ pub struct SelectionMismatchFinder<'a> {
     supergraph_state: &'a SupergraphState,
 }
 
-type MismatchesFound = Vec<MergePath>;
+type MismatchesFound = Vec<(String, MergePath)>;
 
 impl<'a> SelectionMismatchFinder<'a> {
     pub fn new(supergraph_state: &'a SupergraphState) -> Self {
         Self { supergraph_state }
     }
 
-    #[instrument(level = "trace", skip_all, fields(
-      subgraph_name,
-      selection = format!("{}", selection_set)
-    ))]
+    #[instrument(level = "trace", skip_all, fields(subgraph_name,))]
     pub fn find_mismatches_in_node(
         &self,
         subgraph_name: &SubgraphName,
-        selection_set: &TypeAwareSelection,
+        selections: &FetchStepSelections<MultiTypeFetchStep>,
     ) -> MismatchesFound {
+        let mut mismtaches_found = MismatchesFound::new();
         let subgraph_state = self
             .supergraph_state
             .subgraphs_state
             .get(subgraph_name)
             .unwrap();
 
-        let entrypoint_type = subgraph_state
-            .definitions
-            .get(&selection_set.type_name)
-            .unwrap();
+        for (definition_name, selection_set) in selections.iter_selections() {
+            let entrypoint_type = subgraph_state.definitions.get(definition_name).unwrap();
+            let start_path = MergePath::default();
 
-        let mut mismtaches_found = MismatchesFound::new();
-        let start_path = MergePath::default();
+            handle_selection_set(
+                definition_name,
+                self.supergraph_state,
+                subgraph_state,
+                entrypoint_type,
+                selection_set,
+                start_path,
+                &mut mismtaches_found,
+            );
 
-        handle_selection_set(
-            self.supergraph_state,
-            subgraph_state,
-            entrypoint_type,
-            &selection_set.selection_set,
-            start_path,
-            &mut mismtaches_found,
-        );
-
-        trace!("found total of {} mismatches", mismtaches_found.len(),);
+            trace!("found total of {} mismatches", mismtaches_found.len());
+        }
 
         mismtaches_found
     }
@@ -73,6 +69,7 @@ impl<'a> SelectionMismatchFinder<'a> {
   selection = format!("{}", selection_set)
 ))]
 fn handle_selection_set<'field, 'schema>(
+    root_def_type_name: &str,
     supergraph_state: &'schema SupergraphState,
     subgraph_state: &'schema SubgraphState,
     parent_def: &'schema SubgraphDefinition,
@@ -105,6 +102,7 @@ fn handle_selection_set<'field, 'schema>(
                     ));
 
                     let next_parent_type_name = handle_field(
+                        root_def_type_name,
                         supergraph_state,
                         type_def,
                         field,
@@ -117,6 +115,7 @@ fn handle_selection_set<'field, 'schema>(
                         next_parent_type_name.and_then(|n| subgraph_state.definitions.get(n))
                     {
                         handle_selection_set(
+                            root_def_type_name,
                             supergraph_state,
                             subgraph_state,
                             next_parent_def,
@@ -134,8 +133,8 @@ fn handle_selection_set<'field, 'schema>(
                         .definitions
                         .get(&fragment.type_condition)
                         .unwrap();
-                    let fragment_enter_path = path.push(Segment::Cast(
-                        fragment.type_condition.clone(),
+                    let fragment_enter_path = path.push(Segment::TypeCondition(
+                        BTreeSet::from([fragment.type_condition.clone()]),
                         fragment.into(),
                     ));
 
@@ -156,6 +155,7 @@ fn handle_selection_set<'field, 'schema>(
 ///
 /// Returns the return type of the selection, if the inner selection needs to be processed (in case nested selections are defined).
 fn handle_field<'field, 'schema>(
+    root_def_type_name: &str,
     state: &'schema SupergraphState,
     parent_def: &'schema SubgraphDefinition,
     field: &'field FieldSelection,
@@ -201,7 +201,7 @@ fn handle_field<'field, 'schema>(
                   field_path,
               );
 
-                mismatches_found.push(field_path.clone());
+                mismatches_found.push((root_def_type_name.to_string(), field_path.clone()));
             }
         }
     } else {
