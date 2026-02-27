@@ -252,4 +252,43 @@ mod introspection_e2e_tests {
         }
         "#);
     }
+    #[ntex::test]
+    async fn should_have_specified_by_url_in_scalar_types() {
+        let app = init_router_from_config_inline(
+            r#"supergraph:
+                source: file
+                path: "./supergraph-introspection-extended.graphql"
+          "#,
+        )
+        .await
+        .expect("failed to start router");
+        wait_for_readiness(&app.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            query IncludeOneOfInInputValues {
+                TestInput: __type(name: "MyScalar") {
+                    specifiedByURL
+                }
+            }
+        "#,
+            None,
+        );
+        let resp = test::call_service(&app.app, req.to_request()).await;
+
+        assert!(resp.status().is_success(), "Expected 200 OK");
+
+        let body = test::read_body(resp).await;
+        let json_body: Value = from_slice(&body).expect("Failed to deserialize JSON response");
+
+        insta::assert_snapshot!(to_string_pretty(&json_body).expect("Failed to serialize JSON for snapshot"), @r#"
+        {
+          "data": {
+            "TestInput": {
+              "specifiedByURL": "https://example.com/my-scalar-spec"
+            }
+          }
+        }
+        "#);
+    }
 }

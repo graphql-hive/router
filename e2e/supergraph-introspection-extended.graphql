@@ -77,6 +77,8 @@ type Query @join__type(graph: ACCOUNTS) {
 }
 
 input TestInput @oneOf {
-  oldField: String @deprecated(reason: "Use `newField` instead")
-  newField: String = "newFieldDefaultValue"
+  oldField: MyScalar @deprecated(reason: "Use `newField` instead")
+  newField: MyScalar = "newFieldDefaultValue"
 }
+
+scalar MyScalar @specifiedBy(url: "https://example.com/my-scalar-spec")
