@@ -72,7 +72,14 @@ impl FetchGraph<MultiTypeFetchStep> {
                                 let decendent_type_name = decendent
                                     .input
                                     .try_as_single()
-                                    .expect("to be a single input")
+                                    .ok_or_else(|| {
+                                      FetchGraphError::Internal(
+                                        format!(
+                                          "Expected single input type for descendant node [{}] during alias patching, but found multi-type input",
+                                          decendent_idx.index()
+                                        )
+                                      )
+                                    })?
                                     .to_string();
 
                                 let selection = decendent
