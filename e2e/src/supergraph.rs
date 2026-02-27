@@ -72,7 +72,13 @@ mod supergraph_e2e_tests {
         // Now let's wait a bit and let the service re-load and get the new supergraph
         time::sleep(Duration::from_millis(600)).await;
         mock2.assert();
-        router.flush_internal_cache().await;
+        router
+            .schema_state()
+            .normalize_cache
+            .run_pending_tasks()
+            .await;
+        router.schema_state().plan_cache.run_pending_tasks().await;
+        invoke_shutdown_hooks(router.shared_state()).await;
 
         // Now cache should be empty again, if supergraph has changes
         assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
