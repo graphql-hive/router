@@ -93,6 +93,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "inventory",
             "operationKind": "query",
             "operation": "{products{upc __typename}}"
@@ -107,6 +108,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "products",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price(withDiscount: true) _internal_qp_alias_0: price(withDiscount: false)}}}",
@@ -141,6 +143,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 6,
                   "serviceName": "inventory",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reducedPrice}}}",
@@ -177,6 +180,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
+                  "id": 3,
                   "serviceName": "inventory",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive}}}",
@@ -280,6 +284,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "inventory",
             "operationKind": "query",
             "operation": "{products{upc __typename}}"
@@ -294,6 +299,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 5,
               "serviceName": "products",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price(withDiscount: true)}}}",
@@ -325,6 +331,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "inventory",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive}}}",
@@ -412,6 +419,7 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "products",
             "operationKind": "query",
             "operation": "{products{__typename upc price}}"
@@ -426,6 +434,7 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "inventory",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive}}}",
@@ -515,6 +524,7 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "products",
             "operationKind": "query",
             "operation": "{products{__typename upc price}}"
@@ -529,6 +539,7 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "inventory",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive isAvailable}}}",
@@ -616,6 +627,7 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "products",
             "operationKind": "query",
             "operation": "{products{__typename upc price weight}}"
@@ -630,6 +642,7 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "inventory",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate}}}",
@@ -725,6 +738,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "products",
             "operationKind": "query",
             "operation": "{products{__typename upc price weight}}"
@@ -739,6 +753,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 7,
               "serviceName": "inventory",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate2 shippingEstimate}}}",
@@ -836,6 +851,7 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "products",
             "operationKind": "query",
             "operation": "{products{__typename upc price weight}}"
@@ -850,6 +866,7 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "inventory",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate{price}}}}",
@@ -968,6 +985,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "b",
             "operationKind": "query",
             "operation": "{b{id a{__typename id compositeId{two three}}}}"
@@ -985,6 +1003,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 6,
               "serviceName": "a",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on A{name}}}",
@@ -1019,6 +1038,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on A{nameInB}}}",

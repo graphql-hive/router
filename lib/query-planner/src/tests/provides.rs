@@ -63,6 +63,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "products",
             "operationKind": "query",
             "operation": "{products{__typename upc}}"
@@ -77,6 +78,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "reviews",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{author{username}}}}}",
@@ -143,6 +145,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
       "kind": "QueryPlan",
       "node": {
         "kind": "Fetch",
+        "id": 2,
         "serviceName": "category",
         "operationKind": "query",
         "operation": "{products{id categories{id name}}}"
@@ -199,6 +202,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
       "kind": "QueryPlan",
       "node": {
         "kind": "Fetch",
+        "id": 2,
         "serviceName": "b",
         "operationKind": "query",
         "operation": "{media{__typename ...on Book{title id} ...on Movie{id}}}"
@@ -271,6 +275,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "b",
             "operationKind": "query",
             "operation": "{media{__typename ...on Book{title id} ...on Movie{__typename id}}}"
@@ -287,6 +292,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "c",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Movie{title}}}",

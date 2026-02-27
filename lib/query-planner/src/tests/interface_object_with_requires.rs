@@ -77,6 +77,7 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "b",
             "operationKind": "query",
             "operation": "{anotherUsers{__typename id}}"
@@ -91,6 +92,7 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 6,
               "serviceName": "a",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{name}}}",
@@ -137,6 +139,7 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username}}}",
@@ -244,6 +247,7 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "a",
             "operationKind": "query",
             "operation": "{users{__typename id name}}",
@@ -273,6 +277,7 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username}}}",
@@ -381,6 +386,7 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "b",
             "operationKind": "query",
             "operation": "{anotherUsers{__typename id}}"
@@ -395,6 +401,7 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "a",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename ...on User{age}}}}",
@@ -478,6 +485,7 @@ fn inline_fragment_on_local_type_behind_interface() -> Result<(), Box<dyn Error>
       "kind": "QueryPlan",
       "node": {
         "kind": "Fetch",
+        "id": 2,
         "serviceName": "a",
         "operationKind": "query",
         "operation": "{users{__typename ...on User{age}}}"
@@ -573,6 +581,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "b",
             "operationKind": "query",
             "operation": "{anotherUsers{__typename id}}"
@@ -587,6 +596,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             ],
             "node": {
               "kind": "Fetch",
+              "id": 6,
               "serviceName": "a",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename id name ...on User{age name}}}}",
@@ -633,6 +643,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             ],
             "node": {
               "kind": "Fetch",
+              "id": 7,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username id}}}",
@@ -752,6 +763,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "a",
             "operationKind": "query",
             "operation": "{users{__typename ...on User{__typename age id name} id name}}",
@@ -784,6 +796,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username}}}",

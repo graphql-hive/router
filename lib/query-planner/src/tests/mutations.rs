@@ -65,6 +65,7 @@ fn mutations() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "a",
             "operationKind": "mutation",
             "operation": "mutation{addProduct(input: {name: \"new\", price: 599.99}){__typename name price id}}"
@@ -78,6 +79,7 @@ fn mutations() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 4,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive isAvailable}}}",

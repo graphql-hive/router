@@ -1,6 +1,12 @@
 export interface QueryPlan {
   kind: "QueryPlan";
   node?: PlanNode;
+  representationReusePlan?: RepresentationReusePlan;
+}
+
+export interface RepresentationReusePlan {
+  version: number;
+  groups: number[][];
 }
 
 export type PlanNode =
@@ -14,6 +20,7 @@ export type PlanNode =
 
 export interface FetchNode {
   kind: "Fetch";
+  id: number;
   serviceName: string;
   variableUsages?: string[];
   operationKind?: "query" | "mutation" | "subscription";

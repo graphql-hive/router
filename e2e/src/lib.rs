@@ -33,6 +33,8 @@ mod override_subgraph_urls;
 #[cfg(test)]
 mod probes;
 #[cfg(test)]
+mod representation_cache;
+#[cfg(test)]
 mod router_timeout;
 #[cfg(test)]
 mod supergraph;
