@@ -23,3 +23,4 @@ reqwest = {workspace = true}
 [dev-dependencies]
 e2e = { version = "*", path = "../../e2e" }
 serde_json = { workspace = true }
+http = { workspace = true }
