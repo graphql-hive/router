@@ -1,6 +1,11 @@
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    collections::{BTreeSet, HashMap},
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use bytes::BufMut;
+use dashmap::DashMap;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
@@ -14,6 +19,7 @@ use hive_router_query_planner::{
 };
 use http::{HeaderMap, StatusCode};
 use sonic_rs::ValueRef;
+use tokio::sync::OnceCell;
 use tracing::Instrument;
 
 use crate::{
@@ -24,7 +30,7 @@ use crate::{
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
-    executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
+    executors::{common::SubgraphExecutionRequest, dedupe::ABuildHasher, map::SubgraphExecutorMap},
     headers::{
         plan::{HeaderRulesPlan, ResponseHeaderAggregator},
         request::modify_subgraph_request_headers,
@@ -54,6 +60,7 @@ use crate::{
         traverse::{traverse_and_callback, traverse_and_callback_mut},
     },
 };
+use xxhash_rust::xxh3::Xxh3;
 
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
@@ -146,6 +153,7 @@ pub async fn execute_query_plan<'exec>(
         headers_plan: opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
+        representation_fetch_cache: DashMap::with_hasher(ABuildHasher::default()),
         plugin_req_state: opts.plugin_req_state,
     };
 
@@ -237,6 +245,8 @@ pub struct Executor<'exec> {
     pub headers_plan: &'exec HeaderRulesPlan,
     pub jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
     pub dedupe_subgraph_requests: bool,
+    pub representation_fetch_cache:
+        DashMap<u64, Arc<OnceCell<SubgraphResponse<'exec>>>, ABuildHasher>,
     pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
 }
 
@@ -609,6 +619,7 @@ impl<'exec> Executor<'exec> {
             })?;
             let variable_refs =
                 select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
+            let has_representations = representations.as_ref().is_some_and(|r| !r.is_empty());
 
             let mut subgraph_request = SubgraphExecutionRequest {
                 query: node.operation.document_str.as_str(),
@@ -637,19 +648,51 @@ impl<'exec> Executor<'exec> {
                 );
             }
 
-            let response = self
-                .executors
-                .execute(
-                    &node.service_name,
-                    subgraph_request,
-                    self.client_request,
-                    self.plugin_req_state,
-                )
-                .await
-                .with_plan_context(LazyPlanContext {
-                    subgraph_name: subgraph_name_factory,
-                    affected_path: affected_path_factory,
-                })?;
+            let response = if has_representations {
+                let cache_key = {
+                    let mut hasher = Xxh3::new();
+                    node.service_name.hash(&mut hasher);
+                    subgraph_request.hash(&mut hasher);
+                    hasher.finish()
+                };
+
+                let cell = self
+                    .representation_fetch_cache
+                    .entry(cache_key)
+                    .or_default()
+                    .value()
+                    .clone();
+
+                cell.get_or_try_init(|| async {
+                    self.executors
+                        .execute(
+                            &node.service_name,
+                            subgraph_request,
+                            self.client_request,
+                            self.plugin_req_state,
+                        )
+                        .await
+                        .with_plan_context(LazyPlanContext {
+                            subgraph_name: subgraph_name_factory,
+                            affected_path: affected_path_factory,
+                        })
+                })
+                .await?
+                .clone()
+            } else {
+                self.executors
+                    .execute(
+                        &node.service_name,
+                        subgraph_request,
+                        self.client_request,
+                        self.plugin_req_state,
+                    )
+                    .await
+                    .with_plan_context(LazyPlanContext {
+                        subgraph_name: subgraph_name_factory,
+                        affected_path: affected_path_factory,
+                    })?
+            };
 
             if let Some(errors) = &response.errors {
                 if !errors.is_empty() {
@@ -688,18 +731,19 @@ fn condition_node_by_variables<'a>(
 fn select_fetch_variables<'a>(
     variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
     variable_usages: Option<&BTreeSet<String>>,
-) -> Option<HashMap<&'a str, &'a sonic_rs::Value>> {
+) -> Option<Vec<(&'a str, &'a sonic_rs::Value)>> {
     let values = variable_values.as_ref()?;
 
     variable_usages.map(|variable_usages| {
-        variable_usages
-            .iter()
-            .filter_map(|var_name| {
-                values
-                    .get_key_value(var_name.as_str())
-                    .map(|(key, value)| (key.as_str(), value))
-            })
-            .collect()
+        let mut selected = Vec::with_capacity(variable_usages.len());
+
+        for var_name in variable_usages {
+            if let Some((key, value)) = values.get_key_value(var_name.as_str()) {
+                selected.push((key.as_str(), value));
+            }
+        }
+
+        selected
     })
 }
 
@@ -754,8 +798,8 @@ mod tests {
         let selected = select_fetch_variables(&variable_values, Some(&usages)).unwrap();
 
         assert_eq!(selected.len(), 1);
-        assert!(selected.contains_key("used"));
-        assert!(!selected.contains_key("unused"));
+        assert!(selected.iter().any(|(name, _)| *name == "used"));
+        assert!(!selected.iter().any(|(name, _)| *name == "unused"));
     }
 
     #[test]
@@ -771,8 +815,8 @@ mod tests {
         let selected = select_fetch_variables(&variable_values, Some(&usages)).unwrap();
 
         assert_eq!(selected.len(), 1);
-        assert!(selected.contains_key("present"));
-        assert!(!selected.contains_key("missing"));
+        assert!(selected.iter().any(|(name, _)| *name == "present"));
+        assert!(!selected.iter().any(|(name, _)| *name == "missing"));
     }
 
     #[test]
@@ -874,34 +918,6 @@ mod tests {
                     .unwrap(),
             ),
         ]);
-        let executor = Executor {
-            variable_values: &None,
-            schema_metadata: &SchemaMetadata::default(),
-            executors: &SubgraphExecutorMap::from_http_endpoint_map(
-                &subgraph_endpoint_map,
-                HiveRouterConfig::default().into(),
-                Arc::new(TelemetryContext::from_propagation_config(
-                    &Default::default(),
-                )),
-            )
-            .unwrap(),
-            client_request: &ClientRequestDetails {
-                method: &http::Method::POST,
-                url: &"http://example.com".parse().unwrap(),
-                headers: &HeaderMap::new(),
-                operation: OperationDetails {
-                    name: None,
-                    query: "{ from_a from_b }",
-                    kind: "query",
-                },
-                jwt: JwtRequestDetails::Unauthenticated,
-            },
-            headers_plan: &HeaderRulesPlan::default(),
-            jwt_forwarding_plan: None,
-            dedupe_subgraph_requests: false,
-            plugin_req_state: &None,
-        };
-
         let mock_a = subgraph_a
             .mock("POST", "/graphql")
             .with_body(r#"{"data":{"from_a":"value_a"}}"#)
@@ -952,45 +968,71 @@ mod tests {
             fragments: vec![],
         };
 
-        executor
-            .execute_plan_node(
-                &mut exec_ctx,
-                &PlanNode::Parallel(ParallelNode {
-                    nodes: vec![
-                        PlanNode::Fetch(FetchNode {
-                            id: 1,
-                            service_name: "subgraph_a".to_string(),
-                            operation: SubgraphFetchOperation {
-                                document_str: "{ from_a }".to_string(),
-                                document: dummy_doc.clone(),
-                                hash: 0,
-                            },
-                            operation_name: None,
-                            requires: None,
-                            input_rewrites: None,
-                            output_rewrites: None,
-                            variable_usages: None,
-                            operation_kind: None,
-                        }),
-                        PlanNode::Fetch(FetchNode {
-                            id: 2,
-                            service_name: "subgraph_b".to_string(),
-                            operation: SubgraphFetchOperation {
-                                document_str: "{ from_b }".to_string(),
-                                document: dummy_doc.clone(),
-                                hash: 0,
-                            },
-                            operation_name: None,
-                            requires: None,
-                            input_rewrites: None,
-                            output_rewrites: None,
-                            variable_usages: None,
-                            operation_kind: None,
-                        }),
-                    ],
+        let plan_node = PlanNode::Parallel(ParallelNode {
+            nodes: vec![
+                PlanNode::Fetch(FetchNode {
+                    id: 1,
+                    service_name: "subgraph_a".to_string(),
+                    operation: SubgraphFetchOperation {
+                        document_str: "{ from_a }".to_string(),
+                        document: dummy_doc.clone(),
+                        hash: 0,
+                    },
+                    operation_name: None,
+                    requires: None,
+                    input_rewrites: None,
+                    output_rewrites: None,
+                    variable_usages: None,
+                    operation_kind: None,
                 }),
+                PlanNode::Fetch(FetchNode {
+                    id: 2,
+                    service_name: "subgraph_b".to_string(),
+                    operation: SubgraphFetchOperation {
+                        document_str: "{ from_b }".to_string(),
+                        document: dummy_doc.clone(),
+                        hash: 0,
+                    },
+                    operation_name: None,
+                    requires: None,
+                    input_rewrites: None,
+                    output_rewrites: None,
+                    variable_usages: None,
+                    operation_kind: None,
+                }),
+            ],
+        });
+
+        let executor = Executor {
+            variable_values: &None,
+            schema_metadata: &SchemaMetadata::default(),
+            executors: &SubgraphExecutorMap::from_http_endpoint_map(
+                &subgraph_endpoint_map,
+                HiveRouterConfig::default().into(),
+                Arc::new(TelemetryContext::from_propagation_config(
+                    &Default::default(),
+                )),
             )
-            .await;
+            .unwrap(),
+            client_request: &ClientRequestDetails {
+                method: &http::Method::POST,
+                url: &"http://example.com".parse().unwrap(),
+                headers: &HeaderMap::new(),
+                operation: OperationDetails {
+                    name: None,
+                    query: "{ from_a from_b }",
+                    kind: "query",
+                },
+                jwt: JwtRequestDetails::Unauthenticated,
+            },
+            headers_plan: &HeaderRulesPlan::default(),
+            jwt_forwarding_plan: None,
+            dedupe_subgraph_requests: false,
+            representation_fetch_cache: Default::default(),
+            plugin_req_state: &None,
+        };
+
+        executor.execute_plan_node(&mut exec_ctx, &plan_node).await;
         mock_a.assert();
         mock_b.assert();
 
