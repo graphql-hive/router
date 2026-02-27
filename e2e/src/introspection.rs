@@ -7,7 +7,7 @@ mod introspection_e2e_tests {
     use sonic_rs::{from_slice, to_string_pretty, Value};
 
     #[ntex::test]
-    async fn should_have_deprecated_input_values_in_introsection() {
+    async fn should_have_deprecated_input_values_in_introspection() {
         let app = init_router_from_config_inline(
             r#"supergraph:
                 source: file
