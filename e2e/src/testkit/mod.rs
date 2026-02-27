@@ -454,7 +454,7 @@ impl TestRouterBuilder {
     }
 
     pub fn build(self) -> TestRouter<Built> {
-        let mut config = self.config.expect("config is required");
+        let mut config = self.config.unwrap_or_default();
         let mut _hold_until_drop: Vec<Box<dyn Any>> = vec![];
 
         // change the supergraph to use the test subgraphs address
