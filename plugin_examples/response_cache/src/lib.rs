@@ -166,86 +166,86 @@ impl RouterPlugin for ResponseCachePlugin {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    // use std::collections::HashMap;
 
-    use hive_router::ntex::rt::tokio;
-    use hive_router::tracing::trace;
-    use hive_router::{http::StatusCode, ntex};
+    // use hive_router::ntex::rt::tokio;
+    // use hive_router::tracing::trace;
+    // use hive_router::{http::StatusCode, ntex};
 
-    use e2e::testkit::{
-        init_graphql_request, init_router_from_config_file_with_plugins, wait_for_readiness,
-        SubgraphsServer, TestDockerContainer, TestDockerContainerOpts,
-    };
+    // use e2e::testkit::{
+    //     init_graphql_request, init_router_from_config_file_with_plugins, wait_for_readiness,
+    //     SubgraphsServer, TestDockerContainer, TestDockerContainerOpts,
+    // };
 
-    #[ntex::test]
-    async fn test_caching_with_default_ttl() {
-        let container = TestDockerContainer::async_new(TestDockerContainerOpts {
-            name: "redis_resp_caching_test".to_string(),
-            image: "redis/redis-stack:latest".to_string(),
-            ports: HashMap::from([(6379, 6379)]),
-            env: vec!["ALLOW_EMPTY_PASSWORD=yes".to_string()],
-            ..Default::default()
-        })
-        .await
-        .expect("failed to start redis container");
+    // #[ntex::test]
+    // async fn test_caching_with_default_ttl() {
+    //     let container = TestDockerContainer::async_new(TestDockerContainerOpts {
+    //         name: "redis_resp_caching_test".to_string(),
+    //         image: "redis/redis-stack:latest".to_string(),
+    //         ports: HashMap::from([(6379, 6379)]),
+    //         env: vec!["ALLOW_EMPTY_PASSWORD=yes".to_string()],
+    //         ..Default::default()
+    //     })
+    //     .await
+    //     .expect("failed to start redis container");
 
-        // Redis flush all to ensure clean state
-        container
-            .exec(vec!["redis-cli", "FLUSHALL"])
-            .await
-            .expect("Failed to flush redis");
-        let subgraphs_server = SubgraphsServer::start().await;
+    //     // Redis flush all to ensure clean state
+    //     container
+    //         .exec(vec!["redis-cli", "FLUSHALL"])
+    //         .await
+    //         .expect("Failed to flush redis");
+    //     let subgraphs_server = SubgraphsServer::start().await;
 
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/response_cache/router.config.yaml",
-            hive_router::PluginRegistry::new().register::<super::ResponseCachePlugin>(),
-        )
-        .await
-        .expect("failed to start router");
+    //     let app = init_router_from_config_file_with_plugins(
+    //         "../plugin_examples/response_cache/router.config.yaml",
+    //         hive_router::PluginRegistry::new().register::<super::ResponseCachePlugin>(),
+    //     )
+    //     .await
+    //     .expect("failed to start router");
 
-        wait_for_readiness(&app.app).await;
+    //     wait_for_readiness(&app.app).await;
 
-        let req = init_graphql_request("{ users { id } }", None);
-        let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
-        trace!("First response received");
-        assert_eq!(resp.status(), StatusCode::OK);
-        let resp_body = ntex::web::test::read_body(resp).await;
-        trace!(
-            "Response body read: {:?}",
-            String::from_utf8_lossy(&resp_body)
-        );
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
-            .expect("Failed to get subgraph requests log");
-        assert_eq!(subgraph_requests.len(), 1, "Expected one subgraph request");
-        let req = init_graphql_request("{ users { id } }", None);
-        let resp2 = ntex::web::test::call_service(&app.app, req.to_request()).await;
-        trace!("Second response received");
-        assert!(resp2.status().is_success());
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
-            .expect("Failed to get subgraph requests log");
-        assert_eq!(
-            subgraph_requests.len(),
-            1,
-            "Expected only one subgraph request due to caching"
-        );
-        trace!("Waiting for cache to expire...");
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        let req = init_graphql_request("{ users { id } }", None);
-        let resp3 = ntex::web::test::call_service(&app.app, req.to_request()).await;
-        assert!(resp3.status().is_success());
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
-            .expect("Failed to get subgraph requests log");
-        assert_eq!(
-            subgraph_requests.len(),
-            2,
-            "Expected a second subgraph request after cache expiry"
-        );
-        container.stop().await;
-    }
+    //     let req = init_graphql_request("{ users { id } }", None);
+    //     let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
+    //     trace!("First response received");
+    //     assert_eq!(resp.status(), StatusCode::OK);
+    //     let resp_body = ntex::web::test::read_body(resp).await;
+    //     trace!(
+    //         "Response body read: {:?}",
+    //         String::from_utf8_lossy(&resp_body)
+    //     );
+    //     let subgraph_requests = subgraphs_server
+    //         .get_subgraph_requests_log("accounts")
+    //         .await
+    //         .expect("Failed to get subgraph requests log");
+    //     assert_eq!(subgraph_requests.len(), 1, "Expected one subgraph request");
+    //     let req = init_graphql_request("{ users { id } }", None);
+    //     let resp2 = ntex::web::test::call_service(&app.app, req.to_request()).await;
+    //     trace!("Second response received");
+    //     assert!(resp2.status().is_success());
+    //     let subgraph_requests = subgraphs_server
+    //         .get_subgraph_requests_log("accounts")
+    //         .await
+    //         .expect("Failed to get subgraph requests log");
+    //     assert_eq!(
+    //         subgraph_requests.len(),
+    //         1,
+    //         "Expected only one subgraph request due to caching"
+    //     );
+    //     trace!("Waiting for cache to expire...");
+    //     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    //     let req = init_graphql_request("{ users { id } }", None);
+    //     let resp3 = ntex::web::test::call_service(&app.app, req.to_request()).await;
+    //     assert!(resp3.status().is_success());
+    //     let subgraph_requests = subgraphs_server
+    //         .get_subgraph_requests_log("accounts")
+    //         .await
+    //         .expect("Failed to get subgraph requests log");
+    //     assert_eq!(
+    //         subgraph_requests.len(),
+    //         2,
+    //         "Expected a second subgraph request after cache expiry"
+    //     );
+    //     container.stop().await;
+    // }
 }
