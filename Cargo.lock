@@ -202,6 +202,7 @@ version = "0.0.1"
 dependencies = [
  "e2e",
  "hive-router",
+ "http",
  "serde",
 ]
 
