@@ -53,17 +53,113 @@ impl From<&FetchStepSelections<MultiTypeFetchStep>> for SelectionSet {
             items: value
                 .selections
                 .iter()
-                .map(|(def_name, selections)| {
+                .map(|(type_name, selections)| {
+                    // Build one `... on Type` wrapper item if needed
+                    let Some((condition, selections_for_wrapper)) =
+                        try_lift_condition(type_name, selections)
+                    else {
+                        return SelectionItem::InlineFragment(InlineFragmentSelection {
+                            type_condition: type_name.to_string(),
+                            include_if: None,
+                            skip_if: None,
+                            selections: selections.clone(),
+                        });
+                    };
+
                     SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: def_name.clone(),
-                        include_if: None,
-                        skip_if: None,
-                        selections: selections.clone(),
+                        type_condition: type_name.to_string(),
+                        include_if: match &condition {
+                            Condition::Include(var_name) => Some(var_name.clone()),
+                            Condition::Skip(_) => None,
+                        },
+                        skip_if: match &condition {
+                            Condition::Skip(var_name) => Some(var_name.clone()),
+                            Condition::Include(_) => None,
+                        },
+                        selections: selections_for_wrapper,
                     })
                 })
                 .collect(),
         }
     }
+}
+
+fn inline_fragment_condition(fragment: &InlineFragmentSelection) -> Option<Condition> {
+    // Return a condition:
+    match (fragment.include_if.as_ref(), fragment.skip_if.as_ref()) {
+        // Either @include
+        (Some(var_name), None) => Some(Condition::Include(var_name.clone())),
+        // or @skip
+        (None, Some(var_name)) => Some(Condition::Skip(var_name.clone())),
+        // not when both are available
+        _ => None,
+    }
+}
+
+fn try_lift_condition(
+    type_name: &str,
+    selections: &SelectionSet,
+) -> Option<(Condition, SelectionSet)> {
+    let first_item = selections.items.first()?;
+    let SelectionItem::InlineFragment(first_fragment) = first_item else {
+        return None;
+    };
+    debug_assert_eq!(first_fragment.type_condition, type_name);
+
+    // Use the first fragment as baseline condition.
+    // Valid means exactly one conditional directive:
+    // - @include(if: $x), or
+    // - @skip(if: $x)
+    // If it has neither or both, we do not lift.
+    let condition = inline_fragment_condition(first_fragment)?;
+
+    // Every top-level item must be an inline fragment with the same condition.
+    // If this fails, lifting would change semantics.
+    // Here's what i mean:
+    //   ... on User @include(if: $show) { id }
+    //   ... on User @skip(if: $show) { name }
+    // should not be lifted.
+    let all_match = selections.items.iter().all(|item| {
+        let SelectionItem::InlineFragment(inline_fragment) = item else {
+            return false;
+        };
+
+        debug_assert_eq!(inline_fragment.type_condition, type_name);
+        inline_fragment_condition(inline_fragment).as_ref() == Some(&condition)
+    });
+
+    if !all_match {
+        return None;
+    }
+
+    // With one fragment, use its selections directly.
+    // This avoids creating an extra nested `... on Type` fragment.
+    //   ... on User @include(if: $show) { id }
+    // should not become:
+    //   ... on User @include(if: $show) { ... on User { id } }
+    if selections.items.len() == 1 {
+        return Some((condition, first_fragment.selections.clone()));
+    }
+
+    // We lifted the condition to the outer fragment.
+    // Remove identical inner conditions to avoid duplicated nesting.
+    // Before
+    //  ... on User @include(if: $show) { id }
+    //  ... on User @include(if: $show) { name }
+    // After
+    //  ... on User @include(if: $show) {
+    //    ... on User { id }
+    //    ... on User { name }
+    //  }
+    let mut lifted_selections = selections.clone();
+    for item in lifted_selections.items.iter_mut() {
+        if let SelectionItem::InlineFragment(inline_fragment) = item {
+            inline_fragment.include_if = None;
+            inline_fragment.skip_if = None;
+        }
+    }
+
+    Some((condition, lifted_selections))
 }
 
 impl From<&FetchStepSelections<SingleTypeFetchStep>> for SelectionSet {
@@ -210,6 +306,34 @@ impl<State> FetchStepSelections<State> {
 }
 
 impl FetchStepSelections<MultiTypeFetchStep> {
+    fn wrap_definition_selection_with_condition(
+        def_name: &str,
+        selection_set: &mut SelectionSet,
+        condition: &Condition,
+    ) {
+        let prev = selection_set.clone();
+        match condition {
+            Condition::Include(var_name) => {
+                selection_set.items =
+                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: def_name.to_string(),
+                        selections: prev,
+                        skip_if: None,
+                        include_if: Some(var_name.clone()),
+                    })];
+            }
+            Condition::Skip(var_name) => {
+                selection_set.items =
+                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: def_name.to_string(),
+                        selections: prev,
+                        skip_if: Some(var_name.clone()),
+                        include_if: None,
+                    })];
+            }
+        }
+    }
+
     pub fn selecting_same_types(&self, other: &Self) -> bool {
         if self.selections.len() != other.selections.len() {
             return false;
@@ -318,26 +442,18 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 
     pub fn wrap_with_condition(&mut self, condition: Condition) {
         for (def_name, selection_set) in self.selections.iter_mut() {
-            let prev = selection_set.clone();
-            match &condition {
-                Condition::Include(var_name) => {
-                    selection_set.items =
-                        vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                            type_condition: def_name.to_string(),
-                            selections: prev,
-                            skip_if: None,
-                            include_if: Some(var_name.clone()),
-                        })];
-                }
-                Condition::Skip(var_name) => {
-                    selection_set.items =
-                        vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                            type_condition: def_name.to_string(),
-                            selections: prev,
-                            skip_if: Some(var_name.clone()),
-                            include_if: None,
-                        })];
-                }
+            Self::wrap_definition_selection_with_condition(def_name, selection_set, &condition);
+        }
+    }
+
+    pub fn wrap_with_condition_for_types(
+        &mut self,
+        condition: Condition,
+        type_names: &BTreeSet<&str>,
+    ) {
+        for (def_name, selection_set) in self.selections.iter_mut() {
+            if type_names.contains(def_name.as_str()) {
+                Self::wrap_definition_selection_with_condition(def_name, selection_set, &condition);
             }
         }
     }
@@ -365,5 +481,168 @@ impl FetchStepSelections<SingleTypeFetchStep> {
             _state: Default::default(),
             selections: Default::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeMap, marker::PhantomData};
+
+    use graphql_tools::parser::query::{Definition, OperationDefinition};
+
+    use crate::ast::selection_item::SelectionItem;
+    use crate::ast::selection_set::SelectionSet;
+    use crate::utils::parsing::parse_operation;
+    use crate::utils::pretty_display::PrettyDisplay;
+
+    use super::{FetchStepSelections, MultiTypeFetchStep};
+
+    fn parse_selection_set(input: &str) -> SelectionSet {
+        let op = parse_operation(input);
+
+        match op.definitions.first() {
+            Some(Definition::Operation(OperationDefinition::SelectionSet(s))) => s.clone().into(),
+            _ => panic!("expected top-level selection set input"),
+        }
+    }
+
+    fn multi_type_from_top_level_inline_fragments(
+        query: &str,
+    ) -> FetchStepSelections<MultiTypeFetchStep> {
+        let parsed = parse_selection_set(query);
+        let mut map = BTreeMap::<String, SelectionSet>::new();
+
+        for item in parsed.items {
+            let SelectionItem::InlineFragment(inline_fragment) = item else {
+                panic!("expected only top-level inline fragments in test input");
+            };
+
+            map.entry(inline_fragment.type_condition.clone())
+                .or_insert_with(|| SelectionSet { items: vec![] })
+                .items
+                .push(SelectionItem::InlineFragment(inline_fragment));
+        }
+
+        FetchStepSelections {
+            selections: map,
+            _state: PhantomData,
+        }
+    }
+
+    struct PrettySelectionSet(SelectionSet);
+
+    impl std::fmt::Display for PrettySelectionSet {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.0.pretty_fmt(f, 0)
+        }
+    }
+
+    #[test]
+    fn lifts_single_conditional_fragment_without_extra_nesting() {
+        let fetch_selections = multi_type_from_top_level_inline_fragments(
+            r#"
+            {
+              ... on Book @skip(if: $title) {
+                sku
+              }
+            }
+            "#,
+        );
+        insta::assert_snapshot!(
+            format!("{}", PrettySelectionSet((&fetch_selections).into())),
+            @r#"
+              ... on Book @skip(if: $title) {
+                sku
+              }
+            "#
+        );
+    }
+
+    #[test]
+    fn lifts_uniform_condition_from_multiple_fragments() {
+        let fetch_selections = multi_type_from_top_level_inline_fragments(
+            r#"
+            {
+              ... on Book @include(if: $x) {
+                title
+              }
+              ... on Book @include(if: $x) {
+                author
+              }
+            }
+            "#,
+        );
+
+        insta::assert_snapshot!(
+          format!("{}", PrettySelectionSet((&fetch_selections).into())),
+            @r#"
+              ... on Book @include(if: $x) {
+                ... on Book {
+                  title
+                }
+                ... on Book {
+                  author
+                }
+              }
+            "#
+        );
+    }
+
+    #[test]
+    fn does_not_lift_when_conditions_are_mixed() {
+        let fetch_selections = multi_type_from_top_level_inline_fragments(
+            r#"
+            {
+              ... on Book @include(if: $x) {
+                title
+              }
+              ... on Book {
+                sku
+              }
+            }
+            "#,
+        );
+
+        insta::assert_snapshot!(
+          format!("{}", PrettySelectionSet((&fetch_selections).into())),
+            @r#"
+              ... on Book {
+                ... on Book @include(if: $x) {
+                  title
+                }
+                ... on Book {
+                  sku
+                }
+              }
+            "#
+        );
+    }
+
+    #[test]
+    fn does_not_lift_when_top_level_fragments_have_different_types() {
+        let fetch_selections = multi_type_from_top_level_inline_fragments(
+            r#"
+            {
+              ... on Book @include(if: $x) {
+                title
+              }
+              ... on Magazine @include(if: $x) {
+                sku
+              }
+            }
+            "#,
+        );
+
+        insta::assert_snapshot!(
+          format!("{}", PrettySelectionSet((&fetch_selections).into())),
+            @r#"
+              ... on Book @include(if: $x) {
+                title
+              }
+              ... on Magazine @include(if: $x) {
+                sku
+              }
+            "#
+        );
     }
 }

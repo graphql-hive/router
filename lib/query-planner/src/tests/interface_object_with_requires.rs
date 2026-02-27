@@ -115,7 +115,9 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
                   "ValueSetter": {
                     "path": [
                       {
-                        "TypenameEquals": "NodeWithName"
+                        "TypenameEquals": [
+                          "NodeWithName"
+                        ]
                       },
                       {
                         "Key": "__typename"
@@ -165,7 +167,9 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
                   "ValueSetter": {
                     "path": [
                       {
-                        "TypenameEquals": "NodeWithName"
+                        "TypenameEquals": [
+                          "NodeWithName"
+                        ]
                       },
                       {
                         "Key": "__typename"
@@ -252,7 +256,9 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
                 "ValueSetter": {
                   "path": [
                     {
-                      "TypenameEquals": "NodeWithName"
+                      "TypenameEquals": [
+                        "NodeWithName"
+                      ]
                     },
                     {
                       "Key": "__typename"
@@ -301,7 +307,9 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
                   "ValueSetter": {
                     "path": [
                       {
-                        "TypenameEquals": "NodeWithName"
+                        "TypenameEquals": [
+                          "NodeWithName"
+                        ]
                       },
                       {
                         "Key": "__typename"
@@ -419,7 +427,9 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
                   "ValueSetter": {
                     "path": [
                       {
-                        "TypenameEquals": "NodeWithName"
+                        "TypenameEquals": [
+                          "NodeWithName"
+                        ]
                       },
                       {
                         "Key": "__typename"
@@ -611,7 +621,9 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
                   "ValueSetter": {
                     "path": [
                       {
-                        "TypenameEquals": "NodeWithName"
+                        "TypenameEquals": [
+                          "NodeWithName"
+                        ]
                       },
                       {
                         "Key": "__typename"
@@ -661,7 +673,9 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
                   "ValueSetter": {
                     "path": [
                       {
-                        "TypenameEquals": "NodeWithName"
+                        "TypenameEquals": [
+                          "NodeWithName"
+                        ]
                       },
                       {
                         "Key": "__typename"
@@ -760,7 +774,9 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
                 "ValueSetter": {
                   "path": [
                     {
-                      "TypenameEquals": "NodeWithName"
+                      "TypenameEquals": [
+                        "NodeWithName"
+                      ]
                     },
                     {
                       "Key": "__typename"
@@ -779,7 +795,9 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
               },
               "@",
               {
-                "Cast": "User"
+                "TypeCondition": [
+                  "User"
+                ]
               }
             ],
             "node": {
@@ -812,7 +830,9 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
                   "ValueSetter": {
                     "path": [
                       {
-                        "TypenameEquals": "NodeWithName"
+                        "TypenameEquals": [
+                          "NodeWithName"
+                        ]
                       },
                       {
                         "Key": "__typename"

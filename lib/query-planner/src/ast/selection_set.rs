@@ -477,7 +477,7 @@ pub fn find_selection_set_by_path_mut<'a>(
             Segment::List => {
                 continue;
             }
-            Segment::Cast(type_name, condition) => {
+            Segment::TypeCondition(type_names, condition) => {
                 let next_selection_set_option =
                     current_selection_set
                         .items
@@ -485,7 +485,7 @@ pub fn find_selection_set_by_path_mut<'a>(
                         .find_map(|item| match item {
                             SelectionItem::Field(_) => None,
                             SelectionItem::InlineFragment(f) => {
-                                if f.type_condition.eq(type_name)
+                                if type_names.contains(&f.type_condition)
                                     && fragment_condition_equal(condition, f)
                                 {
                                     Some(&mut f.selections)

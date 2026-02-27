@@ -1,10 +1,22 @@
+use std::collections::BTreeSet;
+
 use hive_router_query_planner::planner::plan_nodes::FlattenNodePathSegment;
 
 use crate::{
-    introspection::schema::SchemaMetadata,
+    introspection::schema::{PossibleTypes, SchemaMetadata},
     response::{graphql_error::GraphQLErrorPath, value::Value},
     utils::consts::TYPENAME_FIELD_NAME,
 };
+
+fn entity_satisfies_any_type_condition(
+    possible_types: &PossibleTypes,
+    type_name: &str,
+    type_conditions: &BTreeSet<String>,
+) -> bool {
+    type_conditions
+        .iter()
+        .any(|condition| possible_types.entity_satisfies_type_condition(type_name, condition))
+}
 
 pub fn traverse_and_callback_mut<'a, Callback>(
     current_data: &mut Value<'a>,
@@ -71,18 +83,21 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                 }
             }
         }
-        FlattenNodePathSegment::Cast(type_condition) => {
+        FlattenNodePathSegment::TypeCondition(type_condition) => {
             // If the key is Cast, we expect current_data to be an object or an array
             if let Value::Object(obj) = current_data {
-                let type_name = obj
+                let maybe_type_name = obj
                     .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
                     .ok()
-                    .and_then(|idx| obj[idx].1.as_str())
-                    .unwrap_or(type_condition);
-                if schema_metadata
-                    .possible_types
-                    .entity_satisfies_type_condition(type_name, type_condition)
-                {
+                    .and_then(|idx| obj[idx].1.as_str());
+
+                if maybe_type_name.map_or(true, |type_name| {
+                    entity_satisfies_any_type_condition(
+                        &schema_metadata.possible_types,
+                        type_name,
+                        type_condition,
+                    )
+                }) {
                     let rest_of_path = &remaining_path[1..];
                     traverse_and_callback_mut(
                         current_data,
@@ -114,7 +129,7 @@ pub fn traverse_and_callback_mut<'a, Callback>(
 pub fn traverse_and_callback<'a, Callback>(
     current_data: &'a Value<'a>,
     remaining_path: &'a [FlattenNodePathSegment],
-    schema_metadata: &'a SchemaMetadata,
+    possible_types: &'a PossibleTypes,
     callback: &mut Callback,
 ) where
     Callback: FnMut(&'a Value<'a>),
@@ -135,7 +150,7 @@ pub fn traverse_and_callback<'a, Callback>(
             if let Value::Array(arr) = current_data {
                 let rest_of_path = &remaining_path[1..];
                 for item in arr.iter() {
-                    traverse_and_callback(item, rest_of_path, schema_metadata, callback);
+                    traverse_and_callback(item, rest_of_path, possible_types, callback);
                 }
             }
         }
@@ -144,27 +159,26 @@ pub fn traverse_and_callback<'a, Callback>(
                 if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
                     let (_, next_data) = &map[idx];
                     let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback(next_data, rest_of_path, schema_metadata, callback);
+                    traverse_and_callback(next_data, rest_of_path, possible_types, callback);
                 }
             }
         }
-        FlattenNodePathSegment::Cast(type_condition) => {
+        FlattenNodePathSegment::TypeCondition(type_condition) => {
             if let Value::Object(obj) = current_data {
-                let type_name = obj
+                let maybe_type_name = obj
                     .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
                     .ok()
-                    .and_then(|idx| obj[idx].1.as_str())
-                    .unwrap_or(type_condition);
-                if schema_metadata
-                    .possible_types
-                    .entity_satisfies_type_condition(type_name, type_condition)
-                {
+                    .and_then(|idx| obj[idx].1.as_str());
+
+                if maybe_type_name.map_or(true, |type_name| {
+                    entity_satisfies_any_type_condition(possible_types, type_name, type_condition)
+                }) {
                     let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback(current_data, rest_of_path, schema_metadata, callback);
+                    traverse_and_callback(current_data, rest_of_path, possible_types, callback);
                 }
             } else if let Value::Array(arr) = current_data {
                 for item in arr.iter() {
-                    traverse_and_callback(item, remaining_path, schema_metadata, callback);
+                    traverse_and_callback(item, remaining_path, possible_types, callback);
                 }
             }
         }
@@ -301,5 +315,39 @@ mod tests {
                 GraphQLErrorPathSegment::Index(0),
             ]
         );
+    }
+
+    #[test]
+    fn traverse_matches_multi_type_cast() {
+        let data = Value::Object(vec![("__typename", Value::String("Book".into()))]);
+        let path = vec![FlattenNodePathSegment::TypeCondition(
+            ["Book".to_string(), "User".to_string()]
+                .into_iter()
+                .collect(),
+        )];
+        let mut matched = false;
+
+        super::traverse_and_callback(&data, &path, &Default::default(), &mut |_value| {
+            matched = true;
+        });
+
+        assert!(matched);
+    }
+
+    #[test]
+    fn traverse_rejects_non_matching_multi_type_cast() {
+        let data = Value::Object(vec![("__typename", Value::String("Magazine".into()))]);
+        let path = vec![FlattenNodePathSegment::TypeCondition(
+            ["Book".to_string(), "User".to_string()]
+                .into_iter()
+                .collect(),
+        )];
+        let mut matched = false;
+
+        super::traverse_and_callback(&data, &path, &Default::default(), &mut |_value| {
+            matched = true;
+        });
+
+        assert!(!matched);
     }
 }

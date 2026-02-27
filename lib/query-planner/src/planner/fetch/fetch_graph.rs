@@ -22,7 +22,7 @@ use petgraph::visit::EdgeRef;
 use petgraph::visit::{Bfs, IntoNodeReferences};
 use petgraph::Directed;
 use petgraph::Direction;
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::fmt::{Debug, Display};
 use tracing::{instrument, trace};
 
@@ -764,7 +764,7 @@ fn process_entity_move_edge(
 
         fetch_step.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
             path: vec![
-                FetchNodePathSegment::TypenameEquals(output_type_name.to_string()),
+                FetchNodePathSegment::typename_equals_from_type(output_type_name.to_string()),
                 FetchNodePathSegment::Key("__typename".to_string()),
             ],
             set_value_to: output_type_name.clone(),
@@ -910,7 +910,7 @@ fn process_interface_object_type_move_edge(
     );
     step_for_children.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
         path: vec![
-            FetchNodePathSegment::TypenameEquals(interface_type_name.to_string()),
+            FetchNodePathSegment::typename_equals_from_type(interface_type_name.to_string()),
             FetchNodePathSegment::Key("__typename".to_string()),
         ],
         set_value_to: interface_type_name.clone(),
@@ -1095,12 +1095,14 @@ fn process_selfie_edge(
     } else {
         condition.cloned()
     };
-    let child_response_path = response_path.push(Segment::Cast(
-        target_type_name.clone(),
+    let child_response_path = response_path.push(Segment::TypeCondition(
+        BTreeSet::from([target_type_name.clone()]),
         segment_condition.clone(),
     ));
-    let child_fetch_path =
-        fetch_path.push(Segment::Cast(target_type_name.clone(), segment_condition));
+    let child_fetch_path = fetch_path.push(Segment::TypeCondition(
+        BTreeSet::from([target_type_name.clone()]),
+        segment_condition,
+    ));
 
     process_children_for_fetch_steps(
         graph,
@@ -1159,8 +1161,14 @@ fn process_abstract_edge(
         },
     )?;
 
-    let child_response_path = response_path.push(Segment::Cast(target_type_name.clone(), None));
-    let child_fetch_path = fetch_path.push(Segment::Cast(target_type_name.clone(), None));
+    let child_response_path = response_path.push(Segment::TypeCondition(
+        BTreeSet::from([target_type_name.clone()]),
+        None,
+    ));
+    let child_fetch_path = fetch_path.push(Segment::TypeCondition(
+        BTreeSet::from([target_type_name.clone()]),
+        None,
+    ));
 
     process_children_for_fetch_steps(
         graph,
@@ -1217,7 +1225,7 @@ fn process_plain_field_edge(
         fetch_path.inner.iter().any(|segment| {
             matches!(
                 segment,
-                Segment::Cast(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
+                Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
             )
         })
     } else {
@@ -1412,7 +1420,7 @@ fn process_requires_field_edge(
         );
         step_for_children.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
             path: vec![
-                FetchNodePathSegment::TypenameEquals(head_type_name.to_string()),
+                FetchNodePathSegment::typename_equals_from_type(head_type_name.to_string()),
                 FetchNodePathSegment::Key("__typename".to_string()),
             ],
             set_value_to: head_type_name.clone(),
