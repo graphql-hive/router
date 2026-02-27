@@ -157,7 +157,7 @@ impl SafeSelectionSetMerger {
                         {
                             decision = ConflictsLookupResult::Merged;
 
-                            let next_path = response_path.push(Segment::Cast(
+                            let next_path = response_path.push(Segment::TypeCondition(
                                 BTreeSet::from([source_fragment.type_condition.clone()]),
                                 source_fragment.into(),
                             ));

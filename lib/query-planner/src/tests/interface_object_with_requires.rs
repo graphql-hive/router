@@ -795,7 +795,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
               },
               "@",
               {
-                "Cast": [
+                "TypeCondition": [
                   "User"
                 ]
               }

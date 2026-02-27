@@ -1095,11 +1095,11 @@ fn process_selfie_edge(
     } else {
         condition.cloned()
     };
-    let child_response_path = response_path.push(Segment::Cast(
+    let child_response_path = response_path.push(Segment::TypeCondition(
         BTreeSet::from([target_type_name.clone()]),
         segment_condition.clone(),
     ));
-    let child_fetch_path = fetch_path.push(Segment::Cast(
+    let child_fetch_path = fetch_path.push(Segment::TypeCondition(
         BTreeSet::from([target_type_name.clone()]),
         segment_condition,
     ));
@@ -1161,11 +1161,11 @@ fn process_abstract_edge(
         },
     )?;
 
-    let child_response_path = response_path.push(Segment::Cast(
+    let child_response_path = response_path.push(Segment::TypeCondition(
         BTreeSet::from([target_type_name.clone()]),
         None,
     ));
-    let child_fetch_path = fetch_path.push(Segment::Cast(
+    let child_fetch_path = fetch_path.push(Segment::TypeCondition(
         BTreeSet::from([target_type_name.clone()]),
         None,
     ));
@@ -1225,7 +1225,7 @@ fn process_plain_field_edge(
         fetch_path.inner.iter().any(|segment| {
             matches!(
                 segment,
-                Segment::Cast(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
+                Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
             )
         })
     } else {

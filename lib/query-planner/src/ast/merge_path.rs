@@ -82,14 +82,14 @@ pub enum Segment {
     // We used this to uniquely identify the field in the selection set.
     Field(SelectionIdentifier, u64, Option<Condition>),
     List,
-    Cast(BTreeSet<String>, Option<Condition>),
+    TypeCondition(BTreeSet<String>, Option<Condition>),
 }
 
 impl Display for Segment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::List => write!(f, "@"),
-            Self::Cast(type_names, condition) => {
+            Self::TypeCondition(type_names, condition) => {
                 let joined = type_names.iter().cloned().collect::<Vec<_>>().join("|");
                 if let Some(condition) = condition {
                     write!(f, "|[{}] {}", joined, condition)
@@ -141,7 +141,7 @@ impl MergePath {
 
         let mut result = String::new();
         let mut iter = self.inner.iter();
-        // .filter(|segment| !matches!(segment, Segment::Cast(_, _)));
+        // .filter(|segment| !matches!(segment, Segment::TypeCondition(_, _)));
 
         // We take the first to avoid a leading separator
         if let Some(first_segment) = iter.next() {
@@ -199,7 +199,7 @@ impl MergePath {
         let new_segments = self
             .inner
             .iter()
-            .filter(|segment| !matches!(segment, Segment::Cast(_, _)))
+            .filter(|segment| !matches!(segment, Segment::TypeCondition(_, _)))
             .cloned()
             .collect::<Vec<_>>();
 
@@ -210,7 +210,7 @@ impl MergePath {
 impl Display for MergePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut iter = self.inner.iter();
-        // .filter(|segment| !matches!(segment, Segment::Cast(_, _)));
+        // .filter(|segment| !matches!(segment, Segment::TypeCondition(_, _)));
 
         // We take the first to avoid a leading separator
         if let Some(first_segment) = iter.next() {
@@ -235,7 +235,7 @@ impl From<&MergePath> for Vec<String> {
     fn from(path: &MergePath) -> Self {
         path.inner
             .iter()
-            // .filter(|segment| !matches!(segment, Segment::Cast(_, _)))
+            // .filter(|segment| !matches!(segment, Segment::TypeCondition(_, _)))
             .map(|segment| format!("{}", segment))
             .collect()
     }

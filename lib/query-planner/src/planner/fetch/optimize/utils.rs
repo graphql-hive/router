@@ -18,14 +18,14 @@ use crate::{
     },
 };
 
-pub fn cast_types_from_response_path<'a>(
+pub fn type_condition_types_from_response_path<'a>(
     response_path: &'a MergePath,
 ) -> Option<BTreeSet<&'a str>> {
     let conditioned_types = response_path
         .inner
         .iter()
         .filter_map(|segment| match segment {
-            Segment::Cast(type_names, _) => Some(type_names),
+            Segment::TypeCondition(type_names, _) => Some(type_names),
             _ => None,
         })
         .flat_map(|type_names| type_names.iter().map(|s| s.as_str()).clone())
@@ -53,7 +53,8 @@ fn scope_target_condition(target: &mut FetchStepData<MultiTypeFetchStep>) {
         return;
     };
 
-    let Some(conditioned_types) = cast_types_from_response_path(&target.response_path) else {
+    let Some(conditioned_types) = type_condition_types_from_response_path(&target.response_path)
+    else {
         return;
     };
 
@@ -98,7 +99,7 @@ fn merge_source_condition_into_non_entity_target(
     // Check if the condition is already enforced by the path
     let condition_redundant = matches!(
         source.response_path.last(),
-        Some(Segment::Cast(_, Some(c)) | Segment::Field(_, _, Some(c))) if c == &condition
+        Some(Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c))) if c == &condition
     );
 
     if !condition_redundant {
@@ -125,10 +126,10 @@ fn preserve_or_scope_source_condition_for_entity_target(
     };
 
     // We can scope condition to concrete type branches only in multi-type step.
-    // The response path's cast segments tell us which concrete types are affected.
+    // The response path's type-condition segments tell us which concrete types are affected.
     let conditioned_types =
         if target.is_fetching_multiple_types() || source.is_fetching_multiple_types() {
-            cast_types_from_response_path(&source.response_path)
+            type_condition_types_from_response_path(&source.response_path)
         } else {
             None
         };

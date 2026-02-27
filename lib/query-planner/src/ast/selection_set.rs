@@ -477,7 +477,7 @@ pub fn find_selection_set_by_path_mut<'a>(
             Segment::List => {
                 continue;
             }
-            Segment::Cast(type_names, condition) => {
+            Segment::TypeCondition(type_names, condition) => {
                 let next_selection_set_option =
                     current_selection_set
                         .items

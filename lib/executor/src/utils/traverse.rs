@@ -83,7 +83,7 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                 }
             }
         }
-        FlattenNodePathSegment::Cast(type_condition) => {
+        FlattenNodePathSegment::TypeCondition(type_condition) => {
             // If the key is Cast, we expect current_data to be an object or an array
             if let Value::Object(obj) = current_data {
                 let maybe_type_name = obj
@@ -163,7 +163,7 @@ pub fn traverse_and_callback<'a, Callback>(
                 }
             }
         }
-        FlattenNodePathSegment::Cast(type_condition) => {
+        FlattenNodePathSegment::TypeCondition(type_condition) => {
             if let Value::Object(obj) = current_data {
                 let maybe_type_name = obj
                     .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn traverse_matches_multi_type_cast() {
         let data = Value::Object(vec![("__typename", Value::String("Book".into()))]);
-        let path = vec![FlattenNodePathSegment::Cast(
+        let path = vec![FlattenNodePathSegment::TypeCondition(
             ["Book".to_string(), "User".to_string()]
                 .into_iter()
                 .collect(),
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn traverse_rejects_non_matching_multi_type_cast() {
         let data = Value::Object(vec![("__typename", Value::String("Magazine".into()))]);
-        let path = vec![FlattenNodePathSegment::Cast(
+        let path = vec![FlattenNodePathSegment::TypeCondition(
             ["Book".to_string(), "User".to_string()]
                 .into_iter()
                 .collect(),

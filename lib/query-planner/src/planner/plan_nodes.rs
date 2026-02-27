@@ -164,7 +164,7 @@ pub enum FetchRewrite {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FlattenNodePathSegment {
     Field(String),
-    Cast(BTreeSet<String>),
+    TypeCondition(BTreeSet<String>),
     #[serde(rename = "@")]
     List,
 }
@@ -175,7 +175,7 @@ impl From<&MergePath> for Vec<FetchNodePathSegment> {
             .inner
             .iter()
             .filter_map(|path_segment| match path_segment {
-                Segment::Cast(type_names, _) => {
+                Segment::TypeCondition(type_names, _) => {
                     Some(FetchNodePathSegment::TypenameEquals(type_names.clone()))
                 }
                 Segment::Field(field_name, _args_hash, _) => {
@@ -209,7 +209,7 @@ impl Display for FlattenNodePathSegment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FlattenNodePathSegment::Field(field_name) => write!(f, "{}", field_name),
-            FlattenNodePathSegment::Cast(type_names) => {
+            FlattenNodePathSegment::TypeCondition(type_names) => {
                 write!(
                     f,
                     "|[{}]",
@@ -229,8 +229,8 @@ impl Display for FlattenNodePath {
             write!(f, "{}", segment)?;
             if let Some(peeked) = segments_iter.peek() {
                 match peeked {
-                    FlattenNodePathSegment::Cast(_) => {
-                        // Don't add a dot before Cast
+                    FlattenNodePathSegment::TypeCondition(_) => {
+                        // Don't add a dot before TypeCondition
                     }
                     _ => write!(f, ".")?,
                 }
@@ -246,8 +246,8 @@ impl From<&MergePath> for FlattenNodePath {
             path.inner
                 .iter()
                 .map(|seg| match seg {
-                    Segment::Cast(type_names, _) => {
-                        FlattenNodePathSegment::Cast(type_names.clone())
+                    Segment::TypeCondition(type_names, _) => {
+                        FlattenNodePathSegment::TypeCondition(type_names.clone())
                     }
                     Segment::Field(field_name, _args_hash, _) => {
                         FlattenNodePathSegment::Field(field_name.clone())

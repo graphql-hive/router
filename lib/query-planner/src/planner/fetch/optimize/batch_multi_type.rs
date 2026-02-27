@@ -6,7 +6,7 @@ use tracing::{instrument, trace};
 
 use crate::ast::merge_path::Condition;
 use crate::planner::fetch::fetch_step_data::FetchStepFlags;
-use crate::planner::fetch::optimize::utils::cast_types_from_response_path;
+use crate::planner::fetch::optimize::utils::type_condition_types_from_response_path;
 use crate::{
     ast::merge_path::{MergePath, Segment},
     planner::fetch::{
@@ -18,16 +18,16 @@ use crate::{
 impl FetchGraph<MultiTypeFetchStep> {
     /// Batches sibling entity fetches that only differ by type conditions.
     ///
-    /// - find compatible sibling fetches
-    /// - merge them into fewer multi-type fetches
-    /// - update response_path so Flatten(path) still extracts correct data
+    /// 1. Find compatible sibling fetches
+    /// 2. Merge them into fewer multi-type fetches
+    /// 3. Update response_path so Flatten(path) still extracts correct data
     ///
-    /// We keep type casts when needed for correctness, and drop them only when
-    /// sibling query coverage shows the cast is redundant at that path position.
+    /// We keep type conditions when needed for correctness, and drop them only when
+    /// sibling query coverage shows the type condition is redundant at that path position.
     ///
     /// Example: at `products.@.reviews.@.product`, if the only sibling fragments
     /// used there are `... on Book` and `... on Magazine`, then merging `|[Book]`
-    /// and `|[Magazine]` can drop the cast at that slot.
+    /// and `|[Magazine]` can drop the type condition at that slot.
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn batch_multi_type(&mut self) -> Result<(), FetchGraphError> {
         let root_index = self
@@ -44,11 +44,11 @@ impl FetchGraph<MultiTypeFetchStep> {
                 .graph
                 .neighbors_directed(parent_index, Direction::Outgoing)
                 .collect::<Vec<NodeIndex>>();
-            // For each cast position on sibling paths, collect all requested concrete types.
+            // For each type-condition position on sibling paths, collect all requested concrete types.
             // Example: siblings request |[Book] and |[Magazine] at the same position,
             // so coverage for that position is {Book, Magazine}.
-            let requested_cast_types_by_position =
-                self.requested_cast_types_by_position(&siblings_indices)?;
+            let requested_type_condition_types_by_position =
+                self.requested_type_condition_types_by_position(&siblings_indices)?;
 
             for (i, sibling_index) in siblings_indices.iter().enumerate() {
                 queue.push_back(*sibling_index);
@@ -135,12 +135,12 @@ impl FetchGraph<MultiTypeFetchStep> {
                 merged.response_path = merge_batched_response_paths(
                     &original_me_path,
                     &original_other_path,
-                    &requested_cast_types_by_position,
+                    &requested_type_condition_types_by_position,
                 );
                 if merged.is_fetching_multiple_types() {
                     if let Some(condition) = merged.condition.clone() {
                         if let Some(conditioned_types) =
-                            cast_types_from_response_path(&merged.response_path)
+                            type_condition_types_from_response_path(&merged.response_path)
                         {
                             // Multi-type merged step: keep condition on matching
                             // type branches instead of gating the whole fetch step.
@@ -162,11 +162,11 @@ impl FetchGraph<MultiTypeFetchStep> {
         Ok(())
     }
 
-    fn requested_cast_types_by_position(
+    fn requested_type_condition_types_by_position(
         &self,
         siblings_indices: &[NodeIndex],
     ) -> Result<HashMap<(u64, usize), BTreeSet<String>>, FetchGraphError> {
-        // Key: (path hash without casts, cast position).
+        // Key: (path hash without type conditions, type-condition position).
         // Value: all concrete types requested by siblings at that position.
         let mut result = HashMap::<(u64, usize), BTreeSet<String>>::new();
 
@@ -179,17 +179,18 @@ impl FetchGraph<MultiTypeFetchStep> {
             let mut non_cast_position = 0usize;
 
             loop {
-                let mut cast_members = BTreeSet::<String>::new();
-                while let Some(Segment::Cast(type_names, _)) = path.inner.get(segment_idx) {
-                    cast_members.extend(type_names.iter().cloned());
+                let mut type_condition_members = BTreeSet::<String>::new();
+                while let Some(Segment::TypeCondition(type_names, _)) = path.inner.get(segment_idx)
+                {
+                    type_condition_members.extend(type_names.iter().cloned());
                     segment_idx += 1;
                 }
 
-                if !cast_members.is_empty() {
+                if !type_condition_members.is_empty() {
                     result
                         .entry((normalized_path_key, non_cast_position))
                         .or_default()
-                        .extend(cast_members);
+                        .extend(type_condition_members);
                 }
 
                 match path.inner.get(segment_idx) {
@@ -209,72 +210,84 @@ impl FetchGraph<MultiTypeFetchStep> {
 fn merge_batched_response_paths(
     me: &MergePath,
     other: &MergePath,
-    requested_cast_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
+    requested_type_condition_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
 ) -> MergePath {
-    // We merge only the cast information and keep the rest of the path identical.
-    // If any non-cast structure differs, we bail out and keep `me` unchanged.
-    // Consume consecutive Cast segments at the current cursor and return:
-    // - whether we consumed at least one cast,
-    // - the union of cast member type names.
-    // The cursor is advanced to the first non-cast segment.
-    fn consume_casts<'a>(path: &'a MergePath, idx: &mut usize) -> (bool, BTreeSet<&'a str>) {
-        let mut had_cast = false;
-        let mut cast_members = BTreeSet::new();
+    // We merge only type-condition information and keep the rest of the path identical.
+    // If any non-type-condition structure differs, we bail out and keep `me` unchanged.
+    // Consume consecutive TypeCondition segments at the current cursor and return:
+    // - whether we consumed at least one type condition,
+    // - the union of type-condition member names.
+    // The cursor is advanced to the first non-type-condition segment.
+    fn consume_type_conditions<'a>(
+        path: &'a MergePath,
+        idx: &mut usize,
+    ) -> (bool, BTreeSet<&'a str>) {
+        let mut had_type_condition = false;
+        let mut type_condition_members = BTreeSet::new();
 
-        while let Some(Segment::Cast(type_names, _)) = path.inner.get(*idx) {
-            had_cast = true;
-            cast_members.extend(type_names.iter().map(|s| s.as_str()));
+        while let Some(Segment::TypeCondition(type_names, _)) = path.inner.get(*idx) {
+            had_type_condition = true;
+            type_condition_members.extend(type_names.iter().map(|s| s.as_str()));
             *idx += 1;
         }
 
-        (had_cast, cast_members)
+        (had_type_condition, type_condition_members)
     }
 
-    fn merged_cast_segment(
+    fn merged_type_condition_segment(
         normalized_path_key: u64,
         non_cast_position: usize,
-        cast_changed: bool,
-        me_had_cast: bool,
-        other_had_cast: bool,
-        merged_cast_members: BTreeSet<&str>,
-        requested_cast_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
+        type_condition_changed: bool,
+        me_had_type_condition: bool,
+        other_had_type_condition: bool,
+        merged_type_condition_members: BTreeSet<&str>,
+        requested_type_condition_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
     ) -> Option<Segment> {
-        // We keep cast only when both sides were casted at this position.
-        if !me_had_cast || !other_had_cast || merged_cast_members.is_empty() {
+        // We keep a type condition only when both sides had one at this position.
+        if !me_had_type_condition
+            || !other_had_type_condition
+            || merged_type_condition_members.is_empty()
+        {
             return None;
         }
 
-        // If both sides had the same cast already (for example |[Agency]),
+        // If both sides had the same type condition already (for example |[Agency]),
         // keep it to preserve type-conditioned extraction semantics.
         // Example: dropping |[Agency] can send Self/Group values to agency fetches.
-        if !cast_changed {
-            return Some(Segment::Cast(
-                merged_cast_members.iter().map(|s| s.to_string()).collect(),
+        if !type_condition_changed {
+            return Some(Segment::TypeCondition(
+                merged_type_condition_members
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
                 None,
             ));
         }
 
-        // Strip cast when all queried type branches at this exact path position
-        // are already covered by the merged cast members.
+        // Strip type condition when all queried type branches at this exact path
+        // position are already covered by merged type-condition members.
         // Example: merged {Book, Magazine} and requested {Book, Magazine} -> strip.
-        let requested_types =
-            requested_cast_types_by_position.get(&(normalized_path_key, non_cast_position));
+        let requested_types = requested_type_condition_types_by_position
+            .get(&(normalized_path_key, non_cast_position));
         if requested_types.is_some_and(|requested_types| {
-            requested_types.len() == merged_cast_members.len()
-                && merged_cast_members
+            requested_types.len() == merged_type_condition_members.len()
+                && merged_type_condition_members
                     .iter()
                     .all(|member| requested_types.contains(*member))
         }) {
             return None;
         }
 
-        Some(Segment::Cast(
-            merged_cast_members.iter().map(|s| s.to_string()).collect(),
+        Some(Segment::TypeCondition(
+            merged_type_condition_members
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             None,
         ))
     }
 
-    // If non-cast parts differ, do not merge.
+    // If non-type-condition parts differ, do not merge.
     // Example: a.@.b vs a.c.b.
     if me.without_type_castings() != other.without_type_castings() {
         return me.clone();
@@ -289,29 +302,31 @@ fn merge_batched_response_paths(
     let mut non_cast_position = 0usize;
 
     loop {
-        // Read all cast segments at the current position from both paths.
-        let (me_had_cast, me_cast_members) = consume_casts(me, &mut me_idx);
-        let (other_had_cast, mut other_cast_members) = consume_casts(other, &mut other_idx);
-        let cast_changed = me_cast_members != other_cast_members;
+        // Read all type-condition segments at the current position from both paths.
+        let (me_had_type_condition, me_type_condition_members) =
+            consume_type_conditions(me, &mut me_idx);
+        let (other_had_type_condition, mut other_type_condition_members) =
+            consume_type_conditions(other, &mut other_idx);
+        let type_condition_changed = me_type_condition_members != other_type_condition_members;
 
-        // Combine cast type names from both sides (for example Book + User).
-        let mut merged_cast_members = me_cast_members;
-        merged_cast_members.append(&mut other_cast_members);
+        // Combine type-condition type names from both sides (for example Book + User).
+        let mut merged_type_condition_members = me_type_condition_members;
+        merged_type_condition_members.append(&mut other_type_condition_members);
 
-        // Keep or remove cast here based on merged types and sibling usage.
-        if let Some(merged_cast_segment) = merged_cast_segment(
+        // Keep or remove type condition here based on merged types and sibling usage.
+        if let Some(merged_type_condition_segment) = merged_type_condition_segment(
             normalized_path_key,
             non_cast_position,
-            cast_changed,
-            me_had_cast,
-            other_had_cast,
-            merged_cast_members,
-            requested_cast_types_by_position,
+            type_condition_changed,
+            me_had_type_condition,
+            other_had_type_condition,
+            merged_type_condition_members,
+            requested_type_condition_types_by_position,
         ) {
-            merged.push(merged_cast_segment);
+            merged.push(merged_type_condition_segment);
         }
 
-        // Non-cast segments must match.
+        // Non-type-condition segments must match.
         match (me.inner.get(me_idx), other.inner.get(other_idx)) {
             (Some(me_segment), Some(other_segment)) => {
                 if me_segment != other_segment {
@@ -358,8 +373,8 @@ fn normalized_path_hash(path: &MergePath) -> u64 {
             Segment::List => {
                 "List".hash(&mut hasher);
             }
-            // Ignore casts when building the normalized path hash.
-            Segment::Cast(_, _) => {}
+            // Ignore type conditions when building the normalized path hash.
+            Segment::TypeCondition(_, _) => {}
         }
     }
 
@@ -383,7 +398,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        // Paths must match after removing casts.
+        // Paths must match after removing type conditions.
         if self.response_path.without_type_castings() != other.response_path.without_type_castings()
         {
             return false;
@@ -394,7 +409,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        // Cast segments must be in the same positions.
+        // Type-condition segments must be in the same positions.
         // Example: a.@|[Book].b and a.@.b are not compatible.
         if self
             .response_path
@@ -402,13 +417,14 @@ impl FetchStepData<MultiTypeFetchStep> {
             .iter()
             .zip(other.response_path.inner.iter())
             .any(|(left, right)| {
-                matches!(left, Segment::Cast(_, _)) != matches!(right, Segment::Cast(_, _))
+                matches!(left, Segment::TypeCondition(_, _))
+                    != matches!(right, Segment::TypeCondition(_, _))
             })
         {
             return false;
         }
 
-        // Cast conditions must also match at each position.
+        // Type-condition conditions must also match at each position.
         // Example: |[Book] @skip(if: $x) vs |[Book] with no condition.
         if self
             .response_path
@@ -416,9 +432,10 @@ impl FetchStepData<MultiTypeFetchStep> {
             .iter()
             .zip(other.response_path.inner.iter())
             .any(|(left, right)| match (left, right) {
-                (Segment::Cast(_, left_condition), Segment::Cast(_, right_condition)) => {
-                    left_condition != right_condition
-                }
+                (
+                    Segment::TypeCondition(_, left_condition),
+                    Segment::TypeCondition(_, right_condition),
+                ) => left_condition != right_condition,
                 _ => false,
             })
         {
@@ -456,7 +473,7 @@ mod tests {
         MergePath::new(vec![
             Segment::Field("products".to_string(), 0, None),
             Segment::List,
-            Segment::Cast(BTreeSet::from([type_name.to_string()]), None),
+            Segment::TypeCondition(BTreeSet::from([type_name.to_string()]), None),
             Segment::Field("reviews".to_string(), 0, None),
             Segment::List,
             Segment::Field("product".to_string(), 0, None),
@@ -468,7 +485,7 @@ mod tests {
         let me = path("Book");
         let other = path("User");
         let normalized_path_key = normalized_path_hash(&me);
-        let requested_cast_types_by_position = HashMap::from([(
+        let requested_type_condition_types_by_position = HashMap::from([(
             (normalized_path_key, 2usize),
             BTreeSet::from_iter([
                 "Book".to_string(),
@@ -477,7 +494,8 @@ mod tests {
             ]),
         )]);
 
-        let merged = merge_batched_response_paths(&me, &other, &requested_cast_types_by_position);
+        let merged =
+            merge_batched_response_paths(&me, &other, &requested_type_condition_types_by_position);
 
         assert_eq!(
             format!("{}", FlattenNodePath::from(merged)),
@@ -486,16 +504,17 @@ mod tests {
     }
 
     #[test]
-    fn strips_type_list_when_casts_are_exhaustive() {
+    fn strips_type_list_when_type_conditions_are_exhaustive() {
         let me = path("Book");
         let other = path("User");
         let normalized_path_key = normalized_path_hash(&me);
-        let requested_cast_types_by_position = HashMap::from([(
+        let requested_type_condition_types_by_position = HashMap::from([(
             (normalized_path_key, 2usize),
             BTreeSet::from_iter(["Book".to_string(), "User".to_string()]),
         )]);
 
-        let merged = merge_batched_response_paths(&me, &other, &requested_cast_types_by_position);
+        let merged =
+            merge_batched_response_paths(&me, &other, &requested_type_condition_types_by_position);
 
         assert_eq!(
             format!("{}", FlattenNodePath::from(merged)),

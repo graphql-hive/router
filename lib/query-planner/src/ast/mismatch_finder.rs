@@ -133,7 +133,7 @@ fn handle_selection_set<'field, 'schema>(
                         .definitions
                         .get(&fragment.type_condition)
                         .unwrap();
-                    let fragment_enter_path = path.push(Segment::Cast(
+                    let fragment_enter_path = path.push(Segment::TypeCondition(
                         BTreeSet::from([fragment.type_condition.clone()]),
                         fragment.into(),
                     ));
