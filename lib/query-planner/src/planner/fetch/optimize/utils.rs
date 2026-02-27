@@ -78,8 +78,19 @@ fn merge_source_condition_into_non_entity_target(
         return Ok(false);
     }
 
-    // The source fetch step is an entity call, that has both input and output.
-    // We can safely merge them into source output, as target is a regular query.
+    // The source fetch step is an entity call, so it has both input and output.
+    // The target fetch step is a regular (non-entity) query fetch.
+    //
+    // We can safely migrate source.input into source.output before merging:
+    //
+    // Input             -> Output
+    // { id __typename } -> { price }
+    //
+    // becomes
+    // { products { ... on Product @skip(if: $bool) { __typename id price } } }
+    //
+    // We do this only for non-entity target merges. Entity-to-entity merges use
+    // different path/type rules and are handled in a separate branch.
     source
         .output
         .migrate_from_another(&source.input, &MergePath::default())?;
