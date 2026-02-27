@@ -11,7 +11,8 @@ use ntex::{
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
 use std::{
-    any::Any, marker::PhantomData, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration,
+    any::Any, future::Future, marker::PhantomData, net::SocketAddr, path::PathBuf, sync::Arc,
+    time::Duration,
 };
 use tempfile::{NamedTempFile, TempPath};
 use tokio::{
@@ -726,9 +727,9 @@ impl TestRouter<Started> {
 }
 
 pub trait ClientResponseExt {
-    async fn string_body(&self) -> String;
-    async fn json_body(&self) -> sonic_rs::Value;
-    async fn json_body_string_pretty(&self) -> String;
+    fn string_body(&self) -> impl Future<Output = String>;
+    fn json_body(&self) -> impl Future<Output = sonic_rs::Value>;
+    fn json_body_string_pretty(&self) -> impl Future<Output = String>;
 }
 
 impl ClientResponseExt for ClientResponse {
