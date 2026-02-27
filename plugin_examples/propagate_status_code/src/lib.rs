@@ -91,11 +91,9 @@ impl RouterPlugin for PropagateStatusCodePlugin {
 mod tests {
     use e2e::{
         mockito,
-        testkit::{
-            init_graphql_request, init_router_from_config_file_with_plugins, wait_for_readiness,
-        },
+        testkit::{EnvVarsGuard, TestRouterBuilder},
     };
-    use hive_router::{ntex, PluginRegistry};
+    use hive_router::ntex;
 
     #[ntex::test]
     async fn propagates_highest_status_code() {
@@ -112,28 +110,34 @@ mod tests {
             .with_body(r#"{"data": {"topProducts": [{"upc": "a"}]}}"#)
             .create_async()
             .await;
-        std::env::set_var(
-            "ACCOUNTS_URL_OVERRIDE",
-            format!("http://{}/accounts", subgraphs_server.host_with_port()),
-        );
-        std::env::set_var(
-            "PRODUCTS_URL_OVERRIDE",
-            format!("http://{}/products", subgraphs_server.host_with_port()),
-        );
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/propagate_status_code/router.config.yaml",
-            PluginRegistry::new().register::<super::PropagateStatusCodePlugin>(),
-        )
-        .await
-        .expect("Router should initialize successfully");
-        wait_for_readiness(&app.app).await;
 
-        let req = init_graphql_request("{ users { id } topProducts { upc } }", None);
-        let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 207);
+        let _env_guard = EnvVarsGuard::new()
+            .set(
+                "ACCOUNTS_URL_OVERRIDE",
+                &format!("http://{}/accounts", subgraphs_server.host_with_port()),
+            )
+            .set(
+                "PRODUCTS_URL_OVERRIDE",
+                &format!("http://{}/products", subgraphs_server.host_with_port()),
+            )
+            .apply()
+            .await;
+
+        let router = TestRouterBuilder::new()
+            .file_config("../plugin_examples/propagate_status_code/router.config.yaml")
+            .register_plugin::<super::PropagateStatusCodePlugin>()
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { id } topProducts { upc } }", None, None)
+            .await;
+        assert_eq!(res.status().as_u16(), 207);
         accounts_mock_207.assert_async().await;
         products_mock_206.assert_async().await;
     }
+
     #[ntex::test]
     async fn ignores_unlisted_status_codes() {
         let mut subgraphs_server = mockito::Server::new_async().await;
@@ -149,24 +153,30 @@ mod tests {
             .with_body(r#"{"data": {"topProducts": [{"upc": "a"}]}}"#)
             .create_async()
             .await;
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/propagate_status_code/router.config.yaml",
-            PluginRegistry::new().register::<super::PropagateStatusCodePlugin>(),
-        )
-        .await
-        .expect("Router should initialize successfully");
-        std::env::set_var(
-            "ACCOUNTS_URL_OVERRIDE",
-            format!("http://{}/accounts", subgraphs_server.host_with_port()),
-        );
-        std::env::set_var(
-            "PRODUCTS_URL_OVERRIDE",
-            format!("http://{}/products", subgraphs_server.host_with_port()),
-        );
-        wait_for_readiness(&app.app).await;
-        let req = init_graphql_request("{ users { id } topProducts { upc } }", None);
-        let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
-        assert_eq!(resp.status().as_u16(), 206);
+
+        let _env_guard = EnvVarsGuard::new()
+            .set(
+                "ACCOUNTS_URL_OVERRIDE",
+                &format!("http://{}/accounts", subgraphs_server.host_with_port()),
+            )
+            .set(
+                "PRODUCTS_URL_OVERRIDE",
+                &format!("http://{}/products", subgraphs_server.host_with_port()),
+            )
+            .apply()
+            .await;
+
+        let router = TestRouterBuilder::new()
+            .file_config("../plugin_examples/propagate_status_code/router.config.yaml")
+            .register_plugin::<super::PropagateStatusCodePlugin>()
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { id } topProducts { upc } }", None, None)
+            .await;
+        assert_eq!(res.status().as_u16(), 206);
         accounts_mock_206.assert_async().await;
         products_mock_208.assert_async().await;
     }

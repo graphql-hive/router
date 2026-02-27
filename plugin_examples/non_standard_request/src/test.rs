@@ -1,37 +1,35 @@
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{
-        init_router_from_config_file_with_plugins, wait_for_readiness, SubgraphsServer,
-    };
-    use hive_router::{
-        http::Method,
-        ntex::{self, http::test::TestRequest},
-        PluginRegistry,
-    };
+    use e2e::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use hive_router::ntex;
 
     #[ntex::test]
     async fn accepts_non_standard_request_types() {
-        let subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/non_standard_request/router.config.yaml",
-            PluginRegistry::new().register::<crate::plugin::NonStandardRequestPlugin>(),
-        )
-        .await
-        .expect("Router should initialize successfully");
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-        let req = TestRequest::with_uri("/graphql")
-            .method(Method::POST)
-            .set_payload(r#"{"query":"{ me { name } }"}"#)
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("../plugin_examples/non_standard_request/router.config.yaml")
+            .register_plugin::<crate::plugin::NonStandardRequestPlugin>()
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .serv()
+            .post(router.graphql_path())
             .header("content-type", "text/plain;charset=UTF-8")
-            .finish();
-
-        let resp = ntex::web::test::call_service(&app.app, req).await;
-        let body = ntex::web::test::read_body(resp).await;
-        assert_eq!(body, r#"{"data":{"me":{"name":"Uri Goldshtein"}}}"#);
-        subgraphs
-            .get_subgraph_requests_log("accounts")
+            .send_body(r#"{"query":"{ me { name } }"}"#)
             .await
+            .unwrap();
+
+        assert_eq!(
+            res.string_body().await,
+            r#"{"data":{"me":{"name":"Uri Goldshtein"}}}"#
+        );
+
+        subgraphs
+            .get_requests_log("accounts")
             .expect("Should be able to get subgraph requests log");
     }
 }

@@ -167,27 +167,21 @@ impl RouterPlugin for MultipartPlugin {
 
 #[cfg(test)]
 mod tests {
+    use e2e::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
     use futures_util::StreamExt;
-    use hive_router::ntex::web::test;
-    use hive_router::sonic_rs::JsonValueTrait;
-    use hive_router::{ntex, sonic_rs, PluginRegistry};
-
-    use e2e::testkit::{
-        init_router_from_config_file_with_plugins, wait_for_readiness, SubgraphsServer,
-    };
+    use hive_router::{ntex, sonic_rs::JsonValueTrait};
 
     #[ntex::test]
     async fn forward_files() {
-        let subgraphs_server = SubgraphsServer::start().await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/multipart/router.config.yaml",
-            PluginRegistry::new().register::<super::MultipartPlugin>(),
-        )
-        .await
-        .expect("Router should initialize successfully");
-        wait_for_readiness(&app.app).await;
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("../plugin_examples/multipart/router.config.yaml")
+            .register_plugin::<super::MultipartPlugin>()
+            .build()
+            .start()
+            .await;
 
         let form = reqwest::multipart::Form::new()
             .text("operations", r#"{"query":"mutation ($file: Upload) { upload(file: $file) }","variables":{"file":null}}"#)
@@ -210,20 +204,20 @@ mod tests {
             form_bytes.extend_from_slice(&chunk);
         }
 
-        let req = test::TestRequest::post()
-            .uri("/graphql")
+        let res = router
+            .serv()
+            .post(router.graphql_path())
             .header(
                 "content-type",
                 format!("multipart/form-data; boundary={}", boundary),
             )
-            .set_payload(form_bytes);
+            .send_body(form_bytes)
+            .await
+            .unwrap();
 
-        let resp = test::call_service(&app.app, req.to_request()).await;
-
-        let body = test::read_body(resp).await;
-        let body_str = String::from_utf8_lossy(&body);
-        let body_json = sonic_rs::from_str::<sonic_rs::Value>(&body_str).unwrap();
-        let upload_file_path = &body_json["data"]["upload"].as_str().unwrap();
+        let body_str = res.string_body().await;
+        let body_json = hive_router::sonic_rs::from_str::<hive_router::sonic_rs::Value>(&body_str).unwrap();
+        let upload_file_path = body_json["data"]["upload"].as_str().unwrap();
         assert!(
             upload_file_path.contains("test.txt"),
             "Response should contain the filename"
@@ -234,9 +228,8 @@ mod tests {
             "File content should match the uploaded content"
         );
         assert_eq!(
-            subgraphs_server
-                .get_subgraph_requests_log("products")
-                .await
+            subgraphs
+                .get_requests_log("products")
                 .unwrap()
                 .len(),
             1,
