@@ -45,3 +45,15 @@ Fix missing elements in the introspection;
   }
 }
 ```
+
+- Add missing `specifiedByURL` field in introspection results for custom scalar types. This field provides a URL that specifies the behavior of a custom scalar type. The absence of this field could lead to clients not being able to understand the semantics of custom scalar types, which could result in incorrect handling of values of those types.
+
+```graphql
+{
+  __type(name: "SomeCustomScalar") {
+    name
+    kind
+    specifiedByURL # This field was missing, causing clients to not be able to understand the semantics of custom scalar types
+  }
+}
+```
