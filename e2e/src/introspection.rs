@@ -267,7 +267,7 @@ mod introspection_e2e_tests {
         let req = init_graphql_request(
             r#"
             query IncludeOneOfInInputValues {
-                TestInput: __type(name: "MyScalar") {
+                MyScalar: __type(name: "MyScalar") {
                     specifiedByURL
                 }
             }
@@ -284,7 +284,7 @@ mod introspection_e2e_tests {
         insta::assert_snapshot!(to_string_pretty(&json_body).expect("Failed to serialize JSON for snapshot"), @r#"
         {
           "data": {
-            "TestInput": {
+            "MyScalar": {
               "specifiedByURL": "https://example.com/my-scalar-spec"
             }
           }
