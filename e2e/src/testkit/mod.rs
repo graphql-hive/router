@@ -273,10 +273,11 @@ async fn record_requests(
     let record = RequestLike {
         path,
         headers: header_map,
-        body: body_bytes
-            .is_empty()
-            .then(|| None)
-            .unwrap_or(Some(body_bytes.clone())),
+        body: if body_bytes.is_empty() {
+            None
+        } else {
+            Some(body_bytes.clone())
+        },
     };
     state.request_log.entry(subgraph).or_default().push(record);
 
