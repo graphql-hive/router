@@ -215,8 +215,7 @@ mod tests {
             .await
             .unwrap();
 
-        let body_str = res.string_body().await;
-        let body_json = hive_router::sonic_rs::from_str::<hive_router::sonic_rs::Value>(&body_str).unwrap();
+        let body_json = res.json_body().await;
         let upload_file_path = body_json["data"]["upload"].as_str().unwrap();
         assert!(
             upload_file_path.contains("test.txt"),
@@ -228,10 +227,7 @@ mod tests {
             "File content should match the uploaded content"
         );
         assert_eq!(
-            subgraphs
-                .get_requests_log("products")
-                .unwrap()
-                .len(),
+            subgraphs.get_requests_log("products").unwrap().len(),
             1,
             "Expected 1 request to products subgraph"
         );

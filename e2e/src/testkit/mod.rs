@@ -68,7 +68,7 @@ pub fn supergraph_temp_file_with_subgraphs(
     let original =
         std::fs::read_to_string(supergraph_file).expect("failed to read supergraph file");
     let subgraphs_addr = subgraphs.into();
-    let with_addr = supergraph_with_subgraphs(original, subgraphs_addr.clone());
+    let with_addr = supergraph_with_subgraphs(original, subgraphs_addr);
 
     let temp_file =
         NamedTempFile::with_suffix(".graphql").expect("failed to create temp supergraph file");
@@ -104,6 +104,12 @@ pub struct EnvVarsGuard {
     pending: Vec<(String, String)>,
     vars: Vec<(String, Option<String>)>,
     permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+impl Default for EnvVarsGuard {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EnvVarsGuard {
