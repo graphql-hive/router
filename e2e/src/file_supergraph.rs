@@ -1,13 +1,10 @@
 #[cfg(test)]
 mod file_supergraph_e2e_tests {
-    use ntex::{time, web::test};
-    use sonic_rs::{from_slice, JsonContainerTrait, JsonValueTrait, Value};
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
     use std::{fs, time::Duration};
     use tempfile::NamedTempFile;
 
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness,
-    };
+    use crate::testkit::{ClientResponseExt, TestRouterBuilder};
 
     #[ntex::test]
     async fn should_load_supergraph_from_file() {
@@ -21,25 +18,25 @@ mod file_supergraph_e2e_tests {
         let first_supergraph = include_str!("../supergraph.graphql");
         fs::write(&supergraph_file_path, first_supergraph).expect("failed to write supergraph");
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-                source: file
-                path: {supergraph_file_path}
-          "#,
-        ))
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: {supergraph_file_path}
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        let resp = test::call_service(
-            &app.app,
-            init_graphql_request("{ __schema { types { name } } }", None).to_request(),
-        )
-        .await;
+        let res = router
+            .send_graphql_request("{ __schema { types { name } } }", None, None)
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let json_body: Value = from_slice(&test::read_body(resp).await).unwrap();
+        let json_body = res.json_body().await;
         let types_arr = json_body
             .get("data")
             .unwrap()
@@ -64,26 +61,26 @@ mod file_supergraph_e2e_tests {
         fs::write(&supergraph_file_path, "type Query { f: String }")
             .expect("failed to write supergraph");
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-                source: file
-                path: {supergraph_file_path}
-                poll_interval: 100ms
-          "#,
-        ))
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
+        let router = TestRouterBuilder::new()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: {supergraph_file_path}
+                    poll_interval: 100ms
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        let resp = test::call_service(
-            &app.app,
-            init_graphql_request("{ __schema { types { name } } }", None).to_request(),
-        )
-        .await;
+        let res = router
+            .send_graphql_request("{ __schema { types { name } } }", None, None)
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let json_body: Value = from_slice(&test::read_body(resp).await).unwrap();
+        let json_body = res.json_body().await;
         let types_arr: Vec<String> = json_body
             .get("data")
             .unwrap()
@@ -127,14 +124,13 @@ mod file_supergraph_e2e_tests {
         let mut attempts = 0;
         let max_attempts = 10; // 10 * 50ms = 500 ms max wait
         loop {
-            let resp = test::call_service(
-                &app.app,
-                init_graphql_request("{ __schema { types { name } } }", None).to_request(),
-            )
-            .await;
+            let res = router
+                .send_graphql_request("{ __schema { types { name } } }", None, None)
+                .await;
 
-            if resp.status().is_success() {
-                if String::from_utf8_lossy(&test::read_body(resp).await).contains("NewType") {
+            if res.status().is_success() {
+                let body = res.body().await.unwrap();
+                if String::from_utf8_lossy(&body).contains("NewType") {
                     break;
                 }
             }
@@ -144,18 +140,16 @@ mod file_supergraph_e2e_tests {
                 panic!("Supergraph did not reload within timeout");
             }
 
-            time::sleep(Duration::from_millis(interval_ms)).await;
+            tokio::time::sleep(Duration::from_millis(interval_ms)).await;
         }
 
-        let resp = test::call_service(
-            &app.app,
-            init_graphql_request("{ __schema { types { name } } }", None).to_request(),
-        )
-        .await;
+        let res = router
+            .send_graphql_request("{ __schema { types { name } } }", None, None)
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        assert!(res.status().is_success(), "Expected 200 OK");
 
-        let json_body: Value = from_slice(&test::read_body(resp).await).unwrap();
+        let json_body = res.json_body().await;
         let types_arr: Vec<String> = json_body
             .get("data")
             .unwrap()

@@ -84,6 +84,7 @@ combine = "4.6.6"
 strum = { version = "0.28.0", features = ["derive"] }
 mockito = "1.7.0"
 futures-util = "0.3.31"
+axum = "0.8.4"
 
 # Telemetry
 opentelemetry = "0.31.0"

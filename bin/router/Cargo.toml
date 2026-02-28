@@ -18,6 +18,7 @@ path = "src/main.rs"
 
 [features]
 noop_otlp_exporter = ["hive-router-internal/noop_otlp_exporter"]
+testing = []
 
 [dependencies]
 hive-router-query-planner = { path = "../../lib/query-planner", version = "2.2.1" }

@@ -45,33 +45,34 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
 
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{
-        init_graphql_request, init_router_from_config_file_with_plugins, wait_for_readiness,
-        SubgraphsServer,
-    };
-    use hive_router::{ntex, PluginRegistry};
-    use ntex::web::test;
+    use e2e::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
+    use hive_router::ntex;
 
     // Tests on_subgraph_execute's override behavior
     #[ntex::test]
     async fn caches_subgraph_responses() {
-        let subgraphs = SubgraphsServer::start().await;
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/subgraph_response_cache/router.config.yaml",
-            PluginRegistry::new().register::<super::SubgraphResponseCachePlugin>(),
-        )
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
-        let req = init_graphql_request("{ users { id } }", None);
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp.status().is_success());
-        let req = init_graphql_request("{ users { id } }", None);
-        let resp2 = test::call_service(&app.app, req.to_request()).await;
-        assert!(resp2.status().is_success());
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("../plugin_examples/subgraph_response_cache/router.config.yaml")
+            .register_plugin::<super::SubgraphResponseCachePlugin>()
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert!(res.status().is_success());
+
+        let res2 = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert!(res2.status().is_success());
+
         let subgraph_requests = subgraphs
-            .get_subgraph_requests_log("accounts")
-            .await
+            .get_requests_log("accounts")
             .expect("failed to get subgraph requests log");
         assert_eq!(subgraph_requests.len(), 1);
     }

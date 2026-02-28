@@ -157,40 +157,31 @@ impl ValidationRule for RootFieldLimitRule {
 
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{
-        init_router_from_config_file_with_plugins, wait_for_readiness, SubgraphsServer,
-    };
-    use hive_router::{
-        ntex,
-        sonic_rs::{self, JsonValueTrait},
-        PluginRegistry,
-    };
-    use ntex::web::test;
+    use e2e::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use hive_router::{ntex, sonic_rs::JsonValueTrait};
+
     #[ntex::test]
     async fn rejects_query_with_too_many_root_fields() {
-        SubgraphsServer::start().await;
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/root_field_limit/router.config.yaml",
-            PluginRegistry::new().register::<super::RootFieldLimitPlugin>(),
-        )
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
-        let resp = test::call_service(
-            &app.app,
-            test::TestRequest::post()
-                .uri("/graphql")
-                .set_payload(
-                    r#"{"query":"query TooManyRootFields { users { id } topProducts { upc } }"}"#,
-                )
-                .header("content-type", "application/json")
-                .to_request(),
-        )
-        .await;
-        let json_body: sonic_rs::Value =
-            sonic_rs::from_slice(&test::read_body(resp).await).unwrap();
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-        let error_msg = json_body["errors"][0]["message"].as_str().unwrap();
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("../plugin_examples/root_field_limit/router.config.yaml")
+            .register_plugin::<super::RootFieldLimitPlugin>()
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                "query TooManyRootFields { users { id } topProducts { upc } }",
+                None,
+                None,
+            )
+            .await;
+
+        let body = res.json_body().await;
+        let error_msg = body["errors"][0]["message"].as_str().unwrap();
         assert!(
             error_msg.contains("Query has too many root fields"),
             "Unexpected error message: {}",

@@ -1,17 +1,14 @@
 #[cfg(test)]
 mod supergraph_e2e_tests {
-    use std::{
-        sync::Arc,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
 
+    use hive_router::invoke_shutdown_hooks;
     use mockito::Mock;
-    use ntex::{time, web::test};
-    use sonic_rs::{from_slice, to_string_pretty, JsonValueTrait, Value};
+    use ntex::time;
+    use sonic_rs::JsonValueTrait;
 
     use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness, EnvVarGuard,
-        SubgraphsServer,
+        ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
     };
 
     #[ntex::test]
@@ -34,46 +31,58 @@ mod supergraph_e2e_tests {
             .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
             .create();
 
-        let test_app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-              source: hive
-              endpoint: http://{host}/supergraph
-              key: dummy_key
-              poll_interval: 500ms
-        "#,
-        ))
-        .await
-        .expect("failed to start router");
+        let router = TestRouterBuilder::new()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                  source: hive
+                  endpoint: http://{host}/supergraph
+                  key: dummy_key
+                  poll_interval: 500ms
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&test_app.app).await;
         mock1.assert();
 
-        assert_eq!(test_app.schema_state.plan_cache.entry_count(), 0);
-        assert_eq!(test_app.schema_state.normalize_cache.entry_count(), 0);
+        assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
+        assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
 
-        let resp = test::call_service(
-            &test_app.app,
-            init_graphql_request("{ __schema { types { name } } }", None).to_request(),
-        )
-        .await;
+        let res = router
+            .send_graphql_request("{ __schema { types { name } } }", None, None)
+            .await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        assert!(res.status().is_success(), "Expected 200 OK");
 
         // Flush the caches
-        test_app.shutdown().await;
+        router
+            .schema_state()
+            .normalize_cache
+            .run_pending_tasks()
+            .await;
+        router.schema_state().plan_cache.run_pending_tasks().await;
+        invoke_shutdown_hooks(router.shared_state()).await;
 
         // Now it should have the record
-        assert_eq!(test_app.schema_state.plan_cache.entry_count(), 1);
-        assert_eq!(test_app.schema_state.normalize_cache.entry_count(), 1);
+        assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
+        assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
 
         // Now let's wait a bit and let the service re-load and get the new supergraph
         time::sleep(Duration::from_millis(600)).await;
         mock2.assert();
-        test_app.shutdown().await;
+        router
+            .schema_state()
+            .normalize_cache
+            .run_pending_tasks()
+            .await;
+        router.schema_state().plan_cache.run_pending_tasks().await;
+        invoke_shutdown_hooks(router.shared_state()).await;
 
         // Now cache should be empty again, if supergraph has changes
-        assert_eq!(test_app.schema_state.plan_cache.entry_count(), 0);
-        assert_eq!(test_app.schema_state.normalize_cache.entry_count(), 0);
+        assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
+        assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
     }
 
     /// In this test we are testing that the supergraph is not changed for in-flight requests.
@@ -88,14 +97,18 @@ mod supergraph_e2e_tests {
     /// 6. New request should use the new supergraph and new state, so running the same query should fail now with a validation error.
     #[ntex::test]
     async fn should_not_change_supergraph_for_in_flight_requests() {
-        let _delay_guard = EnvVarGuard::new("SUBGRAPH_DELAY_MS", "500");
-        let _subgraphs_server = SubgraphsServer::start().await;
+        let _delay_guard = EnvVarsGuard::new()
+            .set("SUBGRAPH_DELAY_MS", "500")
+            .apply()
+            .await;
+
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
         let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
-        let supergraph1_sdl = include_str!("../supergraph.graphql");
 
         // First supergraph
+        let supergraph1_sdl = subgraphs.supergraph(include_str!("../supergraph.graphql"));
         let mock1 = server
             .mock("GET", "/supergraph")
             .expect(1)
@@ -106,14 +119,8 @@ mod supergraph_e2e_tests {
             .create();
 
         // Second supergraph
-        let mock2 = server
-            .mock("GET", "/supergraph")
-            .expect_at_least(1)
-            .with_status(200)
-            .with_header("content-type", "text/plain")
-            .with_header("etag", "2")
-            .with_body(
-                r#"schema
+        let supergraph2_sdl = subgraphs.supergraph(
+            r#"schema
                   @link(url: "https://specs.apollo.dev/link/v1.0")
                   @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
                   query: Query
@@ -188,52 +195,54 @@ mod supergraph_e2e_tests {
                   @join__type(graph: PRODUCTS){
                   topProducts(first: Int = 5): [Product] @join__field(graph: PRODUCTS)
                 }
-                   "#,
-            )
+            "#,
+        );
+        let mock2 = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_header("etag", "2")
+            .with_body(supergraph2_sdl)
             .create();
 
-        let test_app = Arc::new(
-            init_router_from_config_inline(&format!(
-                r#"supergraph:
-              source: hive
-              endpoint: http://{host}/supergraph
-              key: dummy_key
-              poll_interval: 300ms
-        "#,
+        let router = TestRouterBuilder::new()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                  source: hive
+                  endpoint: http://{host}/supergraph
+                  key: dummy_key
+                  poll_interval: 300ms
+                "#,
             ))
-            .await
-            .expect("failed to start router"),
-        );
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&test_app.app).await;
         mock1.assert();
 
-        let app_clone = test_app.app.clone();
-        let response = test::call_service(
-            &app_clone.clone(),
-            init_graphql_request("{ users { id name reviews { id body } } }", None).to_request(),
-        )
-        .await;
-        assert!(response.status().is_success(), "Expected 200 OK");
-        let body = test::read_body(response).await;
-        let resp: Value = from_slice(&body).unwrap();
+        let res = router
+            .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let body_json = res.json_body().await;
+
+        assert!(body_json["data"].is_object());
+        assert!(body_json["errors"].is_null());
 
         mock2.assert();
 
-        assert!(resp["data"].is_object());
-        assert!(resp["errors"].is_null());
+        let res_new_supergraph = router
+            .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
+            .await;
 
-        let response_new_supergraph = test::call_service(
-            &test_app.app,
-            init_graphql_request("{ users { id name reviews { id body } } }", None).to_request(),
-        )
-        .await;
+        let body_json = res_new_supergraph.json_body().await;
 
-        let body = test::read_body(response_new_supergraph).await;
-        let json_body: Value = from_slice(&body).unwrap();
-
-        assert!(json_body["data"].is_null());
-        assert!(json_body["errors"].is_array());
+        assert!(body_json["data"].is_null());
+        assert!(body_json["errors"].is_array());
     }
 
     #[ntex::test]
@@ -250,31 +259,33 @@ mod supergraph_e2e_tests {
             .with_body("type Query { initial: String }")
             .create();
 
-        let test_app = init_router_from_config_inline(&format!(
-            r#"supergraph:
-              source: hive
-              endpoint: http://{host}/supergraph
-              key: dummy_key
-              poll_interval: 50ms
-        "#,
-        ))
-        .await
-        .expect("failed to start router");
+        let router = TestRouterBuilder::new()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                  source: hive
+                  endpoint: http://{host}/supergraph
+                  key: dummy_key
+                  poll_interval: 50ms
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&test_app.app).await;
         mock_initial.assert();
 
         // Check if initial supergraph is working
-        let resp = test::call_service(
-            &test_app.app,
-            init_graphql_request(r#"{ __type(name: "Query") { fields { name } } }"#, None)
-                .to_request(),
-        )
-        .await;
-        assert_eq!(resp.status(), 200);
-        let body = test::read_body(resp).await;
-        let json: Value = from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json).unwrap(), @r#"
+        let res = router
+            .send_graphql_request(
+                r#"{ __type(name: "Query") { fields { name } } }"#,
+                None,
+                None,
+            )
+            .await;
+
+        assert_eq!(res.status(), 200);
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "__type": {
@@ -295,7 +306,7 @@ mod supergraph_e2e_tests {
             .with_status(404)
             .create();
 
-        wait_until_mock_matched(&mock_404, Duration::from_millis(200))
+        wait_until_mock_matched(&mock_404, Duration::from_millis(500))
             .await
             .expect("Expected to match 404 mock");
 
@@ -303,16 +314,15 @@ mod supergraph_e2e_tests {
         time::sleep(Duration::from_millis(50)).await;
 
         // Router should still be using the initial supergraph
-        let resp = test::call_service(
-            &test_app.app,
-            init_graphql_request(r#"{ __type(name: "Query") { fields { name } } }"#, None)
-                .to_request(),
-        )
-        .await;
-        assert_eq!(resp.status(), 200);
-        let body = test::read_body(resp).await;
-        let json: Value = from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json).unwrap(), @r#"
+        let res = router
+            .send_graphql_request(
+                r#"{ __type(name: "Query") { fields { name } } }"#,
+                None,
+                None,
+            )
+            .await;
+        assert_eq!(res.status(), 200);
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "__type": {
@@ -344,16 +354,15 @@ mod supergraph_e2e_tests {
         time::sleep(Duration::from_millis(200)).await;
 
         // Check if final supergraph is working
-        let resp = test::call_service(
-            &test_app.app,
-            init_graphql_request(r#"{ __type(name: "Query") { fields { name } } }"#, None)
-                .to_request(),
-        )
-        .await;
-        assert_eq!(resp.status(), 200);
-        let body = test::read_body(resp).await;
-        let json: Value = from_slice(&body).unwrap();
-        insta::assert_snapshot!(to_string_pretty(&json).unwrap(), @r#"
+        let res = router
+            .send_graphql_request(
+                r#"{ __type(name: "Query") { fields { name } } }"#,
+                None,
+                None,
+            )
+            .await;
+        assert_eq!(res.status(), 200);
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "__type": {

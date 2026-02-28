@@ -216,107 +216,88 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for OneOfValidation {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use hive_router::sonic_rs::{from_slice, json, JsonContainerTrait, JsonValueTrait, Value};
-    use hive_router::{ntex, PluginRegistry};
-
-    use e2e::testkit::{init_router_from_config_file_with_plugins, wait_for_readiness};
+    use e2e::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use hive_router::{ntex, sonic_rs, sonic_rs::JsonValueTrait};
 
     #[ntex::test]
     async fn one_of_validates_in_validation_rule() {
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/one_of/router.config.yaml",
-            PluginRegistry::new().register::<super::OneOfPlugin>(),
-        )
-        .await
-        .expect("Router should initialize successfully");
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-        let req = e2e::testkit::init_graphql_request(
-            r#"
-            mutation OneOfTest {
-                oneofTest(input: {
-                    string: "test",
-                    int: 42
-            }) {
-                    string
-                    int
-                    float
-                    boolean
-                    id
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("../plugin_examples/one_of/router.config.yaml")
+            .register_plugin::<super::OneOfPlugin>()
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                mutation OneOfTest {
+                    oneofTest(input: {
+                        string: "test",
+                        int: 42
+                    }) {
+                        string
+                        int
+                        float
+                        boolean
+                        id
+                    }
                 }
-            }
-            "#,
-            None,
-        );
+                "#,
+                None,
+                None,
+            )
+            .await;
 
-        let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
-        let body = ntex::web::test::read_body(resp).await;
-        let body_val: Value = from_slice(&body).expect("Response body should be valid JSON");
-        let errors = body_val
-            .get("errors")
-            .expect("Response should contain errors");
-        let first_error = errors
-            .as_array()
-            .expect("Errors should be an array")
-            .first()
-            .expect("There should be at least one error");
-        let message = first_error
-            .get("message")
-            .expect("Error should have a message")
+        let body: sonic_rs::Value = res.json_body().await;
+        let message = body["errors"][0]["message"]
             .as_str()
-            .expect("Message should be a string");
+            .expect("Error should have a message");
         assert!(message.contains("multiple fields set"));
     }
 
     #[ntex::test]
     async fn one_of_validates_during_execution() {
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/one_of/router.config.yaml",
-            PluginRegistry::new().register::<super::OneOfPlugin>(),
-        )
-        .await
-        .expect("Router should initialize successfully");
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-        let req = e2e::testkit::init_graphql_request(
-            r#"
-            mutation OneOfTest($input: OneOfTestInput!) {
-                oneofTest(input: $input) {
-                    string
-                    int
-                    float
-                    boolean
-                    id
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("../plugin_examples/one_of/router.config.yaml")
+            .register_plugin::<super::OneOfPlugin>()
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                mutation OneOfTest($input: OneOfTestInput!) {
+                    oneofTest(input: $input) {
+                        string
+                        int
+                        float
+                        boolean
+                        id
+                    }
                 }
-            }
-            "#,
-            Some(HashMap::from_iter(vec![(
-                "input".to_string(),
-                json!({
-                    "string": "test",
-                    "int": 42
-                }),
-            )])),
-        );
+                "#,
+                Some(sonic_rs::json!({
+                    "input": {
+                        "string": "test",
+                        "int": 42
+                    }
+                })),
+                None,
+            )
+            .await;
 
-        let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
-        let body = ntex::web::test::read_body(resp).await;
-        let body_val: Value = from_slice(&body).expect("Response body should be valid JSON");
-        let errors = body_val
-            .get("errors")
-            .expect("Response should contain errors");
-        let first_error = errors
-            .as_array()
-            .expect("Errors should be an array")
-            .first()
-            .expect("There should be at least one error");
-        let message = first_error
-            .get("message")
-            .expect("Error should have a message")
+        let body: sonic_rs::Value = res.json_body().await;
+        let message = body["errors"][0]["message"]
             .as_str()
-            .expect("Message should be a string");
+            .expect("Error should have a message");
         assert!(message.contains("multiple fields set"));
     }
 }

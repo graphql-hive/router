@@ -23,14 +23,16 @@ opentelemetry-proto = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-dashmap = { workspace = true }
 tonic = { workspace = true }
 async-trait = { workspace = true }
+futures = { workspace = true }
 http = { workspace = true }
+dashmap = { workspace = true }
+axum = { workspace = true }
 bytes = { workspace = true }
 arc-swap = { workspace = true }
 
-hive-router = { path = "../bin/router" }
+hive-router = { path = "../bin/router", features = ["testing"] }
 hive-router-config = { path = "../lib/router-config" }
 hive-router-plan-executor = { path = "../lib/executor" }
 hive-router-query-planner = { path = "../lib/query-planner" }

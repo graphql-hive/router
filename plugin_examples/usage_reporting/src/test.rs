@@ -2,65 +2,17 @@
 mod tests {
     use std::time::Duration;
 
-    use e2e::mockito::{self, ServerOpts};
-    use e2e::testkit::{
-        init_graphql_request, init_router_from_config_file_with_plugins,
-        init_router_from_config_inline_with_plugins, wait_for_readiness, SubgraphsServer,
-    };
-    use hive_router::ntex::web::test;
+    use e2e::mockito;
+    use e2e::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
+    use hive_router::ntex;
     use hive_router::tokio::time::sleep;
-    use hive_router::{ntex, BoxError, PluginRegistry};
     use serde_json::json;
+
     #[ntex::test]
-    async fn flushes_reports_on_shutdown() -> Result<(), BoxError> {
+    async fn flushes_reports_on_shutdown() {
         let query = "query Test {me{name}}";
         let operation_name = "Test";
-        let mut server = mockito::Server::new_with_opts_async(ServerOpts {
-            port: 9876,
-            ..Default::default()
-        })
-        .await;
-        let usage_mock = server
-            .mock("POST", "/usage_report")
-            .with_status(200)
-            .expect(1)
-            .match_body(mockito::Matcher::Json(json!([
-                {
-                    "query": query.to_string(),
-                    "operation_name": operation_name.to_string(),
-                }
-            ])))
-            .create_async()
-            .await;
-        {
-            let _subgraphs_server = SubgraphsServer::start().await;
 
-            let test_app = init_router_from_config_file_with_plugins(
-                "../plugin_examples/usage_reporting/router.config.yaml",
-                PluginRegistry::new().register::<crate::plugin::UsageReportingPlugin>(),
-            )
-            .await?;
-
-            wait_for_readiness(&test_app.app).await;
-
-            let resp = test::call_service(
-                &test_app.app,
-                init_graphql_request(query, None).to_request(),
-            )
-            .await;
-            assert!(resp.status().is_success(), "Expected 200 OK");
-
-            test_app.shutdown().await;
-        }
-
-        usage_mock.assert_async().await;
-
-        Ok(())
-    }
-    #[ntex::test]
-    async fn flushes_reports_on_interval() -> Result<(), BoxError> {
-        let query = "query Test {me{name}}";
-        let operation_name = "Test";
         let mut server = mockito::Server::new_async().await;
         let usage_mock = server
             .mock("POST", "/usage_report")
@@ -74,11 +26,53 @@ mod tests {
             ])))
             .create_async()
             .await;
-        let _subgraphs_server = SubgraphsServer::start().await;
+
+        {
+            let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+
+            let router = TestRouterBuilder::new()
+                .with_subgraphs(&subgraphs)
+                .inline_config(
+                    include_str!("../../../plugin_examples/usage_reporting/router.config.yaml")
+                        .replace("0.0.0.0:9876", server.host_with_port().as_str()),
+                )
+                .register_plugin::<crate::plugin::UsageReportingPlugin>()
+                .build()
+                .start()
+                .await;
+
+            let res = router.send_graphql_request(query, None, None).await;
+            assert!(res.status().is_success(), "Expected 200 OK");
+        } // router and subgraphs drop here, triggering shutdown
+
+        usage_mock.assert_async().await;
+    }
+
+    #[ntex::test]
+    async fn flushes_reports_on_interval() {
+        let query = "query Test {me{name}}";
+        let operation_name = "Test";
+
+        let mut server = mockito::Server::new_async().await;
+        let usage_mock = server
+            .mock("POST", "/usage_report")
+            .with_status(200)
+            .expect(1)
+            .match_body(mockito::Matcher::Json(json!([
+                {
+                    "query": query.to_string(),
+                    "operation_name": operation_name.to_string(),
+                }
+            ])))
+            .create_async()
+            .await;
+
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
         // Initialize with shorter interval so we can see if reports are flushed without waiting for shutdown
-        let test_app = init_router_from_config_inline_with_plugins(
-            &format!(
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
                 r#"
                 supergraph:
                     source: file
@@ -91,26 +85,17 @@ mod tests {
                             interval: "1s"
                 "#,
                 server.host_with_port()
-            ),
-            PluginRegistry::new().register::<crate::plugin::UsageReportingPlugin>(),
-        )
-        .await?;
+            ))
+            .register_plugin::<crate::plugin::UsageReportingPlugin>()
+            .build()
+            .start()
+            .await;
 
-        wait_for_readiness(&test_app.app).await;
-
-        let resp = test::call_service(
-            &test_app.app,
-            init_graphql_request(query, None).to_request(),
-        )
-        .await;
-        assert!(resp.status().is_success(), "Expected 200 OK");
+        let res = router.send_graphql_request(query, None, None).await;
+        assert!(res.status().is_success(), "Expected 200 OK");
 
         sleep(Duration::from_secs(2)).await; // Wait for the flush interval to pass
 
         usage_mock.assert_async().await;
-
-        test_app.shutdown().await;
-
-        Ok(())
     }
 }

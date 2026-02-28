@@ -1,10 +1,8 @@
-use ntex::web::test;
 use std::time::Duration;
 
 use crate::testkit::{
-    init_graphql_request, init_router_from_config_inline,
     otel::{OtlpCollector, TraceParent},
-    wait_for_readiness, SubgraphsServer,
+    some_header_map, TestRouterBuilder, TestSubgraphsBuilder,
 };
 
 /// Verifies parent-based sampler respects upstream sampling decision.
@@ -13,20 +11,21 @@ use crate::testkit::{
 async fn test_otlp_parent_based_sampler() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
@@ -35,21 +34,17 @@ async fn test_otlp_parent_based_sampler() {
                 sampling: 1.0
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
-
-    wait_for_readiness(&app.app).await;
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
     // Upstream says NOT sampled.
     // Even though sampling is 1.0, the parent-based sampler should respect the upstream decision.
@@ -61,9 +56,15 @@ async fn test_otlp_parent_based_sampler() {
         sampled: false,
     };
 
-    let req = init_graphql_request("{ users { id } }", None)
-        .header("traceparent", upstream_traceparent_not_sampled.to_string());
-    test::call_service(&app.app, req.to_request()).await;
+    let res = router
+        .send_graphql_request(
+            "{ users { id } }",
+            None,
+            some_header_map!("traceparent" => upstream_traceparent_not_sampled.to_string()),
+        )
+        .await;
+
+    assert!(res.status().is_success());
 
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -84,18 +85,19 @@ async fn test_otlp_parent_based_sampler() {
         sampled: true,
     };
 
-    let req = init_graphql_request("{ users { id } }", None)
-        .header("traceparent", upstream_traceparent_sampled.to_string());
-    test::call_service(&app.app, req.to_request()).await;
+    let res = router
+        .send_graphql_request(
+            "{ users { id } }",
+            None,
+            some_header_map!("traceparent" => upstream_traceparent_sampled.to_string()),
+        )
+        .await;
 
-    // Wait for exports
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(res.status().is_success());
 
     // Verify trace was collected
-    let all_traces = otlp_collector.traces().await;
-    let trace = all_traces
-        .first()
-        .expect("Failed to find trace with sampled parent");
+    let all_traces = otlp_collector.wait_for_traces_count(1).await;
+    let trace = all_traces.first().unwrap();
 
     assert_eq!(
         trace.id, upstream_trace_id,
@@ -116,8 +118,6 @@ async fn test_otlp_parent_based_sampler() {
         http_server_span.trace_id, upstream_trace_id,
         "http.server span should have correct trace_id"
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }
 
 /// Verify 0.0 sample rate
@@ -125,20 +125,21 @@ async fn test_otlp_parent_based_sampler() {
 async fn test_otlp_zero_sample_rate() {
     let supergraph_path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
 
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let _subgraphs = SubgraphsServer::start().await;
+    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
 
-    let mut app = init_router_from_config_inline(
-        format!(
+    let router = TestRouterBuilder::new()
+        .inline_config(format!(
             r#"
           supergraph:
             source: file
-            path: {}
+            path: {supergraph_path}
 
           telemetry:
             tracing:
@@ -146,24 +147,23 @@ async fn test_otlp_zero_sample_rate() {
                 sampling: 0.0
               exporters:
                 - kind: otlp
-                  endpoint: {}
+                  endpoint: {otlp_endpoint}
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
                     max_export_timeout: 50ms
       "#,
-            supergraph_path.to_str().unwrap(),
-            otlp_endpoint
-        )
-        .as_str(),
-    )
-    .await
-    .expect("Failed to initialize router from config file");
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
 
-    wait_for_readiness(&app.app).await;
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
 
-    let req = init_graphql_request("{ users { id } }", None);
-    test::call_service(&app.app, req.to_request()).await;
+    assert!(res.status().is_success());
 
     // Wait for exports
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -174,6 +174,4 @@ async fn test_otlp_zero_sample_rate() {
         all_traces.is_empty(),
         "No spans should be exported when sampling rate is 0.0, even if parent is sampled"
     );
-
-    app.hold_until_shutdown(Box::new(otlp_collector));
 }

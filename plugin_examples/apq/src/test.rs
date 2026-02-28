@@ -1,46 +1,38 @@
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{
-        init_router_from_config_file_with_plugins, wait_for_readiness, SubgraphsServer,
-    };
+    use e2e::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use hive_router::{http::StatusCode, ntex, sonic_rs};
 
-    use hive_router::{
-        http::StatusCode,
-        ntex::{self, web::test},
-        sonic_rs::{self, json},
-        PluginRegistry,
-    };
     #[ntex::test]
     async fn sends_not_found_error_if_query_missing() {
-        let _ = SubgraphsServer::start().await;
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/apq/router.config.yaml",
-            PluginRegistry::new().register::<crate::plugin::APQPlugin>(),
-        )
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
-        let body = json!(
-            {
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("../plugin_examples/apq/router.config.yaml")
+            .register_plugin::<crate::plugin::APQPlugin>()
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .serv()
+            .post(router.graphql_path())
+            .header("content-type", "application/json")
+            .send_json(&sonic_rs::json!({
                 "extensions": {
                     "persistedQuery": {
                         "version": 1,
                         "sha256Hash": "ecf4edb46db40b5132295c0291d62fb65d6759a9eedfa4d5d612dd5ec54a6b38",
                     },
                 },
-            }
-        );
-        let req = test::TestRequest::post()
-            .uri("/graphql")
-            .header("content-type", "application/json")
-            .set_payload(body.to_string());
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        let body = test::read_body(resp).await;
-        let body_json: sonic_rs::Value =
-            sonic_rs::from_slice(&body).expect("Response body should be valid JSON");
+            }))
+            .await
+            .unwrap();
+
         assert_eq!(
-            body_json,
-            json!({
+            res.json_body().await,
+            sonic_rs::json!({
                 "errors": [
                     {
                         "message": "PersistedQueryNotFound",
@@ -53,20 +45,27 @@ mod tests {
             "Expected PersistedQueryNotFound error"
         );
     }
+
     #[ntex::test]
     async fn saves_persisted_query() {
-        let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file_with_plugins(
-            "../plugin_examples/apq/router.config.yaml",
-            PluginRegistry::new().register::<crate::plugin::APQPlugin>(),
-        )
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
+        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+
+        let router = TestRouterBuilder::new()
+            .with_subgraphs(&subgraphs)
+            .file_config("../plugin_examples/apq/router.config.yaml")
+            .register_plugin::<crate::plugin::APQPlugin>()
+            .build()
+            .start()
+            .await;
+
         let query = "{ users { id } }";
         let sha256_hash = "ecf4edb46db40b5132295c0291d62fb65d6759a9eedfa4d5d612dd5ec54a6b38";
-        let body = json!(
-            {
+
+        let res = router
+            .serv()
+            .post(router.graphql_path())
+            .header("content-type", "application/json")
+            .send_json(&sonic_rs::json!({
                 "query": query,
                 "extensions": {
                     "persistedQuery": {
@@ -74,48 +73,39 @@ mod tests {
                         "sha256Hash": sha256_hash,
                     },
                 },
-            }
-        );
-        let req = test::TestRequest::post()
-            .uri("/graphql")
-            .header("content-type", "application/json")
-            .set_payload(body.to_string());
-        let resp = test::call_service(&app.app, req.to_request()).await;
-        let resp_status = resp.status();
-        let body = test::read_body(resp).await;
-        let body_json: sonic_rs::Value =
-            sonic_rs::from_slice(&body).expect("Response body should be valid JSON");
-        println!("Response body: {}", body_json);
+            }))
+            .await
+            .unwrap();
+
         assert_eq!(
-            resp_status,
+            res.status(),
             StatusCode::OK,
             "Expected 200 OK when sending full query"
         );
 
         // Now send only the hash and expect it to be found
-        let body = json!(
-            {
+        let res = router
+            .serv()
+            .post(router.graphql_path())
+            .header("content-type", "application/json")
+            .send_json(&sonic_rs::json!({
                 "extensions": {
                     "persistedQuery": {
                         "version": 1,
                         "sha256Hash": sha256_hash,
                     },
                 },
-            }
-        );
-        let req = test::TestRequest::post()
-            .uri("/graphql")
-            .header("content-type", "application/json")
-            .set_payload(body.to_string());
-        let resp = test::call_service(&app.app, req.to_request()).await;
+            }))
+            .await
+            .unwrap();
+
         assert!(
-            resp.status().is_success(),
+            res.status().is_success(),
             "Expected 200 OK when sending persisted query hash"
         );
 
-        let subgraph_requests = subgraphs_server
-            .get_subgraph_requests_log("accounts")
-            .await
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
             .expect("expected requests sent to accounts subgraph");
         assert_eq!(
             subgraph_requests.len(),
