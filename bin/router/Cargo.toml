@@ -1,6 +1,6 @@
 [package]
 name = "hive-router"
-version = "0.0.39"
+version = "0.0.40"
 edition = "2021"
 description = "GraphQL router/gateway for Federation"
 license = "MIT"
@@ -20,12 +20,12 @@ path = "src/main.rs"
 noop_otlp_exporter = ["hive-router-internal/noop_otlp_exporter"]
 
 [dependencies]
-hive-router-query-planner = { path = "../../lib/query-planner", version = "2.2.1" }
-hive-router-plan-executor = { path = "../../lib/executor", version = "6.5.1" }
-hive-router-config = { path = "../../lib/router-config", version = "0.0.23" }
-hive-router-internal = { path = "../../lib/internal", version = "0.0.12" }
-hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.6" }
-graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.1" }
+hive-router-query-planner = { path = "../../lib/query-planner", version = "2.3.0" }
+hive-router-plan-executor = { path = "../../lib/executor", version = "6.6.0" }
+hive-router-config = { path = "../../lib/router-config", version = "0.0.24" }
+hive-router-internal = { path = "../../lib/internal", version = "0.0.13" }
+hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.7" }
+graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.2" }
 
 tokio = { workspace = true }
 futures = { workspace = true }

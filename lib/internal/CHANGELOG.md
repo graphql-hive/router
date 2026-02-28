@@ -1,3 +1,17 @@
+## 0.0.13 (2026-02-28)
+
+### Features
+
+#### Plugin System
+
+Hive Router implements a Plugin System that allows users to extend the functionality of Hive Router by creating custom plugins.
+
+[Learn more about the plugin system in the documentation.](https://graphql-hive.com/docs/router/guides/extending-the-router)
+
+### Fixes
+
+- Adds noop_otlp_exporter feature for internal usage
+
 ## 0.0.12 (2026-02-12)
 
 ### Fixes

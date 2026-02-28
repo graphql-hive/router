@@ -1,3 +1,13 @@
+## 0.3.7 (2026-02-28)
+
+### Features
+
+#### Plugin System
+
+Hive Router implements a Plugin System that allows users to extend the functionality of Hive Router by creating custom plugins.
+
+[Learn more about the plugin system in the documentation.](https://graphql-hive.com/docs/router/guides/extending-the-router)
+
 ## 0.3.6 (2026-02-06)
 
 ### Features
