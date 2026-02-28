@@ -94,6 +94,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.6.0 (2026-02-28)
+
+### Features
+
+#### Plugin System
+
+Hive Router implements a Plugin System that allows users to extend the functionality of Hive Router by creating custom plugins.
+
+[Learn more about the plugin system in the documentation.](https://graphql-hive.com/docs/router/guides/extending-the-router)
+
+### Fixes
+
+- Adds noop_otlp_exporter feature for internal usage
+
 ## 6.5.1 (2026-02-12)
 
 ### Fixes
