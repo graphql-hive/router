@@ -73,7 +73,7 @@ async fn test_deprecated_span_attributes() {
         http.flavor: 1.1
         http.host: localhost
         http.method: POST
-        http.request_content_length: 28
+        http.request_content_length: 45
         http.response_content_length: 86
         http.route: /graphql
         http.status_code: 200
@@ -202,9 +202,9 @@ async fn test_spec_and_deprecated_span_attributes() {
         http.flavor: 1.1
         http.host: localhost
         http.method: POST
-        http.request.body.size: 28
+        http.request.body.size: 45
         http.request.method: POST
-        http.request_content_length: 28
+        http.request_content_length: 45
         http.response.body.size: 86
         http.response.status_code: 200
         http.response_content_length: 86
