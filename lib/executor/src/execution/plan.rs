@@ -308,6 +308,35 @@ impl<'exec> ExecutionJob<'exec> {
 }
 
 impl<'exec> Executor<'exec> {
+    fn reuse_group_id(&self, fetch_node_id: i64) -> Option<usize> {
+        self.representation_reuse_group_by_fetch_id
+            .and_then(|map| map.get(&fetch_node_id))
+            .copied()
+    }
+
+    async fn execute_subgraph_request(
+        &self,
+        node: &'exec FetchNode,
+        subgraph_request: SubgraphExecutionRequest<'exec>,
+        affected_path: Option<&FlattenNodePath>,
+    ) -> Result<SubgraphResponse<'exec>, PlanExecutionError> {
+        let subgraph_name_factory = || Some(node.service_name.clone());
+        let affected_path_factory = || affected_path.map(|p| p.to_string());
+
+        self.executors
+            .execute(
+                &node.service_name,
+                subgraph_request,
+                self.client_request,
+                self.plugin_req_state,
+            )
+            .await
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: subgraph_name_factory,
+                affected_path: affected_path_factory,
+            })
+    }
+
     async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &'exec PlanNode) {
         match node {
             PlanNode::Parallel(parallel_node) => {
@@ -626,10 +655,7 @@ impl<'exec> Executor<'exec> {
             let variable_refs =
                 select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
             let has_representations = representations.as_ref().is_some_and(|r| !r.is_empty());
-            let representation_reuse_group_id = self
-                .representation_reuse_group_by_fetch_id
-                .and_then(|map| map.get(&node.id))
-                .copied();
+            let representation_reuse_group_id = self.reuse_group_id(node.id);
 
             let mut subgraph_request = SubgraphExecutionRequest {
                 query: node.operation.document_str.as_str(),
@@ -675,34 +701,14 @@ impl<'exec> Executor<'exec> {
                     .clone();
 
                 cell.get_or_try_init(|| async {
-                    self.executors
-                        .execute(
-                            &node.service_name,
-                            subgraph_request,
-                            self.client_request,
-                            self.plugin_req_state,
-                        )
+                    self.execute_subgraph_request(node, subgraph_request, affected_path)
                         .await
-                        .with_plan_context(LazyPlanContext {
-                            subgraph_name: subgraph_name_factory,
-                            affected_path: affected_path_factory,
-                        })
                 })
                 .await?
                 .clone()
             } else {
-                self.executors
-                    .execute(
-                        &node.service_name,
-                        subgraph_request,
-                        self.client_request,
-                        self.plugin_req_state,
-                    )
-                    .await
-                    .with_plan_context(LazyPlanContext {
-                        subgraph_name: subgraph_name_factory,
-                        affected_path: affected_path_factory,
-                    })?
+                self.execute_subgraph_request(node, subgraph_request, affected_path)
+                    .await?
             };
 
             if let Some(errors) = &response.errors {
@@ -736,10 +742,8 @@ fn representation_fetch_cache_key(
         representations.hash(&mut hasher);
     }
 
-    if let Some(variables) = variables {
-        if !variables.is_empty() {
-            hash_fetch_variables(variables, &mut hasher);
-        }
+    if let Some(variables) = variables.filter(|variables| !variables.is_empty()) {
+        hash_fetch_variables(variables, &mut hasher);
     }
 
     hasher.finish()
