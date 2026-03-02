@@ -12,4 +12,4 @@ hive-console-sdk: minor
 
 Hive Router implements a Plugin System that allows users to extend the functionality of Hive Router by creating custom plugins.
 
-[Learn more about the plugin system in the documentation.](https://graphql-hive.com/docs/router/guides/extending-the-router)
+[Learn more about the plugin system in the documentation.](https://the-guild.dev/graphql/hive/docs/router/guides/extending-the-router)
