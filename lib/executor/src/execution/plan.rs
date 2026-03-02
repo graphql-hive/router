@@ -308,12 +308,6 @@ impl<'exec> ExecutionJob<'exec> {
 }
 
 impl<'exec> Executor<'exec> {
-    fn reuse_group_id(&self, fetch_node_id: i64) -> Option<usize> {
-        self.representation_reuse_group_by_fetch_id
-            .and_then(|map| map.get(&fetch_node_id))
-            .copied()
-    }
-
     async fn execute_subgraph_request(
         &self,
         node: &'exec FetchNode,
@@ -655,7 +649,9 @@ impl<'exec> Executor<'exec> {
             let variable_refs =
                 select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
             let has_representations = representations.as_ref().is_some_and(|r| !r.is_empty());
-            let representation_reuse_group_id = self.reuse_group_id(node.id);
+            let representation_reuse_group_id = self
+                .representation_reuse_group_by_fetch_id
+                .and_then(|map| map.get(&node.id));
 
             let mut subgraph_request = SubgraphExecutionRequest {
                 query: node.operation.document_str.as_str(),
@@ -688,7 +684,7 @@ impl<'exec> Executor<'exec> {
                 (has_representations, representation_reuse_group_id)
             {
                 let cache_key = representation_fetch_cache_key(
-                    group_id,
+                    group_id.clone(),
                     subgraph_request.representations.as_deref(),
                     subgraph_request.variables.as_deref(),
                 );
