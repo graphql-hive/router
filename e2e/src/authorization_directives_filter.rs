@@ -4,6 +4,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     use ntex::http::header::{self, HeaderValue};
     use ntex::web::test;
     use sonic_rs::{from_slice, json, to_string_pretty, Value};
+    use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::testkit::{
@@ -571,7 +572,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
 
         let req = init_graphql_request(
             "query($include: Boolean!) { me { id name @include(if: $include) } }",
-            Some(json!({"include": true})),
+            Some(HashMap::from([("include".to_string(), json!(true))])),
         )
         .header(
             header::AUTHORIZATION,
@@ -606,7 +607,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
 
         let req = init_graphql_request(
             "query($include: Boolean!) { me { id name @include(if: $include) } }",
-            Some(json!({"include": false})),
+            Some(HashMap::from([("include".to_string(), json!(false))])),
         )
         .header(
             header::AUTHORIZATION,
@@ -640,7 +641,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
 
         let req = init_graphql_request(
             "query($include: Boolean!) { me { id birthday @include(if: $include) } }",
-            Some(json!({"include": false})),
+            Some(HashMap::from([("include".to_string(), json!(false))])),
         )
         .header(
             header::AUTHORIZATION,
@@ -674,7 +675,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
 
         let req = init_graphql_request(
             "query($skip: Boolean!) { me { id name @skip(if: $skip) } }",
-            Some(json!({"skip": true})),
+            Some(HashMap::from([("skip".to_string(), json!(true))])),
         )
         .header(
             header::AUTHORIZATION,
@@ -708,7 +709,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
 
         let req = init_graphql_request(
             "query($skip: Boolean!) { me { id name @skip(if: $skip) } }",
-            Some(json!({"skip": false})),
+            Some(HashMap::from([("skip".to_string(), json!(false))])),
         )
         .header(
             header::AUTHORIZATION,
@@ -743,7 +744,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
 
         let req = init_graphql_request(
             "query($include: Boolean!) { me { id birthday @include(if: $include) } }",
-            Some(json!({"include": true})),
+            Some(HashMap::from([("include".to_string(), json!(true))])),
         )
         .header(
             header::AUTHORIZATION,

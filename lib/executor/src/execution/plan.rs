@@ -6,12 +6,13 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
 use hive_router_query_planner::{
+    ast::operation::OperationDefinition,
     planner::plan_nodes::{
         ConditionNode, FetchNode, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
     },
     state::supergraph_state::OperationKind,
 };
-use http::HeaderMap;
+use http::{HeaderMap, StatusCode};
 use sonic_rs::ValueRef;
 use tracing::Instrument;
 
@@ -29,10 +30,16 @@ use crate::{
         request::modify_subgraph_request_headers,
         response::apply_subgraph_response_headers,
     },
+    hooks::{
+        on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
+        on_graphql_error::handle_graphql_errors_with_plugins,
+    },
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
     },
+    plugin_context::PluginRequestState,
+    plugin_trait::{EndControlFlow, StartControlFlow},
     projection::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
@@ -50,17 +57,19 @@ use crate::{
 
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
-    pub projection_plan: &'exec [FieldProjectionPlan],
+    pub operation_for_plan: &'exec OperationDefinition,
+    pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: HashMap<String, sonic_rs::Value>,
     pub client_request: &'exec ClientRequestDetails<'exec>,
-    pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
+    pub introspection_context: &'exec IntrospectionContext<'exec>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
     pub span: &'exec GraphQLOperationSpan,
+    pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
 }
 
 #[derive(Default)]
@@ -68,12 +77,13 @@ pub struct PlanExecutionOutput {
     pub body: Vec<u8>,
     pub response_headers_aggregator: Option<ResponseHeaderAggregator>,
     pub error_count: usize,
+    pub status_code: StatusCode,
 }
 
 pub async fn execute_query_plan<'exec>(
     opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
-    let data = if let Some(introspection_query) = opts.introspection_context.query {
+    let mut data = if let Some(introspection_query) = opts.introspection_context.query {
         resolve_introspection(introspection_query, opts.introspection_context)
     } else if opts.projection_plan.is_empty() {
         Value::Null
@@ -81,13 +91,49 @@ pub async fn execute_query_plan<'exec>(
         Value::Object(Vec::new())
     };
 
-    let errors = opts.initial_errors;
+    let mut errors = opts.initial_errors;
 
-    let extensions = opts.extensions;
+    let mut extensions = opts.extensions;
 
-    let query_plan = opts.query_plan;
+    let mut query_plan = opts.query_plan;
 
     let dedupe_subgraph_requests = opts.operation_type_name == "Query";
+
+    let mut on_end_callbacks = vec![];
+
+    if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
+        let mut start_payload = OnExecuteStartHookPayload {
+            router_http_request: &plugin_req_state.router_http_request,
+            context: &plugin_req_state.context,
+            query_plan,
+            operation_for_plan: opts.operation_for_plan,
+            data,
+            errors,
+            extensions,
+            variable_values: opts.variable_values,
+            dedupe_subgraph_requests,
+        };
+
+        for plugin in plugin_req_state.plugins.as_ref() {
+            let result = plugin.on_execute(start_payload).await;
+            start_payload = result.payload;
+            match result.control_flow {
+                StartControlFlow::Proceed => { /* continue to next plugin */ }
+                StartControlFlow::EndWithResponse(response) => {
+                    return Ok(response);
+                }
+                StartControlFlow::OnEnd(callback) => {
+                    on_end_callbacks.push(callback);
+                }
+            }
+        }
+
+        // Give the ownership back to variables
+        query_plan = start_payload.query_plan;
+        data = start_payload.data;
+        errors = start_payload.errors;
+        extensions = start_payload.extensions;
+    }
 
     let mut exec_ctx = ExecutionContext::new(query_plan, data, errors);
     // No need for `new`, it has too many parameters
@@ -100,6 +146,7 @@ pub async fn execute_query_plan<'exec>(
         headers_plan: opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
+        plugin_req_state: opts.plugin_req_state,
     };
 
     if let Some(node) = &query_plan.node {
@@ -108,14 +155,55 @@ pub async fn execute_query_plan<'exec>(
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
 
-    let data = exec_ctx.data;
-    let errors = exec_ctx.errors;
-    let response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
-
     if error_count > 0 {
         opts.span.record_error_count(error_count);
         opts.span
-            .record_errors(|| errors.iter().map(|e| e.into()).collect());
+            .record_errors(|| exec_ctx.errors.iter().map(|e| e.into()).collect());
+    }
+
+    let mut data = exec_ctx.data;
+    let mut errors = exec_ctx.errors;
+    let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
+
+    if !on_end_callbacks.is_empty() {
+        let mut end_payload = OnExecuteEndHookPayload {
+            data,
+            errors,
+            extensions,
+            response_size_estimate,
+        };
+
+        for callback in on_end_callbacks {
+            let result = callback(end_payload);
+            end_payload = result.payload;
+            match result.control_flow {
+                EndControlFlow::Proceed => { /* continue to next callback */ }
+                EndControlFlow::EndWithResponse(response) => {
+                    return Ok(response);
+                }
+            }
+        }
+
+        // Give the ownership back to variables
+        data = end_payload.data;
+        errors = end_payload.errors;
+        extensions = end_payload.extensions;
+        response_size_estimate = end_payload.response_size_estimate;
+    }
+
+    let mut status_code = StatusCode::OK;
+
+    if !errors.is_empty() {
+        if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
+            let (new_errors, new_status_code) = handle_graphql_errors_with_plugins(
+                plugin_req_state.plugins.as_ref(),
+                errors,
+                status_code,
+            );
+
+            errors = new_errors;
+            status_code = new_status_code;
+        }
     }
 
     let body = project_by_operation(
@@ -137,17 +225,19 @@ pub async fn execute_query_plan<'exec>(
         body,
         response_headers_aggregator: exec_ctx.response_headers_aggregator.none_if_empty(),
         error_count,
+        status_code,
     })
 }
 
 pub struct Executor<'exec> {
-    variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
-    schema_metadata: &'exec SchemaMetadata,
-    executors: &'exec SubgraphExecutorMap,
-    client_request: &'exec ClientRequestDetails<'exec>,
-    headers_plan: &'exec HeaderRulesPlan,
-    jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
-    dedupe_subgraph_requests: bool,
+    pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+    pub schema_metadata: &'exec SchemaMetadata,
+    pub executors: &'exec SubgraphExecutorMap,
+    pub client_request: &'exec ClientRequestDetails<'exec>,
+    pub headers_plan: &'exec HeaderRulesPlan,
+    pub jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
+    pub dedupe_subgraph_requests: bool,
+    pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
 }
 
 enum ExecutionJob<'exec> {
@@ -362,6 +452,7 @@ impl<'exec> Executor<'exec> {
     ) {
         match job {
             Err(err) => {
+                self.log_error(&err);
                 ctx.errors.push(err.into());
             }
             Ok(job) => {
@@ -379,6 +470,7 @@ impl<'exec> Executor<'exec> {
                         subgraph_name: || Some(subgraph_name.to_string()),
                         affected_path: || affected_path.map(|p| p.to_string()),
                     }) {
+                        self.log_error(&err);
                         ctx.errors.push(err.into());
                     }
                 }
@@ -475,6 +567,18 @@ impl<'exec> Executor<'exec> {
         }
     }
 
+    fn log_error(&self, error: &PlanExecutionError) {
+        if let Some(subgraph_name) = error.subgraph_name() {
+            tracing::error!(
+                "Error executing plan with subgraph '{}': {}",
+                subgraph_name,
+                error
+            );
+        } else {
+            tracing::error!("Error executing plan: {}", error);
+        }
+    }
+
     async fn prepare_fetch_job(
         &self,
         node: &'exec FetchNode,
@@ -535,7 +639,12 @@ impl<'exec> Executor<'exec> {
 
             let response = self
                 .executors
-                .execute(&node.service_name, subgraph_request, self.client_request)
+                .execute(
+                    &node.service_name,
+                    subgraph_request,
+                    self.client_request,
+                    self.plugin_req_state,
+                )
                 .await
                 .with_plan_context(LazyPlanContext {
                     subgraph_name: subgraph_name_factory,
@@ -790,6 +899,7 @@ mod tests {
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
+            plugin_req_state: &None,
         };
 
         let mock_a = subgraph_a

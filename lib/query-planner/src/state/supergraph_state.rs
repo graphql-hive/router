@@ -3,7 +3,6 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use graphql_tools::ast::SchemaDocumentExtension;
 use graphql_tools::parser::query::Directive;
 use graphql_tools::parser::schema as input;
 use serde::{Deserialize, Serialize};

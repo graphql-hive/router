@@ -233,7 +233,7 @@ pub fn create_plan_from_rule(rule: Box<dyn ValidationRule>) -> ValidationPlan {
     let mut rules = Vec::new();
     rules.push(rule);
 
-    ValidationPlan { rules }
+    ValidationPlan::from(rules)
 }
 
 #[cfg(test)]

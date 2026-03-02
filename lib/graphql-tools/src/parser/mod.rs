@@ -85,6 +85,7 @@ mod helpers;
 mod position;
 mod tokenizer;
 
+pub mod hash;
 pub mod query;
 pub mod schema;
 

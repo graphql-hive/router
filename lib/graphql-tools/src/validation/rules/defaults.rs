@@ -1,4 +1,4 @@
-use crate::validation::validate::ValidationPlan;
+use crate::validation::{rules::ValidationRule, validate::ValidationPlan};
 
 use super::{
     FieldsOnCorrectType, FragmentsOnCompositeTypes, KnownArgumentNames, KnownDirectives,
@@ -11,32 +11,32 @@ use super::{
 };
 
 pub fn default_rules_validation_plan() -> ValidationPlan {
-    let mut plan = ValidationPlan { rules: vec![] };
+    let rules: Vec<Box<dyn ValidationRule>> = vec![
+        Box::new(UniqueOperationNames::new()),
+        Box::new(LoneAnonymousOperation::new()),
+        Box::new(SingleFieldSubscriptions::new()),
+        Box::new(KnownTypeNames::new()),
+        Box::new(FragmentsOnCompositeTypes::new()),
+        Box::new(VariablesAreInputTypes::new()),
+        Box::new(LeafFieldSelections::new()),
+        Box::new(FieldsOnCorrectType::new()),
+        Box::new(UniqueFragmentNames::new()),
+        Box::new(KnownFragmentNames::new()),
+        Box::new(NoUnusedFragments::new()),
+        Box::new(OverlappingFieldsCanBeMerged::new()),
+        Box::new(NoFragmentsCycle::new()),
+        Box::new(PossibleFragmentSpreads::new()),
+        Box::new(NoUnusedVariables::new()),
+        Box::new(NoUndefinedVariables::new()),
+        Box::new(KnownArgumentNames::new()),
+        Box::new(UniqueArgumentNames::new()),
+        Box::new(UniqueVariableNames::new()),
+        Box::new(ProvidedRequiredArguments::new()),
+        Box::new(KnownDirectives::new()),
+        Box::new(VariablesInAllowedPosition::new()),
+        Box::new(ValuesOfCorrectType::new()),
+        Box::new(UniqueDirectivesPerLocation::new()),
+    ];
 
-    plan.add_rule(Box::new(UniqueOperationNames::new()));
-    plan.add_rule(Box::new(LoneAnonymousOperation::new()));
-    plan.add_rule(Box::new(SingleFieldSubscriptions::new()));
-    plan.add_rule(Box::new(KnownTypeNames::new()));
-    plan.add_rule(Box::new(FragmentsOnCompositeTypes::new()));
-    plan.add_rule(Box::new(VariablesAreInputTypes::new()));
-    plan.add_rule(Box::new(LeafFieldSelections::new()));
-    plan.add_rule(Box::new(FieldsOnCorrectType::new()));
-    plan.add_rule(Box::new(UniqueFragmentNames::new()));
-    plan.add_rule(Box::new(KnownFragmentNames::new()));
-    plan.add_rule(Box::new(NoUnusedFragments::new()));
-    plan.add_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
-    plan.add_rule(Box::new(NoFragmentsCycle::new()));
-    plan.add_rule(Box::new(PossibleFragmentSpreads::new()));
-    plan.add_rule(Box::new(NoUnusedVariables::new()));
-    plan.add_rule(Box::new(NoUndefinedVariables::new()));
-    plan.add_rule(Box::new(KnownArgumentNames::new()));
-    plan.add_rule(Box::new(UniqueArgumentNames::new()));
-    plan.add_rule(Box::new(UniqueVariableNames::new()));
-    plan.add_rule(Box::new(ProvidedRequiredArguments::new()));
-    plan.add_rule(Box::new(KnownDirectives::new()));
-    plan.add_rule(Box::new(VariablesInAllowedPosition::new()));
-    plan.add_rule(Box::new(ValuesOfCorrectType::new()));
-    plan.add_rule(Box::new(UniqueDirectivesPerLocation::new()));
-
-    plan
+    ValidationPlan::from(rules)
 }

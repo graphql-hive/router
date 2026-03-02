@@ -1,8 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{
-    visit_document, FieldByNameExtension, InputValueHelpers, OperationVisitor,
-    OperationVisitorContext,
-};
+use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::Value;
 use crate::static_graphql::schema::InputValue;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};

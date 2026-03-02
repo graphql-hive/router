@@ -50,13 +50,14 @@
       const workers = {};
       const workerUrls = {
         editorWorkerService:
-          "https://unpkg.com/@graphql-hive/laboratory@1.0.0-alpha-20260224193414-92a02da385cd5d3be81cf73fe81737e00836eacd/dist/monacoeditorwork/editor.worker.bundle.js",
+          "https://unpkg.com/@graphql-hive/laboratory@0.1.0/dist/monacoeditorwork/editor.worker.bundle.js",
         typescript:
-          "https://unpkg.com/@graphql-hive/laboratory@1.0.0-alpha-20260224193414-92a02da385cd5d3be81cf73fe81737e00836eacd/dist/monacoeditorwork/ts.worker.bundle.js",
-        json: "https://unpkg.com/@graphql-hive/laboratory@1.0.0-alpha-20260224193414-92a02da385cd5d3be81cf73fe81737e00836eacd/dist/monacoeditorwork/json.worker.bundle.js",
+          "https://unpkg.com/@graphql-hive/laboratory@0.1.0/dist/monacoeditorwork/ts.worker.bundle.js",
+        json: "https://unpkg.com/@graphql-hive/laboratory@0.1.0/dist/monacoeditorwork/json.worker.bundle.js",
         graphql:
-          "https://unpkg.com/@graphql-hive/laboratory@1.0.0-alpha-20260224193414-92a02da385cd5d3be81cf73fe81737e00836eacd/dist/monacoeditorwork/graphql.worker..bundle.js",
+          "https://unpkg.com/@graphql-hive/laboratory@0.1.0/dist/monacoeditorwork/graphql.worker.bundle.js",
       };
+
       function prepareWorkers() {
         return Promise.all(
           Object.entries(workerUrls).map(async ([label, url]) => {
@@ -66,6 +67,7 @@
           })
         );
       }
+
       self["MonacoEnvironment"] = {
         globalAPI: false,
         getWorkerUrl: function (moduleId, label) {
@@ -73,7 +75,7 @@
         },
       };
     </script>
-    <script src="https://unpkg.com/@graphql-hive/laboratory@1.0.0-alpha-20260224193414-92a02da385cd5d3be81cf73fe81737e00836eacd/dist/hive-laboratory.umd.js"></script>
+    <script src="https://unpkg.com/@graphql-hive/laboratory@0.1.0/dist/hive-laboratory.umd.js"></script>
     <script>
       prepareWorkers().finally(() => {
         HiveLaboratory.renderLaboratory(root);

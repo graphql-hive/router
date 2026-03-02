@@ -7,16 +7,12 @@ use crate::static_graphql::query::{
     VariableDefinition,
 };
 use crate::static_graphql::schema::{
-    self, DirectiveDefinition, InputValue, InterfaceType, ObjectType, TypeDefinition, UnionType,
+    self, DirectiveDefinition, EnumValue, Field, InputValue, InterfaceType, ObjectType,
+    TypeDefinition, TypeExtension, UnionType,
 };
 
-pub trait FieldByNameExtension {
-    fn field_by_name(&self, name: &str) -> Option<&schema::Field>;
-    fn input_field_by_name(&self, name: &str) -> Option<&InputValue>;
-}
-
-impl FieldByNameExtension for TypeDefinition {
-    fn field_by_name(&self, name: &str) -> Option<&schema::Field> {
+impl TypeDefinition {
+    pub fn field_by_name(&self, name: &str) -> Option<&schema::Field> {
         match self {
             TypeDefinition::Object(object) => {
                 object.fields.iter().find(|field| field.name.eq(name))
@@ -28,7 +24,7 @@ impl FieldByNameExtension for TypeDefinition {
         }
     }
 
-    fn input_field_by_name(&self, name: &str) -> Option<&InputValue> {
+    pub fn input_field_by_name(&self, name: &str) -> Option<&InputValue> {
         match self {
             TypeDefinition::InputObject(input_object) => {
                 input_object.fields.iter().find(|field| field.name.eq(name))
@@ -38,14 +34,8 @@ impl FieldByNameExtension for TypeDefinition {
     }
 }
 
-pub trait OperationDefinitionExtension {
-    fn variable_definitions(&self) -> &[VariableDefinition];
-    fn directives(&self) -> &[Directive];
-    fn selection_set(&self) -> &SelectionSet;
-}
-
-impl OperationDefinitionExtension for OperationDefinition {
-    fn variable_definitions(&self) -> &[VariableDefinition] {
+impl OperationDefinition {
+    pub fn variable_definitions(&self) -> &[VariableDefinition] {
         match self {
             OperationDefinition::Query(query) => &query.variable_definitions,
             OperationDefinition::SelectionSet(_) => &[],
@@ -54,7 +44,7 @@ impl OperationDefinitionExtension for OperationDefinition {
         }
     }
 
-    fn selection_set(&self) -> &SelectionSet {
+    pub fn selection_set(&self) -> &SelectionSet {
         match self {
             OperationDefinition::Query(query) => &query.selection_set,
             OperationDefinition::SelectionSet(selection_set) => selection_set,
@@ -63,7 +53,7 @@ impl OperationDefinitionExtension for OperationDefinition {
         }
     }
 
-    fn directives(&self) -> &[Directive] {
+    pub fn directives(&self) -> &[Directive] {
         match self {
             OperationDefinition::Query(query) => &query.directives,
             OperationDefinition::SelectionSet(_) => &[],
@@ -73,26 +63,8 @@ impl OperationDefinitionExtension for OperationDefinition {
     }
 }
 
-pub trait SchemaDocumentExtension {
-    fn type_by_name(&self, name: &str) -> Option<&TypeDefinition>;
-    fn type_map(&self) -> HashMap<&str, &TypeDefinition>;
-    fn directive_by_name(&self, name: &str) -> Option<&DirectiveDefinition>;
-    fn object_type_by_name(&self, name: &str) -> Option<&ObjectType>;
-    fn schema_definition(&self) -> &schema::SchemaDefinition;
-    fn query_type(&self) -> &ObjectType;
-    fn mutation_type(&self) -> Option<&ObjectType>;
-    fn subscription_type(&self) -> Option<&ObjectType>;
-    fn is_subtype(&self, sub_type: &Type, super_type: &Type) -> bool;
-    fn is_named_subtype(&self, sub_type_name: &str, super_type_name: &str) -> bool;
-    fn is_possible_type(
-        &self,
-        abstract_type: &TypeDefinition,
-        possible_type: &TypeDefinition,
-    ) -> bool;
-}
-
-impl SchemaDocumentExtension for schema::Document {
-    fn type_by_name(&self, name: &str) -> Option<&TypeDefinition> {
+impl schema::Document {
+    pub fn type_by_name(&self, name: &str) -> Option<&TypeDefinition> {
         for def in &self.definitions {
             if let schema::Definition::TypeDefinition(type_def) = def {
                 if type_def.name().eq(name) {
@@ -104,7 +76,7 @@ impl SchemaDocumentExtension for schema::Document {
         None
     }
 
-    fn directive_by_name(&self, name: &str) -> Option<&DirectiveDefinition> {
+    pub fn directive_by_name(&self, name: &str) -> Option<&DirectiveDefinition> {
         for def in &self.definitions {
             if let schema::Definition::DirectiveDefinition(directive_def) = def {
                 if directive_def.name.eq(name) {
@@ -134,7 +106,7 @@ impl SchemaDocumentExtension for schema::Document {
             .unwrap_or(&*DEFAULT_SCHEMA_DEF)
     }
 
-    fn query_type(&self) -> &ObjectType {
+    pub fn query_type(&self) -> &ObjectType {
         lazy_static! {
             static ref QUERY: String = "Query".to_string();
         }
@@ -145,14 +117,14 @@ impl SchemaDocumentExtension for schema::Document {
             .unwrap()
     }
 
-    fn mutation_type(&self) -> Option<&ObjectType> {
+    pub fn mutation_type(&self) -> Option<&ObjectType> {
         self.schema_definition()
             .mutation
             .as_ref()
             .and_then(|name| self.object_type_by_name(name))
     }
 
-    fn subscription_type(&self) -> Option<&ObjectType> {
+    pub fn subscription_type(&self) -> Option<&ObjectType> {
         self.schema_definition()
             .subscription
             .as_ref()
@@ -166,7 +138,7 @@ impl SchemaDocumentExtension for schema::Document {
         }
     }
 
-    fn type_map(&self) -> HashMap<&str, &TypeDefinition> {
+    pub fn type_map(&self) -> HashMap<&str, &TypeDefinition> {
         let mut type_map = HashMap::new();
 
         for def in &self.definitions {
@@ -178,7 +150,7 @@ impl SchemaDocumentExtension for schema::Document {
         type_map
     }
 
-    fn is_named_subtype(&self, sub_type_name: &str, super_type_name: &str) -> bool {
+    pub fn is_named_subtype(&self, sub_type_name: &str, super_type_name: &str) -> bool {
         if sub_type_name == super_type_name {
             true
         } else if let (Some(sub_type), Some(super_type)) = (
@@ -210,7 +182,7 @@ impl SchemaDocumentExtension for schema::Document {
         }
     }
 
-    fn is_subtype(&self, sub_type: &Type, super_type: &Type) -> bool {
+    pub fn is_subtype(&self, sub_type: &Type, super_type: &Type) -> bool {
         // Equivalent type is a valid subtype
         if sub_type == super_type {
             return true;
@@ -256,18 +228,38 @@ impl SchemaDocumentExtension for schema::Document {
 
         false
     }
+
+    pub fn query_type_name(&self) -> &str {
+        "Query"
+    }
+
+    pub fn mutation_type_name(&self) -> Option<&str> {
+        for def in &self.definitions {
+            if let schema::Definition::SchemaDefinition(schema_def) = def {
+                if let Some(name) = schema_def.mutation.as_ref() {
+                    return Some(name.as_str());
+                }
+            }
+        }
+
+        self.type_by_name("Mutation").map(|typ| typ.name())
+    }
+
+    pub fn subscription_type_name(&self) -> Option<&str> {
+        for def in &self.definitions {
+            if let schema::Definition::SchemaDefinition(schema_def) = def {
+                if let Some(name) = schema_def.subscription.as_ref() {
+                    return Some(name.as_str());
+                }
+            }
+        }
+
+        self.type_by_name("Subscription").map(|typ| typ.name())
+    }
 }
 
-pub trait TypeExtension {
-    fn inner_type(&self) -> &str;
-    fn is_non_null(&self) -> bool;
-    fn is_list_type(&self) -> bool;
-    fn is_named_type(&self) -> bool;
-    fn of_type(&self) -> &Type;
-}
-
-impl TypeExtension for Type {
-    fn inner_type(&self) -> &str {
+impl Type {
+    pub fn inner_type(&self) -> &str {
         match self {
             Type::NamedType(name) => name.as_str(),
             Type::ListType(child) => child.inner_type(),
@@ -283,7 +275,7 @@ impl TypeExtension for Type {
         }
     }
 
-    fn is_non_null(&self) -> bool {
+    pub fn is_non_null(&self) -> bool {
         matches!(self, Type::NonNullType(_))
     }
 
@@ -291,18 +283,13 @@ impl TypeExtension for Type {
         matches!(self, Type::ListType(_))
     }
 
-    fn is_named_type(&self) -> bool {
+    pub fn is_named_type(&self) -> bool {
         matches!(self, Type::NamedType(_))
     }
 }
 
-pub trait ValueExtension {
-    fn compare(&self, other: &Self) -> bool;
-    fn variables_in_use(&self) -> Vec<&str>;
-}
-
-impl ValueExtension for Value {
-    fn compare(&self, other: &Self) -> bool {
+impl Value {
+    pub fn compare(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Null, Value::Null) => true,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
@@ -319,7 +306,7 @@ impl ValueExtension for Value {
         }
     }
 
-    fn variables_in_use(&self) -> Vec<&str> {
+    pub fn variables_in_use(&self) -> Vec<&str> {
         match self {
             Value::Variable(v) => vec![v],
             Value::List(list) => list.iter().flat_map(|v| v.variables_in_use()).collect(),
@@ -332,12 +319,8 @@ impl ValueExtension for Value {
     }
 }
 
-pub trait InputValueHelpers {
-    fn is_required(&self) -> bool;
-}
-
-impl InputValueHelpers for InputValue {
-    fn is_required(&self) -> bool {
+impl InputValue {
+    pub fn is_required(&self) -> bool {
         if let Type::NonNullType(_inner_type) = &self.value_type {
             if self.default_value.is_none() {
                 return true;
@@ -348,30 +331,7 @@ impl InputValueHelpers for InputValue {
     }
 }
 
-pub trait AbstractTypeDefinitionExtension {
-    fn is_implemented_by(&self, other_type: &dyn ImplementingInterfaceExtension) -> bool;
-}
-
-pub trait TypeDefinitionExtension {
-    fn is_leaf_type(&self) -> bool;
-    fn is_composite_type(&self) -> bool;
-    fn is_input_type(&self) -> bool;
-    fn is_object_type(&self) -> bool;
-    fn is_union_type(&self) -> bool;
-    fn is_interface_type(&self) -> bool;
-    fn is_enum_type(&self) -> bool;
-    fn is_scalar_type(&self) -> bool;
-    fn is_abstract_type(&self) -> bool;
-    fn name(&self) -> &str;
-}
-
-pub trait ImplementingInterfaceExtension {
-    fn interfaces(&self) -> Vec<String>;
-    fn has_sub_type(&self, other_type: &TypeDefinition) -> bool;
-    fn has_concrete_sub_type(&self, concrete_type: &ObjectType) -> bool;
-}
-
-impl ImplementingInterfaceExtension for TypeDefinition {
+impl TypeDefinition {
     fn interfaces(&self) -> Vec<String> {
         match self {
             schema::TypeDefinition::Object(o) => o.interfaces(),
@@ -380,7 +340,7 @@ impl ImplementingInterfaceExtension for TypeDefinition {
         }
     }
 
-    fn has_sub_type(&self, other_type: &TypeDefinition) -> bool {
+    pub fn has_sub_type(&self, other_type: &TypeDefinition) -> bool {
         match self {
             TypeDefinition::Interface(interface_type) => {
                 interface_type.is_implemented_by(other_type)
@@ -390,23 +350,19 @@ impl ImplementingInterfaceExtension for TypeDefinition {
         }
     }
 
-    fn has_concrete_sub_type(&self, concrete_type: &ObjectType) -> bool {
+    pub fn has_concrete_sub_type(&self, concrete_type: &TypeDefinition) -> bool {
         match self {
             TypeDefinition::Interface(interface_type) => {
                 interface_type.is_implemented_by(concrete_type)
             }
-            TypeDefinition::Union(union_type) => union_type.has_sub_type(&concrete_type.name),
+            TypeDefinition::Union(union_type) => union_type.has_sub_type(concrete_type.name()),
             _ => false,
         }
     }
 }
 
-pub trait PossibleTypesExtension {
-    fn possible_types<'a>(&self, schema: &'a schema::Document) -> Vec<&'a ObjectType>;
-}
-
-impl PossibleTypesExtension for TypeDefinition {
-    fn possible_types<'a>(&self, schema: &'a schema::Document) -> Vec<&'a ObjectType> {
+impl TypeDefinition {
+    pub fn possible_types<'a>(&self, schema: &'a schema::Document) -> Vec<&'a TypeDefinition> {
         match self {
             TypeDefinition::Object(_) => vec![],
             TypeDefinition::InputObject(_) => vec![],
@@ -416,10 +372,8 @@ impl PossibleTypesExtension for TypeDefinition {
                 .type_map()
                 .iter()
                 .filter_map(|(_type_name, type_def)| {
-                    if let TypeDefinition::Object(o) = type_def {
-                        if i.is_implemented_by(*type_def) {
-                            return Some(o);
-                        }
+                    if i.is_implemented_by(type_def) {
+                        return Some(*type_def);
                     }
 
                     None
@@ -429,8 +383,8 @@ impl PossibleTypesExtension for TypeDefinition {
                 .types
                 .iter()
                 .filter_map(|type_name| {
-                    if let Some(TypeDefinition::Object(o)) = schema.type_by_name(type_name) {
-                        return Some(o);
+                    if let Some(type_def) = schema.type_by_name(type_name) {
+                        return Some(type_def);
                     }
 
                     None
@@ -440,124 +394,48 @@ impl PossibleTypesExtension for TypeDefinition {
     }
 }
 
-impl ImplementingInterfaceExtension for InterfaceType {
+impl InterfaceType {
     fn interfaces(&self) -> Vec<String> {
         self.implements_interfaces.clone()
     }
 
-    fn has_sub_type(&self, other_type: &TypeDefinition) -> bool {
+    pub fn has_sub_type(&self, other_type: &TypeDefinition) -> bool {
         self.is_implemented_by(other_type)
     }
 
-    fn has_concrete_sub_type(&self, concrete_type: &ObjectType) -> bool {
+    pub fn has_concrete_sub_type(&self, concrete_type: &TypeDefinition) -> bool {
         self.is_implemented_by(concrete_type)
     }
 }
 
-impl ImplementingInterfaceExtension for ObjectType {
+impl ObjectType {
     fn interfaces(&self) -> Vec<String> {
         self.implements_interfaces.clone()
     }
 
-    fn has_sub_type(&self, _other_type: &TypeDefinition) -> bool {
+    pub fn has_sub_type(&self, _other_type: &TypeDefinition) -> bool {
         false
     }
 
-    fn has_concrete_sub_type(&self, _concrete_type: &ObjectType) -> bool {
+    pub fn has_concrete_sub_type(&self, _concrete_type: &ObjectType) -> bool {
         false
     }
 }
 
-pub trait SubTypeExtension {
-    fn has_sub_type(&self, other_type_name: &str) -> bool;
-}
-
-impl SubTypeExtension for UnionType {
-    fn has_sub_type(&self, other_type_name: &str) -> bool {
+impl UnionType {
+    pub fn has_sub_type(&self, other_type_name: &str) -> bool {
         self.types.iter().any(|v| other_type_name.eq(v))
     }
 }
 
-impl AbstractTypeDefinitionExtension for InterfaceType {
-    fn is_implemented_by(&self, other_type: &dyn ImplementingInterfaceExtension) -> bool {
+impl InterfaceType {
+    pub fn is_implemented_by(&self, other_type: &TypeDefinition) -> bool {
         other_type.interfaces().iter().any(|v| self.name.eq(v))
     }
 }
 
-impl TypeDefinitionExtension for Option<&schema::TypeDefinition> {
-    fn is_leaf_type(&self) -> bool {
-        match self {
-            Some(t) => t.is_leaf_type(),
-            _ => false,
-        }
-    }
-
-    fn is_composite_type(&self) -> bool {
-        match self {
-            Some(t) => t.is_composite_type(),
-            _ => false,
-        }
-    }
-
-    fn is_input_type(&self) -> bool {
-        match self {
-            Some(t) => t.is_input_type(),
-            _ => false,
-        }
-    }
-
-    fn is_interface_type(&self) -> bool {
-        match self {
-            Some(t) => t.is_interface_type(),
-            _ => false,
-        }
-    }
-
-    fn is_object_type(&self) -> bool {
-        match self {
-            Some(t) => t.is_object_type(),
-            _ => false,
-        }
-    }
-
-    fn is_union_type(&self) -> bool {
-        match self {
-            Some(t) => t.is_union_type(),
-            _ => false,
-        }
-    }
-
-    fn is_enum_type(&self) -> bool {
-        match self {
-            Some(t) => t.is_enum_type(),
-            _ => false,
-        }
-    }
-
-    fn is_scalar_type(&self) -> bool {
-        match self {
-            Some(t) => t.is_scalar_type(),
-            _ => false,
-        }
-    }
-
-    fn is_abstract_type(&self) -> bool {
-        match self {
-            Some(t) => t.is_abstract_type(),
-            _ => false,
-        }
-    }
-
-    fn name(&self) -> &str {
-        match self {
-            Some(t) => t.name(),
-            _ => "",
-        }
-    }
-}
-
-impl TypeDefinitionExtension for schema::TypeDefinition {
-    fn name(&self) -> &str {
+impl schema::TypeDefinition {
+    pub fn name(&self) -> &str {
         match self {
             schema::TypeDefinition::Object(o) => &o.name,
             schema::TypeDefinition::Interface(i) => &i.name,
@@ -568,7 +446,7 @@ impl TypeDefinitionExtension for schema::TypeDefinition {
         }
     }
 
-    fn is_abstract_type(&self) -> bool {
+    pub fn is_abstract_type(&self) -> bool {
         matches!(
             self,
             schema::TypeDefinition::Interface(_) | schema::TypeDefinition::Union(_)
@@ -579,14 +457,14 @@ impl TypeDefinitionExtension for schema::TypeDefinition {
         matches!(self, schema::TypeDefinition::Interface(_))
     }
 
-    fn is_leaf_type(&self) -> bool {
+    pub fn is_leaf_type(&self) -> bool {
         matches!(
             self,
             schema::TypeDefinition::Scalar(_) | schema::TypeDefinition::Enum(_)
         )
     }
 
-    fn is_input_type(&self) -> bool {
+    pub fn is_input_type(&self) -> bool {
         matches!(
             self,
             schema::TypeDefinition::Scalar(_)
@@ -595,7 +473,7 @@ impl TypeDefinitionExtension for schema::TypeDefinition {
         )
     }
 
-    fn is_composite_type(&self) -> bool {
+    pub fn is_composite_type(&self) -> bool {
         matches!(
             self,
             schema::TypeDefinition::Object(_)
@@ -604,19 +482,19 @@ impl TypeDefinitionExtension for schema::TypeDefinition {
         )
     }
 
-    fn is_object_type(&self) -> bool {
+    pub fn is_object_type(&self) -> bool {
         matches!(self, schema::TypeDefinition::Object(_o))
     }
 
-    fn is_union_type(&self) -> bool {
+    pub fn is_union_type(&self) -> bool {
         matches!(self, schema::TypeDefinition::Union(_o))
     }
 
-    fn is_enum_type(&self) -> bool {
+    pub fn is_enum_type(&self) -> bool {
         matches!(self, schema::TypeDefinition::Enum(_o))
     }
 
-    fn is_scalar_type(&self) -> bool {
+    pub fn is_scalar_type(&self) -> bool {
         matches!(self, schema::TypeDefinition::Scalar(_o))
     }
 }
@@ -648,13 +526,8 @@ impl AstNodeWithName for query::FragmentSpread {
     }
 }
 
-pub trait FragmentSpreadExtraction {
-    fn get_recursive_fragment_spreads(&self) -> Vec<&FragmentSpread>;
-    fn get_fragment_spreads(&self) -> Vec<&FragmentSpread>;
-}
-
-impl FragmentSpreadExtraction for query::SelectionSet {
-    fn get_recursive_fragment_spreads(&self) -> Vec<&FragmentSpread> {
+impl query::SelectionSet {
+    pub fn get_recursive_fragment_spreads(&self) -> Vec<&FragmentSpread> {
         self.items
             .iter()
             .flat_map(|v| match v {
@@ -673,5 +546,114 @@ impl FragmentSpreadExtraction for query::SelectionSet {
                 _ => vec![],
             })
             .collect()
+    }
+}
+
+impl query::Selection {
+    pub fn directives(&self) -> &[Directive] {
+        match self {
+            query::Selection::Field(f) => &f.directives,
+            query::Selection::FragmentSpread(f) => &f.directives,
+            query::Selection::InlineFragment(f) => &f.directives,
+        }
+    }
+    pub fn selection_set(&self) -> Option<&SelectionSet> {
+        match self {
+            query::Selection::Field(f) => Some(&f.selection_set),
+            query::Selection::FragmentSpread(_) => None,
+            query::Selection::InlineFragment(f) => Some(&f.selection_set),
+        }
+    }
+}
+
+impl schema::Definition<'static, String> {
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            schema::Definition::SchemaDefinition(_) => None,
+            schema::Definition::TypeDefinition(type_def) => Some(type_def.name()),
+            schema::Definition::TypeExtension(type_ext) => Some(type_ext.name()),
+            schema::Definition::DirectiveDefinition(directive_def) => Some(&directive_def.name),
+        }
+    }
+    pub fn fields<'a>(&'a self) -> Option<TypeDefinitionFields<'a>> {
+        match self {
+            schema::Definition::SchemaDefinition(_) => None,
+            schema::Definition::TypeDefinition(type_def) => type_def.fields(),
+            schema::Definition::TypeExtension(type_ext) => type_ext.fields(),
+            schema::Definition::DirectiveDefinition(_) => None,
+        }
+    }
+    pub fn directives(&self) -> Option<&[Directive]> {
+        match self {
+            schema::Definition::SchemaDefinition(schema_def) => Some(&schema_def.directives),
+            schema::Definition::TypeDefinition(type_def) => type_def.directives(),
+            schema::Definition::TypeExtension(type_ext) => type_ext.directives(),
+            schema::Definition::DirectiveDefinition(_) => None,
+        }
+    }
+}
+
+pub enum TypeDefinitionFields<'a> {
+    Fields(&'a [Field]),
+    InputValues(&'a [InputValue]),
+    EnumValues(&'a [EnumValue]),
+}
+
+impl TypeDefinition {
+    pub fn fields<'a>(&'a self) -> Option<TypeDefinitionFields<'a>> {
+        match self {
+            TypeDefinition::Scalar(_) => None,
+            TypeDefinition::Object(object) => Some(TypeDefinitionFields::Fields(&object.fields)),
+            TypeDefinition::Interface(interface) => {
+                Some(TypeDefinitionFields::Fields(&interface.fields))
+            }
+            TypeDefinition::Union(_) => None,
+            TypeDefinition::Enum(enum_) => Some(TypeDefinitionFields::EnumValues(&enum_.values)),
+            TypeDefinition::InputObject(input_object) => {
+                Some(TypeDefinitionFields::InputValues(&input_object.fields))
+            }
+        }
+    }
+    pub fn directives(&self) -> Option<&[Directive]> {
+        match self {
+            TypeDefinition::Scalar(_) => None,
+            TypeDefinition::Object(object) => Some(&object.directives),
+            TypeDefinition::Interface(interface) => Some(&interface.directives),
+            TypeDefinition::Union(union) => Some(&union.directives),
+            TypeDefinition::Enum(enum_) => Some(&enum_.directives),
+            TypeDefinition::InputObject(input_object) => Some(&input_object.directives),
+        }
+    }
+}
+
+impl TypeExtension<'static, String> {
+    pub fn name(&self) -> &str {
+        match self {
+            TypeExtension::Object(object) => &object.name,
+            TypeExtension::Interface(interface) => &interface.name,
+            TypeExtension::Union(union) => &union.name,
+            TypeExtension::Scalar(scalar) => &scalar.name,
+            TypeExtension::Enum(enum_) => &enum_.name,
+            TypeExtension::InputObject(input_object) => &input_object.name,
+        }
+    }
+    pub fn fields<'a>(&'a self) -> Option<TypeDefinitionFields<'a>> {
+        match self {
+            TypeExtension::Object(object) => Some(TypeDefinitionFields::Fields(&object.fields)),
+            TypeExtension::Interface(interface) => {
+                Some(TypeDefinitionFields::Fields(&interface.fields))
+            }
+            _ => None,
+        }
+    }
+    pub fn directives(&self) -> Option<&[Directive]> {
+        match self {
+            TypeExtension::Object(object) => Some(&object.directives),
+            TypeExtension::Interface(interface) => Some(&interface.directives),
+            TypeExtension::Union(union) => Some(&union.directives),
+            TypeExtension::Enum(enum_) => Some(&enum_.directives),
+            TypeExtension::InputObject(input_object) => Some(&input_object.directives),
+            TypeExtension::Scalar(scalar) => Some(&scalar.directives),
+        }
     }
 }

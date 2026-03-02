@@ -1,9 +1,5 @@
 use super::ValidationRule;
-use crate::ast::ext::TypeDefinitionExtension;
-use crate::ast::{
-    visit_document, ImplementingInterfaceExtension, OperationVisitor, OperationVisitorContext,
-    PossibleTypesExtension, SchemaDocumentExtension,
-};
+use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::TypeCondition;
 use crate::static_graphql::schema;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};

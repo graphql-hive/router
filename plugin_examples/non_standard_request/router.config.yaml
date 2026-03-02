@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+plugins:
+  non_standard_request:
+    enabled: true
+    config:
+      # If the client sends non-standard content types
+      # map them to the compatible ones
+      content_type_map:
+        "text/plain": "application/json"

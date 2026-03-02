@@ -1,9 +1,5 @@
 use anyhow::anyhow;
 use anyhow::Error;
-use graphql_tools::ast::ext::SchemaDocumentExtension;
-use graphql_tools::ast::FieldByNameExtension;
-use graphql_tools::ast::TypeDefinitionExtension;
-use graphql_tools::ast::TypeExtension;
 use graphql_tools::parser::minify_query_document;
 use graphql_tools::parser::schema::InputObjectType;
 use moka::sync::Cache;

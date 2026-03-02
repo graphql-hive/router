@@ -6,6 +6,7 @@ use std::{str::FromStr, sync::Arc};
 
 use cookie::Cookie;
 use hive_router_config::jwt_auth::{JwtAuthConfig, JwtAuthPluginLookupLocation};
+use hive_router_internal::background_tasks::BackgroundTasksManager;
 use http::header::COOKIE;
 use jsonwebtoken::{
     decode, decode_header,
@@ -16,7 +17,6 @@ use ntex::{http::header::HeaderValue, http::HeaderMap};
 use tracing::warn;
 
 use crate::{
-    background_tasks::BackgroundTasksManager,
     jwt::{
         context::{Audience, JwtClaims, JwtRequestContext, JwtTokenPayload},
         errors::{JwtError, LookupError},
