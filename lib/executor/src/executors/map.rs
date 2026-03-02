@@ -6,7 +6,9 @@ use std::{
 
 use dashmap::DashMap;
 use hive_router_config::{
-    override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
+    override_subgraph_urls::UrlOrExpression,
+    primitives::{file_path::FilePath, single_or_multiple::SingleOrMultiple},
+    traffic_shaping::{ClientTLSConfig, DurationOrExpression},
     HiveRouterConfig,
 };
 use hive_router_internal::expressions::vrl::core::Value as VrlValue;
@@ -15,10 +17,14 @@ use hive_router_internal::{
     expressions::vrl::compiler::Program as VrlProgram, telemetry::TelemetryContext,
 };
 use http::Uri;
-use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
+use hyper_rustls::{ConfigBuilderExt, HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::{
     client::legacy::{connect::HttpConnector, Client},
     rt::{TokioExecutor, TokioTimer},
+};
+use rustls::{
+    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
+    ClientConfig, RootCertStore,
 };
 use tokio::sync::{OnceCell, Semaphore};
 
@@ -27,7 +33,7 @@ use crate::{
     executors::{
         common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         dedupe::ABuildHasher,
-        error::SubgraphExecutorError,
+        error::{SubgraphExecutorError, TlsCertificatesError},
         http::{HTTPSubgraphExecutor, HttpClient, SubgraphHttpResponse},
     },
     hooks::on_subgraph_execute::{
@@ -73,11 +79,116 @@ pub struct SubgraphExecutorMap {
     telemetry_context: Arc<TelemetryContext>,
 }
 
-fn build_https_executor() -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
-    HttpsConnectorBuilder::new()
-        .with_native_roots()
-        .map_err(SubgraphExecutorError::NativeTlsCertificatesError)
-        .map(|b| b.https_or_http().enable_http1().enable_http2().build())
+pub fn from_cert_file_config_to_certificate_der<'a>(
+    cert_file_path: &SingleOrMultiple<FilePath>,
+) -> Result<Vec<CertificateDer<'a>>, TlsCertificatesError> {
+    match cert_file_path {
+        SingleOrMultiple::Single(cert_file_path) => {
+            CertificateDer::pem_file_iter(&cert_file_path.absolute)
+                .and_then(|res| res.collect::<Result<Vec<_>, _>>())
+                .map_err(|err| TlsCertificatesError::CustomTlsCertificatesError("cert_file", err))
+        }
+        SingleOrMultiple::Multiple(file_paths) => file_paths
+            .iter()
+            .map(|file_path| {
+                CertificateDer::pem_file_iter(&file_path.absolute)
+                    .and_then(|res| res.collect::<Result<Vec<_>, _>>())
+                    .map_err(|err| {
+                        TlsCertificatesError::CustomTlsCertificatesError("cert_file", err)
+                    })
+            })
+            .try_fold(Vec::new(), |mut acc, certs_result| {
+                certs_result.map(|mut certs| {
+                    acc.append(&mut certs);
+                    acc
+                })
+            }),
+    }
+}
+
+fn build_https_client_config(
+    tls_config: Option<&ClientTLSConfig>,
+) -> Result<ClientConfig, TlsCertificatesError> {
+    let tls_config_for_rustls =
+        if let Some(cert_file_path) = tls_config.and_then(|c| c.cert_file.as_ref()) {
+            // Read trust roots
+            let certs = from_cert_file_config_to_certificate_der(cert_file_path)?;
+
+            if certs.is_empty() {
+                return Err(TlsCertificatesError::InvalidTlsCertificates(format!(
+                    "No valid certificates found in {:#?}",
+                    cert_file_path
+                )));
+            }
+
+            let certs_len = certs.len();
+            let mut roots = RootCertStore::empty();
+            let (valid, _) = roots.add_parsable_certificates(certs);
+            if valid != certs_len {
+                return Err(TlsCertificatesError::InvalidTlsCertificates(format!(
+                    "Expected {} certificates in {:#?}, but only {} were valid",
+                    certs_len, cert_file_path, valid
+                )));
+            }
+            // TLS client config using the custom CA store for lookups
+            ClientConfig::builder().with_root_certificates(roots)
+        } else {
+            ClientConfig::builder()
+                .with_native_roots()
+                .map_err(TlsCertificatesError::NativeTlsCertificatesError)?
+        };
+    let client_config = if let Some(client_auth) = tls_config.and_then(|c| c.client_auth.as_ref()) {
+        let certs = from_cert_file_config_to_certificate_der(&client_auth.cert_file)?;
+
+        let private_key =
+            PrivateKeyDer::from_pem_file(&client_auth.key_file.absolute).map_err(|err| {
+                TlsCertificatesError::CustomTlsCertificatesError("client_auth.key", err)
+            })?;
+
+        tls_config_for_rustls
+            .with_client_auth_cert(certs, private_key)
+            .map_err(TlsCertificatesError::TlsConfigFailure)?
+    } else {
+        tls_config_for_rustls.with_no_client_auth()
+    };
+
+    Ok(client_config)
+}
+
+fn build_https_connector(
+    tls_config: Option<&ClientTLSConfig>,
+) -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
+    Ok(HttpsConnectorBuilder::new()
+        .with_tls_config(build_https_client_config(tls_config)?)
+        .https_or_http()
+        .enable_all_versions()
+        .build())
+}
+
+fn get_merged_tls_config(
+    global: Option<&ClientTLSConfig>,
+    subgraph: Option<&ClientTLSConfig>,
+) -> Option<ClientTLSConfig> {
+    match (global, subgraph) {
+        (Some(global), Some(subgraph)) => {
+            // If both global and subgraph TLS configs are provided, we merge them by giving precedence to subgraph config values.
+            // If the subgraph config has a field set to None, we fall back to the global config for that field.
+            let merged = ClientTLSConfig {
+                cert_file: subgraph
+                    .cert_file
+                    .clone()
+                    .or_else(|| global.cert_file.clone()),
+                client_auth: subgraph
+                    .client_auth
+                    .clone()
+                    .or_else(|| global.client_auth.clone()),
+            };
+            Some(merged)
+        }
+        (None, Some(subgraph)) => Some(subgraph.clone()),
+        (Some(global), None) => Some(global.clone()),
+        (None, None) => None,
+    }
 }
 
 impl SubgraphExecutorMap {
@@ -90,7 +201,9 @@ impl SubgraphExecutorMap {
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.traffic_shaping.all.pool_idle_timeout)
             .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host)
-            .build(build_https_executor()?);
+            .build(build_https_connector(
+                config.traffic_shaping.all.tls.as_ref(),
+            )?);
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
@@ -418,18 +531,24 @@ impl SubgraphExecutorMap {
             return Ok(config);
         };
 
-        // Override client only if pool idle timeout is customized
-        if let Some(pool_idle_timeout) = subgraph_config.pool_idle_timeout {
-            // Only override if it's different from the global setting
-            if pool_idle_timeout != self.config.traffic_shaping.all.pool_idle_timeout {
-                config.client = Arc::new(
-                    Client::builder(TokioExecutor::new())
-                        .pool_timer(TokioTimer::new())
-                        .pool_idle_timeout(pool_idle_timeout)
-                        .pool_max_idle_per_host(self.max_connections_per_host)
-                        .build(build_https_executor()?),
-                );
-            }
+        let pool_idle_timeout = subgraph_config
+            .pool_idle_timeout
+            .unwrap_or(self.config.traffic_shaping.all.pool_idle_timeout);
+        // Override client only if pool idle timeout is customized or TLS config is provided
+        if pool_idle_timeout != self.config.traffic_shaping.all.pool_idle_timeout
+            || subgraph_config.tls.is_some()
+        {
+            let tls_config = get_merged_tls_config(
+                self.config.traffic_shaping.all.tls.as_ref(),
+                subgraph_config.tls.as_ref(),
+            );
+            config.client = Arc::new(
+                Client::builder(TokioExecutor::new())
+                    .pool_timer(TokioTimer::new())
+                    .pool_idle_timeout(pool_idle_timeout)
+                    .pool_max_idle_per_host(self.max_connections_per_host)
+                    .build(build_https_connector(tls_config.as_ref())?),
+            );
         }
 
         // Apply other subgraph-specific overrides

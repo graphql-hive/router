@@ -70,6 +70,7 @@ pub use sonic_rs;
 pub use tokio;
 pub use tracing;
 use tracing::{info, warn, Instrument};
+pub mod tls;
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
 
@@ -188,7 +189,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     paths.detect_conflicts(&prometheus)?;
 
     let graphql_path = graphql_path.to_string();
-    let maybe_error = web::HttpServer::new(async move || {
+    let server = web::HttpServer::new(async move || {
         let landing_page_path = graphql_path.clone();
         let prometheus = prometheus.clone();
         web::App::new()
@@ -199,9 +200,22 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
             .default_service(web::to(move || {
                 landing_page_handler(landing_page_path.clone())
             }))
-    })
-    .bind(&addr)
-    .map_err(|err| RouterInitError::HttpServerBindError(addr, err))?
+    });
+
+    let tls_config = shared_state_clone
+        .router_config
+        .traffic_shaping
+        .router
+        .tls
+        .as_ref();
+
+    let maybe_error = if let Some(tls_config) = tls_config {
+        let rustls_config = tls::build_rustls_config(tls_config)?;
+        server.bind_rustls(&addr, &rustls_config)
+    } else {
+        server.bind(&addr)
+    }
+    .map_err(|err| RouterInitError::HttpServerBindError(addr.to_string(), err))?
     .run()
     .await
     .map_err(RouterInitError::HttpServerStartError);

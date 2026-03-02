@@ -42,6 +42,8 @@ mod supergraph;
 mod telemetry;
 #[cfg(test)]
 mod timeout_per_subgraph;
+#[cfg(test)]
+mod tls;
 
 pub use insta;
 pub use mockito;
