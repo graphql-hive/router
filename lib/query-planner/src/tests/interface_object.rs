@@ -440,7 +440,9 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
                   "ValueSetter": {
                     "path": [
                       {
-                        "TypenameEquals": "NodeWithName"
+                        "TypenameEquals": [
+                          "NodeWithName"
+                        ]
                       },
                       {
                         "Key": "__typename"
@@ -486,7 +488,9 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
                   "ValueSetter": {
                     "path": [
                       {
-                        "TypenameEquals": "NodeWithName"
+                        "TypenameEquals": [
+                          "NodeWithName"
+                        ]
                       },
                       {
                         "Key": "__typename"
