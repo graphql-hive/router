@@ -6,6 +6,6 @@ pub enum MinificationError {
     FieldNotFound(String, String),
     #[error("Unsupported fragment spread")]
     UnsupportedFragmentSpread,
-    #[error("Unsupported field in `_entities`: {0}")]
-    UnsupportedFieldInEntities(String),
+    #[error("Unsupported field in `_entities`: {0}.{1}")]
+    UnsupportedFieldInEntities(String, String),
 }

@@ -10,6 +10,9 @@ homepage = "https://github.com/graphql-hive/router"
 authors = ["The Guild"]
 
 [lib]
+ # Disabled because it requires all imports in the documentation, which bloats the documentation,
+ # and makes it harder to follow.
+doctest = false
 
 [dependencies]
 hive-router-query-planner = { path = "../query-planner", version = "2.2.1" }

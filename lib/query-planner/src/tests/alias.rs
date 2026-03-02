@@ -156,7 +156,9 @@ fn conflict_list_type_in_interface() -> Result<(), Box<dyn Error>> {
                   "Key": "i"
                 },
                 {
-                  "TypenameEquals": "TypeB"
+                  "TypenameEquals": [
+                    "TypeB"
+                  ]
                 },
                 {
                   "Key": "_internal_qp_alias_0"
@@ -230,7 +232,9 @@ fn multiple_mismtaches_same_level() -> Result<(), Box<dyn Error>> {
                   "Key": "i"
                 },
                 {
-                  "TypenameEquals": "TypeB"
+                  "TypenameEquals": [
+                    "TypeB"
+                  ]
                 },
                 {
                   "Key": "_internal_qp_alias_0"
@@ -246,7 +250,9 @@ fn multiple_mismtaches_same_level() -> Result<(), Box<dyn Error>> {
                   "Key": "i"
                 },
                 {
-                  "TypenameEquals": "TypeB"
+                  "TypenameEquals": [
+                    "TypeB"
+                  ]
                 },
                 {
                   "Key": "_internal_qp_alias_1"
@@ -437,7 +443,9 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"
@@ -629,13 +637,17 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "User"
+                          "TypenameEquals": [
+                            "User"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"
@@ -651,7 +663,9 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"
@@ -667,13 +681,17 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"
@@ -922,19 +940,25 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "User"
+                          "TypenameEquals": [
+                            "User"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "User"
+                          "TypenameEquals": [
+                            "User"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"
@@ -950,13 +974,17 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "User"
+                          "TypenameEquals": [
+                            "User"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"
@@ -972,19 +1000,25 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "User"
+                          "TypenameEquals": [
+                            "User"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"
@@ -1000,7 +1034,9 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"
@@ -1016,19 +1052,25 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "User"
+                          "TypenameEquals": [
+                            "User"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"
@@ -1044,13 +1086,17 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"
@@ -1066,19 +1112,25 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                           "Key": "accounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "similarAccounts"
                         },
                         {
-                          "TypenameEquals": "Admin"
+                          "TypenameEquals": [
+                            "Admin"
+                          ]
                         },
                         {
                           "Key": "_internal_qp_alias_0"

@@ -185,6 +185,7 @@ fn transform_field(
                     }
 
                     return Err(MinificationError::UnsupportedFieldInEntities(
+                        type_name.to_string(),
                         field.name.clone(),
                     ));
                 }

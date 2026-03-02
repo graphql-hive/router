@@ -367,42 +367,48 @@ impl<'exec> Executor<'exec> {
                 let mut representation_hash_to_index: HashMap<u64, usize> = HashMap::new();
                 let arena = bumpalo::Bump::new();
 
-                traverse_and_callback(data, normalized_path, self.schema_metadata, &mut |entity| {
-                    let hash = entity.to_hash(&requires_nodes.items, possible_types);
+                traverse_and_callback(
+                    data,
+                    normalized_path,
+                    &self.schema_metadata.possible_types,
+                    &mut |entity| {
+                        let hash = entity.to_hash(&requires_nodes.items, possible_types);
 
-                    if !entity.is_null() {
-                        representation_hashes.push(hash);
-                    }
-
-                    if representation_hash_to_index.contains_key(&hash) {
-                        return;
-                    }
-
-                    let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                        let new_entity = arena.alloc(entity.clone());
-                        for input_rewrite in input_rewrites {
-                            input_rewrite.rewrite(&self.schema_metadata.possible_types, new_entity);
+                        if !entity.is_null() {
+                            representation_hashes.push(hash);
                         }
-                        new_entity
-                    } else {
-                        entity
-                    };
 
-                    let is_projected = project_requires(
-                        possible_types,
-                        &requires_nodes.items,
-                        entity,
-                        &mut filtered_representations,
-                        representation_hash_to_index.is_empty(),
-                        None,
-                    );
+                        if representation_hash_to_index.contains_key(&hash) {
+                            return;
+                        }
 
-                    if is_projected {
-                        representation_hash_to_index.insert(hash, index);
-                    }
+                        let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                            let new_entity = arena.alloc(entity.clone());
+                            for input_rewrite in input_rewrites {
+                                input_rewrite
+                                    .rewrite(&self.schema_metadata.possible_types, new_entity);
+                            }
+                            new_entity
+                        } else {
+                            entity
+                        };
 
-                    index += 1;
-                });
+                        let is_projected = project_requires(
+                            possible_types,
+                            &requires_nodes.items,
+                            entity,
+                            &mut filtered_representations,
+                            representation_hash_to_index.is_empty(),
+                            None,
+                        );
+
+                        if is_projected {
+                            representation_hash_to_index.insert(hash, index);
+                        }
+
+                        index += 1;
+                    },
+                );
 
                 filtered_representations.put(CLOSE_BRACKET);
 

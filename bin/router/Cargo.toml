@@ -8,6 +8,7 @@ publish = true
 authors = ["The Guild"]
 repository = "https://github.com/graphql-hive/router"
 homepage = "https://github.com/graphql-hive/router"
+readme = "README.crate.md"
 
 [lib]
 
