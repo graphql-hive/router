@@ -1,4 +1,4 @@
-use crate::testkit::{otel::OtlpCollector, TestRouterBuilder, TestSubgraphsBuilder};
+use crate::testkit::{otel::OtlpCollector, TestRouter, TestSubgraphs};
 
 /// Verify Hive Console exporter works with HTTP protocol
 #[ntex::test]
@@ -13,12 +13,12 @@ async fn test_hive_http_export() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
     let token = "your_token_here";
     let target = "my-org/my-project/my-target";
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
             supergraph:

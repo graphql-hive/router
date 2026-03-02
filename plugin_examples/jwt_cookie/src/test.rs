@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use e2e::mockito::{self};
-    use e2e::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use e2e::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
     use hive_router::ntex;
 
     use crate::plugin::{NewTokenResult, JWT_TOKEN_NAME};
@@ -33,9 +33,9 @@ mod tests {
             .create_async()
             .await;
 
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 include_str!("../../../plugin_examples/jwt_cookie/router.config.yaml").replace(

@@ -4,7 +4,7 @@ mod tests {
     use std::time::Duration;
 
     use e2e::mockito;
-    use e2e::testkit::{ClientResponseExt, EnvVarsGuard, TestRouterBuilder};
+    use e2e::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter};
     use futures::stream::FuturesUnordered;
     use futures::StreamExt;
     use hive_router::{http::StatusCode, ntex, sonic_rs};
@@ -36,7 +36,7 @@ mod tests {
             .apply()
             .await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("../plugin_examples/incoming_request_deduplication/router.config.yaml")
             .register_plugin::<crate::plugin::IncomingRequestDeduplicationPlugin>()
             .build()

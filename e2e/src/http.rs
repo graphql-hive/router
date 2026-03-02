@@ -4,13 +4,13 @@ mod http_tests {
     use sonic_rs::JsonValueTrait;
 
     use crate::testkit::{
-        some_header_map, ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder,
+        some_header_map, ClientResponseExt, TestRouter, TestSubgraphs,
     };
 
     #[ntex::test]
     async fn should_allow_to_customize_graphql_endpoint() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -55,8 +55,8 @@ mod http_tests {
 
     #[ntex::test]
     async fn should_not_expose_query_plan_when_disabled() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -105,8 +105,8 @@ mod http_tests {
 
     #[ntex::test]
     async fn should_execute_and_expose_query_plan() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -155,8 +155,8 @@ mod http_tests {
 
     #[ntex::test]
     async fn should_dry_run_and_expose_query_plan() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"

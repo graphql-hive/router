@@ -2,7 +2,7 @@
 mod override_subgraph_urls_e2e_tests {
     use crate::{
         some_header_map,
-        testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder},
+        testkit::{ClientResponseExt, TestRouter, TestSubgraphs},
     };
 
     #[ntex::test]
@@ -11,10 +11,10 @@ mod override_subgraph_urls_e2e_tests {
     /// The router config overrides the URL for the "accounts" subgraph to point to 4100.
     /// This way we can verify that the override is applied correctly.
     async fn should_override_subgraph_url_based_on_static_value() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
         let subgraphs_addr = subgraphs.addr();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
                 supergraph:
@@ -53,10 +53,10 @@ mod override_subgraph_urls_e2e_tests {
     /// This way we can verify that the override is applied correctly.
     /// Without the header, the request goes to 4200 and fail (thanks to `.default`).
     async fn should_override_subgraph_url_based_on_header_value() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
         let subgraphs_addr = subgraphs.addr();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
                 supergraph:

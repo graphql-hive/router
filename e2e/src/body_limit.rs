@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod body_limit_e2e_tests {
-    use crate::testkit::{ClientResponseExt, TestRouterBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouter};
     #[ntex::test]
     async fn should_return_payload_too_large_if_limit_exceeds_while_reading_the_stream() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(
                 r#"
                 supergraph:
@@ -48,7 +48,7 @@ mod body_limit_e2e_tests {
 
     #[ntex::test]
     async fn should_return_payload_too_large_if_content_length_header_exceeds_the_limit() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(
                 r#"
                 supergraph:

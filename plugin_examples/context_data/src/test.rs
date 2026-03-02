@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
+    use e2e::testkit::{TestRouter, TestSubgraphs};
     use hive_router::ntex;
 
     #[ntex::test]
     async fn should_add_context_data_and_modify_subgraph_request() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("../plugin_examples/context_data/router.config.yaml")
             .register_plugin::<crate::plugin::ContextDataPlugin>()

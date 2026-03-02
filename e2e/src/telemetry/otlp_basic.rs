@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::testkit::{
     otel::{CollectedSpan, OtlpCollector},
-    TestRouterBuilder, TestSubgraphsBuilder,
+    TestRouter, TestSubgraphs,
 };
 
 /// Verify OTLP exporter works with HTTP protocol
@@ -18,9 +18,9 @@ async fn test_otlp_http_export_with_graphql_request() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -255,9 +255,9 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -511,9 +511,9 @@ async fn test_otlp_disabled() {
     let otlp_grpc_endpoint = otlp_collector.grpc_endpoint();
     let otlp_http_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -572,9 +572,9 @@ async fn test_otlp_http_headers() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -636,9 +636,9 @@ async fn test_otlp_grpc_metadata() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -701,9 +701,9 @@ async fn test_otlp_cache_hits() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -796,9 +796,9 @@ async fn test_otlp_no_trace_id_collision() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:

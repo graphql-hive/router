@@ -8,7 +8,7 @@ mod supergraph_e2e_tests {
     use sonic_rs::JsonValueTrait;
 
     use crate::testkit::{
-        ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
+        ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs,
     };
 
     #[ntex::test]
@@ -31,7 +31,7 @@ mod supergraph_e2e_tests {
             .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
                 supergraph:
@@ -102,7 +102,7 @@ mod supergraph_e2e_tests {
             .apply()
             .await;
 
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
@@ -206,7 +206,7 @@ mod supergraph_e2e_tests {
             .with_body(supergraph2_sdl)
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
                 supergraph:
@@ -259,7 +259,7 @@ mod supergraph_e2e_tests {
             .with_body("type Query { initial: String }")
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
                 supergraph:

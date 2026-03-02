@@ -3,13 +3,13 @@ mod override_subgraph_urls_e2e_tests {
     use sonic_rs::json;
 
     use crate::testkit::{
-        some_header_map, ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder,
+        some_header_map, ClientResponseExt, TestRouter, TestSubgraphs,
     };
 
     #[ntex::test]
     async fn should_not_deadlock_when_overriding_subgraph_timeout_statically() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/timeout_per_subgraph_static.router.yaml")
             .build()
@@ -49,8 +49,8 @@ mod override_subgraph_urls_e2e_tests {
 
     #[ntex::test]
     async fn should_not_deadlock_when_overriding_subgraph_timeout_dynamically() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/timeout_per_subgraph_dynamic.router.yaml")
             .build()

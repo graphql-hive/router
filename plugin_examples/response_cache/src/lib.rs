@@ -166,7 +166,7 @@ impl RouterPlugin for ResponseCachePlugin {
 
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{docker::TestDockerContainer, TestRouterBuilder, TestSubgraphsBuilder};
+    use e2e::testkit::{docker::TestDockerContainer, TestRouter, TestSubgraphs};
     use hive_router::{http::StatusCode, ntex};
 
     #[ntex::test]
@@ -181,9 +181,9 @@ mod tests {
 
         container.exec(vec!["redis-cli", "FLUSHALL"]).await;
 
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("../plugin_examples/response_cache/router.config.yaml")
             .register_plugin::<super::ResponseCachePlugin>()

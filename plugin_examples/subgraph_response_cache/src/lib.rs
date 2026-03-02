@@ -45,15 +45,15 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
 
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
+    use e2e::testkit::{TestRouter, TestSubgraphs};
     use hive_router::ntex;
 
     // Tests on_subgraph_execute's override behavior
     #[ntex::test]
     async fn caches_subgraph_responses() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("../plugin_examples/subgraph_response_cache/router.config.yaml")
             .register_plugin::<super::SubgraphResponseCachePlugin>()

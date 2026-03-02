@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod error_handling_e2e_tests {
-    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn should_continue_execution_when_a_subgraph_is_down() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
         let subgraphs_addr = subgraphs.addr();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             // we dont set subgraphs avoiding the port change in the supergrph.
             // we want this because we are here testing the overrides
             // .with_subgraphs(&subgraphs)

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod max_tokens_e2e_tests {
-    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
 
     static QUERY: &str = r#"
         query {
@@ -12,8 +12,8 @@ mod max_tokens_e2e_tests {
 
     #[ntex::test]
     async fn does_not_reject_an_operation_below_token_limit() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -44,8 +44,8 @@ mod max_tokens_e2e_tests {
 
     #[ntex::test]
     async fn rejects_an_operation_exceeding_token_limit() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"

@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod apollo_sandbox_tests {
-    use e2e::testkit::{ClientResponseExt, TestRouterBuilder};
+    use e2e::testkit::{ClientResponseExt, TestRouter};
     use hive_router::ntex;
 
     #[ntex::test]
     async fn renders_apollo_sandbox_page() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("../plugin_examples/apollo_sandbox/router.config.yaml")
             .register_plugin::<crate::plugin::ApolloSandboxPlugin>()
             .build()

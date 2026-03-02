@@ -167,15 +167,15 @@ impl RouterPlugin for MultipartPlugin {
 
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use e2e::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
     use futures_util::StreamExt;
     use hive_router::{ntex, sonic_rs::JsonValueTrait};
 
     #[ntex::test]
     async fn forward_files() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("../plugin_examples/multipart/router.config.yaml")
             .register_plugin::<super::MultipartPlugin>()

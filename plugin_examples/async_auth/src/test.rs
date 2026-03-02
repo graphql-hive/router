@@ -2,16 +2,16 @@
 mod tests {
     use e2e::{
         some_header_map,
-        testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder},
+        testkit::{ClientResponseExt, TestRouter, TestSubgraphs},
     };
 
     use hive_router::{http, ntex, sonic_rs};
 
     #[ntex::test]
     async fn should_allow_only_allowed_client_ids() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("../plugin_examples/async_auth/router.config.yaml")
             .register_plugin::<crate::plugin::AllowClientIdFromFilePlugin>()

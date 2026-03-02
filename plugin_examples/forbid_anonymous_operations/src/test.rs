@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use e2e::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
     use hive_router::{http::StatusCode, ntex, sonic_rs};
 
     #[ntex::test]
     async fn should_forbid_anonymous_operations() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("../plugin_examples/forbid_anonymous_operations/router.config.yaml")
             .register_plugin::<crate::plugin::ForbidAnonymousOperationsPlugin>()

@@ -216,14 +216,14 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for OneOfValidation {
 
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use e2e::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
     use hive_router::{ntex, sonic_rs, sonic_rs::JsonValueTrait};
 
     #[ntex::test]
     async fn one_of_validates_in_validation_rule() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("../plugin_examples/one_of/router.config.yaml")
             .register_plugin::<super::OneOfPlugin>()
@@ -261,9 +261,9 @@ mod tests {
 
     #[ntex::test]
     async fn one_of_validates_during_execution() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("../plugin_examples/one_of/router.config.yaml")
             .register_plugin::<super::OneOfPlugin>()

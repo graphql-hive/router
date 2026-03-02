@@ -3,7 +3,7 @@ mod tests {
     use std::time::Duration;
 
     use e2e::mockito;
-    use e2e::testkit::{TestRouterBuilder, TestSubgraphsBuilder};
+    use e2e::testkit::{TestRouter, TestSubgraphs};
     use hive_router::ntex;
     use hive_router::tokio::time::sleep;
     use serde_json::json;
@@ -28,9 +28,9 @@ mod tests {
             .await;
 
         {
-            let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+            let subgraphs = TestSubgraphs::builder().build().start().await;
 
-            let router = TestRouterBuilder::new()
+            let router = TestRouter::builder()
                 .with_subgraphs(&subgraphs)
                 .inline_config(
                     include_str!("../../../plugin_examples/usage_reporting/router.config.yaml")
@@ -67,10 +67,10 @@ mod tests {
             .create_async()
             .await;
 
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         // Initialize with shorter interval so we can see if reports are flushed without waiting for shutdown
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(format!(
                 r#"

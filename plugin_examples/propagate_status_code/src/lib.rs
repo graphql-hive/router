@@ -91,7 +91,7 @@ impl RouterPlugin for PropagateStatusCodePlugin {
 mod tests {
     use e2e::{
         mockito,
-        testkit::{EnvVarsGuard, TestRouterBuilder},
+        testkit::{EnvVarsGuard, TestRouter},
     };
     use hive_router::ntex;
 
@@ -123,7 +123,7 @@ mod tests {
             .apply()
             .await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("../plugin_examples/propagate_status_code/router.config.yaml")
             .register_plugin::<super::PropagateStatusCodePlugin>()
             .build()
@@ -166,7 +166,7 @@ mod tests {
             .apply()
             .await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("../plugin_examples/propagate_status_code/router.config.yaml")
             .register_plugin::<super::PropagateStatusCodePlugin>()
             .build()

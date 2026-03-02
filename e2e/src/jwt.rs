@@ -4,9 +4,7 @@ mod jwt_e2e_tests {
     use sonic_rs::{json, JsonValueTrait, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::testkit::{
-        some_header_map, ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder,
-    };
+    use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
 
     fn generate_jwt(payload: &Value) -> String {
         generate_jwt_with_alg(payload, jsonwebtoken::Algorithm::RS512)
@@ -29,8 +27,8 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn should_forward_claims_to_subgraph_via_extensions() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth_forward.router.yaml")
             .build()
@@ -84,8 +82,8 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn should_allow_expressions_to_access_jwt_details() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth_header_expression.router.yaml")
             .build()
@@ -154,8 +152,8 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn should_allow_expressions_to_access_jwt_scopes() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth_header_expression.router.yaml")
             .build()
@@ -276,7 +274,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_without_token_when_auth_is_required() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("configs/jwt_auth.router.yaml")
             .build()
             .start()
@@ -305,7 +303,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_malformed_token() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("configs/jwt_auth.router.yaml")
             .build()
             .start()
@@ -340,7 +338,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_invalid_signature() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("configs/jwt_auth.router.yaml")
             .build()
             .start()
@@ -368,7 +366,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn accepts_request_with_valid_token() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("configs/jwt_auth.router.yaml")
             .build()
             .start()
@@ -406,7 +404,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn accepts_request_with_valid_token_jwk_with_alg() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("configs/jwt_auth_jwk_with_alg.router.yaml")
             .build()
             .start()
@@ -444,7 +442,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_expired_token() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("configs/jwt_auth.router.yaml")
             .build()
             .start()
@@ -481,7 +479,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_wrong_issuer() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("configs/jwt_auth_issuer.router.yaml")
             .build()
             .start()
@@ -512,7 +510,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_wrong_audience() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("configs/jwt_auth_audience.router.yaml")
             .build()
             .start()
@@ -543,7 +541,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_wrong_algorithm() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("configs/jwt_auth_jwk_with_alg.router.yaml")
             .build()
             .start()

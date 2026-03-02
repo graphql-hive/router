@@ -320,6 +320,10 @@ async fn handle_on_request(
 }
 
 impl TestSubgraphs<Built> {
+    pub fn builder() -> TestSubgraphsBuilder {
+        TestSubgraphsBuilder::new()
+    }
+
     pub async fn start(self) -> TestSubgraphs<Started> {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -575,6 +579,10 @@ pub struct TestRouter<State> {
 }
 
 impl TestRouter<Built> {
+    pub fn builder() -> TestRouterBuilder {
+        TestRouterBuilder::new()
+    }
+
     pub async fn start(mut self) -> TestRouter<Started> {
         init_rustls_crypto_provider();
         let config = self.config.take().unwrap();

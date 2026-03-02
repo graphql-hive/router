@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use e2e::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
     use hive_router::{http::StatusCode, ntex, sonic_rs};
 
     #[ntex::test]
     async fn sends_not_found_error_if_query_missing() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("../plugin_examples/apq/router.config.yaml")
             .register_plugin::<crate::plugin::APQPlugin>()
@@ -48,9 +48,9 @@ mod tests {
 
     #[ntex::test]
     async fn saves_persisted_query() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("../plugin_examples/apq/router.config.yaml")
             .register_plugin::<crate::plugin::APQPlugin>()

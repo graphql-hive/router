@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
     use e2e::mockito;
-    use e2e::testkit::{ClientResponseExt, TestRouterBuilder};
+    use e2e::testkit::{ClientResponseExt, TestRouter};
     use hive_router::{http::StatusCode, ntex};
 
     #[ntex::test]
     async fn should_map_subgraph_errors() {
         let mut subgraphs = mockito::Server::new_async().await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(subgraphs.socket_address())
             .file_config("../plugin_examples/error_mapping/router.config.yaml")
             .register_plugin::<crate::plugin::ErrorMappingPlugin>()
@@ -39,7 +39,7 @@ mod tests {
 
     #[ntex::test]
     async fn should_map_router_errors() {
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .file_config("../plugin_examples/error_mapping/router.config.yaml")
             .register_plugin::<crate::plugin::ErrorMappingPlugin>()
             .build()

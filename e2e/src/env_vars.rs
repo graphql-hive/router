@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod env_vars_e2e_tests {
     use crate::testkit::{
-        ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
+        ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs,
     };
 
     #[ntex::test]
@@ -13,11 +13,11 @@ mod env_vars_e2e_tests {
     /// This way we can verify that the override is applied correctly.
     /// Without the env var, the request goes to the allocated port (thanks to `.default`).
     async fn should_override_subgraph_url_based_on_env_var() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         // Makes the expression to evaluate to port 4200 (value of .default)
         {
-            let router = TestRouterBuilder::new()
+            let router = TestRouter::builder()
                 .with_subgraphs(&subgraphs)
                 .file_config("configs/env_vars.router.yaml")
                 .build()
@@ -52,7 +52,7 @@ mod env_vars_e2e_tests {
                 .apply()
                 .await;
 
-            let router = TestRouterBuilder::new()
+            let router = TestRouter::builder()
                 .with_subgraphs(&subgraphs)
                 .file_config("configs/env_vars.router.yaml")
                 .build()
@@ -95,11 +95,11 @@ mod env_vars_e2e_tests {
     /// Test that the `x-router-env` header value depends on the `ROUTER_ENV_HEADER` env var,
     /// with a fallback to "default".
     async fn should_insert_response_header_based_on_env_var() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         // Makes the expression to evaluate to "default" (default value provided)
         {
-            let router = TestRouterBuilder::new()
+            let router = TestRouter::builder()
                 .with_subgraphs(&subgraphs)
                 .file_config("configs/env_vars.router.yaml")
                 .build()
@@ -128,7 +128,7 @@ mod env_vars_e2e_tests {
                 .apply()
                 .await;
 
-            let router = TestRouterBuilder::new()
+            let router = TestRouter::builder()
                 .with_subgraphs(&subgraphs)
                 .file_config("configs/env_vars.router.yaml")
                 .build()

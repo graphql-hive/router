@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod max_directives_e2e_tests {
-    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn allows_query_within_max_directives() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -62,8 +62,8 @@ mod max_directives_e2e_tests {
 
     #[ntex::test]
     async fn rejects_query_exceeding_max_directives() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
