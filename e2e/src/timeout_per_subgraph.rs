@@ -2,9 +2,7 @@
 mod override_subgraph_urls_e2e_tests {
     use sonic_rs::json;
 
-    use crate::testkit::{
-        some_header_map, ClientResponseExt, TestRouter, TestSubgraphs,
-    };
+    use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn should_not_deadlock_when_overriding_subgraph_timeout_statically() {

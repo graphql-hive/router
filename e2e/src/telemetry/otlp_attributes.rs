@@ -1,6 +1,4 @@
-use crate::testkit::{
-    otel::OtlpCollector, some_header_map, TestRouter, TestSubgraphs,
-};
+use crate::testkit::{otel::OtlpCollector, some_header_map, TestRouter, TestSubgraphs};
 
 /// Verify only deprecated attributes are emitted for deprecated mode
 #[ntex::test]

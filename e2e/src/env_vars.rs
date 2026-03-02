@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod env_vars_e2e_tests {
-    use crate::testkit::{
-        ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs,
-    };
+    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     /// Test that a dynamic URL override for a subgraph based on an env var is respected.

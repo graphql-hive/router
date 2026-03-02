@@ -4,9 +4,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     use sonic_rs::{json, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::testkit::{
-        some_header_map, ClientResponseExt, TestRouter, TestSubgraphs,
-    };
+    use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
 
     fn generate_jwt(payload: &Value) -> String {
         let pem = include_str!("../jwks.rsa512.pem");

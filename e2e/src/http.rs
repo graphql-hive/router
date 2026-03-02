@@ -3,9 +3,7 @@ mod http_tests {
     use hive_router::pipeline::execution::EXPOSE_QUERY_PLAN_HEADER;
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{
-        some_header_map, ClientResponseExt, TestRouter, TestSubgraphs,
-    };
+    use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn should_allow_to_customize_graphql_endpoint() {
