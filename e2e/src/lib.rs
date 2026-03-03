@@ -35,7 +35,7 @@ mod override_subgraph_urls;
 #[cfg(test)]
 mod probes;
 #[cfg(test)]
-mod representation_cache;
+mod request_deduplication;
 #[cfg(test)]
 mod router_timeout;
 #[cfg(test)]

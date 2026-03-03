@@ -11,7 +11,7 @@ use crate::{
 use super::{
     error::QueryPlanError,
     fetch::fetch_graph::FetchGraph,
-    plan_nodes::{ParallelNode, QueryPlan, SequenceNode},
+    plan_nodes::{FetchNode, ParallelNode, QueryPlan, RepresentationReusePlan, SequenceNode},
 };
 
 mod optimize;
@@ -76,6 +76,123 @@ impl<'a> InDegree<'a> {
 }
 
 pub static QUERY_PLAN_KIND: &str = "QueryPlan";
+
+const REPRESENTATION_REUSE_PLAN_VERSION: u8 = 2;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct RepresentationFetchSignature {
+    service_name: String,
+    operation_hash: u64,
+    operation_name: Option<String>,
+    variable_usages: Option<Vec<String>>,
+}
+
+fn build_representation_reuse_plan(node: &PlanNode) -> Option<RepresentationReusePlan> {
+    let mut signatures: HashMap<RepresentationFetchSignature, Vec<i64>> = HashMap::new();
+    collect_representation_fetch_signatures(node, &mut signatures);
+
+    let mut groups = signatures
+        .into_values()
+        .filter_map(|mut fetch_ids| {
+            if fetch_ids.len() < 2 {
+                return None;
+            }
+
+            fetch_ids.sort_unstable();
+            fetch_ids.dedup();
+
+            if fetch_ids.len() < 2 {
+                return None;
+            }
+
+            Some(fetch_ids)
+        })
+        .collect::<Vec<_>>();
+
+    groups.sort_unstable_by(|a, b| a.first().cmp(&b.first()).then_with(|| a.cmp(b)));
+
+    if groups.is_empty() {
+        None
+    } else {
+        let mut fetch_id_to_group_id = HashMap::new();
+        for (group_id, group) in groups.iter().enumerate() {
+            for &fetch_id in group {
+                fetch_id_to_group_id.insert(fetch_id, group_id);
+            }
+        }
+
+        Some(RepresentationReusePlan {
+            version: REPRESENTATION_REUSE_PLAN_VERSION,
+            groups,
+            fetch_id_to_group_id,
+        })
+    }
+}
+
+fn collect_representation_fetch_signatures(
+    node: &PlanNode,
+    signatures: &mut HashMap<RepresentationFetchSignature, Vec<i64>>,
+) {
+    match node {
+        PlanNode::Fetch(_) => {}
+        PlanNode::BatchFetch(_) => {}
+        PlanNode::Flatten(flatten_node) => {
+            if let PlanNode::Fetch(fetch_node) = flatten_node.node.as_ref() {
+                if fetch_node.requires.is_some() {
+                    let signature = representation_fetch_signature(fetch_node);
+                    signatures.entry(signature).or_default().push(fetch_node.id);
+                }
+            }
+
+            collect_representation_fetch_signatures(flatten_node.node.as_ref(), signatures);
+        }
+        PlanNode::Sequence(sequence_node) => {
+            for child in &sequence_node.nodes {
+                collect_representation_fetch_signatures(child, signatures);
+            }
+        }
+        PlanNode::Parallel(parallel_node) => {
+            for child in &parallel_node.nodes {
+                collect_representation_fetch_signatures(child, signatures);
+            }
+        }
+        PlanNode::Condition(condition_node) => {
+            if let Some(if_clause) = condition_node.if_clause.as_ref() {
+                collect_representation_fetch_signatures(if_clause.as_ref(), signatures);
+            }
+
+            if let Some(else_clause) = condition_node.else_clause.as_ref() {
+                collect_representation_fetch_signatures(else_clause.as_ref(), signatures);
+            }
+        }
+        PlanNode::Subscription(subscription_node) => {
+            collect_representation_fetch_signatures(subscription_node.primary.as_ref(), signatures);
+        }
+        PlanNode::Defer(defer_node) => {
+            if let Some(node) = defer_node.primary.node.as_ref() {
+                collect_representation_fetch_signatures(node.as_ref(), signatures);
+            }
+
+            for deferred in &defer_node.deferred {
+                if let Some(node) = deferred.node.as_ref() {
+                    collect_representation_fetch_signatures(node.as_ref(), signatures);
+                }
+            }
+        }
+    }
+}
+
+fn representation_fetch_signature(fetch_node: &FetchNode) -> RepresentationFetchSignature {
+    RepresentationFetchSignature {
+        service_name: fetch_node.service_name.clone(),
+        operation_hash: fetch_node.operation.hash,
+        operation_name: fetch_node.operation_name.clone(),
+        variable_usages: fetch_node
+            .variable_usages
+            .as_ref()
+            .map(|variable_usages| variable_usages.iter().cloned().collect()),
+    }
+}
 
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn build_query_plan_from_fetch_graph(
@@ -183,8 +300,11 @@ pub fn build_query_plan_from_fetch_graph(
     // Then run full recursive optimization + batching rewrites.
     let root_node = optimize::optimize_root_node(root_node, supergraph)?;
 
+    let representation_reuse_plan = build_representation_reuse_plan(&root_node);
+
     Ok(QueryPlan {
         kind: QUERY_PLAN_KIND,
         node: Some(root_node),
+        representation_reuse_plan,
     })
 }

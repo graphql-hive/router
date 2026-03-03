@@ -78,18 +78,21 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
+            "id": 4,
             "serviceName": "price",
             "operationKind": "query",
             "operation": "{product{price{id amount currency}}}"
           },
           {
             "kind": "Fetch",
+            "id": 3,
             "serviceName": "category",
             "operationKind": "query",
             "operation": "{product{category{id name} id}}"
           },
           {
             "kind": "Fetch",
+            "id": 2,
             "serviceName": "name",
             "operationKind": "query",
             "operation": "{product{name{id brand model}}}"

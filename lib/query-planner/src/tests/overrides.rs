@@ -37,6 +37,7 @@ fn single_simple_overrides() -> Result<(), Box<dyn Error>> {
       "kind": "QueryPlan",
       "node": {
         "kind": "Fetch",
+        "id": 2,
         "serviceName": "b",
         "operationKind": "query",
         "operation": "{feed{createdAt}}"
@@ -114,12 +115,14 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
             "nodes": [
               {
                 "kind": "Fetch",
+                "id": 4,
                 "serviceName": "b",
                 "operationKind": "query",
                 "operation": "{bFeed{createdAt}}"
               },
               {
                 "kind": "Fetch",
+                "id": 2,
                 "serviceName": "a",
                 "operationKind": "query",
                 "operation": "{aFeed{__typename id}}"
@@ -136,6 +139,7 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
+              "id": 3,
               "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{createdAt}}}",

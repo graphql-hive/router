@@ -6,7 +6,7 @@ use bytes::Bytes;
 use http::HeaderMap;
 use serde::de::{self, Deserializer, MapAccess, Visitor};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct SubgraphResponse<'a> {
     pub data: Value<'a>,
     pub errors: Option<Vec<GraphQLError>>,
