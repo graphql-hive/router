@@ -636,7 +636,7 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
           }
         },
         BatchFetch(service: "inventory") {
-          entityBatch(originalFetchCount: 2) {
+          {
             _e0 {
               paths: [
                 "magazine.@"

@@ -80,7 +80,7 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
             },
           },
           BatchFetch(service: "reviews") {
-            entityBatch(originalFetchCount: 2) {
+            {
               _e0 {
                 paths: [
                   "topProducts.@"
@@ -149,7 +149,7 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
         },
         Parallel {
           BatchFetch(service: "products") {
-            entityBatch(originalFetchCount: 3) {
+            {
               _e0 {
                 paths: [
                   "topProducts.@.reviews.@.author.reviews.@.product"
@@ -175,7 +175,7 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
             }
           },
           BatchFetch(service: "accounts") {
-            entityBatch(originalFetchCount: 2) {
+            {
               _e0 {
                 paths: [
                   "topProducts.@.reviews.@.author"
@@ -199,7 +199,7 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
           },
         },
         BatchFetch(service: "inventory") {
-          entityBatch(originalFetchCount: 3) {
+          {
             _e0 {
               paths: [
                 "topProducts.@.reviews.@.author.reviews.@.product"

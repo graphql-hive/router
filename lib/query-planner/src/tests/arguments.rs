@@ -44,7 +44,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
           }
         },
         BatchFetch(service: "a") {
-          entityBatch(originalFetchCount: 2) {
+          {
             _e0 {
               paths: [
                 "products.@"
@@ -969,7 +969,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
           },
         },
         BatchFetch(service: "a") {
-          entityBatch(originalFetchCount: 2) {
+          {
             _e0 {
               paths: [
                 "test"
@@ -1212,7 +1212,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
           },
         },
         BatchFetch(service: "a") {
-          entityBatch(originalFetchCount: 2) {
+          {
             _e0 {
               paths: [
                 "test"
@@ -1963,7 +1963,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
         },
         Parallel {
           BatchFetch(service: "a") {
-            entityBatch(originalFetchCount: 2) {
+            {
               _e0 {
                 paths: [
                   "secondProduct"
@@ -1988,7 +1988,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
             }
           },
           BatchFetch(service: "b") {
-            entityBatch(originalFetchCount: 2) {
+            {
               _e0 {
                 paths: [
                   "secondProduct"
@@ -2015,7 +2015,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
           },
         },
         BatchFetch(service: "c") {
-          entityBatch(originalFetchCount: 2) {
+          {
             _e0 {
               paths: [
                 "secondProduct.category"
@@ -2094,7 +2094,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
         },
         Parallel {
           BatchFetch(service: "a") {
-            entityBatch(originalFetchCount: 2) {
+            {
               _e0 {
                 paths: [
                   "secondProduct"
@@ -2119,7 +2119,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
             }
           },
           BatchFetch(service: "b") {
-            entityBatch(originalFetchCount: 2) {
+            {
               _e0 {
                 paths: [
                   "secondProduct"
@@ -2146,7 +2146,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
           },
         },
         BatchFetch(service: "c") {
-          entityBatch(originalFetchCount: 2) {
+          {
             _e0 {
               paths: [
                 "secondProduct.category"

@@ -49,7 +49,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
           },
         },
         BatchFetch(service: "inventory") {
-          entityBatch(originalFetchCount: 2) {
+          {
             _e0 {
               paths: [
                 "products.@"

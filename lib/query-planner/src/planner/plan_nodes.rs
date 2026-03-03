@@ -617,11 +617,7 @@ impl PrettyDisplay for BatchFetchNode {
             "{indent}BatchFetch(service: \"{}\") {{",
             self.service_name
         )?;
-        writeln!(
-            f,
-            "{indent}  entityBatch(originalFetchCount: {}) {{",
-            self.entity_batch.original_fetch_count
-        )?;
+        writeln!(f, "{indent}  {{")?;
         for alias in &self.entity_batch.aliases {
             writeln!(f, "{indent}    {} {{", alias.alias)?;
             writeln!(f, "{indent}      paths: [")?;

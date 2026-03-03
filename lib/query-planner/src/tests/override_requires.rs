@@ -67,7 +67,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
         },
         Parallel {
           BatchFetch(service: "b") {
-            entityBatch(originalFetchCount: 2) {
+            {
               _e0 {
                 paths: [
                   "userInC"
@@ -124,7 +124,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
         },
         Parallel {
           BatchFetch(service: "c") {
-            entityBatch(originalFetchCount: 2) {
+            {
               _e0 {
                 paths: [
                   "userInC"
@@ -148,7 +148,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
             }
           },
           BatchFetch(service: "a") {
-            entityBatch(originalFetchCount: 2) {
+            {
               _e0 {
                 paths: [
                   "userInC"

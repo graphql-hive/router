@@ -62,7 +62,7 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
           }
         },
         BatchFetch(service: "b") {
-          entityBatch(originalFetchCount: 2) {
+          {
             _e0 {
               paths: [
                 "viewer.review|[UserReview].product"
