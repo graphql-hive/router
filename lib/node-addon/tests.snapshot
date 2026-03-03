@@ -290,9 +290,8 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
               "originalFetchCount": 2
             },
             "kind": "BatchFetch",
-            "operation": "query BatchedEntities ($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id reviews{id body product{__typename upc}} username}}\\n",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id reviews{id body product{__typename upc}} username}}\\n",
             "operationKind": "query",
-            "operationName": "BatchedEntities",
             "serviceName": "reviews"
           }
         ]
@@ -409,9 +408,8 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
               "originalFetchCount": 3
             },
             "kind": "BatchFetch",
-            "operation": "query BatchedEntities ($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{price weight name}}}",
+            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{price weight name}}}",
             "operationKind": "query",
-            "operationName": "BatchedEntities",
             "serviceName": "products"
           },
           {
@@ -488,9 +486,8 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
               "originalFetchCount": 2
             },
             "kind": "BatchFetch",
-            "operation": "query BatchedEntities ($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{name}}}",
+            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{name}}}",
             "operationKind": "query",
-            "operationName": "BatchedEntities",
             "serviceName": "accounts"
           }
         ]
@@ -608,9 +605,8 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
           "originalFetchCount": 3
         },
         "kind": "BatchFetch",
-        "operation": "query BatchedEntities ($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{inStock shippingEstimate}}}",
+        "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{inStock shippingEstimate}}}",
         "operationKind": "query",
-        "operationName": "BatchedEntities",
         "serviceName": "inventory"
       }
     ]
