@@ -1,25 +1,23 @@
 #[cfg(test)]
 mod introspection_e2e_tests {
-    use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness,
-    };
-    use ntex::web::test;
-    use sonic_rs::{from_slice, to_string_pretty, Value};
+    use crate::testkit::{ClientResponseExt, TestRouter};
 
     #[ntex::test]
     async fn should_have_deprecated_input_values_in_introspection() {
-        let app = init_router_from_config_inline(
-            r#"supergraph:
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"supergraph:
                 source: file
                 path: "./supergraph-introspection-extended.graphql"
           "#,
-        )
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
+            ))
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(
-            r#"
+        let resp = router
+            .send_graphql_request(
+                r#"
             query IncludeDeprecatedInputValues {
                 Query: __type(name: "Query") {
                     fields {
@@ -50,16 +48,14 @@ mod introspection_e2e_tests {
                 }
             }
         "#,
-            None,
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
+                None,
+                None,
+            )
+            .await;
 
         assert!(resp.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).expect("Failed to deserialize JSON response");
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).expect("Failed to serialize JSON for snapshot"), @r#"
+        insta::assert_snapshot!(resp.json_body_string_pretty().await, @r#"
         {
           "data": {
             "Query": {
@@ -164,34 +160,34 @@ mod introspection_e2e_tests {
     }
     #[ntex::test]
     async fn should_have_is_one_of_in_input_values() {
-        let app = init_router_from_config_inline(
-            r#"supergraph:
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"supergraph:
                 source: file
                 path: "./supergraph-introspection-extended.graphql"
           "#,
-        )
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
+            ))
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(
-            r#"
+        let resp = router
+            .send_graphql_request(
+                r#"
             query IncludeOneOfInInputValues {
                 TestInput: __type(name: "TestInput") {
                     isOneOf
                 }
             }
         "#,
-            None,
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
+                None,
+                None,
+            )
+            .await;
 
         assert!(resp.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).expect("Failed to deserialize JSON response");
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).expect("Failed to serialize JSON for snapshot"), @r#"
+        insta::assert_snapshot!(resp.json_body_string_pretty().await, @r#"
         {
           "data": {
             "TestInput": {
@@ -203,18 +199,20 @@ mod introspection_e2e_tests {
     }
     #[ntex::test]
     async fn should_have_default_values_in_input_values() {
-        let app = init_router_from_config_inline(
-            r#"supergraph:
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"supergraph:
                 source: file
                 path: "./supergraph-introspection-extended.graphql"
           "#,
-        )
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
+            ))
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(
-            r#"
+        let resp = router
+            .send_graphql_request(
+                r#"
             query IncludeOneOfInInputValues {
                 TestInput: __type(name: "TestInput") {
                     inputFields {
@@ -224,16 +222,14 @@ mod introspection_e2e_tests {
                 }
             }
         "#,
-            None,
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
+                None,
+                None,
+            )
+            .await;
 
         assert!(resp.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).expect("Failed to deserialize JSON response");
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).expect("Failed to serialize JSON for snapshot"), @r#"
+        insta::assert_snapshot!(resp.json_body_string_pretty().await, @r#"
         {
           "data": {
             "TestInput": {
@@ -254,34 +250,34 @@ mod introspection_e2e_tests {
     }
     #[ntex::test]
     async fn should_have_specified_by_url_in_scalar_types() {
-        let app = init_router_from_config_inline(
-            r#"supergraph:
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"supergraph:
                 source: file
                 path: "./supergraph-introspection-extended.graphql"
           "#,
-        )
-        .await
-        .expect("failed to start router");
-        wait_for_readiness(&app.app).await;
+            ))
+            .build()
+            .start()
+            .await;
 
-        let req = init_graphql_request(
-            r#"
+        let resp = router
+            .send_graphql_request(
+                r#"
             query IncludeOneOfInInputValues {
                 MyScalar: __type(name: "MyScalar") {
                     specifiedByURL
                 }
             }
         "#,
-            None,
-        );
-        let resp = test::call_service(&app.app, req.to_request()).await;
+                None,
+                None,
+            )
+            .await;
 
         assert!(resp.status().is_success(), "Expected 200 OK");
 
-        let body = test::read_body(resp).await;
-        let json_body: Value = from_slice(&body).expect("Failed to deserialize JSON response");
-
-        insta::assert_snapshot!(to_string_pretty(&json_body).expect("Failed to serialize JSON for snapshot"), @r#"
+        insta::assert_snapshot!(resp.json_body_string_pretty().await, @r#"
         {
           "data": {
             "MyScalar": {
