@@ -20,3 +20,4 @@ serde = { workspace = true }
 
 [dev-dependencies]
 e2e = { version = "*", path = "../../e2e" }
+http = { workspace = true }

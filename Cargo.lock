@@ -202,6 +202,7 @@ version = "0.0.1"
 dependencies = [
  "e2e",
  "hive-router",
+ "http",
  "serde",
 ]
 
@@ -1537,9 +1538,11 @@ version = "0.0.1"
 dependencies = [
  "arc-swap",
  "async-trait",
+ "axum",
  "bollard",
  "bytes",
  "dashmap",
+ "futures",
  "futures-util",
  "graphql-tools",
  "hex",
@@ -1809,6 +1812,7 @@ version = "0.0.1"
 dependencies = [
  "e2e",
  "hive-router",
+ "http",
  "serde",
 ]
 
@@ -3041,6 +3045,7 @@ dependencies = [
  "chrono",
  "e2e",
  "hive-router",
+ "http",
  "reqwest",
  "serde",
  "serde_json",
@@ -6138,10 +6143,8 @@ dependencies = [
  "async-graphql",
  "async-graphql-axum",
  "axum",
- "dashmap",
  "lazy_static",
  "rand 0.10.0",
- "sonic-rs",
  "tokio",
 ]
 
