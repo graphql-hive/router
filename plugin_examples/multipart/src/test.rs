@@ -2,6 +2,7 @@
 mod tests {
     use e2e::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
     use hive_router::{ntex, sonic_rs::JsonValueTrait};
+    use reqwest::header::CONTENT_TYPE;
 
     #[ntex::test]
     async fn forward_files() {
@@ -23,29 +24,29 @@ mod tests {
                 reqwest::multipart::Part::bytes("file content".as_bytes().to_vec())
                     .file_name("test.txt")
                     .mime_str("text/plain")
-                    .unwrap(),
+                    .expect("Invalid content type for multipart file"),
             );
 
-        let (boundary, form_bytes) = crate::plugin::form_to_boundary_and_bytes(form).await;
+        let (content_type, form_bytes) = crate::plugin::form_to_content_type_and_bytes(form).await;
 
         let res = router
             .serv()
             .post(router.graphql_path())
-            .header(
-                "content-type",
-                format!("multipart/form-data; boundary={}", boundary),
-            )
+            .header(CONTENT_TYPE, content_type)
             .send_body(form_bytes)
             .await
-            .unwrap();
+            .expect("Failed to send request to the router");
 
         let body_json = res.json_body().await;
-        let upload_file_path = body_json["data"]["upload"].as_str().unwrap();
+        let upload_file_path = body_json["data"]["upload"]
+            .as_str()
+            .expect("Response should contain the uploaded file path");
         assert!(
             upload_file_path.contains("test.txt"),
             "Response should contain the filename"
         );
-        let file_content = std::fs::read(upload_file_path).unwrap();
+        let file_content = std::fs::read(upload_file_path)
+            .expect("Failed to read the uploaded file from the response path");
         assert_eq!(
             file_content, b"file content",
             "File content should match the uploaded content"

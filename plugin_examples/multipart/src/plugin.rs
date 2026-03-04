@@ -16,6 +16,7 @@ use hive_router::{
     sonic_rs,
 };
 use multer::{bytes::Bytes, Multipart};
+use reqwest::header::CONTENT_TYPE;
 
 #[derive(Default)]
 pub struct MultipartPlugin;
@@ -31,8 +32,8 @@ pub struct MultipartContext {
     pub files: HashMap<String, MultipartFile>,
 }
 
-pub async fn form_to_boundary_and_bytes(form: reqwest::multipart::Form) -> (String, Vec<u8>) {
-    let boundary = form.boundary().to_string();
+pub async fn form_to_content_type_and_bytes(form: reqwest::multipart::Form) -> (String, Vec<u8>) {
+    let content_type = format!("multipart/form-data; boundary={}", form.boundary());
     let form_stream = form.into_stream();
 
     let mut form_bytes = vec![];
@@ -42,7 +43,7 @@ pub async fn form_to_boundary_and_bytes(form: reqwest::multipart::Form) -> (Stri
         form_bytes.extend_from_slice(&chunk);
     }
 
-    (boundary, form_bytes)
+    (content_type, form_bytes)
 }
 
 #[async_trait]
@@ -61,31 +62,36 @@ impl RouterPlugin for MultipartPlugin {
         if let Some(content_type) = payload.router_http_request.headers.get("content-type") {
             if let Ok(content_type_str) = content_type.to_str() {
                 if content_type_str.starts_with("multipart/form-data") {
-                    let boundary = multer::parse_boundary(content_type_str).unwrap();
+                    let boundary = multer::parse_boundary(content_type_str)
+                        .expect("Failed to parse boundary from content type");
                     let body = payload.body.clone();
                     let stream = futures_util::stream::once(async move {
                         Ok::<Bytes, std::io::Error>(Bytes::from(body.to_vec()))
                     });
                     let mut multipart = Multipart::new(stream, boundary);
-                    while let Some(field) = multipart.next_field().await.unwrap() {
-                        let field_name = field.name().unwrap().to_string();
+                    while let Ok(Some(field)) = multipart.next_field().await {
+                        let field_name = field.name().map(|s| s.to_string());
                         let filename = field.file_name().map(|s| s.to_string());
                         let content_type = field.content_type().map(|s| s.to_string());
-                        let data = field.bytes().await.unwrap();
-                        match field_name.as_str() {
-                            "operations" => {
-                                payload = payload
-                                    .with_graphql_params(sonic_rs::from_slice(&data).unwrap());
+                        let data = field
+                            .bytes()
+                            .await
+                            .expect("Failed to read field data as bytes");
+                        match field_name.as_deref() {
+                            Some("operations") => {
+                                if let Ok(graphql_params) = sonic_rs::from_slice(&data) {
+                                    payload = payload.with_graphql_params(graphql_params);
+                                }
                             }
-                            "map" => {
-                                let file_map: HashMap<String, Vec<String>> =
-                                    sonic_rs::from_slice(&data).unwrap();
-                                payload.context.insert(MultipartContext {
-                                    file_map,
-                                    files: HashMap::new(),
-                                });
+                            Some("map") => {
+                                if let Ok(file_map) = sonic_rs::from_slice(&data) {
+                                    payload.context.insert(MultipartContext {
+                                        file_map,
+                                        files: HashMap::new(),
+                                    });
+                                }
                             }
-                            field_name => {
+                            Some(field_name) => {
                                 let multipart_ctx = payload.context.get_mut::<MultipartContext>();
                                 if let Some(mut multipart_ctx) = multipart_ctx {
                                     let multipart_file = MultipartFile {
@@ -97,6 +103,9 @@ impl RouterPlugin for MultipartPlugin {
                                         .files
                                         .insert(field_name.to_string(), multipart_file);
                                 }
+                            }
+                            None => {
+                                // Ignore fields without a name
                             }
                         }
                     }
@@ -128,12 +137,12 @@ impl RouterPlugin for MultipartPlugin {
                 }
                 if !file_map.is_empty() {
                     let mut form = reqwest::multipart::Form::new();
-                    form = form.text(
-                        "operations",
-                        String::from_utf8(payload.body.clone()).unwrap(),
-                    );
-                    let file_map_str: String = sonic_rs::to_string(&file_map).unwrap();
-                    form = form.text("map", file_map_str);
+                    if let Ok(operations) = String::from_utf8(payload.body) {
+                        form = form.text("operations", operations);
+                    }
+                    if let Ok(file_map_str) = sonic_rs::to_string(&file_map) {
+                        form = form.text("map", file_map_str);
+                    }
                     for (file_ref, _op_refs) in file_map {
                         if let Some(file_field) = multipart_ctx.files.get(&file_ref) {
                             let mut part =
@@ -142,19 +151,22 @@ impl RouterPlugin for MultipartPlugin {
                                 part = part.file_name(file_name.to_string());
                             }
                             if let Some(content_type) = &file_field.content_type {
-                                part = part.mime_str(&content_type.to_string()).unwrap();
+                                part = part
+                                    .mime_str(content_type)
+                                    .expect("Invalid content type for multipart file");
                             }
                             form = form.part(file_ref, part);
                         }
                     }
-                    let (boundary, form_bytes) = form_to_boundary_and_bytes(form).await;
+                    let (content_type, form_bytes) = form_to_content_type_and_bytes(form).await;
                     payload.body = form_bytes;
-                    payload.execution_request.headers.insert(
-                        "content-type",
-                        format!("multipart/form-data; boundary={}", boundary)
-                            .parse()
-                            .unwrap(),
-                    );
+                    let content_type = content_type
+                        .try_into()
+                        .expect("Failed to create content type header value");
+                    payload
+                        .execution_request
+                        .headers
+                        .insert(CONTENT_TYPE, content_type);
                 }
             }
         }
