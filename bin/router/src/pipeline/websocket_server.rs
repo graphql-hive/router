@@ -11,7 +11,6 @@ use hive_router_plan_executor::executors::websocket_common::{
     handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
 };
 use hive_router_query_planner::state::supergraph_state::OperationKind;
-use hive_router_query_planner::utils::cancellation::CancellationToken;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
@@ -33,14 +32,14 @@ use crate::jwt::errors::JwtError;
 use crate::pipeline::coerce_variables::coerce_request_variables;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_pipeline;
-use crate::pipeline::execution::{ExposeQueryPlanMode, EXPOSE_QUERY_PLAN_HEADER};
-use crate::pipeline::execution_request::ExecutionRequest;
+
 use crate::pipeline::introspection_policy::handle_introspection_policy;
 use crate::pipeline::normalize::normalize_request_with_cache;
 use crate::pipeline::parser::parse_operation_with_cache;
 use crate::pipeline::validation::validate_operation_with_cache;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
@@ -258,27 +257,46 @@ async fn handle_text_frame(
                 }
             }
 
-            let mut payload = ExecutionRequest {
-                query: payload.query,
+            let mut payload = GraphQLParams {
+                query: Some(payload.query),
                 operation_name: payload.operation_name,
                 variables: payload.variables.unwrap_or_default(),
                 extensions: payload.extensions,
             };
 
-            let parser_payload = match parse_operation_with_cache(shared_state, &payload).await {
-                Ok(payload) => payload,
-                Err(err) => return Some(err.into_server_message(&id)),
+            // TODO: ok we need this!
+            let plugin_req_state = None;
+
+            let parser_result =
+                match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {
+                    Ok(result) => result,
+                    Err(err) => return Some(err.into_server_message(&id)),
+                };
+
+            let parser_payload = match parser_result {
+                crate::pipeline::parser::ParseResult::Payload(payload) => payload,
+                crate::pipeline::parser::ParseResult::EarlyResponse(_) => {
+                    return Some(ServerMessage::error(
+                        &id,
+                        &[GraphQLError::from_message_and_code(
+                            "Unexpected early response during parse",
+                            "INTERNAL_SERVER_ERROR",
+                        )],
+                    ));
+                }
             };
 
-            if let Err(err) = validate_operation_with_cache(
+            match validate_operation_with_cache(
                 supergraph,
                 schema_state,
                 shared_state,
                 &parser_payload,
+                &plugin_req_state,
             )
             .await
             {
-                return Some(err.into_server_message(&id));
+                Ok(_) => {}
+                Err(err) => return Some(err.into_server_message(&id)),
             }
 
             let normalize_payload = match normalize_request_with_cache(
@@ -338,7 +356,7 @@ async fn handle_text_frame(
                         Some(OperationKind::Subscription) => "subscription",
                         None => "query",
                     },
-                    query: &payload.query,
+                    query: payload.query.as_deref().unwrap_or_default(),
                 },
                 jwt: jwt_request_details,
             };
@@ -361,31 +379,15 @@ async fn handle_text_frame(
                 Err(err) => return Some(err.into_server_message(&id)),
             };
 
-            let query_plan_cancellation_token =
-                CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
-
-            let mut expose_query_plan = ExposeQueryPlanMode::No;
-            if shared_state.router_config.query_planner.allow_expose {
-                if let Some(expose_qp_header) = headers.get(&EXPOSE_QUERY_PLAN_HEADER) {
-                    let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
-                    match str_value {
-                        "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
-                        "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
-                        _ => {}
-                    }
-                }
-            }
-
             match execute_pipeline(
-                &query_plan_cancellation_token,
                 &client_request_details,
                 &normalize_payload,
                 &variable_payload,
-                &expose_query_plan,
                 supergraph,
                 shared_state,
                 schema_state,
                 &operation_span,
+                &plugin_req_state,
             )
             .await
             {
