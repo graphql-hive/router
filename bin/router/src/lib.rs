@@ -72,12 +72,6 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
-    // Set it to the default value in case of the negotiation failing,
-    // so that we can still generate an error response in the correct format.
-    // It will be updated to the negotiated value if the negotiation succeeds,
-    // inside the graphql_request_handler function.
-    let mut response_mode = ResponseMode::default();
-
     let parent_ctx = app_state
         .telemetry_context
         .extract_context(&HeaderExtractor(request.headers()));
@@ -93,7 +87,13 @@ async fn graphql_endpoint_handler(
         {
             return early_response;
         }
-        
+
+        // Set it to the default value in case of the negotiation failing,
+        // so that we can still generate an error response in the correct format.
+        // It will be updated to the negotiated value if the negotiation succeeds,
+        // inside the graphql_request_handler function.
+        let mut response_mode = ResponseMode::default();
+
         let req_handler_fut = graphql_request_handler(
             &request,
             body_stream,
