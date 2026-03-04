@@ -85,6 +85,15 @@ async fn graphql_endpoint_handler(
     let _ = root_http_request_span.set_parent(parent_ctx);
 
     async {
+        // If an early CORS response is needed, return it immediately.
+        if let Some(early_response) = app_state
+            .cors_runtime
+            .as_ref()
+            .and_then(|cors| cors.get_early_response(&request))
+        {
+            return early_response;
+        }
+        
         let req_handler_fut = graphql_request_handler(
             &request,
             body_stream,

@@ -67,15 +67,6 @@ pub async fn graphql_request_handler(
     http_server_request_span: &HttpServerRequestSpan,
     response_mode: &mut ResponseMode,
 ) -> Result<web::HttpResponse, PipelineError> {
-    // If an early CORS response is needed, return it immediately.
-    if let Some(early_response) = shared_state
-        .cors_runtime
-        .as_ref()
-        .and_then(|cors| cors.get_early_response(req))
-    {
-        return Ok(early_response);
-    }
-
     // agree on the response content type
     *response_mode = req.negotiate()?;
 
