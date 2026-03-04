@@ -202,7 +202,7 @@ impl Cors {
 
     pub fn get_early_response(&self, req: &HttpRequest) -> Option<web::HttpResponse> {
         if req.method() == ntex::http::Method::OPTIONS {
-// The caller is responsible for setting the CORS headers on this response.
+            // The caller is responsible for setting the CORS headers on this response.
             Some(
                 web::HttpResponse::Ok()
                     .status(StatusCode::NO_CONTENT)
