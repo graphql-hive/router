@@ -202,13 +202,13 @@ impl Cors {
 
     pub fn get_early_response(&self, req: &HttpRequest) -> Option<web::HttpResponse> {
         if req.method() == ntex::http::Method::OPTIONS {
-            let mut response = web::HttpResponse::Ok()
-                .status(StatusCode::NO_CONTENT)
-                .header(header::CONTENT_LENGTH, HeaderValue::from_static("0"))
-                .finish();
-
-            self.set_headers(req, response.headers_mut());
-            Some(response)
+            // it is already set inside the request handler
+            Some(
+                web::HttpResponse::Ok()
+                    .status(StatusCode::NO_CONTENT)
+                    .header(header::CONTENT_LENGTH, HeaderValue::from_static("0"))
+                    .finish(),
+            )
         } else {
             None
         }

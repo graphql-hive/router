@@ -79,15 +79,6 @@ async fn graphql_endpoint_handler(
     let _ = root_http_request_span.set_parent(parent_ctx);
 
     async {
-        // If an early CORS response is needed, return it immediately.
-        if let Some(early_response) = app_state
-            .cors_runtime
-            .as_ref()
-            .and_then(|cors| cors.get_early_response(&request))
-        {
-            return early_response;
-        }
-
         // Set it to the default value in case of the negotiation failing,
         // so that we can still generate an error response in the correct format.
         // It will be updated to the negotiated value if the negotiation succeeds,
