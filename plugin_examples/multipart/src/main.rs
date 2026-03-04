@@ -9,6 +9,8 @@ configure_global_allocator!();
 async fn main() -> Result<(), RouterInitError> {
     init_rustls_crypto_provider();
 
-    router_entrypoint(PluginRegistry::new().register::<multipart_plugin_example::MultipartPlugin>())
-        .await
+    router_entrypoint(
+        PluginRegistry::new().register::<multipart_plugin_example::plugin::MultipartPlugin>(),
+    )
+    .await
 }
