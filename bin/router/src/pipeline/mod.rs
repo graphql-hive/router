@@ -1,10 +1,10 @@
 use std::{sync::Arc, time::Instant};
 use tracing::{error, Instrument};
 
+use futures::Stream;
 use hive_router_internal::telemetry::traces::spans::{
     graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
 };
-use futures::Stream;
 use hive_router_plan_executor::{
     execution::{
         client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
@@ -16,7 +16,7 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::Method;
+use http::{header::CONTENT_TYPE, Method};
 use ntex::web::{self, HttpRequest};
 
 use crate::{
@@ -28,7 +28,7 @@ use crate::{
         error::PipelineError,
         execution::{execute_plan, PlannedRequest},
         execution_request::{deserialize_graphql_params, DeserializationResult, GetQueryStr},
-        header::{RequestAccepts, StreamContentType},
+        header::{RequestAccepts, ResponseMode, StreamContentType, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
         multipart_subscribe::{
             APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
@@ -41,6 +41,7 @@ use crate::{
     },
     schema_state::SchemaState,
     shared_state::RouterSharedState,
+    GRAPHIQL_HTML,
 };
 
 pub mod authorization;
@@ -53,12 +54,13 @@ pub mod execution;
 pub mod execution_request;
 pub mod header;
 pub mod introspection_policy;
+pub mod multipart_subscribe;
 pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
-pub mod multipart_subscribe;
 pub mod sse;
+pub mod timeout;
 pub mod usage_reporting;
 pub mod validation;
 pub mod websocket_server;
@@ -67,11 +69,33 @@ pub mod websocket_server;
 pub async fn graphql_request_handler(
     req: &HttpRequest,
     body_stream: web::types::Payload,
-    supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
     http_server_request_span: &HttpServerRequestSpan,
+    response_mode: &mut ResponseMode,
 ) -> Result<web::HttpResponse, PipelineError> {
+    // If an early CORS response is needed, return it immediately.
+    if let Some(early_response) = shared_state
+        .cors_runtime
+        .as_ref()
+        .and_then(|cors| cors.get_early_response(req))
+    {
+        return Ok(early_response);
+    }
+
+    // agree on the response content type
+    *response_mode = req.negotiate()?;
+
+    if *response_mode == ResponseMode::GraphiQL {
+        if shared_state.router_config.graphiql.enabled {
+            return Ok(web::HttpResponse::Ok()
+                .header(CONTENT_TYPE, TEXT_HTML_MIME)
+                .body(GRAPHIQL_HTML));
+        } else {
+            return Ok(web::HttpResponse::NotFound().into());
+        }
+    }
+
     let started_at = Instant::now();
     let operation_span = GraphQLOperationSpan::new();
 
@@ -153,6 +177,10 @@ pub async fn graphql_request_handler(
             &parser_payload.hive_operation_hash,
         );
 
+        let Some(ref supergraph) = **schema_state.current_supergraph() else {
+            return Err(PipelineError::NoSupergraphAvailable);
+        };
+
         if let Some(response) = validate_operation_with_cache(
             supergraph,
             schema_state,
@@ -181,8 +209,6 @@ pub async fn graphql_request_handler(
                 return Err(PipelineError::MutationNotAllowedOverHttpGet);
             }
         }
-
-        let response_mode = req.get_response_mode();
 
         let is_subscription = matches!(
             normalize_payload.operation_for_plan.operation_kind,
