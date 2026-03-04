@@ -23,7 +23,7 @@ use crate::{
     pipeline::{
         error::handle_pipeline_error,
         graphql_request_handler,
-        header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
+        header::ResponseMode,
         timeout::handle_timeout,
         usage_reporting::init_hive_usage_agent,
         validation::{
@@ -40,7 +40,6 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 pub use arc_swap::ArcSwap;
 pub use async_trait::async_trait;
 pub use dashmap::DashMap;
-use futures::TryFutureExt;
 pub use graphql_tools;
 use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use hive_router_config::humantime_serde;
@@ -56,7 +55,6 @@ pub use hive_router_plan_executor::executors::http::SubgraphHttpResponse;
 pub use hive_router_plan_executor::response::graphql_error::GraphQLError;
 pub use hive_router_query_planner as query_planner;
 pub use http;
-use http::header::CONTENT_TYPE;
 pub use mimalloc::MiMalloc as RouterGlobalAllocator;
 pub use ntex;
 pub use ntex::main;
@@ -74,32 +72,11 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
-    // If an early CORS response is needed, return it immediately.
-    if let Some(early_response) = app_state
-        .cors_runtime
-        .as_ref()
-        .and_then(|cors| cors.get_early_response(&request))
-    {
-        return early_response;
-    }
-
-    // agree on the response content type
-    let response_mode = match request.negotiate() {
-        Ok(mode) => mode,
-        Err(err) => {
-            return handle_pipeline_error(err, &request, &ResponseMode::default());
-        }
-    };
-
-    if response_mode == ResponseMode::GraphiQL {
-        if app_state.router_config.graphiql.enabled {
-            return web::HttpResponse::Ok()
-                .header(CONTENT_TYPE, TEXT_HTML_MIME)
-                .body(GRAPHIQL_HTML);
-        } else {
-            return web::HttpResponse::NotFound().into();
-        }
-    }
+    // Set it to the default value in case of the negotiation failing,
+    // so that we can still generate an error response in the correct format.
+    // It will be updated to the negotiated value if the negotiation succeeds,
+    // inside the graphql_request_handler function.
+    let mut response_mode = ResponseMode::default();
 
     let parent_ctx = app_state
         .telemetry_context
@@ -114,14 +91,16 @@ async fn graphql_endpoint_handler(
             app_state.get_ref(),
             schema_state.get_ref(),
             &root_http_request_span,
-            &response_mode,
+            &mut response_mode,
         );
 
         // Handle the request with a timeout. If the timeout is reached, a timeout error response will be generated.
-        let mut res = handle_timeout(req_handler_fut, &app_state)
+        let result = handle_timeout(req_handler_fut, &app_state).await;
+        let mut res = match result {
+            Ok(response) => response,
             // If the request handler returns an error, convert it to an HTTP response.
-            .unwrap_or_else(|error| handle_pipeline_error(error, &request, &response_mode))
-            .await;
+            Err(error) => handle_pipeline_error(error, &app_state, &response_mode),
+        };
 
         // Apply CORS headers to the final response if CORS is configured.
         if let Some(cors) = app_state.cors_runtime.as_ref() {

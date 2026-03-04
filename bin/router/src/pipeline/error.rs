@@ -214,7 +214,7 @@ struct FailedExecutionResult {
 #[inline]
 pub fn handle_pipeline_error(
     err: PipelineError,
-    req: &web::HttpRequest,
+    shared_state: &RouterSharedState,
     response_mode: &ResponseMode,
 ) -> web::HttpResponse {
     let single_content_type = response_mode.single_content_type();
@@ -229,6 +229,10 @@ pub fn handle_pipeline_error(
         res.content_type(single_content_type.as_ref());
     }
 
+    if matches!(err, PipelineError::NoSupergraphAvailable) {
+        res.header(RETRY_AFTER, "10");
+    }
+
     let mut errors = match err {
         PipelineError::ValidationErrors(validation_errors) => {
             validation_errors.iter().map(|error| error.into()).collect()
@@ -238,10 +242,6 @@ pub fn handle_pipeline_error(
             .map(|error| error.into())
             .collect(),
         _ => {
-            if matches!(err, PipelineError::NoSupergraphAvailable) {
-                res.header(RETRY_AFTER, "10");
-            }
-
             let code = err.graphql_error_code();
             let message = err.graphql_error_message();
             let graphql_error = GraphQLError::from_message_and_code(message, code);
@@ -250,12 +250,9 @@ pub fn handle_pipeline_error(
         }
     };
 
-    if let Some(plugins) = req
-        .app_state::<Arc<RouterSharedState>>()
-        .and_then(|shared_state| shared_state.plugins.clone())
-    {
+    if let Some(plugins) = &shared_state.plugins {
         let (new_errors, new_status_code) =
-            handle_graphql_errors_with_plugins(&plugins, errors, status);
+            handle_graphql_errors_with_plugins(plugins, errors, status);
         errors = new_errors;
         res.status(new_status_code);
     }
