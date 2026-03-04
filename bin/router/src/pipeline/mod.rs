@@ -27,7 +27,7 @@ use crate::{
         error::PipelineError,
         execution::{execute_plan, PlannedRequest},
         execution_request::{deserialize_graphql_params, DeserializationResult, GetQueryStr},
-        header::RequestAccepts,
+        header::ResponseMode,
         introspection_policy::handle_introspection_policy,
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::{parse_operation_with_cache, ParseResult},
@@ -53,6 +53,7 @@ pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
+pub mod timeout;
 pub mod usage_reporting;
 pub mod validation;
 
@@ -60,10 +61,10 @@ pub mod validation;
 pub async fn graphql_request_handler(
     req: &HttpRequest,
     body_stream: web::types::Payload,
-    supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
     http_server_request_span: &HttpServerRequestSpan,
+    response_mode: &ResponseMode,
 ) -> Result<web::HttpResponse, PipelineError> {
     let started_at = Instant::now();
     let operation_span = GraphQLOperationSpan::new();
@@ -146,6 +147,10 @@ pub async fn graphql_request_handler(
             &parser_payload.hive_operation_hash,
         );
 
+        let Some(ref supergraph) = **schema_state.current_supergraph() else {
+            return Err(PipelineError::NoSupergraphAvailable);
+        };
+
         if let Some(response) = validate_operation_with_cache(
             supergraph,
             schema_state,
@@ -186,8 +191,6 @@ pub async fn graphql_request_handler(
         {
             return Err(PipelineError::SubscriptionsNotSupported);
         }
-
-        let response_mode = req.get_response_mode();
 
         let Some(single_content_type) = response_mode.single_content_type() else {
             // streaming responses coming soon
