@@ -3,7 +3,7 @@ use bytes::Bytes;
 use crate::{
     executors::{
         common::SubgraphExecutionRequest,
-        http::{DeduplicationHint, HttpClient, SubgraphHttpResponse},
+        http::{DeduplicationHint, SubgraphHttpResponse},
     },
     plugin_context::PluginContext,
     plugin_trait::{
@@ -15,8 +15,6 @@ use crate::{
 pub struct OnSubgraphHttpRequestHookPayload<'exec> {
     /// The name of the subgraph for which the HTTP request is being sent.
     pub subgraph_name: &'exec str,
-
-    pub http_client: &'exec HttpClient,
 
     /// The endpoint of the subgraph for which the HTTP request is being sent.
     pub endpoint: &'exec http::Uri,

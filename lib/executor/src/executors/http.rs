@@ -261,7 +261,6 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
             let mut start_payload = OnSubgraphHttpRequestHookPayload {
                 subgraph_name: &self.subgraph_name,
-                http_client: &self.http_client,
                 endpoint: &self.endpoint,
                 method,
                 body,
