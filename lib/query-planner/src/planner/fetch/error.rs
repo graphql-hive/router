@@ -1,6 +1,6 @@
 use crate::{
-    ast::type_aware_selection::TypeAwareSelectionError,
     graph::{error::GraphError, node::Node},
+    planner::fetch::selections::FetchStepSelectionsError,
     planner::walker::error::WalkOperationError,
     utils::cancellation::CancellationError,
 };
@@ -48,7 +48,7 @@ pub enum FetchGraphError {
     #[error("Expected @requires")]
     MissingRequires,
     #[error(transparent)]
-    SelectionSetManipulationError(#[from] TypeAwareSelectionError),
+    SelectionSetManipulationError(#[from] FetchStepSelectionsError),
     #[error(transparent)]
     CancellationError(#[from] CancellationError),
 }

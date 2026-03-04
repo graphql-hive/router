@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod disable_introspection_e2e_tests {
     use crate::testkit::{
-        some_header_map, ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
+        some_header_map, ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs,
     };
 
     #[ntex::test]
@@ -11,8 +11,8 @@ mod disable_introspection_e2e_tests {
             .apply()
             .await;
 
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/disable_introspection_env.yaml")
             .build()
@@ -44,8 +44,8 @@ mod disable_introspection_e2e_tests {
             .apply()
             .await;
 
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/disable_introspection_env.yaml")
             .build()
@@ -71,8 +71,8 @@ mod disable_introspection_e2e_tests {
 
     #[ntex::test]
     async fn should_disable_based_on_headers() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/disable_introspection_header.yaml")
             .build()
@@ -105,8 +105,8 @@ mod disable_introspection_e2e_tests {
 
     #[ntex::test]
     async fn should_enable_based_on_headers() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/disable_introspection_header.yaml")
             .build()

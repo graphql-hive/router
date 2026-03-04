@@ -19,6 +19,8 @@ mod hive_cdn_supergraph;
 #[cfg(test)]
 mod http;
 #[cfg(test)]
+mod introspection;
+#[cfg(test)]
 mod jwt;
 #[cfg(test)]
 mod max_aliases;
@@ -41,8 +43,10 @@ mod supergraph;
 #[cfg(test)]
 mod telemetry;
 #[cfg(test)]
-mod testkit;
-#[cfg(test)]
 mod timeout_per_subgraph;
 #[cfg(test)]
 mod websocket;
+
+pub use insta;
+pub use mockito;
+pub mod testkit;

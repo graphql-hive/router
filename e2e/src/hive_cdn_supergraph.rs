@@ -6,11 +6,11 @@ mod hive_cdn_supergraph_e2e_tests {
     use sonic_rs::{JsonContainerTrait, JsonValueTrait};
     use tokio::time::sleep;
 
-    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn should_load_supergraph_from_endpoint() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
@@ -20,10 +20,10 @@ mod hive_cdn_supergraph_e2e_tests {
             .match_header("x-hive-cdn-key", "dummy_key")
             .with_status(200)
             .with_header("content-type", "text/plain")
-            .with_body(subgraphs.supergraph_with_addr(include_str!("../supergraph.graphql")))
+            .with_body(subgraphs.supergraph(include_str!("../supergraph.graphql")))
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:
@@ -74,7 +74,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_status(304)
             .create();
 
-        let _router = TestRouterBuilder::new()
+        let _router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:
@@ -133,7 +133,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_status(304)
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:
@@ -197,7 +197,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body(include_str!("../supergraph.graphql"))
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:
@@ -250,7 +250,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .unwrap()
             .as_array()
             .unwrap();
-        assert_eq!(types_arr.len(), 18);
+        assert_eq!(types_arr.len(), 21);
     }
 
     #[ntex::test]
@@ -272,7 +272,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body("type Query { dummy: String }")
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:
@@ -305,7 +305,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_status(500)
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:
@@ -362,7 +362,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body(include_str!("../supergraph.graphql"))
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:

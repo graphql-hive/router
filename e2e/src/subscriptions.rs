@@ -6,12 +6,12 @@ mod subscriptions_e2e_tests {
     use reqwest::StatusCode;
     use sonic_rs::json;
 
-    use crate::testkit::{some_header_map, ResponseLike, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{some_header_map, ResponseLike, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn subscription_not_allowed_when_disabled() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -61,12 +61,12 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_no_entity_resolution_sse_subgraph() {
-        let subgraphs = TestSubgraphsBuilder::new()
+        let subgraphs = TestSubgraphs::builder()
             .with_subscriptions_protocol(subgraphs::SubscriptionProtocol::SseOnly)
             .build()
             .start()
             .await;
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -154,12 +154,12 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_no_entity_resolution_multipart_subgraph() {
-        let subgraphs = TestSubgraphsBuilder::new()
+        let subgraphs = TestSubgraphs::builder()
             .with_subscriptions_protocol(subgraphs::SubscriptionProtocol::MultipartOnly)
             .build()
             .start()
             .await;
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -247,8 +247,8 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_yes_entity_resolution() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -337,8 +337,8 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_yes_entity_resolution_multipart_client() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -439,8 +439,8 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_yes_entity_resolution_websocket_subgraph() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -523,8 +523,8 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_entity_resolution_with_requires() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -613,8 +613,8 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_with_variable_forwarding() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -684,8 +684,8 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_http_accept_multipart_and_sse() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -743,7 +743,7 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_stream_failed_source_subgraph_requests() {
-        let subgraphs = TestSubgraphsBuilder::new()
+        let subgraphs = TestSubgraphs::builder()
             .with_on_request(|_req| {
                 Some(ResponseLike::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -755,7 +755,7 @@ mod subscriptions_e2e_tests {
             .start()
             .await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -800,7 +800,7 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_stream_failed_entity_resolution_requests() {
-        let subgraphs = TestSubgraphsBuilder::new()
+        let subgraphs = TestSubgraphs::builder()
             .with_on_request(|req| {
                 if req.path.contains("products") {
                     // entity resolution
@@ -825,7 +825,7 @@ mod subscriptions_e2e_tests {
             .start()
             .await;
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -884,8 +884,8 @@ mod subscriptions_e2e_tests {
     async fn subscription_stream_client_cancelled() {
         use futures::StreamExt;
 
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -945,8 +945,8 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_header_propagation_for_subscription() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/header_propagation.router.yaml")
             .build()
@@ -993,8 +993,8 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_header_propagation_for_entity_resolution() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/header_propagation.router.yaml")
             .build()
@@ -1046,8 +1046,8 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_propagate_connection_termination_subgraph() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"

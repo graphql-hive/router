@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::testkit::{
     otel::{CollectedSpan, OtlpCollector},
-    TestRouterBuilder, TestSubgraphsBuilder,
+    TestRouter, TestSubgraphs,
 };
 
 /// Verify OTLP exporter works with HTTP protocol
@@ -18,9 +18,9 @@ async fn test_otlp_http_export_with_graphql_request() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -94,7 +94,7 @@ async fn test_otlp_http_export_with_graphql_request() {
       Kind: Server
       Status: message='' code='0'
       Attributes:
-        graphql.document.hash: 1237612228098794304
+        graphql.document.hash: 6258881170828510919
         graphql.operation.type: query
         hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
         hive.kind: graphql.operation
@@ -110,7 +110,7 @@ async fn test_otlp_http_export_with_graphql_request() {
       Status: message='' code='0'
       Attributes:
         cache.hit: false
-        graphql.document.hash: 1237612228098794304
+        graphql.document.hash: 6258881170828510919
         graphql.operation.type: query
         hive.kind: graphql.parse
         target: hive-router
@@ -255,9 +255,9 @@ async fn test_otlp_grpc_export_with_graphql_request() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -350,7 +350,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
       Kind: Server
       Status: message='' code='0'
       Attributes:
-        graphql.document.hash: 1237612228098794304
+        graphql.document.hash: 6258881170828510919
         graphql.operation.type: query
         hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
         hive.kind: graphql.operation
@@ -366,7 +366,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
       Status: message='' code='0'
       Attributes:
         cache.hit: false
-        graphql.document.hash: 1237612228098794304
+        graphql.document.hash: 6258881170828510919
         graphql.operation.type: query
         hive.kind: graphql.parse
         target: hive-router
@@ -511,9 +511,9 @@ async fn test_otlp_disabled() {
     let otlp_grpc_endpoint = otlp_collector.grpc_endpoint();
     let otlp_http_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -572,9 +572,9 @@ async fn test_otlp_http_headers() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -636,9 +636,9 @@ async fn test_otlp_grpc_metadata() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -701,9 +701,9 @@ async fn test_otlp_cache_hits() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -756,11 +756,21 @@ async fn test_otlp_cache_hits() {
     let second_plan_span = second_trace.span_by_hive_kind_one("graphql.plan");
 
     fn assert_cache_hit(span: &CollectedSpan) {
-        assert_eq!(span.attributes.get("cache.hit"), Some(&"true".to_string()));
+        assert_eq!(
+            span.attributes.get("cache.hit"),
+            Some(&"true".to_string()),
+            "Expected cache hit for span '{}'",
+            span.name
+        );
     }
 
     fn assert_cache_miss(span: &CollectedSpan) {
-        assert_eq!(span.attributes.get("cache.hit"), Some(&"false".to_string()));
+        assert_eq!(
+            span.attributes.get("cache.hit"),
+            Some(&"false".to_string()),
+            "Expected cache miss for span '{}'",
+            span.name
+        );
     }
 
     assert_cache_miss(first_parse_span);
@@ -786,9 +796,9 @@ async fn test_otlp_no_trace_id_collision() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:

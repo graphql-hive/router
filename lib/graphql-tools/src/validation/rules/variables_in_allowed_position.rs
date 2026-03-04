@@ -1,10 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    ast::{
-        visit_document, AstNodeWithName, OperationVisitor, OperationVisitorContext,
-        SchemaDocumentExtension,
-    },
+    ast::{visit_document, AstNodeWithName, OperationVisitor, OperationVisitorContext},
     static_graphql::query::{Type, Value, VariableDefinition},
     validation::utils::{ValidationError, ValidationErrorContext},
 };

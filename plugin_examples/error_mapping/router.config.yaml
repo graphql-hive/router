@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+plugins:
+  error_mapping:
+    enabled: true
+    config:
+      GRAPHQL_PARSE_FAILED:
+        status_code: 400
+        code: InvalidInput
+      DOWNSTREAM_SERVICE_ERROR:
+        status_code: 502
+        code: BadGateway

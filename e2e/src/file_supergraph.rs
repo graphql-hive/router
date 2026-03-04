@@ -4,7 +4,7 @@ mod file_supergraph_e2e_tests {
     use std::{fs, time::Duration};
     use tempfile::NamedTempFile;
 
-    use crate::testkit::{ClientResponseExt, TestRouterBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouter};
 
     #[ntex::test]
     async fn should_load_supergraph_from_file() {
@@ -18,7 +18,7 @@ mod file_supergraph_e2e_tests {
         let first_supergraph = include_str!("../supergraph.graphql");
         fs::write(&supergraph_file_path, first_supergraph).expect("failed to write supergraph");
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
                 supergraph:
@@ -46,7 +46,7 @@ mod file_supergraph_e2e_tests {
             .unwrap()
             .as_array()
             .unwrap();
-        assert_eq!(types_arr.len(), 18);
+        assert_eq!(types_arr.len(), 21);
     }
 
     #[ntex::test]
@@ -61,7 +61,7 @@ mod file_supergraph_e2e_tests {
         fs::write(&supergraph_file_path, "type Query { f: String }")
             .expect("failed to write supergraph");
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
                 supergraph:

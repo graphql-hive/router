@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod env_vars_e2e_tests {
-    use crate::testkit::{
-        ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
-    };
+    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     /// Test that a dynamic URL override for a subgraph based on an env var is respected.
@@ -13,11 +11,11 @@ mod env_vars_e2e_tests {
     /// This way we can verify that the override is applied correctly.
     /// Without the env var, the request goes to the allocated port (thanks to `.default`).
     async fn should_override_subgraph_url_based_on_env_var() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         // Makes the expression to evaluate to port 4200 (value of .default)
         {
-            let router = TestRouterBuilder::new()
+            let router = TestRouter::builder()
                 .with_subgraphs(&subgraphs)
                 .file_config("configs/env_vars.router.yaml")
                 .build()
@@ -52,7 +50,7 @@ mod env_vars_e2e_tests {
                 .apply()
                 .await;
 
-            let router = TestRouterBuilder::new()
+            let router = TestRouter::builder()
                 .with_subgraphs(&subgraphs)
                 .file_config("configs/env_vars.router.yaml")
                 .build()
@@ -63,8 +61,6 @@ mod env_vars_e2e_tests {
                 .send_graphql_request("{ users { id } }", None, None)
                 .await;
 
-            assert!(res.status().is_success(), "Expected 200 OK");
-
             insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
             {
               "data": {
@@ -72,7 +68,7 @@ mod env_vars_e2e_tests {
               },
               "errors": [
                 {
-                  "message": "Failed to send request to subgraph \"http://0.0.0.0:1000/accounts\": client error (Connect)",
+                  "message": "Failed to send request to subgraph: client error (Connect)",
                   "extensions": {
                     "code": "SUBGRAPH_REQUEST_FAILURE",
                     "serviceName": "accounts"
@@ -97,11 +93,11 @@ mod env_vars_e2e_tests {
     /// Test that the `x-router-env` header value depends on the `ROUTER_ENV_HEADER` env var,
     /// with a fallback to "default".
     async fn should_insert_response_header_based_on_env_var() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         // Makes the expression to evaluate to "default" (default value provided)
         {
-            let router = TestRouterBuilder::new()
+            let router = TestRouter::builder()
                 .with_subgraphs(&subgraphs)
                 .file_config("configs/env_vars.router.yaml")
                 .build()
@@ -130,7 +126,7 @@ mod env_vars_e2e_tests {
                 .apply()
                 .await;
 
-            let router = TestRouterBuilder::new()
+            let router = TestRouter::builder()
                 .with_subgraphs(&subgraphs)
                 .file_config("configs/env_vars.router.yaml")
                 .build()

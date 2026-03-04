@@ -1,13 +1,17 @@
-use futures::Stream;
 use std::{sync::Arc, time::Instant};
 use tracing::{error, Instrument};
 
 use hive_router_internal::telemetry::traces::spans::{
     graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
 };
-use hive_router_plan_executor::execution::{
-    client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-    plan::QueryPlanExecutionResult,
+use futures::Stream;
+use hive_router_plan_executor::{
+    execution::{
+        client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
+        plan::QueryPlanExecutionResult,
+    },
+    hooks::on_supergraph_load::SupergraphData,
+    plugin_context::{PluginContext, PluginRequestState},
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -22,20 +26,20 @@ use crate::{
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
         error::PipelineError,
-        execution::{execute_plan, ExposeQueryPlanMode, PlannedRequest, EXPOSE_QUERY_PLAN_HEADER},
-        execution_request::get_execution_request_from_http_request,
-        header::{ResponseMode, StreamContentType},
+        execution::{execute_plan, PlannedRequest},
+        execution_request::{deserialize_graphql_params, DeserializationResult, GetQueryStr},
+        header::{RequestAccepts, StreamContentType},
         introspection_policy::handle_introspection_policy,
         multipart_subscribe::{
             APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
         },
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
-        parser::parse_operation_with_cache,
+        parser::{parse_operation_with_cache, ParseResult},
         progressive_override::request_override_context,
-        query_plan::plan_operation_with_cache,
+        query_plan::{plan_operation_with_cache, QueryPlanResult},
         validation::validate_operation_with_cache,
     },
-    schema_state::{SchemaState, SupergraphData},
+    schema_state::SchemaState,
     shared_state::RouterSharedState,
 };
 
@@ -49,11 +53,11 @@ pub mod execution;
 pub mod execution_request;
 pub mod header;
 pub mod introspection_policy;
-pub mod multipart_subscribe;
 pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
+pub mod multipart_subscribe;
 pub mod sse;
 pub mod usage_reporting;
 pub mod validation;
@@ -63,7 +67,6 @@ pub mod websocket_server;
 pub async fn graphql_request_handler(
     req: &HttpRequest,
     body_stream: web::types::Payload,
-    response_mode: &ResponseMode,
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
@@ -88,7 +91,28 @@ pub async fn graphql_request_handler(
 
         http_server_request_span.record_body_size(body_bytes.len());
 
-        let mut execution_request = get_execution_request_from_http_request(req, body_bytes).await?;
+        let mut plugin_req_state = None;
+
+        if let (Some(plugins), Some(plugin_context)) = (
+            shared_state.plugins.as_ref(),
+            req.extensions().get::<Arc<PluginContext>>(),
+        ) {
+            plugin_req_state = Some(PluginRequestState {
+                plugins: plugins.clone(),
+                router_http_request: req.into(),
+                context: plugin_context.clone(),
+            });
+        }
+
+        let deserialization_result =
+            deserialize_graphql_params(req, body_bytes, &plugin_req_state).await?;
+
+        let mut graphql_params = match deserialization_result {
+            DeserializationResult::GraphQLParams(params) => params,
+            DeserializationResult::EarlyResponse(response) => {
+                return Ok(response);
+            }
+        };
 
         let client_name = req
             .headers()
@@ -111,7 +135,16 @@ pub async fn graphql_request_handler(
             )
             .and_then(|v| v.to_str().ok());
 
-        let parser_payload = parse_operation_with_cache(shared_state, &execution_request).await?;
+        let parser_result =
+            parse_operation_with_cache(shared_state, &graphql_params, &plugin_req_state).await?;
+
+        let parser_payload = match parser_result {
+            ParseResult::Payload(payload) => payload,
+            ParseResult::EarlyResponse(response) => {
+                return Ok(response);
+            }
+        };
+
         operation_span.record_details(
             &parser_payload.minified_document,
             (&parser_payload).into(),
@@ -120,13 +153,22 @@ pub async fn graphql_request_handler(
             &parser_payload.hive_operation_hash,
         );
 
-        validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload)
-            .await?;
+        if let Some(response) = validate_operation_with_cache(
+            supergraph,
+            schema_state,
+            shared_state,
+            &parser_payload,
+            &plugin_req_state,
+        )
+        .await?
+        {
+            return Ok(response);
+        }
 
         let normalize_payload = normalize_request_with_cache(
             supergraph,
             schema_state,
-            &execution_request,
+            &graphql_params,
             &parser_payload,
         )
         .await?;
@@ -140,13 +182,15 @@ pub async fn graphql_request_handler(
             }
         }
 
+        let response_mode = req.get_response_mode();
+
         let is_subscription = matches!(
             normalize_payload.operation_for_plan.operation_kind,
             Some(OperationKind::Subscription)
         );
 
         if is_subscription
-            && (!shared_state.router_config.subscriptions.enabled || !response_mode.can_stream())
+        && (!shared_state.router_config.subscriptions.enabled || !response_mode.can_stream())
         {
             // check early, even though we check again after pipeline execution below
             return Err(PipelineError::SubscriptionsNotSupported);
@@ -168,6 +212,12 @@ pub async fn graphql_request_handler(
             None => JwtRequestDetails::Unauthenticated,
         };
 
+        let variable_payload = coerce_request_variables(
+            supergraph,
+            &mut graphql_params.variables,
+            &normalize_payload,
+        )?;
+
         let client_request_details = ClientRequestDetails {
             method: req.method(),
             url: req.uri(),
@@ -180,49 +230,20 @@ pub async fn graphql_request_handler(
                     Some(OperationKind::Subscription) => "subscription",
                     None => "query",
                 },
-                query: &execution_request.query,
+                query: graphql_params.get_query()?,
             },
             jwt: jwt_request_details,
         };
 
-        if normalize_payload.operation_for_introspection.is_some() {
-            handle_introspection_policy(
-                &shared_state.introspection_policy,
-                &client_request_details,
-            )?;
-        }
-
-        let variable_payload = coerce_request_variables(
-            supergraph,
-            &mut execution_request.variables,
-            &normalize_payload,
-        )?;
-
-        let query_plan_cancellation_token =
-            CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
-
-        let mut expose_query_plan = ExposeQueryPlanMode::No;
-        if shared_state.router_config.query_planner.allow_expose {
-            if let Some(expose_qp_header) = req.headers().get(&EXPOSE_QUERY_PLAN_HEADER) {
-                let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
-                match str_value {
-                    "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
-                    "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
-                    _ => {}
-                }
-            }
-        }
-
         match execute_pipeline(
-            &query_plan_cancellation_token,
             &client_request_details,
             &normalize_payload,
             &variable_payload,
-            &expose_query_plan,
             supergraph,
             shared_state,
             schema_state,
             &operation_span,
+            &plugin_req_state,
         )
         .await?
         {
@@ -267,6 +288,7 @@ pub async fn graphql_request_handler(
                 }
 
                 Ok(response_builder
+                    // .status(result.status) TODO: status codes in streaming responses?
                     .header(http::header::CONTENT_TYPE, content_type_header)
                     .streaming(body))
             },
@@ -308,6 +330,7 @@ pub async fn graphql_request_handler(
                 }
 
                 Ok(response_builder
+                    .status(result.status_code)
                     .content_type(single_content_type.as_ref())
                     .body(result.body))
             },
@@ -320,16 +343,22 @@ pub async fn graphql_request_handler(
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_pipeline<'exec>(
-    cancellation_token: &CancellationToken,
     client_request_details: &ClientRequestDetails<'exec>,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     variable_payload: &CoerceVariablesPayload,
-    expose_query_plan: &ExposeQueryPlanMode,
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
     operation_span: &GraphQLOperationSpan,
+    plugin_req_state: &Option<PluginRequestState<'exec>>,
 ) -> Result<QueryPlanExecutionResult, PipelineError> {
+    if normalize_payload.operation_for_introspection.is_some() {
+        handle_introspection_policy(&shared_state.introspection_policy, client_request_details)?;
+    }
+
+    let cancellation_token =
+        CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
+
     let progressive_override_ctx = request_override_context(
         &shared_state.override_labels_evaluator,
         client_request_details,
@@ -344,14 +373,22 @@ pub async fn execute_pipeline<'exec>(
         &client_request_details.jwt,
     )?;
 
-    let query_plan_payload = plan_operation_with_cache(
+    let query_plan_result = plan_operation_with_cache(
         supergraph,
         schema_state,
         &normalize_payload,
         &progressive_override_ctx,
-        cancellation_token,
+        &cancellation_token,
+        plugin_req_state,
     )
     .await?;
+
+    let query_plan_payload = match query_plan_result {
+        QueryPlanResult::QueryPlan(plan) => plan,
+        QueryPlanResult::EarlyResponse(response) => {
+            return Ok(QueryPlanExecutionResult::Single(response));
+        }
+    };
 
     let planned_request = PlannedRequest {
         normalized_payload: &normalize_payload,
@@ -359,16 +396,8 @@ pub async fn execute_pipeline<'exec>(
         variable_payload,
         client_request_details,
         authorization_errors,
+        plugin_req_state,
     };
 
-    let pipeline_result = execute_plan(
-        supergraph,
-        shared_state,
-        expose_query_plan,
-        planned_request,
-        operation_span,
-    )
-    .await?;
-
-    Ok(pipeline_result)
+    execute_plan(supergraph, shared_state, planned_request, operation_span).await
 }

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod max_depth_e2e_tests {
-    use crate::testkit::{ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
 
     const QUERY: &'static str = r#"
             query {
@@ -15,8 +15,8 @@ mod max_depth_e2e_tests {
 
     #[ntex::test]
     async fn allows_query_within_max_depth() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -54,8 +54,8 @@ mod max_depth_e2e_tests {
 
     #[ntex::test]
     async fn rejects_query_exceeding_max_depth() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"
@@ -88,8 +88,8 @@ mod max_depth_e2e_tests {
 
     #[ntex::test]
     async fn unknown_fragments() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
                 r#"

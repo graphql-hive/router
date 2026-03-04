@@ -2,13 +2,12 @@
 mod supergraph_e2e_tests {
     use std::time::{Duration, Instant};
 
+    use hive_router::invoke_shutdown_hooks;
     use mockito::Mock;
     use ntex::time;
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{
-        ClientResponseExt, EnvVarsGuard, TestRouterBuilder, TestSubgraphsBuilder,
-    };
+    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn should_clear_internal_caches_when_supergraph_changes() {
@@ -30,7 +29,7 @@ mod supergraph_e2e_tests {
             .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
                 supergraph:
@@ -46,7 +45,6 @@ mod supergraph_e2e_tests {
 
         mock1.assert();
 
-        assert_eq!(router.schema_state().validate_cache.entry_count(), 0);
         assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
 
@@ -57,20 +55,30 @@ mod supergraph_e2e_tests {
         assert!(res.status().is_success(), "Expected 200 OK");
 
         // Flush the caches
-        router.flush_internal_cache().await;
+        router
+            .schema_state()
+            .normalize_cache
+            .run_pending_tasks()
+            .await;
+        router.schema_state().plan_cache.run_pending_tasks().await;
+        invoke_shutdown_hooks(router.shared_state()).await;
 
         // Now it should have the record
-        assert_eq!(router.schema_state().validate_cache.entry_count(), 1);
         assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
 
         // Now let's wait a bit and let the service re-load and get the new supergraph
         time::sleep(Duration::from_millis(600)).await;
         mock2.assert();
-        router.flush_internal_cache().await;
+        router
+            .schema_state()
+            .normalize_cache
+            .run_pending_tasks()
+            .await;
+        router.schema_state().plan_cache.run_pending_tasks().await;
+        invoke_shutdown_hooks(router.shared_state()).await;
 
         // Now cache should be empty again, if supergraph has changes
-        assert_eq!(router.schema_state().validate_cache.entry_count(), 0);
         assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
     }
@@ -92,13 +100,13 @@ mod supergraph_e2e_tests {
             .apply()
             .await;
 
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
 
         // First supergraph
-        let supergraph1_sdl = subgraphs.supergraph_with_addr(include_str!("../supergraph.graphql"));
+        let supergraph1_sdl = subgraphs.supergraph(include_str!("../supergraph.graphql"));
         let mock1 = server
             .mock("GET", "/supergraph")
             .expect(1)
@@ -109,7 +117,7 @@ mod supergraph_e2e_tests {
             .create();
 
         // Second supergraph
-        let supergraph2_sdl = subgraphs.supergraph_with_addr(
+        let supergraph2_sdl = subgraphs.supergraph(
             r#"schema
                   @link(url: "https://specs.apollo.dev/link/v1.0")
                   @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
@@ -196,7 +204,7 @@ mod supergraph_e2e_tests {
             .with_body(supergraph2_sdl)
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
                 supergraph:
@@ -249,7 +257,7 @@ mod supergraph_e2e_tests {
             .with_body("type Query { initial: String }")
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
                 supergraph:

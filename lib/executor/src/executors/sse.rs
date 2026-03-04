@@ -7,7 +7,7 @@ use crate::{
     executors::error::SubgraphExecutorError, response::subgraph_response::SubgraphResponse,
 };
 
-#[derive(thiserror::Error, Debug, Clone)]
+#[derive(thiserror::Error, Debug)]
 pub enum ParseError {
     #[error("Invalid UTF-8 sequence: {0}")]
     InvalidUtf8(String),

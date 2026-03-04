@@ -1,9 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::ValidationRule;
-use crate::ast::{
-    visit_document, AstNodeWithName, OperationVisitor, OperationVisitorContext, ValueExtension,
-};
+use crate::ast::{visit_document, AstNodeWithName, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::{self, OperationDefinition};
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 

@@ -1,36 +1,39 @@
-use std::sync::Arc;
+use std::{sync::Arc, vec};
 
-use futures_util::stream;
 use graphql_tools::validation::utils::ValidationError;
-use hive_router_internal::graphql::ObservedError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
     headers::errors::HeaderRuleRuntimeError,
+    hooks::on_graphql_error::handle_graphql_errors_with_plugins,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
 };
-use http::{header, HeaderName, Method, StatusCode};
+use http::{header::RETRY_AFTER, HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use strum::IntoStaticStr;
+
+use futures_util::stream;
+use http::header;
 
 use crate::{
     jwt::errors::JwtError,
     pipeline::{
         authorization::AuthorizationError,
         body_read::ReadBodyStreamError,
-        header::{ResponseMode, SingleContentType, StreamContentType},
+        header::{RequestAccepts, ResponseMode, StreamContentType},
         multipart_subscribe::{
             self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
         },
         progressive_override::LabelEvaluationError,
         sse,
     },
+    RouterSharedState,
 };
 
 #[derive(Debug, thiserror::Error, IntoStaticStr)]
@@ -145,6 +148,10 @@ pub enum PipelineError {
     #[error("Failed to serialize the query plan: {0}")]
     #[strum(serialize = "QUERY_PLAN_SERIALIZATION_FAILED")]
     QueryPlanSerializationFailed(sonic_rs::Error),
+
+    #[error("No supergraph available yet, unable to process request")]
+    #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
+    NoSupergraphAvailable,
 }
 
 impl PipelineError {
@@ -203,102 +210,115 @@ impl PipelineError {
             (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
+}
 
-    pub fn into_response(self, response_mode: Option<ResponseMode>) -> web::HttpResponse {
-        let errors = if let PipelineError::ValidationErrors(ref validation_errors) = self {
-            Some(validation_errors.iter().map(|error| error.into()).collect())
-        } else if let PipelineError::AuthorizationFailed(ref authorization_errors) = self {
-            Some(
-                authorization_errors
-                    .iter()
-                    .map(|error| error.clone().into())
-                    .collect(),
-            )
-        } else {
-            let code = self.graphql_error_code();
-            let message = self.graphql_error_message();
-            let graphql_error = GraphQLError::from_message_and_code(message, code);
-            Some(vec![graphql_error])
+impl From<&PipelineError> for GraphQLError {
+    fn from(val: &PipelineError) -> Self {
+        let code = val.graphql_error_code();
+        let message = val.graphql_error_message();
+        GraphQLError::from_message_and_code(message, code)
+    }
+}
+
+#[derive(Serialize)]
+struct FailedExecutionResult {
+    errors: Vec<GraphQLError>,
+}
+
+impl web::error::WebResponseError for PipelineError {
+    fn error_response(&self, req: &web::HttpRequest) -> web::HttpResponse {
+        // Retrieve the negotiated response mode, defaulting to standard if not set
+        let response_mode = req.get_response_mode();
+        let response_mode = response_mode.as_ref();
+
+        // Prefer status OK for all streaming response modes, and for single
+        // response modes if they prefer status OK for errors
+        let prefer_ok = matches!(response_mode, ResponseMode::StreamOnly(_))
+            || response_mode.prefer_status_ok_for_errors();
+
+        let status = self.default_status_code(prefer_ok);
+
+        let mut res = ResponseBuilder::new(status);
+
+        let mut errors = match self {
+            Self::ValidationErrors(validation_errors) => {
+                validation_errors.iter().map(|error| error.into()).collect()
+            }
+            Self::AuthorizationFailed(authorization_errors) => authorization_errors
+                .iter()
+                .map(|error| error.into())
+                .collect(),
+            _ => {
+                let graphql_error: GraphQLError = self.into();
+
+                if matches!(self, PipelineError::NoSupergraphAvailable) {
+                    res.header(RETRY_AFTER, "10");
+                }
+
+                vec![graphql_error]
+            }
         };
+
+        if let Some(plugins) = req
+            .app_state::<Arc<RouterSharedState>>()
+            .and_then(|shared_state| shared_state.plugins.clone())
+        {
+            let (new_errors, new_status_code) =
+                handle_graphql_errors_with_plugins(&plugins, errors, status);
+            errors = new_errors;
+            res.status(new_status_code);
+        }
 
         let data = sonic_rs::to_vec(&FailedExecutionResult { errors }).unwrap_or_else(|_| {
             // should never happen. result should always serialize - but hey, no unwraps
             tracing::error!("Failed to serialize pipeline error to response: {}", self);
             sonic_rs::to_vec(&FailedExecutionResult {
-                errors: Some(vec![GraphQLError::from_message_and_code(
+                errors: vec![GraphQLError::from_message_and_code(
                     "Failed to serialize error response",
                     "INTERNAL_SERVER_ERROR",
-                )]),
+                )],
             })
             .unwrap()
         });
 
-        match response_mode.unwrap_or_default() {
-            ResponseMode::SingleOnly(single_content_type)
-            | ResponseMode::Dual(single_content_type, _) => {
-                let status =
-                    self.default_status_code(single_content_type == SingleContentType::JSON);
-                ResponseBuilder::new(status)
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(data)
-            }
-            ResponseMode::StreamOnly(StreamContentType::IncrementalDelivery) => {
-                ResponseBuilder::new(StatusCode::OK)
-                    .header(
-                        header::CONTENT_TYPE,
-                        http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE),
-                    )
-                    .streaming(multipart_subscribe::create_incremental_delivery_stream(
-                        Box::pin(stream::once(async move { data })),
-                    ))
-            }
-            ResponseMode::StreamOnly(StreamContentType::SSE) => {
-                ResponseBuilder::new(StatusCode::OK)
-                    .header(
-                        header::CONTENT_TYPE,
-                        http::HeaderValue::from_static("text/event-stream"),
-                    )
-                    .streaming(sse::create_stream(
-                        Box::pin(stream::once(async move { data })),
-                        std::time::Duration::from_secs(10),
-                    ))
-            }
-            ResponseMode::StreamOnly(StreamContentType::ApolloMultipartHTTP) => {
-                ResponseBuilder::new(StatusCode::OK)
-                    .header(
-                        header::CONTENT_TYPE,
-                        http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE),
-                    )
-                    .streaming(multipart_subscribe::create_apollo_multipart_http_stream(
-                        Box::pin(stream::once(async move { data })),
-                        std::time::Duration::from_secs(10),
-                    ))
-            }
+        match response_mode {
+            ResponseMode::SingleOnly(_) | ResponseMode::Dual(_, _) => res
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(data),
+            ResponseMode::StreamOnly(StreamContentType::IncrementalDelivery) => res
+                .header(
+                    header::CONTENT_TYPE,
+                    http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE),
+                )
+                .streaming(multipart_subscribe::create_incremental_delivery_stream(
+                    Box::pin(stream::once(async move { data })),
+                )),
+            ResponseMode::StreamOnly(StreamContentType::SSE) => res
+                .header(
+                    header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("text/event-stream"),
+                )
+                .streaming(sse::create_stream(
+                    Box::pin(stream::once(async move { data })),
+                    std::time::Duration::from_secs(10),
+                )),
+            ResponseMode::StreamOnly(StreamContentType::ApolloMultipartHTTP) => res
+                .header(
+                    header::CONTENT_TYPE,
+                    http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE),
+                )
+                .streaming(multipart_subscribe::create_apollo_multipart_http_stream(
+                    Box::pin(stream::once(async move { data })),
+                    std::time::Duration::from_secs(10),
+                )),
             ResponseMode::GraphiQL => {
                 unreachable!(
                     "GraphiQL can not be a response mode because GraphiQL requests can not execute operations"
                 )
             }
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct FailedExecutionResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub errors: Option<Vec<GraphQLError>>,
-}
-
-impl From<&PipelineError> for ObservedError {
-    fn from(value: &PipelineError) -> Self {
-        Self {
-            code: Some(value.graphql_error_code().to_string()),
-            message: value.graphql_error_message(),
-            path: None,
-            service_name: None,
-            affected_path: None,
         }
     }
 }

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::testkit::{
     otel::{OtlpCollector, TraceParent},
-    some_header_map, TestRouterBuilder, TestSubgraphsBuilder,
+    some_header_map, TestRouter, TestSubgraphs,
 };
 
 /// Verifies parent-based sampler respects upstream sampling decision.
@@ -18,9 +18,9 @@ async fn test_otlp_parent_based_sampler() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -132,9 +132,9 @@ async fn test_otlp_zero_sample_rate() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:

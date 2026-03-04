@@ -7,14 +7,18 @@ use petgraph::{
 };
 use tracing::{instrument, trace};
 
-use crate::planner::fetch::{
-    error::FetchGraphError,
-    fetch_graph::FetchGraph,
-    fetch_step_data::{FetchStepData, FetchStepFlags},
+use crate::{
+    ast::selection_set::selection_items_are_subset_of,
+    planner::fetch::{
+        error::FetchGraphError,
+        fetch_graph::FetchGraph,
+        fetch_step_data::{FetchStepData, FetchStepFlags},
+        state::MultiTypeFetchStep,
+    },
 };
 
-impl FetchGraph {
-    /// When a child's input contains its output,
+impl FetchGraph<MultiTypeFetchStep> {
+    /// When a child has the input identical as the output,
     /// it gets squashed into its parent.
     /// Its children becomes children of the parent.
     #[instrument(level = "trace", skip_all)]
@@ -84,13 +88,13 @@ impl FetchGraph {
     }
 }
 
-impl FetchStepData {
+impl FetchStepData<MultiTypeFetchStep> {
     pub(crate) fn can_merge_passthrough_child(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph,
+        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
         if self_index == other_index {
             return false;
@@ -112,7 +116,16 @@ impl FetchStepData {
             return false;
         }
 
-        other.input.contains(&other.output)
+        for (output_def_name, output_selections) in other.output.iter_selections() {
+            if let Some(input_selections) = other.input.selections_for_definition(output_def_name) {
+                if selection_items_are_subset_of(&input_selections.items, &output_selections.items)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -120,21 +133,19 @@ impl FetchStepData {
 fn perform_passthrough_child_merge(
     self_index: NodeIndex,
     other_index: NodeIndex,
-    fetch_graph: &mut FetchGraph,
+    fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
 ) -> Result<(), FetchGraphError> {
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
+    let path = other.response_path.slice_from(me.response_path.len());
 
     trace!(
-        "merging fetch steps [{}] + [{}]",
+        "merging fetch steps [{}] + [{}] at path {}",
         self_index.index(),
-        other_index.index()
+        other_index.index(),
+        path
     );
 
-    me.output.add_at_path(
-        &other.output,
-        other.response_path.slice_from(me.response_path.len()),
-        false,
-    )?;
+    me.output.migrate_from_another(&other.output, &path)?;
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];

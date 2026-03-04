@@ -37,18 +37,8 @@ pub fn project_requires(
             return false;
         }
         Value::Bool(b) => {
-            if !first {
-                buffer.put(COMMA);
-            }
-            if let Some(response_key) = response_key {
-                buffer.put(QUOTE);
-                buffer.put(response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-                buffer.put(if b == &true { TRUE } else { FALSE });
-            } else {
-                buffer.put(if b == &true { TRUE } else { FALSE });
-            }
+            write_response_key(first, response_key, buffer);
+            buffer.put(if b == &true { TRUE } else { FALSE });
         }
         Value::F64(n) => {
             write_response_key(first, response_key, buffer);
@@ -161,15 +151,7 @@ fn project_requires_map_mut(
                 }
 
                 if *first {
-                    if !parent_first {
-                        buffer.put(COMMA);
-                    }
-                    if let Some(parent_response_key) = parent_response_key {
-                        buffer.put(QUOTE);
-                        buffer.put(parent_response_key.as_bytes());
-                        buffer.put(QUOTE);
-                        buffer.put(COLON);
-                    }
+                    write_response_key(parent_first, parent_response_key, buffer);
                     buffer.put(OPEN_BRACE);
                     // Write __typename only if the object has other fields
                     if let Some(type_name) = entity_obj

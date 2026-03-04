@@ -7,7 +7,7 @@ use crate::{
     executors::error::SubgraphExecutorError, response::subgraph_response::SubgraphResponse,
 };
 
-#[derive(thiserror::Error, Debug, Clone)]
+#[derive(thiserror::Error, Debug)]
 pub enum ParseError {
     #[error("Invalid UTF-8 sequence: {0}")]
     InvalidUtf8(String),
@@ -193,7 +193,7 @@ fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, Pars
 
     let parsed: sonic_rs::Value = sonic_rs::from_str(body).map_err(|e| {
         ParseError::InvalidSubgraphResponse(SubgraphExecutorError::ResponseDeserializationFailure(
-            e.to_string(),
+            e,
         ))
     })?;
 
@@ -213,7 +213,7 @@ fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, Pars
         }
         let payload_str = sonic_rs::to_string(payload).map_err(|e| {
             ParseError::InvalidSubgraphResponse(
-                SubgraphExecutorError::ResponseDeserializationFailure(e.to_string()),
+                SubgraphExecutorError::ResponseDeserializationFailure(e),
             )
         })?;
         return SubgraphResponse::deserialize_from_bytes(Bytes::from(payload_str))

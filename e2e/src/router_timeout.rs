@@ -2,7 +2,7 @@
 mod router_timeout_e2e_tests {
     use std::{thread::sleep, time::Duration};
 
-    use crate::testkit::TestRouterBuilder;
+    use crate::testkit::TestRouter;
 
     #[ntex::test]
     async fn should_timeout_request_when_exceeding_router_timeout() {
@@ -21,7 +21,7 @@ mod router_timeout_e2e_tests {
 
         // This test just ensures that when a request takes longer than the configured router timeout, it gets timed out and doesn't cause any deadlocks or other issues in the router.
         // The actual timeout behavior is tested in unit tests for the timeout middleware, so here we just want to ensure that it works correctly in an end-to-end scenario with the full router setup.
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:

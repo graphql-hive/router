@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeSet, HashMap},
-    sync::Arc,
-};
+use std::collections::{BTreeSet, HashMap};
 
 use bytes::BufMut;
 use futures::{
@@ -13,19 +10,20 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
 use hive_router_query_planner::{
+    ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        ConditionNode, FetchNode, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan, SequenceNode,
+        ConditionNode, FetchNode, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
     },
     state::supergraph_state::OperationKind,
 };
-use http::HeaderMap;
+use http::{HeaderMap, StatusCode};
 use sonic_rs::ValueRef;
 use tracing::Instrument;
 
 use crate::{
     context::ExecutionContext,
     execution::{
-        client_request_details::{ClientRequestDetails, OperationDetails},
+        client_request_details::ClientRequestDetails,
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
@@ -36,10 +34,16 @@ use crate::{
         request::modify_subgraph_request_headers,
         response::apply_subgraph_response_headers,
     },
+    hooks::{
+        on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
+        on_graphql_error::handle_graphql_errors_with_plugins,
+    },
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
     },
+    plugin_context::PluginRequestState,
+    plugin_trait::{EndControlFlow, StartControlFlow},
     projection::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
@@ -57,17 +61,19 @@ use crate::{
 
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
-    pub projection_plan: &'exec [FieldProjectionPlan],
+    pub operation_for_plan: &'exec OperationDefinition,
+    pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: HashMap<String, sonic_rs::Value>,
     pub client_request: &'exec ClientRequestDetails<'exec>,
-    pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
+    pub introspection_context: &'exec IntrospectionContext<'exec>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
     pub span: &'exec GraphQLOperationSpan,
+    pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
 }
 
 #[derive(Default)]
@@ -75,6 +81,7 @@ pub struct PlanExecutionOutput {
     pub body: Vec<u8>,
     pub response_headers_aggregator: Option<ResponseHeaderAggregator>,
     pub error_count: usize,
+    pub status_code: StatusCode,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -91,7 +98,7 @@ pub enum QueryPlanExecutionResult {
 pub async fn execute_query_plan<'exec>(
     opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
-    let (subscription_node, remaining_nodes) = match &opts.query_plan.node {
+    let (subscription_node, _remaining_nodes) = match &opts.query_plan.node {
         // a subscription to a subgraph that contains all data and doesn't need entity resolution
         Some(PlanNode::Subscription(sub)) => (Some(sub), None),
         // a subscription that needs entity resolution. after emitting, it needs to execute the
@@ -111,188 +118,14 @@ pub async fn execute_query_plan<'exec>(
         _ => (None, None),
     };
 
-    if let Some(sub) = subscription_node {
-        // subscription
-
-        // the primary (fetch node) of the subscription is the
-        // subscription destination, we execute it first and it
-        // would give us back a stream of results
-        let fetch_node = sub.primary.clone();
-
-        // we assemble a synthetic query plan for entity resolution from remaining nodes
-        // because we might need entity resolution after receiving each subscription event
-        let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan {
-            kind: "QueryPlan".to_string(),
-            node: remaining_nodes.map(|nodes| {
-                if nodes.len() == 1 {
-                    nodes.into_iter().next().unwrap()
-                } else {
-                    PlanNode::Sequence(SequenceNode { nodes })
-                }
-            }),
-        });
-
-        // we perform a regular subgraph request to the subscription subgraph
-        // the only difference is that we get back a stream of results
-        let mut headers_map = HeaderMap::new();
-        modify_subgraph_request_headers(
-            opts.headers_plan,
-            &fetch_node.service_name,
-            opts.client_request,
-            &mut headers_map,
-        )
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || Some(fetch_node.service_name.clone()),
-            affected_path: || None,
-        })?;
-        let variable_refs =
-            select_fetch_variables(opts.variable_values, fetch_node.variable_usages.as_ref());
-
-        let mut subgraph_request = SubgraphExecutionRequest {
-            query: fetch_node.operation.document_str.as_str(),
-            dedupe: false,
-            operation_name: fetch_node.operation_name.as_deref(),
-            variables: variable_refs,
-            representations: None,
-            headers: headers_map,
-            extensions: None,
-        };
-
-        // TODO: otel instrumentation and stuff
-        // let subgraph_operation_span = GraphQLSubgraphOperationSpan::new(
-        //     fetch_node.service_name.as_str(),
-        //     &fetch_node.operation.document_str,
-        // );
-        // subgraph_operation_span.record_operation_identity(GraphQLSpanOperationIdentity {
-        //     name: subgraph_request.operation_name,
-        //     operation_type: match fetch_node.operation_kind {
-        //         Some(OperationKind::Query) | None => "query",
-        //         Some(OperationKind::Mutation) => "mutation",
-        //         Some(OperationKind::Subscription) => "subscription",
-        //     },
-        //     client_document_hash: fetch_node.operation.hash.to_string().as_str(),
-        // });
-
-        if let Some(jwt_forwarding_plan) = &opts.jwt_auth_forwarding {
-            subgraph_request.add_request_extensions_field(
-                jwt_forwarding_plan.extension_field_name.clone(),
-                jwt_forwarding_plan.extension_field_value.clone(),
-            );
-        }
-
-        let response_stream = opts
-            .executors
-            .subscribe(
-                &fetch_node.service_name,
-                subgraph_request,
-                opts.client_request,
-            )
-            .await
-            .with_plan_context(LazyPlanContext {
-                subgraph_name: || Some(fetch_node.service_name.clone()),
-                affected_path: || None,
-            })?;
-
-        // clone all necessary data from the context for usage in the stream.
-        // the stream will move all of these values inside its closure
-        let projection_plan: Arc<[FieldProjectionPlan]> = opts.projection_plan.into();
-        let headers_plan: Arc<HeaderRulesPlan> = opts.headers_plan.clone().into();
-        let variable_values: Option<HashMap<String, sonic_rs::Value>> =
-            opts.variable_values.clone();
-        let extensions: HashMap<String, sonic_rs::Value> = opts.extensions.clone();
-        let schema_metadata: Arc<SchemaMetadata> =
-            Arc::new(opts.introspection_context.metadata.clone());
-        let operation_type_name: String = opts.operation_type_name.to_string();
-        let executors: Arc<SubgraphExecutorMap> = opts.executors.clone().into();
-        let jwt_auth_forwarding: Option<JwtAuthForwardingPlan> = opts.jwt_auth_forwarding.clone();
-        let initial_errors: Vec<GraphQLError> = opts.initial_errors.clone();
-
-        let client_method = opts.client_request.method.clone();
-        let client_url = opts.client_request.url.clone();
-        let client_headers = opts.client_request.headers.clone();
-        let client_operation_name = opts.client_request.operation.name.map(|s| s.to_string());
-        let client_operation_query = opts.client_request.operation.query.to_string();
-        let client_operation_kind = opts.client_request.operation.kind;
-        let client_jwt = opts.client_request.jwt.clone();
-
-        let body_stream = Box::pin(async_stream::stream! {
-            let mut response_stream = response_stream;
-            while let Some(response) = response_stream.next().await {
-                let client_request = ClientRequestDetails {
-                    method: &client_method,
-                    url: &client_url,
-                    headers: &client_headers,
-                    operation: OperationDetails {
-                        name: client_operation_name.as_deref(),
-                        query: &client_operation_query,
-                        kind: client_operation_kind,
-                    },
-                    jwt: client_jwt.clone(),
-                };
-
-                let executor = Executor {
-                    variable_values: &variable_values,
-                    schema_metadata: &schema_metadata,
-                    executors: &executors,
-                    client_request: &client_request,
-                    headers_plan: &headers_plan,
-                    jwt_forwarding_plan: jwt_auth_forwarding.clone(),
-                    // TODO: decide how and when to dedupe during entity resolution
-                    dedupe_subgraph_requests: false,
-                };
-
-                let mut errors = initial_errors.clone();
-                if let Some(resp_errors) = response.errors {
-                    errors.extend(resp_errors);
-                }
-
-                let mut exec_ctx = ExecutionContext::new(&query_plan, response.data, errors);
-                if let Some(node) = &query_plan.node {
-                    executor.execute_plan_node(&mut exec_ctx, node).await;
-                }
-
-                let data = exec_ctx.data;
-                let errors = exec_ctx.errors;
-                let response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
-
-                // TODO: otel tracing and insturmentation for subscription events
-                // let error_count = exec_ctx.errors.len();
-                // if error_count > 0 {
-                //     opts.span.record_error_count(error_count);
-                //     opts.span
-                //         .record_errors(|| errors.iter().map(|e| e.into()).collect());
-                // }
-
-                yield match project_by_operation(
-                    &data,
-                    errors,
-                    &extensions,
-                    &operation_type_name,
-                    &projection_plan,
-                    &variable_values,
-                    response_size_estimate,
-                    &schema_metadata,
-                )
-                .with_plan_context(LazyPlanContext {
-                    subgraph_name: || None,
-                    affected_path: || None,
-                }) {
-                    Ok(body) => body,
-                    Err(_) => todo!(),
-                }
-            }
-        });
-
-        return Ok(QueryPlanExecutionResult::Stream(PlanSubscriptionOutput {
-            body: body_stream,
-            response_headers_aggregator: None,
-            error_count: 0, // NOTE: errors can only happen before streaming started
-        }));
+    // subscription
+    if let Some(_sub) = subscription_node {
+        todo!();
     }
 
     // query or mutation
 
-    let data = if let Some(introspection_query) = opts.introspection_context.query {
+    let mut data = if let Some(introspection_query) = opts.introspection_context.query {
         resolve_introspection(introspection_query, opts.introspection_context)
     } else if opts.projection_plan.is_empty() {
         Value::Null
@@ -300,13 +133,49 @@ pub async fn execute_query_plan<'exec>(
         Value::Object(Vec::new())
     };
 
-    let errors = opts.initial_errors;
+    let mut errors = opts.initial_errors;
 
-    let extensions = opts.extensions;
+    let mut extensions = opts.extensions;
 
-    let query_plan = opts.query_plan;
+    let mut query_plan = opts.query_plan;
 
     let dedupe_subgraph_requests = opts.operation_type_name == "Query";
+
+    let mut on_end_callbacks = vec![];
+
+    if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
+        let mut start_payload = OnExecuteStartHookPayload {
+            router_http_request: &plugin_req_state.router_http_request,
+            context: &plugin_req_state.context,
+            query_plan,
+            operation_for_plan: opts.operation_for_plan,
+            data,
+            errors,
+            extensions,
+            variable_values: opts.variable_values,
+            dedupe_subgraph_requests,
+        };
+
+        for plugin in plugin_req_state.plugins.as_ref() {
+            let result = plugin.on_execute(start_payload).await;
+            start_payload = result.payload;
+            match result.control_flow {
+                StartControlFlow::Proceed => { /* continue to next plugin */ }
+                StartControlFlow::EndWithResponse(response) => {
+                    return Ok(QueryPlanExecutionResult::Single(response));
+                }
+                StartControlFlow::OnEnd(callback) => {
+                    on_end_callbacks.push(callback);
+                }
+            }
+        }
+
+        // Give the ownership back to variables
+        query_plan = start_payload.query_plan;
+        data = start_payload.data;
+        errors = start_payload.errors;
+        extensions = start_payload.extensions;
+    }
 
     let mut exec_ctx = ExecutionContext::new(query_plan, data, errors);
     // No need for `new`, it has too many parameters
@@ -319,6 +188,7 @@ pub async fn execute_query_plan<'exec>(
         headers_plan: opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
+        plugin_req_state: opts.plugin_req_state,
     };
 
     if let Some(node) = &query_plan.node {
@@ -327,14 +197,55 @@ pub async fn execute_query_plan<'exec>(
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
 
-    let data = exec_ctx.data;
-    let errors = exec_ctx.errors;
-    let response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
-
     if error_count > 0 {
         opts.span.record_error_count(error_count);
         opts.span
-            .record_errors(|| errors.iter().map(|e| e.into()).collect());
+            .record_errors(|| exec_ctx.errors.iter().map(|e| e.into()).collect());
+    }
+
+    let mut data = exec_ctx.data;
+    let mut errors = exec_ctx.errors;
+    let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
+
+    if !on_end_callbacks.is_empty() {
+        let mut end_payload = OnExecuteEndHookPayload {
+            data,
+            errors,
+            extensions,
+            response_size_estimate,
+        };
+
+        for callback in on_end_callbacks {
+            let result = callback(end_payload);
+            end_payload = result.payload;
+            match result.control_flow {
+                EndControlFlow::Proceed => { /* continue to next callback */ }
+                EndControlFlow::EndWithResponse(response) => {
+                    return Ok(QueryPlanExecutionResult::Single(response));
+                }
+            }
+        }
+
+        // Give the ownership back to variables
+        data = end_payload.data;
+        errors = end_payload.errors;
+        extensions = end_payload.extensions;
+        response_size_estimate = end_payload.response_size_estimate;
+    }
+
+    let mut status_code = StatusCode::OK;
+
+    if !errors.is_empty() {
+        if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
+            let (new_errors, new_status_code) = handle_graphql_errors_with_plugins(
+                plugin_req_state.plugins.as_ref(),
+                errors,
+                status_code,
+            );
+
+            errors = new_errors;
+            status_code = new_status_code;
+        }
     }
 
     let body = project_by_operation(
@@ -356,17 +267,19 @@ pub async fn execute_query_plan<'exec>(
         body,
         response_headers_aggregator: exec_ctx.response_headers_aggregator.none_if_empty(),
         error_count,
+        status_code,
     }))
 }
 
 pub struct Executor<'exec> {
-    variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
-    schema_metadata: &'exec SchemaMetadata,
-    executors: &'exec SubgraphExecutorMap,
-    client_request: &'exec ClientRequestDetails<'exec>,
-    headers_plan: &'exec HeaderRulesPlan,
-    jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
-    dedupe_subgraph_requests: bool,
+    pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+    pub schema_metadata: &'exec SchemaMetadata,
+    pub executors: &'exec SubgraphExecutorMap,
+    pub client_request: &'exec ClientRequestDetails<'exec>,
+    pub headers_plan: &'exec HeaderRulesPlan,
+    pub jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
+    pub dedupe_subgraph_requests: bool,
+    pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
 }
 
 enum ExecutionJob<'exec> {
@@ -496,42 +409,48 @@ impl<'exec> Executor<'exec> {
                 let mut representation_hash_to_index: HashMap<u64, usize> = HashMap::new();
                 let arena = bumpalo::Bump::new();
 
-                traverse_and_callback(data, normalized_path, self.schema_metadata, &mut |entity| {
-                    let hash = entity.to_hash(&requires_nodes.items, possible_types);
+                traverse_and_callback(
+                    data,
+                    normalized_path,
+                    &self.schema_metadata.possible_types,
+                    &mut |entity| {
+                        let hash = entity.to_hash(&requires_nodes.items, possible_types);
 
-                    if !entity.is_null() {
-                        representation_hashes.push(hash);
-                    }
-
-                    if representation_hash_to_index.contains_key(&hash) {
-                        return;
-                    }
-
-                    let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                        let new_entity = arena.alloc(entity.clone());
-                        for input_rewrite in input_rewrites {
-                            input_rewrite.rewrite(&self.schema_metadata.possible_types, new_entity);
+                        if !entity.is_null() {
+                            representation_hashes.push(hash);
                         }
-                        new_entity
-                    } else {
-                        entity
-                    };
 
-                    let is_projected = project_requires(
-                        possible_types,
-                        &requires_nodes.items,
-                        entity,
-                        &mut filtered_representations,
-                        representation_hash_to_index.is_empty(),
-                        None,
-                    );
+                        if representation_hash_to_index.contains_key(&hash) {
+                            return;
+                        }
 
-                    if is_projected {
-                        representation_hash_to_index.insert(hash, index);
-                    }
+                        let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                            let new_entity = arena.alloc(entity.clone());
+                            for input_rewrite in input_rewrites {
+                                input_rewrite
+                                    .rewrite(&self.schema_metadata.possible_types, new_entity);
+                            }
+                            new_entity
+                        } else {
+                            entity
+                        };
 
-                    index += 1;
-                });
+                        let is_projected = project_requires(
+                            possible_types,
+                            &requires_nodes.items,
+                            entity,
+                            &mut filtered_representations,
+                            representation_hash_to_index.is_empty(),
+                            None,
+                        );
+
+                        if is_projected {
+                            representation_hash_to_index.insert(hash, index);
+                        }
+
+                        index += 1;
+                    },
+                );
 
                 filtered_representations.put(CLOSE_BRACKET);
 
@@ -581,6 +500,7 @@ impl<'exec> Executor<'exec> {
     ) {
         match job {
             Err(err) => {
+                self.log_error(&err);
                 ctx.errors.push(err.into());
             }
             Ok(job) => {
@@ -598,6 +518,7 @@ impl<'exec> Executor<'exec> {
                         subgraph_name: || Some(subgraph_name.to_string()),
                         affected_path: || affected_path.map(|p| p.to_string()),
                     }) {
+                        self.log_error(&err);
                         ctx.errors.push(err.into());
                     }
                 }
@@ -694,6 +615,18 @@ impl<'exec> Executor<'exec> {
         }
     }
 
+    fn log_error(&self, error: &PlanExecutionError) {
+        if let Some(subgraph_name) = error.subgraph_name() {
+            tracing::error!(
+                "Error executing plan with subgraph '{}': {}",
+                subgraph_name,
+                error
+            );
+        } else {
+            tracing::error!("Error executing plan: {}", error);
+        }
+    }
+
     async fn prepare_fetch_job(
         &self,
         node: &'exec FetchNode,
@@ -754,7 +687,12 @@ impl<'exec> Executor<'exec> {
 
             let response = self
                 .executors
-                .execute(&node.service_name, subgraph_request, self.client_request)
+                .execute(
+                    &node.service_name,
+                    subgraph_request,
+                    self.client_request,
+                    self.plugin_req_state,
+                )
                 .await
                 .with_plan_context(LazyPlanContext {
                     subgraph_name: subgraph_name_factory,
@@ -1009,6 +947,7 @@ mod tests {
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
+            plugin_req_state: &None,
         };
 
         let mock_a = subgraph_a

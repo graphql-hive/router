@@ -1,12 +1,12 @@
 #[cfg(test)]
 
 mod header_propagation_e2e_tests {
-    use crate::testkit::{some_header_map, TestRouterBuilder, TestSubgraphsBuilder};
+    use crate::testkit::{some_header_map, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn should_propagate_headers_to_subgraphs() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/header_propagation.router.yaml")
             .build()

@@ -5,7 +5,7 @@ use crate::{
     projection::error::ProjectionError, response::graphql_error::GraphQLError,
 };
 
-#[derive(thiserror::Error, Debug, Clone, IntoStaticStr)]
+#[derive(thiserror::Error, Debug, IntoStaticStr)]
 pub enum PlanExecutionErrorKind {
     #[error("Projection failure: {0}")]
     #[strum(serialize = "PROJECTION_FAILURE")]
@@ -25,7 +25,7 @@ pub enum PlanExecutionErrorKind {
 /// This struct combines a specific `PlanExecutionErrorKind` with a
 /// `PlanExecutionErrorContext` that holds shared, dynamic information
 /// like the subgraph name or affected GraphQL path.
-#[derive(thiserror::Error, Debug, Clone)]
+#[derive(thiserror::Error, Debug)]
 #[error("{kind}")]
 pub struct PlanExecutionError {
     #[source]

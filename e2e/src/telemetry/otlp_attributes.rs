@@ -1,6 +1,4 @@
-use crate::testkit::{
-    otel::OtlpCollector, some_header_map, TestRouterBuilder, TestSubgraphsBuilder,
-};
+use crate::testkit::{otel::OtlpCollector, some_header_map, TestRouter, TestSubgraphs};
 
 /// Verify only deprecated attributes are emitted for deprecated mode
 #[ntex::test]
@@ -15,9 +13,9 @@ async fn test_deprecated_span_attributes() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -144,9 +142,9 @@ async fn test_spec_and_deprecated_span_attributes() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.grpc_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -297,9 +295,9 @@ async fn test_default_client_identification() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -350,7 +348,7 @@ async fn test_default_client_identification() {
       Kind: Server
       Status: message='' code='0'
       Attributes:
-        graphql.document.hash: 1237612228098794304
+        graphql.document.hash: 6258881170828510919
         graphql.operation.type: query
         hive.client.name: e2e
         hive.client.version: tests
@@ -374,9 +372,9 @@ async fn test_custom_client_identification() {
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -430,7 +428,7 @@ async fn test_custom_client_identification() {
       Kind: Server
       Status: message='' code='0'
       Attributes:
-        graphql.document.hash: 1237612228098794304
+        graphql.document.hash: 6258881170828510919
         graphql.operation.type: query
         hive.client.name: e2e
         hive.client.version: tests
@@ -453,9 +451,9 @@ async fn test_default_resource_attributes() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -521,9 +519,9 @@ async fn test_custom_resource_attributes() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:

@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: supergraph.graphql
+plugins:
+  feature_flags:
+    enabled: true

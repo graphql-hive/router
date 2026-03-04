@@ -1,6 +1,6 @@
 use crate::testkit::{
     otel::{Baggage, OtlpCollector, TraceParent},
-    some_header_map, TestRouterBuilder, TestSubgraphsBuilder,
+    some_header_map, TestRouter, TestSubgraphs,
 };
 
 #[ntex::test]
@@ -14,9 +14,9 @@ async fn test_otlp_http_trace_context_propagation() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -127,9 +127,9 @@ async fn test_otlp_http_baggage_propagation() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -220,9 +220,9 @@ async fn test_otlp_http_b3_propagation() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:
@@ -340,9 +340,9 @@ async fn test_otlp_http_jaeger_propagation() {
         .expect("Failed to start OTLP collector");
     let otlp_endpoint = otlp_collector.http_endpoint();
 
-    let subgraphs = TestSubgraphsBuilder::new().build().start().await;
+    let subgraphs = TestSubgraphs::builder().build().start().await;
 
-    let router = TestRouterBuilder::new()
+    let router = TestRouter::builder()
         .inline_config(format!(
             r#"
           supergraph:

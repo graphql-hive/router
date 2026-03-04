@@ -4,9 +4,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     use sonic_rs::{json, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::testkit::{
-        some_header_map, ClientResponseExt, TestRouterBuilder, TestSubgraphsBuilder,
-    };
+    use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
 
     fn generate_jwt(payload: &Value) -> String {
         let pem = include_str!("../jwks.rsa512.pem");
@@ -46,8 +44,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// results in an error and the field being nulled.
     #[ntex::test]
     async fn unauthenticated_access_to_authenticated_field() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -98,8 +96,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// This test makes sure that filtered queries with empty selection sets are handled correctly.
     #[ntex::test]
     async fn unauthenticated_access_to_authenticated_field_empty_query() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -140,8 +138,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// by `@authenticated` is successful.
     #[ntex::test]
     async fn authenticated_access_to_authenticated_field() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -180,8 +178,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// protected by `@requiresScopes`.
     #[ntex::test]
     async fn authenticated_access_to_scoped_field() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -219,8 +217,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// user is unauthenticated. Fields protected by `@authenticated` should be nulled.
     #[ntex::test]
     async fn complex_query_unauthenticated() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -279,8 +277,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Fields with unmet scope requirements should be nulled.
     #[ntex::test]
     async fn complex_query_partially_authorized() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -356,8 +354,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Tests a complex query with all required scopes, ensuring everything is accessible.
     #[ntex::test]
     async fn complex_query_fully_authorized() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -420,8 +418,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// The `internal` field requires BOTH "read:internal" AND "admin"
     #[ntex::test]
     async fn scope_and_condition_failure() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -540,8 +538,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Tests @include directive with authorized field
     #[ntex::test]
     async fn include_authorized_field_with_true() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -572,8 +570,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Tests @include directive with authorized field set to false
     #[ntex::test]
     async fn include_authorized_field_with_false() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -603,8 +601,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Tests @include directive with unauthorized field set to false - should not error
     #[ntex::test]
     async fn include_unauthorized_field_with_false() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -634,8 +632,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Tests @skip directive with authorized field set to true
     #[ntex::test]
     async fn skip_authorized_field_with_true() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -665,8 +663,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Tests @skip directive with authorized field set to false
     #[ntex::test]
     async fn skip_authorized_field_with_false() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -697,8 +695,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Tests @include directive with unauthorized field set to true - should error
     #[ntex::test]
     async fn include_unauthorized_field_with_true() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -738,8 +736,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Tests @requiresScopes with AND logic (scopes in same inner array)
     #[ntex::test]
     async fn test_scope_and_logic() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -820,8 +818,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Tests @requiresScopes with OR logic (scopes in different inner arrays)
     #[ntex::test]
     async fn test_scope_or_logic() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -934,8 +932,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Tests that unauthorized access to a non-nullable field causes null to bubble up
     #[ntex::test]
     async fn unauthorized_access_to_non_nullable_field_bubbles_up() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -974,8 +972,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// SocialAccount.url requires @authenticated on both TwitterAccount and GitHubAccount
     #[ntex::test]
     async fn interface_field_authenticated_on_interface() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -1043,8 +1041,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Expected: Requires BOTH read:twitter_handle AND read:github_handle
     #[ntex::test]
     async fn interface_field_requires_all_implementor_scopes() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -1140,8 +1138,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Expected: Requires authentication AND both handle scopes
     #[ntex::test]
     async fn interface_field_authenticated_and_scoped() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -1237,8 +1235,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Expected: Only requires read:github_handle scope
     #[ntex::test]
     async fn interface_inline_fragment_github_only() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -1303,8 +1301,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Expected: Only requires read:twitter_handle scope
     #[ntex::test]
     async fn interface_inline_fragment_twitter_only() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -1370,8 +1368,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Expected: Requires BOTH scopes (should reject if only partial access)
     #[ntex::test]
     async fn interface_inline_fragments_both_implementors() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -1467,8 +1465,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Expected: Requires authentication and read:github_handle
     #[ntex::test]
     async fn interface_inline_fragment_authenticated_and_scoped() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -1507,8 +1505,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Expected: No auth required (followers is not protected)
     #[ntex::test]
     async fn interface_inline_fragment_unprotected_field() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -1546,8 +1544,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Expected: Requires authentication only (no scopes needed)
     #[ntex::test]
     async fn interface_inline_fragments_authenticated_no_scopes() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()
@@ -1589,8 +1587,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     /// Expected: handle field filtered without scopes, __typename shown with proper auth
     #[ntex::test]
     async fn interface_field_authorization_with_typename() {
-        let subgraphs = TestSubgraphsBuilder::new().build().start().await;
-        let router = TestRouterBuilder::new()
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .file_config("configs/jwt_auth.directives.router.yaml")
             .build()

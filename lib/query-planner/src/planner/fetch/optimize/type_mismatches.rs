@@ -7,22 +7,22 @@ use crate::{
         mismatch_finder::SelectionMismatchFinder,
         safe_merge::SafeSelectionSetMerger,
         selection_item::SelectionItem,
-        type_aware_selection::{field_condition_equal, find_selection_set_by_path_mut},
+        selection_set::{field_condition_equal, find_selection_set_by_path_mut},
     },
     planner::{
-        fetch::{error::FetchGraphError, fetch_graph::FetchGraph},
+        fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
         plan_nodes::{FetchNodePathSegment, FetchRewrite, KeyRenamer},
     },
     state::supergraph_state::SupergraphState,
 };
 
-impl FetchGraph {
+impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn fix_conflicting_type_mismatches(
         &mut self,
         supergraph: &SupergraphState,
     ) -> Result<(), FetchGraphError> {
-        let mut pending_patches = Vec::<(NodeIndex, Vec<MergePath>)>::new();
+        let mut pending_patches = Vec::<(NodeIndex, Vec<(String, MergePath)>)>::new();
 
         for (node_index, node) in self.all_nodes() {
             if self.root_index.is_some_and(|v| v == node_index) {
@@ -53,7 +53,7 @@ impl FetchGraph {
                 node_index.index()
             );
 
-            for mismatch_path in mismatches_paths {
+            for (root_def_name, mismatch_path) in mismatches_paths {
                 let mut merger = SafeSelectionSetMerger::default();
 
                 if let Some(Segment::Field(field_lookup, args_hash_lookup, condition)) =
@@ -61,9 +61,13 @@ impl FetchGraph {
                 {
                     // TODO: We can avoid this cut and slice thing, if we return "SelectionItem" instead of "SelectionSet" inside "find_selection_set_by_path_mut".
                     let lookup_path = &mismatch_path.without_last();
+                    let root_def_selections = node
+                        .output
+                        .selections_for_definition_mut(&root_def_name)
+                        .expect("missing definition in step");
 
                     if let Some(selection_set) =
-                        find_selection_set_by_path_mut(&mut node.output.selection_set, lookup_path)
+                        find_selection_set_by_path_mut(root_def_selections, lookup_path)
                     {
                         let next_alias = merger.safe_next_alias_name(&selection_set.items);
                         let item = selection_set

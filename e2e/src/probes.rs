@@ -5,7 +5,7 @@ mod probes_e2e_tests {
         time::Duration,
     };
 
-    use crate::testkit::TestRouterBuilder;
+    use crate::testkit::TestRouter;
 
     #[ntex::test]
     async fn should_respond_to_probes_correctly() {
@@ -22,7 +22,7 @@ mod probes_e2e_tests {
             })
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:
@@ -76,7 +76,7 @@ mod probes_e2e_tests {
             .with_status(500)
             .create();
 
-        let router = TestRouterBuilder::new()
+        let router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:

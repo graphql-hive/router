@@ -22,6 +22,7 @@ combine = { workspace = true }
 thiserror = { workspace = true }
 itoa = "1.0.17"
 ryu = "1.0.22"
+xxhash-rust = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }

@@ -6,8 +6,6 @@ use crate::{
     response::{graphql_error::GraphQLError, value::Value},
 };
 use bytes::Bytes;
-use futures::stream::BoxStream;
-use futures_util::stream;
 use http::HeaderMap;
 use serde::de::{self, Deserializer, MapAccess, Visitor};
 
@@ -113,17 +111,18 @@ impl<'a> SubgraphResponse<'a> {
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         let bytes_ref: &[u8] = &bytes;
 
-        // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'static`.
-        // This is safe because the returned `SubgraphResponse` contains a clone of `bytes`
-        // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
-        // underlying data remains alive as long as the `SubgraphResponse` does.
-        // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
-        // creating a self-referential struct, which is why `unsafe` is required.
+        // SAFETY: The byte slice `bytes_ref` is transmuted to `'static`.
+        // This is safe because the returned `SubgraphResponse` stores the `bytes` (Arc-backed
+        // reference-counted buffer) in its `bytes` field, keeping the underlying data alive as
+        // long as the `SubgraphResponse` does. The `data` field of `SubgraphResponse` contains
+        // values that borrow from this buffer, creating a self-referential struct, which is why
+        // `unsafe` is required.
         let bytes_ref: &'static [u8] = unsafe { std::mem::transmute(bytes_ref) };
 
         sonic_rs::from_slice(bytes_ref)
-            .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e.to_string()))
-            .map(|mut resp: SubgraphResponse<'static>| {
+            .map_err(SubgraphExecutorError::ResponseDeserializationFailure)
+            .map(move |mut resp: SubgraphResponse<'static>| {
+                // Zero cost of cloning Bytes
                 resp.bytes = Some(bytes);
                 resp
             })
@@ -137,13 +136,6 @@ impl SubgraphExecutorError {
             self.error_code(),
         )
         .to_subgraph_response(subgraph_name)
-    }
-    pub fn stream_once_subgraph_response(
-        self,
-        subgraph_name: &str,
-    ) -> BoxStream<'static, SubgraphResponse<'static>> {
-        let subgraph_response = self.to_subgraph_response(subgraph_name);
-        Box::pin(stream::once(async move { subgraph_response }))
     }
 }
 

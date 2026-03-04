@@ -1,5 +1,4 @@
-use crate::ast::ext::TypeDefinitionExtension;
-use crate::ast::{visit_document, FieldByNameExtension, OperationVisitor, OperationVisitorContext};
+use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::{Field, OperationDefinition, Selection};
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 

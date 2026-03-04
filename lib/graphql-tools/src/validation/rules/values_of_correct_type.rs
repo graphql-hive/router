@@ -2,9 +2,6 @@ use std::collections::BTreeMap;
 
 use crate::parser::schema::TypeDefinition;
 
-use crate::ast::{
-    InputValueHelpers, SchemaDocumentExtension, TypeDefinitionExtension, TypeExtension,
-};
 use crate::static_graphql::query::Value;
 use crate::validation::utils::ValidationError;
 use crate::{

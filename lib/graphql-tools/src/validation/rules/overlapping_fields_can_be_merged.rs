@@ -2,11 +2,7 @@ use crate::parser::query::{Definition, TypeCondition};
 use crate::parser::Pos;
 
 use super::ValidationRule;
-use crate::ast::ext::TypeDefinitionExtension;
-use crate::ast::{
-    visit_document, FieldByNameExtension, OperationVisitor, OperationVisitorContext,
-    SchemaDocumentExtension, TypeExtension, ValueExtension,
-};
+use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::*;
 use crate::static_graphql::schema::{
     Document as SchemaDocument, Field as FieldDefinition, TypeDefinition,
@@ -373,10 +369,25 @@ impl<'a> OverlappingFieldsCanBeMerged<'a> {
         // different Object types. Interface or Union types might overlap - if not
         // in the current state of the schema, then perhaps in some future version,
         // thus may not safely diverge.
-        let mutually_exclusive = parents_mutually_exclusive
-            || (parent_type1.name().ne(parent_type2.name())
-                && parent_type1.is_object_type()
-                && parent_type2.is_object_type());
+
+        let (parent_type1_props, parent_type2_props) = (
+            parent_type1.map(|t| (t.name(), t.is_object_type())),
+            parent_type2.map(|t| (t.name(), t.is_object_type())),
+        );
+
+        let mut mutually_exclusive = parents_mutually_exclusive;
+
+        if !parents_mutually_exclusive {
+            if let (
+                Some((parent_type1_name, parent_type1_is_object)),
+                Some((parent_type2_name, parent_type2_is_object)),
+            ) = (parent_type1_props, parent_type2_props)
+            {
+                mutually_exclusive = parent_type1_name != parent_type2_name
+                    && parent_type1_is_object
+                    && parent_type2_is_object;
+            }
+        }
 
         if !mutually_exclusive {
             let name1 = &field1.name;
