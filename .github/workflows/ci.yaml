@@ -37,10 +37,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
-      - name: increase open files limit
-        run: sudo prlimit --pid $$ --nofile=500000:500000
       - name: test e2e
-        run: cargo test -p e2e
+        run: cargo test_e2e
         timeout-minutes: 60
         env:
           RUST_BACKTRACE: full
@@ -55,10 +53,8 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
-      - name: increase open files limit
-        run: sudo prlimit --pid $$ --nofile=500000:500000
       - name: test plugin examples
-        run: cargo test -p *-plugin-example
+        run: cargo test_plugin_examples
         timeout-minutes: 60
         env:
           RUST_BACKTRACE: full
