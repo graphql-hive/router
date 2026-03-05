@@ -62,10 +62,22 @@ mod body_limit_e2e_tests {
             .start()
             .await;
 
-        // ntex will set the content-type and it will exceede the 1B
+        // use send_body instead of send_json to avoid a race condition
+        // where ntex's send_json may encounter a "Disconnected" error in CI
+        // when the server closes the connection before reading the full body
+        // and responding with 413
+        let body = sonic_rs::to_vec(&sonic_rs::json!({
+            "query": "{ __typename }",
+        }))
+        .unwrap();
+
         let res = router
-            .send_graphql_request("{ __typename }", None, None)
-            .await;
+            .serv()
+            .post(router.graphql_path())
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .send_body(body)
+            .await
+            .expect("failed to send graphql request");
 
         assert_eq!(res.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
 

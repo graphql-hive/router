@@ -1,4 +1,26 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.13 (2026-03-05)
+
+### Features
+
+#### Improve Query Plans for abstract types
+
+The query planner now combines fetches for multiple matching types into a single fetch step.
+Before, the planner could create one fetch per type.
+Now, it can fetch many types together when possible, which reduces duplicate fetches and makes query plans more efficient.
+
+#### Rename internal query-plan path segment from `Cast(String)` to `TypeCondition(Vec<String>)`
+
+Query Plan shape changed from `Cast(String)` to `TypeCondition(Vec<String>)`.
+The `TypeCondition` name better reflects GraphQL semantics (`... on Type`) and avoids string encoding/decoding like `"A|B"` in planner/executor code.
+
+**What changed**
+- Query planner path model now uses `TypeCondition` terminology instead of `Cast`.
+- Type conditions are represented as a list of type names, not a pipe-delimited string.
+- Node addon query-plan typings were updated accordingly:
+  - `FetchNodePathSegment.TypenameEquals` now uses `string[]`
+  - `FlattenNodePathSegment` now uses `TypeCondition: string[]` (instead of `Cast: string`)
+
 ## 0.0.12 (2026-02-06)
 
 ### Features
