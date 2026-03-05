@@ -46,10 +46,25 @@ mod tests {
         for _ in 0..number_of_tests {
             let mut requests = FuturesUnordered::new();
             for _ in 0..number_of_parallel_requests {
-                requests.push(router.send_graphql_request("{ me { name } }", None, None));
+                let req = router
+                    .serv()
+                    .post(router.graphql_path())
+                    .timeout(Duration::from_secs(30))
+                    .header("content-type", "application/json")
+                    .header("accept", "application/graphql-response+json");
+
+                let json_body = sonic_rs::to_vec(&sonic_rs::json!({
+                    "query": "{ me { name } }"
+                }))
+                .unwrap();
+
+                let req = req.send_body(json_body);
+
+                requests.push(req);
             }
 
             while let Some(res) = requests.next().await {
+                let res = res.expect("Failed to send graphql request");
                 assert_eq!(res.status(), StatusCode::OK);
                 assert_eq!(
                     res.json_body().await,

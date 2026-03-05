@@ -75,7 +75,7 @@ mod body_limit_e2e_tests {
             .serv()
             .post(router.graphql_path())
             .header(http::header::CONTENT_TYPE, "application/json")
-            .send_body(ntex::util::Bytes::from(body))
+            .send_body(body)
             .await
             .expect("failed to send graphql request");
 
