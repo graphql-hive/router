@@ -1,3 +1,10 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::io;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::time::Instant;
+
 use futures::StreamExt;
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLOperationSpan;
 use hive_router_plan_executor::execution::client_request_details::{
@@ -10,6 +17,8 @@ use hive_router_plan_executor::executors::graphql_transport_ws::{
 use hive_router_plan_executor::executors::websocket_common::{
     handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
 };
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
+use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use http::Method;
 use ntex::channel::oneshot;
@@ -18,28 +27,20 @@ use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::io;
-use std::rc::Rc;
-use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, trace, warn};
-
-use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
+use tracing::{debug, error, trace, warn, Instrument};
 
 use crate::jwt::errors::JwtError;
 use crate::pipeline::coerce_variables::coerce_request_variables;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_pipeline;
-
-use crate::pipeline::introspection_policy::handle_introspection_policy;
+use crate::pipeline::execution_request::GetQueryStr;
 use crate::pipeline::normalize::normalize_request_with_cache;
 use crate::pipeline::parser::parse_operation_with_cache;
+use crate::pipeline::usage_reporting;
 use crate::pipeline::validation::validate_operation_with_cache;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
-use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
@@ -203,254 +204,324 @@ async fn handle_text_frame(
                 return Some(CloseCode::SubscriberAlreadyExists(id).into());
             }
 
-            // TODO: do the same as bin/router/src/pipeline/mod.rs
+            let started_at = Instant::now();
             let operation_span = GraphQLOperationSpan::new();
 
-            let maybe_supergraph = schema_state.current_supergraph();
-            let supergraph = match maybe_supergraph.as_ref() {
-                Some(supergraph) => supergraph,
-                None => {
-                    warn!(
-                        "No supergraph available yet, unable to process client subscribe message"
-                    );
-                    return Some(ServerMessage::error(
-                        &id,
-                        &[GraphQLError::from_message_and_extensions(
-                            "No supergraph available yet".to_string(),
-                            GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
-                        )],
-                    ));
+            let result = async {
+                let maybe_supergraph = schema_state.current_supergraph();
+                let supergraph = match maybe_supergraph.as_ref() {
+                    Some(supergraph) => supergraph,
+                    None => {
+                        warn!(
+                            "No supergraph available yet, unable to process client subscribe message"
+                        );
+                        return Some(ServerMessage::error(
+                            &id,
+                            &[GraphQLError::from_message_and_extensions(
+                                "No supergraph available yet".to_string(),
+                                GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
+                            )],
+                        ));
+                    }
+                };
+
+                let config = &shared_state.router_config.websocket;
+
+                let connection_init_headers = if config.headers.accepts_connection_headers() {
+                    let state_borrow = state.borrow();
+                    parse_headers_from_connection_init_payload(state_borrow.init_payload.as_ref())
+                } else {
+                    HeaderMap::new()
+                };
+
+                let extensions_headers = if config.headers.accepts_operation_headers() {
+                    parse_headers_from_extensions(payload.extensions.as_ref())
+                } else {
+                    HeaderMap::new()
+                };
+
+                // merge, extensions have precedence
+                let mut headers = connection_init_headers;
+                for (key, value) in extensions_headers.iter() {
+                    headers.insert(key.clone(), value.clone());
                 }
-            };
 
-            let config = &shared_state.router_config.websocket;
-
-            let connection_init_headers = if config.headers.accepts_connection_headers() {
-                let state_borrow = state.borrow();
-                parse_headers_from_connection_init_payload(state_borrow.init_payload.as_ref())
-            } else {
-                HeaderMap::new()
-            };
-
-            let extensions_headers = if config.headers.accepts_operation_headers() {
-                parse_headers_from_extensions(payload.extensions.as_ref())
-            } else {
-                HeaderMap::new()
-            };
-
-            // merge, extensions have precedence
-            let mut headers = connection_init_headers;
-            for (key, value) in extensions_headers.iter() {
-                headers.insert(key.clone(), value.clone());
-            }
-
-            // store the merged headers back to init_payload if configured to do so
-            if config.headers.persist {
-                if let Some(ref mut init_payload) = state.borrow_mut().init_payload {
-                    for (key, value) in headers.iter() {
-                        if let Ok(val_str) = value.to_str() {
-                            init_payload
-                                .fields
-                                .insert(key.to_string(), Value::from(val_str));
+                // store the merged headers back to init_payload if configured to do so
+                if config.headers.persist {
+                    if let Some(ref mut init_payload) = state.borrow_mut().init_payload {
+                        for (key, value) in headers.iter() {
+                            if let Ok(val_str) = value.to_str() {
+                                init_payload
+                                    .fields
+                                    .insert(key.to_string(), Value::from(val_str));
+                            }
                         }
                     }
                 }
-            }
 
-            let mut payload = GraphQLParams {
-                query: Some(payload.query),
-                operation_name: payload.operation_name,
-                variables: payload.variables.unwrap_or_default(),
-                extensions: payload.extensions,
-            };
+                let mut payload = GraphQLParams {
+                    query: Some(payload.query),
+                    operation_name: payload.operation_name,
+                    variables: payload.variables.unwrap_or_default(),
+                    extensions: payload.extensions,
+                };
 
-            // TODO: ok we need this!
-            let plugin_req_state = None;
+                // TODO: ok we need this!
+                let plugin_req_state = None;
 
-            let parser_result =
-                match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {
-                    Ok(result) => result,
+                let client_name = headers
+                    .get(
+                        &shared_state
+                            .router_config
+                            .telemetry
+                            .client_identification
+                            .name_header,
+                    )
+                    .and_then(|v| v.to_str().ok());
+                let client_version = headers
+                    .get(
+                        &shared_state
+                            .router_config
+                            .telemetry
+                            .client_identification
+                            .version_header,
+                    )
+                    .and_then(|v| v.to_str().ok());
+
+                let parser_result =
+                    match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {
+                        Ok(result) => result,
+                        Err(err) => return Some(err.into_server_message(&id)),
+                    };
+
+                let parser_payload = match parser_result {
+                    crate::pipeline::parser::ParseResult::Payload(payload) => payload,
+                    crate::pipeline::parser::ParseResult::EarlyResponse(_) => {
+                        return Some(ServerMessage::error(
+                            &id,
+                            &[GraphQLError::from_message_and_code(
+                                "Unexpected early response during parse",
+                                "INTERNAL_SERVER_ERROR",
+                            )],
+                        ));
+                    }
+                };
+
+                operation_span.record_details(
+                    &parser_payload.minified_document,
+                    (&parser_payload).into(),
+                    client_name,
+                    client_version,
+                    &parser_payload.hive_operation_hash,
+                );
+
+                match validate_operation_with_cache(
+                    supergraph,
+                    schema_state,
+                    shared_state,
+                    &parser_payload,
+                    &plugin_req_state,
+                )
+                .await
+                {
+                    Ok(Some(_)) => {
+                        return Some(ServerMessage::error(
+                            &id,
+                            &[GraphQLError::from_message_and_code(
+                                "Unexpected early response during validation",
+                                "INTERNAL_SERVER_ERROR",
+                            )],
+                        ));
+                    }
+                    Ok(None) => {}
+                    Err(err) => return Some(err.into_server_message(&id)),
+                }
+
+                let normalize_payload = match normalize_request_with_cache(
+                    supergraph,
+                    schema_state,
+                    &payload,
+                    &parser_payload,
+                )
+                .await
+                {
+                    Ok(payload) => payload,
                     Err(err) => return Some(err.into_server_message(&id)),
                 };
 
-            let parser_payload = match parser_result {
-                crate::pipeline::parser::ParseResult::Payload(payload) => payload,
-                crate::pipeline::parser::ParseResult::EarlyResponse(_) => {
-                    return Some(ServerMessage::error(
-                        &id,
-                        &[GraphQLError::from_message_and_code(
-                            "Unexpected early response during parse",
-                            "INTERNAL_SERVER_ERROR",
-                        )],
-                    ));
+                let is_subscription = matches!(
+                    normalize_payload.operation_for_plan.operation_kind,
+                    Some(OperationKind::Subscription)
+                );
+
+                if is_subscription && !shared_state.router_config.subscriptions.enabled {
+                    return Some(PipelineError::SubscriptionsNotSupported.into_server_message(&id));
                 }
-            };
 
-            match validate_operation_with_cache(
-                supergraph,
-                schema_state,
-                shared_state,
-                &parser_payload,
-                &plugin_req_state,
-            )
-            .await
-            {
-                Ok(_) => {}
-                Err(err) => return Some(err.into_server_message(&id)),
-            }
+                let jwt_request_details = match &shared_state.jwt_auth_runtime {
+                    Some(jwt_auth_runtime) => match jwt_auth_runtime
+                        .validate_headers(&headers, &shared_state.jwt_claims_cache)
+                        .await
+                    {
+                        Ok(Some(jwt_context)) => JwtRequestDetails::Authenticated {
+                            scopes: jwt_context.extract_scopes(),
+                            claims: match jwt_context
+                                .get_claims_value()
+                                .map_err(PipelineError::JwtForwardingError)
+                            {
+                                Ok(claims) => claims,
+                                Err(e) => return Some(e.into_server_message(&id)),
+                            },
+                            token: jwt_context.token_raw,
+                            prefix: jwt_context.token_prefix,
+                        },
+                        Ok(None) => JwtRequestDetails::Unauthenticated,
+                        // jwt_auth_runtime.validate_headers() will error out only if
+                        // authentication is required and has failed. we therefore use
+                        // the JwtError conversion here to respond with proper error message
+                        // close with Forbidden.
+                        Err(e) => {
+                            let _ = sink.send(e.clone().into_server_message(&id)).await;
+                            // we report error as graphql error, but we also close the
+                            // connection since we're dealing with auth so let's be safe
+                            return Some(e.into_close_message());
+                        }
+                    },
+                    None => JwtRequestDetails::Unauthenticated,
+                };
 
-            let normalize_payload = match normalize_request_with_cache(
-                supergraph,
-                schema_state,
-                &payload,
-                &parser_payload,
-            )
-            .await
-            {
-                Ok(payload) => payload,
-                Err(err) => return Some(err.into_server_message(&id)),
-            };
+                let variable_payload = match coerce_request_variables(
+                    supergraph,
+                    &mut payload.variables,
+                    &normalize_payload,
+                ) {
+                    Ok(payload) => payload,
+                    Err(err) => return Some(err.into_server_message(&id)),
+                };
 
-            let jwt_request_details = match &shared_state.jwt_auth_runtime {
-                Some(jwt_auth_runtime) => match jwt_auth_runtime
-                    .validate_headers(&headers, &shared_state.jwt_claims_cache)
-                    .await
-                {
-                    Ok(Some(jwt_context)) => JwtRequestDetails::Authenticated {
-                        scopes: jwt_context.extract_scopes(),
-                        claims: match jwt_context
-                            .get_claims_value()
-                            .map_err(PipelineError::JwtForwardingError)
-                        {
-                            Ok(claims) => claims,
+                // synthetic client request details for plan executor
+                let client_request_details = ClientRequestDetails {
+                    method: &Method::POST,
+                    url: &http::Uri::from_static("/graphql"),
+                    headers: &headers,
+                    operation: OperationDetails {
+                        name: normalize_payload.operation_for_plan.name.as_deref(),
+                        kind: match normalize_payload.operation_for_plan.operation_kind {
+                            Some(OperationKind::Query) => "query",
+                            Some(OperationKind::Mutation) => "mutation",
+                            Some(OperationKind::Subscription) => "subscription",
+                            None => "query",
+                        },
+                        query: match payload.get_query() {
+                            Ok(q) => q,
                             Err(e) => return Some(e.into_server_message(&id)),
                         },
-                        token: jwt_context.token_raw,
-                        prefix: jwt_context.token_prefix,
                     },
-                    Ok(None) => JwtRequestDetails::Unauthenticated,
-                    // jwt_auth_runtime.validate_headers() will error out only if
-                    // authentication is required and has failed. we therefore use
-                    // the JwtError conversion here to respond with proper error message
-                    // close with Forbidden.
-                    Err(e) => {
-                        let _ = sink.send(e.clone().into_server_message(&id)).await;
-                        // we report error as graphql error, but we also close the
-                        // connection since we're dealing with auth so let's be safe
-                        return Some(e.into_close_message());
-                    }
-                },
-                None => JwtRequestDetails::Unauthenticated,
-            };
+                    jwt: jwt_request_details,
+                };
 
-            // synthetic client request details for plan executor
-            let client_request_details = ClientRequestDetails {
-                method: &Method::POST,
-                url: &http::Uri::from_static("/graphql"),
-                headers: &headers,
-                operation: OperationDetails {
-                    name: normalize_payload.operation_for_plan.name.as_deref(),
-                    kind: match normalize_payload.operation_for_plan.operation_kind {
-                        Some(OperationKind::Query) => "query",
-                        Some(OperationKind::Mutation) => "mutation",
-                        Some(OperationKind::Subscription) => "subscription",
-                        None => "query",
-                    },
-                    query: payload.query.as_deref().unwrap_or_default(),
-                },
-                jwt: jwt_request_details,
-            };
-
-            if normalize_payload.operation_for_introspection.is_some() {
-                if let Err(e) = handle_introspection_policy(
-                    &shared_state.introspection_policy,
+                match execute_pipeline(
                     &client_request_details,
-                ) {
-                    return Some(e.into_server_message(&id));
-                }
-            }
-
-            let variable_payload = match coerce_request_variables(
-                supergraph,
-                &mut payload.variables,
-                &normalize_payload,
-            ) {
-                Ok(payload) => payload,
-                Err(err) => return Some(err.into_server_message(&id)),
-            };
-
-            match execute_pipeline(
-                &client_request_details,
-                &normalize_payload,
-                &variable_payload,
-                supergraph,
-                shared_state,
-                schema_state,
-                &operation_span,
-                &plugin_req_state,
-            )
-            .await
-            {
-                Ok(QueryPlanExecutionResult::Single(response)) => {
-                    let _ = sink.send(ServerMessage::next(&id, &response.body)).await;
-                    Some(ServerMessage::complete(&id))
-                }
-                Ok(QueryPlanExecutionResult::Stream(response)) => {
-                    // we use mpsc::channel(1) instead of oneshot because oneshot::Receiver
-                    // is consumed on first await, which doesn't work in tokio::select! loops that
-                    // need to poll the receiver multiple times across iterations
-                    let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
-
-                    state
-                        .borrow_mut()
-                        .subscriptions
-                        .insert(id.clone(), cancel_tx);
-
-                    // automatically remove the subscription from subscriptions when dropped
-                    let _guard = SubscriptionGuard {
-                        state: state.clone(),
-                        id: id.clone(),
-                    };
-
-                    let mut stream = response.body;
-                    let mut cancelled = false;
-
-                    trace!(id = %id, "Subscription started");
-
-                    let id_for_loop = id.clone();
-                    loop {
-                        tokio::select! {
-                            maybe_item = stream.next() => {
-                                match maybe_item {
-                                    Some(body) => {
-                                        let _ = sink.send(ServerMessage::next(&id_for_loop, &body)).await;
-                                    }
-                                    None => {
-                                        break; // completed
-                                    }
-                                }
-                            }
-                            _ = cancel_rx.recv() => {
-                                cancelled = true;
-                                break; // cancelled
-                            }
+                    &normalize_payload,
+                    &variable_payload,
+                    supergraph,
+                    shared_state,
+                    schema_state,
+                    &operation_span,
+                    &plugin_req_state,
+                )
+                .await
+                {
+                    Ok(QueryPlanExecutionResult::Single(response)) => {
+                        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                            usage_reporting::collect_usage_report(
+                                supergraph.supergraph_schema.clone(),
+                                started_at.elapsed(),
+                                client_name,
+                                client_version,
+                                &client_request_details,
+                                hive_usage_agent,
+                                shared_state
+                                    .router_config
+                                    .telemetry
+                                    .hive
+                                    .as_ref()
+                                    .map(|c| &c.usage_reporting)
+                                    .expect(
+                                        // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
+                                        // the UsageAgent is only created when usage reporting is enabled.
+                                        // Thus, this expect should never panic.
+                                        "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
+                                    ),
+                                response.error_count,
+                            )
+                            .await;
                         }
-                    }
 
-                    if cancelled {
-                        trace!(id = %id, "Subscription cancelled");
-                        // we dont emit complete on cancelled subscriptions.
-                        // they're either deliberately cancelled by the client
-                        // or dropped due to connection close, either way
-                        // we dont/cant inform the client with a complete message
-                        None
-                    } else {
-                        trace!(id = %id, "Subscription completed");
+                        let _ = sink.send(ServerMessage::next(&id, &response.body)).await;
                         Some(ServerMessage::complete(&id))
                     }
+                    Ok(QueryPlanExecutionResult::Stream(response)) => {
+                        // we use mpsc::channel(1) instead of oneshot because oneshot::Receiver
+                        // is consumed on first await, which doesn't work in tokio::select! loops that
+                        // need to poll the receiver multiple times across iterations
+                        let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+
+                        state
+                            .borrow_mut()
+                            .subscriptions
+                            .insert(id.clone(), cancel_tx);
+
+                        // automatically remove the subscription from subscriptions when dropped
+                        let _guard = SubscriptionGuard {
+                            state: state.clone(),
+                            id: id.clone(),
+                        };
+
+                        let mut stream = response.body;
+                        let mut cancelled = false;
+
+                        trace!(id = %id, "Subscription started");
+
+                        let id_for_loop = id.clone();
+                        loop {
+                            tokio::select! {
+                                maybe_item = stream.next() => {
+                                    match maybe_item {
+                                        Some(body) => {
+                                            let _ = sink.send(ServerMessage::next(&id_for_loop, &body)).await;
+                                        }
+                                        None => {
+                                            break; // completed
+                                        }
+                                    }
+                                }
+                                _ = cancel_rx.recv() => {
+                                    cancelled = true;
+                                    break; // cancelled
+                                }
+                            }
+                        }
+
+                        if cancelled {
+                            trace!(id = %id, "Subscription cancelled");
+                            // we dont emit complete on cancelled subscriptions.
+                            // they're either deliberately cancelled by the client
+                            // or dropped due to connection close, either way
+                            // we dont/cant inform the client with a complete message
+                            None
+                        } else {
+                            trace!(id = %id, "Subscription completed");
+                            Some(ServerMessage::complete(&id))
+                        }
+                    }
+                    Err(err) => Some(err.into_server_message(&id)),
                 }
-                Err(err) => Some(err.into_server_message(&id)),
             }
+            .instrument(operation_span.clone())
+            .await;
+
+            result
         }
         ClientMessage::Complete { id } => {
             if let Some(msg) = state.borrow().check_acknowledged() {
