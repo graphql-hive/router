@@ -30,4 +30,4 @@ impl RouterPlugin for MyPlugin {
 
 You can learn more about the plugin system in the [technical documentation](https://the-guild.dev/graphql/hive/docs/router/plugin-system) and in [Extending the Router guide](https://the-guild.dev/graphql/hive/docs/router/guides/extending-the-router).
 
-This new feaure also exposes many of the Router's internals through the [`hive-router` crate](https://crates.io/crates/hive-router).
+This new feature also exposes many of the Router's internals through the [`hive-router` crate](https://crates.io/crates/hive-router).
