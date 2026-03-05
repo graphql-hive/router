@@ -453,11 +453,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             res.status()
         );
 
-        // TODO: non-success statuses are not handled in single-shot results?
-        //       seems like the body is read regardless there, do the same in subscriptions?
-        // if !res.status().is_success() {
-        //     return Err(SubgraphExecutorError::RequestFailure(...));
-        // }
+        if !res.status().is_success() {
+            return Err(SubgraphExecutorError::StreamStatusCodeNotOk(res.status()));
+        }
 
         let (parts, body_stream) = res.into_parts();
         let _response_headers = parts.headers.clone();

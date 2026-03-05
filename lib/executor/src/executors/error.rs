@@ -1,4 +1,4 @@
-use http::uri::InvalidUri;
+use http::{uri::InvalidUri, StatusCode};
 use strum::IntoStaticStr;
 
 #[derive(thiserror::Error, Debug, IntoStaticStr)]
@@ -59,6 +59,9 @@ pub enum SubgraphExecutorError {
     #[error("Failed to handle subscription stream from '{0}': {1}")]
     #[strum(serialize = "SUBGRAPH_SUBSCRIPTION_STREAM_ERROR")]
     SubscriptionStreamError(String, String),
+    #[error("Subgraph stream responded with a not-OK status code '{0}'")]
+    #[strum(serialize = "SUBGRAPH_STREAM_STATUS_CODE_NOT_OK")]
+    StreamStatusCodeNotOk(StatusCode),
 }
 
 impl SubgraphExecutorError {

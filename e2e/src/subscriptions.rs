@@ -792,8 +792,8 @@ mod subscriptions_e2e_tests {
         let body_str = std::str::from_utf8(&body).unwrap();
 
         assert!(
-            body_str.contains(r#"{"code":"SUBGRAPH_REQUEST_FAILURE"}"#),
-            "Expected '{}' to contain the subgraph request failure error code",
+            body_str.contains("SUBGRAPH_STREAM_STATUS_CODE_NOT_OK"),
+            "Expected '{}' to contain the subgraph stream response not-ok failure error code",
             body_str
         );
     }
