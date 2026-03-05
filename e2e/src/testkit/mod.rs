@@ -694,7 +694,8 @@ impl TestRouter<Started> {
                         }
                     }
                     Err(_) => {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        // will resolve fast
+                        tokio::time::sleep(Duration::from_millis(300)).await;
                     }
                 }
             }
@@ -714,7 +715,9 @@ impl TestRouter<Started> {
                         }
                     }
                     Err(_) => {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        // readiness might take a moment, so allow for some time
+                        // to avoid spamming the router and the h1 dispatcher
+                        tokio::time::sleep(Duration::from_millis(600)).await;
                     }
                 }
             }
