@@ -116,6 +116,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.40 (2026-03-05)
+
+### Features
+
+- plugin system (#628)
+
+#### Plugin System
+
+This release introduces a Plugin System that allows users to extend the functionality of Hive Router by creating custom plugins.
+
+```rust
+use hive_router::plugins::plugin_trait::RouterPlugin;
+use hive_router::async_trait;
+ 
+struct MyPlugin;
+ 
+##[async_trait]
+impl RouterPlugin for MyPlugin {
+    type Config = ();
+ 
+    fn plugin_name() -> &'static str {
+        "my_plugin"
+    }
+}
+```
+
+You can learn more about the plugin system in the [technical documentation](https://the-guild.dev/graphql/hive/docs/router/plugin-system) and in [Extending the Router guide](https://the-guild.dev/graphql/hive/docs/router/guides/extending-the-router).
+
+This new feature also exposes many of the Router's internals through the [`hive-router` crate](https://crates.io/crates/hive-router).
+
+### Fixes
+
+- export `BackgroundTask` from `hive-router` crate (#797)
+- resolve missing fields in introspection (#802)
+
+#### Improve Query Plans for abstract types
+
+The query planner now combines fetches for multiple matching types into a single fetch step.
+Before, the planner could create one fetch per type.
+Now, it can fetch many types together when possible, which reduces duplicate fetches and makes query plans more efficient.
+
+#### Adds `noop_otlp_exporter` feature for internal usage
+
+Hive Router uses `noop_otlp_exporter` internally for testing purposes. This change adds the `noop_otlp_exporter` feature to the `hive-router` crate so that it can be used internally while testing the router.
+
+#### Rename internal query-plan path segment from `Cast(String)` to `TypeCondition(Vec<String>)`
+
+Query Plan shape changed from `Cast(String)` to `TypeCondition(Vec<String>)`.
+The `TypeCondition` name better reflects GraphQL semantics (`... on Type`) and avoids string encoding/decoding like `"A|B"` in planner/executor code.
+
+**What changed**
+- Query planner path model now uses `TypeCondition` terminology instead of `Cast`.
+- Type conditions are represented as a list of type names, not a pipe-delimited string.
+- Node addon query-plan typings were updated accordingly:
+  - `FetchNodePathSegment.TypenameEquals` now uses `string[]`
+  - `FlattenNodePathSegment` now uses `TypeCondition: string[]` (instead of `Cast: string`)
+
+#### Dependencies Updates
+
+- Update `rustls`, `aws-lc-rs` and `aws-lc-sys` dependencies to address `PKCS7` CVE in `aws-lc` crates.
+- Update `rand` to latest version.
+
+#### Fix missing elements in the introspection;
+
+- `isDeprecated` and `deprecationReason` fields in introspection results for input values. This caused deprecated input values to be treated as non-deprecated, which could lead to clients not being aware of deprecations and potentially using deprecated fields or arguments.
+
+```graphql
+{
+  __type(name: "SomeInputType") {
+    inputFields {
+      name
+      isDeprecated # This field was missing, causing deprecated input values to be treated as non-deprecated
+    }
+  }
+}
+```
+
+- `isOneOf` field in introspection results for input object types. This field indicates whether an input object type is a "oneOf" type, which is a special kind of input object that allows only one of its fields to be provided. The absence of this field could lead to clients not being able to correctly identify and handle "oneOf" input object types.
+
+```graphql
+{
+  __type(name: "SomeInputObjectType") {
+    name
+    kind
+    isOneOf # This field was missing, causing clients to not be able to identify "oneOf" input object types
+  }
+}
+```
+
+- `defaultValue` field in introspection results for input values and arguments. This field provides the default value for an argument if it is not provided in a query. The absence of this field could lead to clients not being aware of default values for arguments, which could result in unexpected behavior when executing queries that rely on default argument values.
+
+```graphql
+{
+  __type(name: "SomeType") {
+    fields {
+      name
+      args {
+        name
+        defaultValue # This field was missing, causing clients to not be aware of default argument values
+      }
+    }
+  }
+}
+```
+
+- Add missing `specifiedByURL` field in introspection results for custom scalar types. This field provides a URL that specifies the behavior of a custom scalar type. The absence of this field could lead to clients not being able to understand the semantics of custom scalar types, which could result in incorrect handling of values of those types.
+
+```graphql
+{
+  __type(name: "SomeCustomScalar") {
+    name
+    kind
+    specifiedByURL # This field was missing, causing clients to not be able to understand the semantics of custom scalar types
+  }
+}
+```
+
+#### Internal GraphQL Validation Cache Key
+
+- `ConsumerSchema` and `ValidationPlan` now implement `hash` property, which is calculated based on the SDL string of the consumer schema and the validation rules when the struct is created or when a new rule is added to the validation plan.
+- Validation cache key is generated by hashing the SDL string of the consumer schema, and the validation rules together with the operation itself.
+- All schema AST nodes now implement `Hash` trait, which allows us to hash the entire schema AST when generating the validation cache key.
+
 ## 0.0.39 (2026-02-12)
 
 ### Fixes

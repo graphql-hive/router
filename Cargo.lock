@@ -2096,7 +2096,7 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "graphql-tools"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "combine",
  "criterion",
@@ -2268,7 +2268,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
  "async-dropper-simple",
@@ -2298,7 +2298,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.39"
+version = "0.0.40"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2353,7 +2353,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-config"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "config",
  "envconfig",
@@ -2374,7 +2374,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-internal"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2411,7 +2411,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "6.5.1"
+version = "6.6.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2451,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-query-planner"
-version = "2.2.1"
+version = "2.3.0"
 dependencies = [
  "bitflags 2.11.0",
  "criterion",
@@ -3470,7 +3470,7 @@ dependencies = [
 
 [[package]]
 name = "node-addon"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "hive-router-query-planner",
  "napi",
