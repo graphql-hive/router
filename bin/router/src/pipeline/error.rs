@@ -226,12 +226,14 @@ pub fn handle_pipeline_error(
     shared_state: &RouterSharedState,
     response_mode: &ResponseMode,
 ) -> web::HttpResponse {
-    // Prefer status OK for all streaming response modes, and for single
-    // response modes if they prefer status OK for errors
-    let prefer_ok = matches!(response_mode, ResponseMode::StreamOnly(_))
-        || response_mode.prefer_status_ok_for_errors();
-
-    let status = err.default_status_code(prefer_ok);
+    let status = if matches!(response_mode, ResponseMode::StreamOnly(_)) {
+        // alwats status OK for streaming response modes, because we accept
+        // the stream and then stream the error from within the stream by default
+        StatusCode::OK
+    } else {
+        let prefer_ok = response_mode.prefer_status_ok_for_errors();
+        err.default_status_code(prefer_ok)
+    };
 
     let mut res = ResponseBuilder::new(status);
 
