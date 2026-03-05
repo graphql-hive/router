@@ -3,7 +3,7 @@ hive-router: patch
 hive-router-plan-executor: patch
 ---
 
-Fix missing elements in the introspection;
+# Fix missing elements in the introspection;
 
 - `isDeprecated` and `deprecationReason` fields in introspection results for input values. This caused deprecated input values to be treated as non-deprecated, which could lead to clients not being aware of deprecations and potentially using deprecated fields or arguments.
 

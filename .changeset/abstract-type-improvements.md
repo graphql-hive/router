@@ -5,7 +5,7 @@ hive-router-plan-executor: patch
 hive-router: patch
 ---
 
-## Improve Query Plans for abtract types
+# Improve Query Plans for abstract types
 
 The query planner now combines fetches for multiple matching types into a single fetch step.
 Before, the planner could create one fetch per type.
