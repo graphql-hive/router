@@ -301,7 +301,10 @@ async fn emit_subscription_events(
                 _ = interval.tick() => Some(CallbackEvent::Heartbeat),
             }
         } else {
-            stream.next().await.map(|r| CallbackEvent::Next(Box::new(r)))
+            stream
+                .next()
+                .await
+                .map(|r| CallbackEvent::Next(Box::new(r)))
         };
 
         match next_event {
