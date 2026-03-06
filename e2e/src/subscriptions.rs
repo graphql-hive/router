@@ -6,7 +6,9 @@ mod subscriptions_e2e_tests {
     use reqwest::StatusCode;
     use sonic_rs::json;
 
-    use crate::testkit::{some_header_map, ResponseLike, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        some_header_map, ClientResponseExt, ResponseLike, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     async fn subscription_not_allowed_when_disabled() {
@@ -527,50 +529,48 @@ mod subscriptions_e2e_tests {
 
     #[ntex::test]
     async fn subscription_yes_entity_resolution_http_callback_subgraph() {
-        let _subgraphs_server = SubgraphsServer::start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    callback:
+                        public_url: http://localhost:4000/callback
+                        subgraphs:
+                            - reviews
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-        let router = init_router_from_config_inline(&format!(
-            r#"
-            supergraph:
-                source: file
-                path: supergraph.graphql
-            subscriptions:
-                enabled: true
-                callback:
-                    public_url: http://localhost:4000/callback
-                    subgraphs:
-                        - reviews
-            "#
-        ))
-        .await
-        .unwrap();
-
-        wait_for_readiness(&router.app).await;
-
-        let req = init_graphql_request(
-            r#"
-            subscription {
-                reviewAdded(intervalInMs: 0) {
-                    id
-                    product {
-                        name
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
                     }
                 }
-            }
-            "#,
-            None,
-        )
-        .header(http::header::ACCEPT, "text/event-stream")
-        .to_request();
+                "#,
+                None,
+                some_header_map!(
+                        http::header::ACCEPT => "text/event-stream"
+                ),
+            )
+            .await;
 
-        let res = test::call_service(&router.app, req).await;
+        assert_eq!(res.status(), 200, "Expected 200 OK");
 
-        assert!(res.status().is_success(), "Expected 200 OK");
-
-        let body = test::read_body(res).await;
-        let body_str = std::str::from_utf8(&body).unwrap();
-
-        assert_snapshot!(body_str, @r#"
+        assert_snapshot!(res.string_body().await, @r#"
         event: next
         data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}
 
