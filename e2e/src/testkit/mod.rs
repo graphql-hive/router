@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use hive_router_plan_executor::plugin_trait::RouterPlugin;
 use lazy_static::lazy_static;
 use ntex::{
-    client::{Client, ClientRequest, ClientResponse},
+    client::ClientResponse,
     io::Sealed,
     web::{self, test},
     ws::WsConnection,
