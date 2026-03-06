@@ -106,6 +106,7 @@ pub async fn callback_handler(
         }
         "next" => {
             trace!(subscription_id = %payload.id, "Received next message");
+            // TODO: this is a hot path. avoid `Value` re-serialization
             let data = match payload.payload {
                 Some(p) => match sonic_rs::to_vec(&p) {
                     Ok(bytes) => BytesLib::from(bytes),
