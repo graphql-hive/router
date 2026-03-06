@@ -640,6 +640,7 @@ impl TestRouter<Built> {
             let schema_state = serv_schema_state.clone();
             let serv_graphql_path = serv_graphql_path.clone();
             let serv_websocket_path = serv_websocket_path.clone();
+            let serv_callback_path = serv_callback_path.clone();
 
             // set the tracing dispatch on the server thread. the guard is
             // intentionally leaked: dropping it would restore the no-op default
