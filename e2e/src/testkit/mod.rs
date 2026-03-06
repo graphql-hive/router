@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use hive_router_plan_executor::plugin_trait::RouterPlugin;
 use lazy_static::lazy_static;
 use ntex::{
-    client::ClientResponse,
+    client::{Client, ClientRequest, ClientResponse},
     io::Sealed,
     web::{self, test},
     ws::WsConnection,
@@ -38,8 +38,8 @@ use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 /// Binds a TCP listener to an OS-assigned port and returns that port number.
 /// The listener is immediately dropped, so the port is free for the caller to use.
 pub fn get_available_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("failed to bind to get available port");
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("failed to bind to get available port");
     listener
         .local_addr()
         .expect("failed to get local address")
@@ -442,7 +442,7 @@ pub struct TestRouterBuilder {
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     subgraphs_addr: Option<SocketAddr>,
-    port: Option<u16>,
+    port: u16,
 }
 
 impl TestRouterBuilder {
@@ -453,7 +453,7 @@ impl TestRouterBuilder {
             config: None,
             plugins: vec![],
             subgraphs_addr: None,
-            port: None,
+            port: 0,
         }
     }
 
@@ -479,7 +479,7 @@ impl TestRouterBuilder {
     }
 
     pub fn with_port(mut self, port: u16) -> Self {
-        self.port = Some(port);
+        self.port = port;
         self
     }
 
@@ -502,11 +502,8 @@ impl TestRouterBuilder {
 
     pub fn build(self) -> TestRouter<Built> {
         let mut config = self.config.unwrap_or_default();
+        config.http.port = self.port; // sync with config // TODO: what if testing custom port?
         let mut _hold_until_drop: Vec<Box<dyn Any>> = vec![];
-
-        if let Some(port) = self.port {
-            config.http.port = port;
-        }
 
         // change the supergraph to use the test subgraphs address
         if let Some(subgraphs_addr) = self.subgraphs_addr {
@@ -543,6 +540,7 @@ impl TestRouterBuilder {
             graphql_path: config.graphql_path().to_string(),
             websocket_path: config.websocket_path().map(|s| s.to_string()),
             callback_path: config.callback_path().map(|s| s.to_string()),
+            port: self.port,
             config: Some(config),
             plugins: self.plugins,
             handle: None,
@@ -614,6 +612,7 @@ pub struct TestRouter<State> {
     graphql_path: String,
     websocket_path: Option<String>,
     callback_path: Option<String>,
+    port: u16,
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     handle: Option<TestRouterHandle>,
@@ -657,7 +656,7 @@ impl TestRouter<Built> {
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
         let serv_callback_path = self.callback_path.clone();
-        let serv = test::server(move || {
+        let serv = test::server_with(test::config().port(self.port), move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
             let serv_graphql_path = serv_graphql_path.clone();
@@ -694,6 +693,7 @@ impl TestRouter<Built> {
         let mut hold_until_drop = self._hold_until_drop;
         hold_until_drop.push(Box::new(subscription_guard));
         let started = TestRouter {
+            port: self.port,
             wait_for_healthy_on_start: self.wait_for_healthy_on_start,
             wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: self.graphql_path,
