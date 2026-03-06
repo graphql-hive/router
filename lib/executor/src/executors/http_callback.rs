@@ -262,6 +262,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
 
         if !res.status().is_success() {
             self.active_subscriptions.remove(&subscription_id);
+            let status = res.status();
             let (_, body) = res.into_parts();
             let body_bytes = body.collect().await.ok().map(|b| b.to_bytes());
             let body_str = body_bytes
@@ -270,7 +271,10 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 .unwrap_or("(no body)");
             return Err(SubgraphExecutorError::SubscriptionStreamError(
                 self.endpoint.to_string(),
-                format!("Subgraph returned non-success status: {}", body_str),
+                format!(
+                    "Subgraph returned non-success status: {} with body {}",
+                    status, body_str
+                ),
             ));
         }
 
