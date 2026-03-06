@@ -248,13 +248,10 @@ pub fn configure_ntex_app(
         cfg.route(websocket_path, web::get().to(ws_index));
     }
     if let Some(callback_path) = callback_path {
-        let callback_route = if callback_path.ends_with("/") {
-            // ends with slash, just suffix the subscription_id
-            format!("{}{{subscription_id}}", callback_path)
-        } else {
-            // suffix the slash if it's not already present
-            format!("{}/{{subscription_id}}", callback_path)
-        };
+        let callback_route = format!(
+            "{}/{{subscription_id}}",
+            callback_path.trim_end_matches('/'),
+        );
         cfg.route(&callback_route, web::post().to(callback_handler));
     }
     cfg.route(graphql_path, web::to(graphql_endpoint_handler))

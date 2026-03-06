@@ -39,14 +39,18 @@ pub async fn callback_handler(
             "Invalid or missing {} header, expected {}",
             SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION
         );
-        return HttpResponse::BadRequest().finish();
+        return HttpResponse::BadRequest()
+            .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+            .finish();
     }
 
     let payload: CallbackPayload = match sonic_rs::from_slice(&body) {
         Ok(p) => p,
         Err(e) => {
             warn!("Failed to parse callback payload: {}", e);
-            return HttpResponse::BadRequest().finish();
+            return HttpResponse::BadRequest()
+                .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+                .finish();
         }
     };
 
@@ -55,7 +59,9 @@ pub async fn callback_handler(
             "Invalid callback kind: {}, expected 'subscription'",
             payload.kind
         );
-        return HttpResponse::BadRequest().finish();
+        return HttpResponse::BadRequest()
+            .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+            .finish();
     }
 
     if payload.id != subscription_id_from_path {
@@ -63,7 +69,9 @@ pub async fn callback_handler(
             "Subscription ID mismatch: path='{}', body='{}'",
             subscription_id_from_path, payload.id
         );
-        return HttpResponse::BadRequest().finish();
+        return HttpResponse::BadRequest()
+            .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+            .finish();
     }
 
     let subscription = match active_subscriptions.get(&payload.id) {
@@ -73,7 +81,9 @@ pub async fn callback_handler(
                 subscription_id = %payload.id,
                 "Subscription not found, may have been terminated"
             );
-            return HttpResponse::NotFound().finish();
+            return HttpResponse::NotFound()
+                .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+                .finish();
         }
     };
 
@@ -82,7 +92,9 @@ pub async fn callback_handler(
             subscription_id = %payload.id,
             "Invalid verifier for subscription"
         );
-        return HttpResponse::Unauthorized().finish();
+        return HttpResponse::BadRequest()
+            .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+            .finish();
     }
 
     match payload.action.as_str() {
@@ -102,7 +114,9 @@ pub async fn callback_handler(
                             subscription_id = %payload.id,
                             "Failed to serialize payload: {}", e
                         );
-                        return HttpResponse::BadRequest().finish();
+                        return HttpResponse::BadRequest()
+                            .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+                            .finish();
                     }
                 },
                 None => {
@@ -110,7 +124,9 @@ pub async fn callback_handler(
                         subscription_id = %payload.id,
                         "Missing payload in next message"
                     );
-                    return HttpResponse::BadRequest().finish();
+                    return HttpResponse::BadRequest()
+                        .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+                        .finish();
                 }
             };
 
@@ -125,7 +141,9 @@ pub async fn callback_handler(
                 );
                 drop(subscription);
                 active_subscriptions.remove(&payload.id);
-                return HttpResponse::NotFound().finish();
+                return HttpResponse::NotFound()
+                    .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+                    .finish();
             }
 
             HttpResponse::NoContent()
@@ -150,7 +168,9 @@ pub async fn callback_handler(
                 action = %payload.action,
                 "Unknown callback action"
             );
-            HttpResponse::BadRequest().finish()
+            HttpResponse::BadRequest()
+                .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+                .finish()
         }
     }
 }

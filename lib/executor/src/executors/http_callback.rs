@@ -138,7 +138,11 @@ impl HttpCallbackSubgraphExecutor {
         }
 
         // Build extensions with subscription callback info
-        let callback_url = format!("{}/{}", self.callback_base_url, subscription_id);
+        let callback_url = format!(
+            "{}/{}",
+            self.callback_base_url.trim_end_matches('/'),
+            subscription_id
+        );
         let mut extensions: HashMap<String, sonic_rs::Value> =
             execution_request.extensions.clone().unwrap_or_default();
 
