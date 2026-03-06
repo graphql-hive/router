@@ -150,13 +150,13 @@ impl HttpCallbackSubgraphExecutor {
         });
         extensions.insert("subscription".to_string(), subscription_ext);
 
-        let extensions_value = sonic_rs::to_value(&extensions).map_err(|err| {
+        let extensions_str = sonic_rs::to_string(&extensions).map_err(|err| {
             SubgraphExecutorError::VariablesSerializationFailure("extensions".to_string(), err)
         })?;
 
         body.put(COMMA);
         body.put("\"extensions\":".as_bytes());
-        body.extend_from_slice(extensions_value.to_string().as_bytes());
+        body.extend_from_slice(extensions_str.as_bytes());
 
         body.put(CLOSE_BRACE);
 
