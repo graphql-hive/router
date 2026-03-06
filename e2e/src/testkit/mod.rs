@@ -31,7 +31,7 @@ use hive_router::{
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use hive_router_plan_executor::executors::websocket_client;
-use subgraphs::{subgraphs_app, SubscriptionProtocol};
+use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 
 // utilities
 
@@ -212,7 +212,7 @@ impl ResponseLike {
 type OnRequest = dyn Fn(RequestLike) -> Option<ResponseLike> + Send + Sync;
 
 pub struct TestSubgraphsBuilder {
-    subscriptions_protocol: SubscriptionProtocol,
+    subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
     on_request: Option<Arc<OnRequest>>,
 }
 
@@ -220,11 +220,14 @@ impl TestSubgraphsBuilder {
     pub fn new() -> Self {
         Self {
             on_request: None,
-            subscriptions_protocol: SubscriptionProtocol::default(),
+            subscriptions_protocol: HTTPStreamingSubscriptionProtocol::default(),
         }
     }
 
-    pub fn with_subscriptions_protocol(mut self, protocol: SubscriptionProtocol) -> Self {
+    pub fn with_http_streaming_subscriptions_protocol(
+        mut self,
+        protocol: HTTPStreamingSubscriptionProtocol,
+    ) -> Self {
         self.subscriptions_protocol = protocol;
         self
     }
@@ -260,7 +263,7 @@ struct TestSubgraphsHandle {
 }
 
 pub struct TestSubgraphs<State> {
-    subscriptions_protocol: SubscriptionProtocol,
+    subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
     on_request: Option<Arc<OnRequest>>,
     handle: Option<TestSubgraphsHandle>,
     _state: PhantomData<State>,

@@ -62,7 +62,9 @@ mod subscriptions_e2e_tests {
     #[ntex::test]
     async fn subscription_no_entity_resolution_sse_subgraph() {
         let subgraphs = TestSubgraphs::builder()
-            .with_subscriptions_protocol(subgraphs::SubscriptionProtocol::SseOnly)
+            .with_http_streaming_subscriptions_protocol(
+                subgraphs::HTTPStreamingSubscriptionProtocol::SseOnly,
+            )
             .build()
             .start()
             .await;
@@ -155,7 +157,9 @@ mod subscriptions_e2e_tests {
     #[ntex::test]
     async fn subscription_no_entity_resolution_multipart_subgraph() {
         let subgraphs = TestSubgraphs::builder()
-            .with_subscriptions_protocol(subgraphs::SubscriptionProtocol::MultipartOnly)
+            .with_http_streaming_subscriptions_protocol(
+                subgraphs::HTTPStreamingSubscriptionProtocol::MultipartOnly,
+            )
             .build()
             .start()
             .await;
