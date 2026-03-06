@@ -517,6 +517,7 @@ impl TestRouterBuilder {
             wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: config.graphql_path().to_string(),
             websocket_path: config.websocket_path().map(|s| s.to_string()),
+            callback_path: config.callback_path().map(|s| s.to_string()),
             config: Some(config),
             plugins: self.plugins,
             handle: None,
@@ -587,6 +588,7 @@ pub struct TestRouter<State> {
     wait_for_ready_on_start: bool,
     graphql_path: String,
     websocket_path: Option<String>,
+    callback_path: Option<String>,
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     handle: Option<TestRouterHandle>,
@@ -629,6 +631,7 @@ impl TestRouter<Built> {
         let serv_schema_state = schema_state.clone();
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
+        let serv_callback_path = self.callback_path.clone();
         let serv = test::server(move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
@@ -655,6 +658,7 @@ impl TestRouter<Built> {
                             m,
                             serv_graphql_path.as_ref(),
                             serv_websocket_path.as_deref(),
+                            serv_callback_path.as_deref(),
                         )
                     })
             }
@@ -668,6 +672,7 @@ impl TestRouter<Built> {
             wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: self.graphql_path,
             websocket_path: self.websocket_path,
+            callback_path: self.callback_path,
             handle: Some(TestRouterHandle {
                 schema_state,
                 shared_state,
