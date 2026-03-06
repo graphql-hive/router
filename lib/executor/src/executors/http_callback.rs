@@ -36,7 +36,6 @@ pub struct ActiveSubscription {
 
 #[derive(Debug)]
 pub enum CallbackMessage {
-    Check,
     Next { payload: Bytes },
     Complete { errors: Option<Vec<GraphQLError>> },
 }
@@ -287,9 +286,6 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
 
             while let Some(msg) = rx.recv().await {
                 match msg {
-                    CallbackMessage::Check => {
-                        trace!(subscription_id = %subscription_id_for_stream, "received heartbeat check");
-                    }
                     CallbackMessage::Next { payload } => {
                         trace!(subscription_id = %subscription_id_for_stream, "received next payload");
                         match SubgraphResponse::deserialize_from_bytes(payload) {
