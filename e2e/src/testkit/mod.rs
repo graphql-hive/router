@@ -35,6 +35,17 @@ use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 
 // utilities
 
+/// Binds a TCP listener to an OS-assigned port and returns that port number.
+/// The listener is immediately dropped, so the port is free for the caller to use.
+pub fn get_available_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("failed to bind to get available port");
+    listener
+        .local_addr()
+        .expect("failed to get local address")
+        .port()
+}
+
 /// Creates a Some(http::HeaderMap) from a list of key-value pairs, for use in test requests.
 #[macro_export]
 macro_rules! some_header_map {
@@ -431,6 +442,7 @@ pub struct TestRouterBuilder {
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     subgraphs_addr: Option<SocketAddr>,
+    port: Option<u16>,
 }
 
 impl TestRouterBuilder {
@@ -441,6 +453,7 @@ impl TestRouterBuilder {
             config: None,
             plugins: vec![],
             subgraphs_addr: None,
+            port: None,
         }
     }
 
@@ -465,6 +478,11 @@ impl TestRouterBuilder {
         self
     }
 
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.port = Some(port);
+        self
+    }
+
     pub fn skip_wait_for_healthy_on_start(mut self) -> Self {
         self.wait_for_healthy_on_start = false;
         self
@@ -485,6 +503,10 @@ impl TestRouterBuilder {
     pub fn build(self) -> TestRouter<Built> {
         let mut config = self.config.unwrap_or_default();
         let mut _hold_until_drop: Vec<Box<dyn Any>> = vec![];
+
+        if let Some(port) = self.port {
+            config.http.port = port;
+        }
 
         // change the supergraph to use the test subgraphs address
         if let Some(subgraphs_addr) = self.subgraphs_addr {

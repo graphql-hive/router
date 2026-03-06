@@ -7,7 +7,8 @@ mod subscriptions_e2e_tests {
     use sonic_rs::json;
 
     use crate::testkit::{
-        some_header_map, ClientResponseExt, ResponseLike, TestRouter, TestSubgraphs,
+        get_available_port, some_header_map, ClientResponseExt, ResponseLike, TestRouter,
+        TestSubgraphs,
     };
 
     #[ntex::test]
@@ -530,9 +531,12 @@ mod subscriptions_e2e_tests {
     #[ntex::test]
     async fn subscription_yes_entity_resolution_http_callback_subgraph() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router_port = get_available_port();
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(
+            .with_port(router_port)
+            .inline_config(format!(
                 r#"
                 supergraph:
                     source: file
@@ -540,11 +544,11 @@ mod subscriptions_e2e_tests {
                 subscriptions:
                     enabled: true
                     callback:
-                        public_url: http://localhost:4000/callback
+                        public_url: http://0.0.0.0:{router_port}/callback
                         subgraphs:
                             - reviews
-                "#,
-            )
+                "#
+            ))
             .build()
             .start()
             .await;
