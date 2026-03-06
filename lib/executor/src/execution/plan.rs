@@ -251,7 +251,7 @@ pub async fn execute_query_plan<'exec>(
                     client_request: &client_request,
                     headers_plan: &headers_plan,
                     jwt_forwarding_plan: jwt_auth_forwarding.clone(),
-                    plugin_req_state: &plugin_req_state,
+                    plugin_req_state,
                     // TODO: decide how and when to dedupe during entity resolution
                     dedupe_subgraph_requests: false,
                 };
