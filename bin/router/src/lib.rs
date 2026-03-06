@@ -126,11 +126,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let addr = router_config.address();
     let gql_path = router_config.graphql_path().to_string();
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
-    let callback_path = router_config
-        .subscriptions
-        .callback
-        .as_ref()
-        .map(|c| c.path.clone());
+    let callback_path = router_config.callback_path().map(|p| p.to_string());
 
     let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
