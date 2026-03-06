@@ -18,6 +18,7 @@ use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::http::HttpClient;
 use crate::json_writer::write_and_escape_string;
+use crate::plugin_context::PluginRequestState;
 use crate::response::graphql_error::GraphQLError;
 use crate::response::subgraph_response::SubgraphResponse;
 use crate::utils::consts::{CLOSE_BRACE, COLON, COMMA, QUOTE};
@@ -115,7 +116,7 @@ impl HttpCallbackSubgraphExecutor {
                 let value_str = sonic_rs::to_string(variable_value).map_err(|err| {
                     SubgraphExecutorError::VariablesSerializationFailure(
                         variable_name.to_string(),
-                        err.to_string(),
+                        err,
                     )
                 })?;
                 body.put(value_str.as_bytes());
@@ -151,10 +152,7 @@ impl HttpCallbackSubgraphExecutor {
         extensions.insert("subscription".to_string(), subscription_ext);
 
         let extensions_value = sonic_rs::to_value(&extensions).map_err(|err| {
-            SubgraphExecutorError::VariablesSerializationFailure(
-                "extensions".to_string(),
-                err.to_string(),
-            )
+            SubgraphExecutorError::VariablesSerializationFailure("extensions".to_string(), err)
         })?;
 
         body.put(COMMA);
@@ -167,28 +165,20 @@ impl HttpCallbackSubgraphExecutor {
     }
 }
 
-fn log_error(error: &SubgraphExecutorError) {
-    tracing::error!(
-        error = error as &dyn std::error::Error,
-        "Subgraph executor error"
-    );
-}
-
 #[async_trait]
 impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
+    fn endpoint(&self) -> &http::Uri {
+        &self.endpoint
+    }
+
     #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn execute<'a>(
         &self,
         _execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
-    ) -> SubgraphResponse<'a> {
-        let error = SubgraphExecutorError::RequestFailure(
-            self.endpoint.to_string(),
-            "HTTP Callback executor does not support single-shot execute, use subscribe instead"
-                .to_string(),
-        );
-        log_error(&error);
-        error.to_subgraph_response(&self.subgraph_name)
+        _plugin_req_state: &'a Option<PluginRequestState<'a>>,
+    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+        Err(SubgraphExecutorError::HttpCallbackNoSingle)
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
@@ -196,17 +186,11 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> BoxStream<'static, SubgraphResponse<'static>> {
+    ) -> Result<BoxStream<'static, SubgraphResponse<'static>>, SubgraphExecutorError> {
         let subscription_id = Uuid::new_v4().to_string();
         let verifier = Uuid::new_v4().to_string();
 
-        let body = match self.build_request_body(&execution_request, &subscription_id, &verifier) {
-            Ok(body) => body,
-            Err(e) => {
-                log_error(&e);
-                return e.stream_once_subgraph_response(&self.subgraph_name);
-            }
-        };
+        let body = self.build_request_body(&execution_request, &subscription_id, &verifier)?;
 
         let (tx, mut rx) = mpsc::unbounded_channel::<CallbackMessage>();
 
@@ -227,12 +211,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             Ok(req) => req,
             Err(e) => {
                 self.active_subscriptions.remove(&subscription_id);
-                let e = SubgraphExecutorError::RequestBuildFailure(
-                    self.endpoint.to_string(),
-                    e.to_string(),
-                );
-                log_error(&e);
-                return e.stream_once_subgraph_response(&self.subgraph_name);
+                return Err(SubgraphExecutorError::RequestBuildFailure(e));
             }
         };
 
@@ -255,21 +234,13 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 Ok(Ok(response)) => response,
                 Ok(Err(e)) => {
                     self.active_subscriptions.remove(&subscription_id);
-                    let e = SubgraphExecutorError::RequestFailure(
-                        self.endpoint.to_string(),
-                        e.to_string(),
-                    );
-                    log_error(&e);
-                    return e.stream_once_subgraph_response(&self.subgraph_name);
+                    return Err(SubgraphExecutorError::RequestFailure(e));
                 }
                 Err(_) => {
                     self.active_subscriptions.remove(&subscription_id);
-                    let e = SubgraphExecutorError::RequestTimeout(
-                        self.endpoint.to_string(),
+                    return Err(SubgraphExecutorError::RequestTimeout(
                         timeout_duration.as_millis(),
-                    );
-                    log_error(&e);
-                    return e.stream_once_subgraph_response(&self.subgraph_name);
+                    ));
                 }
             }
         } else {
@@ -277,12 +248,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 Ok(response) => response,
                 Err(e) => {
                     self.active_subscriptions.remove(&subscription_id);
-                    let e = SubgraphExecutorError::RequestFailure(
-                        self.endpoint.to_string(),
-                        e.to_string(),
-                    );
-                    log_error(&e);
-                    return e.stream_once_subgraph_response(&self.subgraph_name);
+                    return Err(SubgraphExecutorError::RequestFailure(e));
                 }
             }
         };
@@ -302,19 +268,17 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 .as_ref()
                 .and_then(|b| std::str::from_utf8(b).ok())
                 .unwrap_or("(no body)");
-            let e = SubgraphExecutorError::RequestFailure(
+            return Err(SubgraphExecutorError::SubscriptionStreamError(
                 self.endpoint.to_string(),
                 format!("Subgraph returned non-success status: {}", body_str),
-            );
-            log_error(&e);
-            return e.stream_once_subgraph_response(&self.subgraph_name);
+            ));
         }
 
         let subgraph_name = self.subgraph_name.clone();
         let active_subscriptions = self.active_subscriptions.clone();
         let subscription_id_for_stream = subscription_id.clone();
 
-        Box::pin(async_stream::stream! {
+        Ok(Box::pin(async_stream::stream! {
             trace!(subscription_id = %subscription_id_for_stream, "HTTP callback subscription stream started");
 
             while let Some(msg) = rx.recv().await {
@@ -354,6 +318,6 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
 
             active_subscriptions.remove(&subscription_id_for_stream);
             trace!(subscription_id = %subscription_id_for_stream, "HTTP callback subscription stream ended");
-        })
+        }))
     }
 }
