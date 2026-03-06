@@ -1,6 +1,7 @@
 use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
+use dashmap::DashMap;
 use graphql_tools::static_graphql::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
@@ -11,6 +12,7 @@ use hive_router_internal::{
 };
 use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
+    executors::http_callback::ActiveSubscriptionsMap,
     hooks::on_supergraph_load::{
         OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload, SupergraphData,
     },
@@ -42,6 +44,7 @@ pub struct SchemaState {
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
+    pub active_callback_subscriptions: ActiveSubscriptionsMap,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -86,11 +89,13 @@ impl SchemaState {
         let plan_cache = Cache::new(1000);
         let validate_cache = Cache::new(1000);
         let normalize_cache = Cache::new(1000);
+        let active_callback_subscriptions: ActiveSubscriptionsMap = Arc::new(DashMap::new());
 
         // This is cheap clone, as Cache is thread-safe and can be cloned without any performance penalty.
         let task_plan_cache = plan_cache.clone();
         let validate_cache_cache = validate_cache.clone();
         let normalize_cache_cache = normalize_cache.clone();
+        let active_subs_clone = active_callback_subscriptions.clone();
 
         bg_tasks_manager.register_handle(async move {
             while let Some(new_sdl) = rx.recv().await {
@@ -132,7 +137,12 @@ impl SchemaState {
                 }
 
                 match new_supergraph_data.unwrap_or_else(|| {
-                    Self::build_data(router_config.clone(), telemetry_context.clone(), new_ast)
+                    Self::build_data(
+                        router_config.clone(),
+                        telemetry_context.clone(),
+                        new_ast,
+                        active_subs_clone.clone(),
+                    )
                 }) {
                     Ok(mut new_supergraph_data) => {
                         if !on_end_callbacks.is_empty() {
@@ -190,6 +200,7 @@ impl SchemaState {
             plan_cache,
             validate_cache,
             normalize_cache,
+            active_callback_subscriptions,
         })
     }
 
@@ -197,6 +208,7 @@ impl SchemaState {
         router_config: Arc<HiveRouterConfig>,
         telemetry_context: Arc<TelemetryContext>,
         parsed_supergraph_sdl: Document,
+        active_callback_subscriptions: ActiveSubscriptionsMap,
     ) -> Result<SupergraphData, SupergraphManagerError> {
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
         let metadata = Arc::new(planner.consumer_schema.schema_metadata());
@@ -205,6 +217,7 @@ impl SchemaState {
             &planner.supergraph.subgraph_endpoint_map,
             router_config,
             telemetry_context,
+            active_callback_subscriptions,
         )?);
 
         Ok(SupergraphData {
