@@ -172,15 +172,12 @@ impl HiveRouterConfig {
     }
 
     pub fn websocket_path(&self) -> Option<&str> {
-        if !self.websocket.enabled {
-            return None;
-        }
-        Some(
+        self.websocket.enabled.then(|| {
             self.websocket
                 .path
                 .as_deref()
-                .unwrap_or_else(|| self.graphql_path()),
-        )
+                .unwrap_or_else(|| self.graphql_path())
+        })
     }
 }
 
