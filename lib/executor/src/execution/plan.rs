@@ -949,6 +949,7 @@ mod tests {
     };
 
     use super::select_fetch_variables;
+    use dashmap::DashMap;
     use hive_router_config::HiveRouterConfig;
     use hive_router_internal::telemetry::TelemetryContext;
     use hive_router_query_planner::{
