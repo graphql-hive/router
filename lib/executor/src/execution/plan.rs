@@ -941,6 +941,7 @@ mod tests {
             client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
             plan::Executor,
         },
+        executors::http_callback::ActiveSubscription,
         headers::plan::HeaderRulesPlan,
         introspection::schema::SchemaMetadata,
         response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
@@ -1113,6 +1114,7 @@ mod tests {
                 Arc::new(TelemetryContext::from_propagation_config(
                     &Default::default(),
                 )),
+                Arc::new(DashMap::new()),
             )
             .unwrap(),
             client_request: &ClientRequestDetails {
