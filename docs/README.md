@@ -18,7 +18,7 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
-|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"enabled":false}`<br/>||
+|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"callback":null,"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"request_timeout":"1m"}}`<br/>||
@@ -122,6 +122,7 @@ query_planner:
   allow_expose: false
   timeout: 10s
 subscriptions:
+  callback: null
   enabled: false
 supergraph: {}
 telemetry:
@@ -1902,6 +1903,7 @@ Configuration for subscriptions.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**callback**](#subscriptionscallback)|`object`, `null`|Configuration for subgraphs using the HTTP Callback protocol.<br/>|yes|
 |**enabled**|`boolean`|Enables/disables subscriptions. By default, the subscriptions are disabled.<br/><br/>You can override this setting by setting the `SUBSCRIPTIONS_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
 |[**websocket**](#subscriptionswebsocket)|`object`, `null`|Configuration for subgraphs using WebSocket protocol.<br/>||
 
@@ -1909,10 +1911,44 @@ Configuration for subscriptions.
 **Example**
 
 ```yaml
+callback: null
 enabled: false
 
 ```
 
+<a name="subscriptionscallback"></a>
+### subscriptions\.callback: object,null
+
+Configuration for subgraphs using the HTTP Callback protocol.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**heartbeat\_interval**|`string`|The interval at which the subgraph must send heartbeat messages.<br/>If set to 0, heartbeats are disabled. Defaults to 5 seconds.<br/>Default: `"5s"`<br/>|no|
+|**path**|`string`|The path of the router's callback endpoint.<br/>Defaults to `/callback`.<br/>Default: `"/callback"`<br/>|no|
+|**public\_url**|`string`|The public URL that subgraphs will use to send callback messages to this router.<br/><br/>Your public_url must match the server address combined with the router's path.<br/>Meaning, if your server is `http://localhost:4000` and the path is `/callback`,<br/>your `public_url` should be `http://localhost:4000/callback`.<br/><br/>Example: `https://example.com:4000/callback`<br/>|yes|
+|[**subgraphs**](#subscriptionscallbacksubgraphs)|`string[]`|The list of subgraph names that use the HTTP callback protocol.<br/>Default: <br/>|no|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="subscriptionscallbacksubgraphs"></a>
+#### subscriptions\.callback\.subgraphs\[\]: array
+
+The list of subgraph names that use the HTTP callback protocol.
+
+
+**Items**
+
+**Item Type:** `string`  
+**Unique Items:** yes  
 <a name="subscriptionswebsocket"></a>
 ### subscriptions\.websocket: object,null
 
@@ -1932,6 +1968,8 @@ Configuration for subgraphs using WebSocket protocol.
 
 The default configuration that will be applied to all subgraphs using
 WebSocket protocol, unless overridden by a specific subgraph configuration.
+
+When specified, all subgraphs (not claimed by `callback`) will use the WebSocket protocol.
 
 
 **Properties**
