@@ -20,6 +20,11 @@ mod http_callback_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                headers:
+                    all:
+                        request:
+                            - propagate:
+                                named: x-disable-http-callback-heartbeats
                 subscriptions:
                     enabled: true
                     callback:
@@ -50,7 +55,8 @@ mod http_callback_e2e_tests {
                 "#,
                 None,
                 some_header_map!(
-                        http::header::ACCEPT => "text/event-stream"
+                    http::header::ACCEPT => "text/event-stream",
+                    http::header::HeaderName::from_static("x-disable-http-callback-heartbeats") => "true"
                 ),
             )
             .await;

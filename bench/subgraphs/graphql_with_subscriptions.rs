@@ -120,6 +120,12 @@ where
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<usize>().ok());
 
+        let disable_heartbeats = req
+            .headers()
+            .get("x-disable-http-callback-heartbeats")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v == "true");
+
         let sub_prot = self.subscriptions_protocol.clone();
 
         let executor = self.executor.clone();
@@ -207,6 +213,7 @@ where
                     sub_ext.subscription_id,
                     sub_ext.verifier,
                     sub_ext.heartbeat_interval_ms,
+                    disable_heartbeats,
                     stream,
                 ));
 
@@ -286,6 +293,7 @@ async fn emit_subscription_events(
     subscription_id: String,
     verifier: String,
     heartbeat_interval_ms: u64,
+    disable_heartbeats: bool,
     stream: impl Stream<Item = GraphQLResponse> + Send + Unpin + 'static,
 ) {
     let mut stream = std::pin::pin!(stream);
@@ -338,6 +346,9 @@ async fn emit_subscription_events(
                 }
             }
             Some(CallbackEvent::Heartbeat) => {
+                if disable_heartbeats {
+                    continue;
+                }
                 let msg = CallbackMessage {
                     kind: "subscription",
                     action: "check",
