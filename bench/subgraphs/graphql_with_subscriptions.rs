@@ -20,6 +20,7 @@ use futures_util::{future::BoxFuture, stream::BoxStream, Stream, StreamExt};
 use hive_router::pipeline::multipart_subscribe::APOLLO_MULTIPART_HTTP_CONTENT_TYPE;
 use hive_router::pipeline::sse::SSE_HEADER;
 use hive_router::pipeline::{multipart_subscribe, sse};
+use hive_router::tracing::error;
 use serde::{Deserialize, Serialize};
 use tower_service::Service;
 
@@ -178,12 +179,21 @@ where
 
                 match check_resp {
                     Ok(resp) if resp.status() == 204 => {}
-                    _ => {
-                        // yeah yeah, TODO: explain why it failed
+                    Ok(resp) => {
+                        error!("callback check responded with: {}", resp.status());
                         return Ok(HttpResponse::builder()
                             .status(400)
                             .body(Body::from(
                                 r#"{"errors":[{"message":"Callback check failed for whatever reason"}]}"#,
+                            ))
+                            .unwrap());
+                    }
+                    Err(err) => {
+                        error!("failed to send callback check request: {}", err);
+                        return Ok(HttpResponse::builder()
+                            .status(400)
+                            .body(Body::from(
+                                r#"{"errors":[{"message":"Failed to send callback check request"}]}"#,
                             ))
                             .unwrap());
                     }
