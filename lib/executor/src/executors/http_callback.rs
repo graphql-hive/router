@@ -280,13 +280,13 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 .as_ref()
                 .and_then(|b| std::str::from_utf8(b).ok())
                 .unwrap_or("(no body)");
-            return Err(SubgraphExecutorError::SubscriptionStreamError(
-                self.endpoint.to_string(),
-                format!(
-                    "Subgraph returned non-success status: {} with body {}",
-                    status, body_str
-                ),
-            ));
+            error!(
+                subscription_id = %subscription_id,
+                status = %status,
+                body = body_str,
+                "HTTP callback subscription request failed with non-success status"
+            );
+            return Err(SubgraphExecutorError::HttpCallbackStatusCodeNotOk(status));
         }
 
         let subgraph_name = self.subgraph_name.clone();

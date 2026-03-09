@@ -62,6 +62,9 @@ pub enum SubgraphExecutorError {
     #[error("Subgraph stream responded with a not-OK status code '{0}'")]
     #[strum(serialize = "SUBGRAPH_STREAM_STATUS_CODE_NOT_OK")]
     StreamStatusCodeNotOk(StatusCode),
+    #[error("Subgraph HTTP callback responded with a not-OK status code '{0}'")]
+    #[strum(serialize = "SUBGRAPH_HTTP_CALLBACK_STATUS_CODE_NOT_OK")]
+    HttpCallbackStatusCodeNotOk(StatusCode),
     #[error("HTTP Callback protocol does not support single-shot execution, use it only for subscriptions")]
     #[strum(serialize = "SUBGRAPH_HTTP_CALLBACK_NO_SINGLE")]
     HttpCallbackNoSingle,
