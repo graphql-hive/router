@@ -42,6 +42,9 @@ type __Type {
   name: String
   description: String
 
+  # may be non-null for custom SCALAR, otherwise null.
+  specifiedByURL: String
+
   # OBJECT and INTERFACE only
   fields(includeDeprecated: Boolean = false): [__Field!]
 
@@ -59,6 +62,9 @@ type __Type {
 
   # NON_NULL and LIST only
   ofType: __Type
+
+  # must be non-null for INPUT_OBJECT, otherwise null.
+  isOneOf: Boolean
 }
 
 type __Field {

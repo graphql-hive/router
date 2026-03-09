@@ -1,3 +1,42 @@
+## 0.0.13 (2026-03-05)
+
+### Features
+
+#### Plugin System
+
+This release introduces a Plugin System that allows users to extend the functionality of Hive Router by creating custom plugins.
+
+```rust
+use hive_router::plugins::plugin_trait::RouterPlugin;
+use hive_router::async_trait;
+ 
+struct MyPlugin;
+ 
+##[async_trait]
+impl RouterPlugin for MyPlugin {
+    type Config = ();
+ 
+    fn plugin_name() -> &'static str {
+        "my_plugin"
+    }
+}
+```
+
+You can learn more about the plugin system in the [technical documentation](https://the-guild.dev/graphql/hive/docs/router/plugin-system) and in [Extending the Router guide](https://the-guild.dev/graphql/hive/docs/router/guides/extending-the-router).
+
+This new feature also exposes many of the Router's internals through the [`hive-router` crate](https://crates.io/crates/hive-router).
+
+### Fixes
+
+#### Adds `noop_otlp_exporter` feature for internal usage
+
+Hive Router uses `noop_otlp_exporter` internally for testing purposes. This change adds the `noop_otlp_exporter` feature to the `hive-router` crate so that it can be used internally while testing the router.
+
+#### Dependencies Updates
+
+- Update `rustls`, `aws-lc-rs` and `aws-lc-sys` dependencies to address `PKCS7` CVE in `aws-lc` crates.
+- Update `rand` to latest version.
+
 ## 0.0.12 (2026-02-12)
 
 ### Fixes

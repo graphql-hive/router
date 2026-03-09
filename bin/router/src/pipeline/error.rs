@@ -21,7 +21,7 @@ use strum::IntoStaticStr;
 use crate::{
     jwt::errors::JwtError,
     pipeline::{
-        authorization::AuthorizationError, body_read::ReadBodyStreamError, header::RequestAccepts,
+        authorization::AuthorizationError, body_read::ReadBodyStreamError, header::ResponseMode,
         progressive_override::LabelEvaluationError,
     },
     RouterSharedState,
@@ -206,64 +206,56 @@ impl PipelineError {
     }
 }
 
-impl From<&PipelineError> for GraphQLError {
-    fn from(val: &PipelineError) -> Self {
-        let code = val.graphql_error_code();
-        let message = val.graphql_error_message();
-        GraphQLError::from_message_and_code(message, code)
-    }
-}
-
 #[derive(Serialize)]
 struct FailedExecutionResult {
     errors: Vec<GraphQLError>,
 }
 
-impl web::error::WebResponseError for PipelineError {
-    fn error_response(&self, req: &web::HttpRequest) -> web::HttpResponse {
-        // Retrieve the negotiated response mode, defaulting to standard if not set
-        let response_mode = req.get_response_mode();
-        let single_content_type = response_mode.single_content_type();
+#[inline]
+pub fn handle_pipeline_error(
+    err: PipelineError,
+    shared_state: &RouterSharedState,
+    response_mode: &ResponseMode,
+) -> web::HttpResponse {
+    let single_content_type = response_mode.single_content_type();
 
-        let prefer_ok = response_mode.prefer_status_ok_for_errors();
+    let prefer_ok = response_mode.prefer_status_ok_for_errors();
 
-        let status = self.default_status_code(prefer_ok);
+    let status = err.default_status_code(prefer_ok);
 
-        let mut res = ResponseBuilder::new(status);
+    let mut res = ResponseBuilder::new(status);
 
-        if let Some(single_content_type) = single_content_type {
-            res.content_type(single_content_type.as_ref());
-        }
-
-        let mut errors = match self {
-            Self::ValidationErrors(validation_errors) => {
-                validation_errors.iter().map(|error| error.into()).collect()
-            }
-            Self::AuthorizationFailed(authorization_errors) => authorization_errors
-                .iter()
-                .map(|error| error.into())
-                .collect(),
-            _ => {
-                let graphql_error: GraphQLError = self.into();
-
-                if matches!(self, PipelineError::NoSupergraphAvailable) {
-                    res.header(RETRY_AFTER, "10");
-                }
-
-                vec![graphql_error]
-            }
-        };
-
-        if let Some(plugins) = req
-            .app_state::<Arc<RouterSharedState>>()
-            .and_then(|shared_state| shared_state.plugins.clone())
-        {
-            let (new_errors, new_status_code) =
-                handle_graphql_errors_with_plugins(&plugins, errors, status);
-            errors = new_errors;
-            res.status(new_status_code);
-        }
-
-        res.json(&FailedExecutionResult { errors })
+    if let Some(single_content_type) = single_content_type {
+        res.content_type(single_content_type.as_ref());
     }
+
+    if matches!(err, PipelineError::NoSupergraphAvailable) {
+        res.header(RETRY_AFTER, "10");
+    }
+
+    let mut errors = match err {
+        PipelineError::ValidationErrors(validation_errors) => {
+            validation_errors.iter().map(|error| error.into()).collect()
+        }
+        PipelineError::AuthorizationFailed(authorization_errors) => authorization_errors
+            .iter()
+            .map(|error| error.into())
+            .collect(),
+        _ => {
+            let code = err.graphql_error_code();
+            let message = err.graphql_error_message();
+            let graphql_error = GraphQLError::from_message_and_code(message, code);
+
+            vec![graphql_error]
+        }
+    };
+
+    if let Some(plugins) = &shared_state.plugins {
+        let (new_errors, new_status_code) =
+            handle_graphql_errors_with_plugins(plugins, errors, status);
+        errors = new_errors;
+        res.status(new_status_code);
+    }
+
+    res.json(&FailedExecutionResult { errors })
 }

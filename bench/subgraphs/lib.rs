@@ -5,24 +5,18 @@ pub mod reviews;
 
 use async_graphql_axum::GraphQL;
 use axum::{
-    body::{to_bytes, Bytes},
-    extract::{Request, State},
-    http::{self, request::Parts, StatusCode},
+    extract::Request,
+    http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post_service},
     Router,
 };
-use dashmap::DashMap;
-use sonic_rs::Value;
-use std::{env::var, sync::Arc};
 use tokio::{
     net::TcpListener,
     sync::oneshot::{self, Sender},
     task::JoinHandle,
 };
-
-extern crate lazy_static;
 
 async fn delay_middleware(req: Request, next: Next) -> Response {
     let delay_ms: Option<u64> = std::env::var("SUBGRAPH_DELAY_MS")
@@ -52,88 +46,19 @@ async fn add_subgraph_header(req: Request, next: Next) -> Response {
     response
 }
 
-async fn track_requests(
-    State(state): State<Arc<SubgraphsServiceState>>,
-    request: Request,
-    next: Next,
-) -> impl IntoResponse {
-    let path = request.uri().path().to_string();
-    let (parts, body) = request.into_parts();
-    let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
-    let record = extract_record(&parts, body_bytes.clone());
-    state.request_log.entry(path).or_default().push(record);
-    let new_body = axum::body::Body::from(body_bytes);
-    let request = Request::from_parts(parts, new_body);
-
-    next.run(request).await
-}
-
-fn extract_record(request_parts: &Parts, request_body: Bytes) -> RequestLog {
-    let header_map = request_parts.headers.clone();
-    // If body is not valid JSON, store the error message as string
-    let body_value: Value =
-        sonic_rs::from_slice(&request_body).unwrap_or_else(|err| Value::from(&err.to_string()));
-
-    RequestLog {
-        headers: header_map,
-        request_body: body_value,
-    }
-}
-
 async fn health_check_handler() -> impl IntoResponse {
     StatusCode::OK
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct RequestLog {
-    pub headers: http::HeaderMap,
-    pub request_body: Value,
-}
-
-#[derive(Clone)]
-pub struct SubgraphsServiceState {
-    pub request_log: DashMap<String, Vec<RequestLog>>,
-    pub health_check_url: String,
-}
-
-pub fn start_subgraphs_server(
-    port: Option<u16>,
-) -> (JoinHandle<()>, Sender<()>, Arc<SubgraphsServiceState>) {
+pub fn start_subgraphs_server(port: Option<u16>) -> (JoinHandle<()>, Sender<()>) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let host = var("HOST").unwrap_or("0.0.0.0".to_owned());
+    let host = std::env::var("HOST").unwrap_or("0.0.0.0".to_owned());
     let port = port
         .map(|v| v.to_string())
-        .unwrap_or(var("PORT").unwrap_or("4200".to_owned()));
+        .unwrap_or(std::env::var("PORT").unwrap_or("4200".to_owned()));
 
-    let shared_state = Arc::new(SubgraphsServiceState {
-        request_log: DashMap::new(),
-        health_check_url: format!("http://{}:{}/health", host, port),
-    });
-
-    let app = Router::new()
-        .route(
-            "/accounts",
-            post_service(GraphQL::new(accounts::get_subgraph())),
-        )
-        .route(
-            "/inventory",
-            post_service(GraphQL::new(inventory::get_subgraph())),
-        )
-        .route(
-            "/products",
-            post_service(GraphQL::new(products::get_subgraph())),
-        )
-        .route(
-            "/reviews",
-            post_service(GraphQL::new(reviews::get_subgraph())),
-        )
-        .layer(middleware::from_fn_with_state(
-            shared_state.clone(),
-            track_requests,
-        ))
-        .route("/health", get(health_check_handler))
-        .route_layer(middleware::from_fn(add_subgraph_header))
-        .route_layer(middleware::from_fn(delay_middleware));
+    let mut app = subgraphs_app();
+    app = app.route("/health", get(health_check_handler));
 
     println!("Starting server on http://{}:{}", host, port);
 
@@ -152,5 +77,27 @@ pub fn start_subgraphs_server(
         .expect("failed to start subgraphs server");
     });
 
-    (server_handle, shutdown_tx, shared_state)
+    (server_handle, shutdown_tx)
+}
+
+pub fn subgraphs_app() -> Router<()> {
+    Router::new()
+        .route(
+            "/accounts",
+            post_service(GraphQL::new(accounts::get_subgraph())),
+        )
+        .route(
+            "/inventory",
+            post_service(GraphQL::new(inventory::get_subgraph())),
+        )
+        .route(
+            "/products",
+            post_service(GraphQL::new(products::get_subgraph())),
+        )
+        .route(
+            "/reviews",
+            post_service(GraphQL::new(reviews::get_subgraph())),
+        )
+        .route_layer(middleware::from_fn(add_subgraph_header))
+        .route_layer(middleware::from_fn(delay_middleware))
 }

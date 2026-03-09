@@ -6,10 +6,10 @@ use tracing::{instrument, trace};
 
 use crate::planner::fetch::{
     error::FetchGraphError, fetch_graph::FetchGraph,
-    optimize::utils::is_reachable_via_alternative_upstream_path,
+    optimize::utils::is_reachable_via_alternative_upstream_path, state::MultiTypeFetchStep,
 };
 
-impl FetchGraph {
+impl FetchGraph<MultiTypeFetchStep> {
     /// Removes redundant direct dependencies from a FetchStep graph.
     ///
     /// ```text
@@ -29,9 +29,7 @@ impl FetchGraph {
                     Err(_) => return false,
                 };
 
-                if !step.output.selection_set.items.is_empty()
-                    && self.parents_of(step_index).next().is_some()
-                {
+                if !step.output.is_empty() && self.parents_of(step_index).next().is_some() {
                     return false;
                 }
 

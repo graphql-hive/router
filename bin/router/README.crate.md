@@ -45,7 +45,7 @@ async fn main() -> Result<(), RouterInitError> {
 }
 ```
 
-- To learn more about the router itself, see the [router documentation](https://graphql-hive.com/docs/router).
-- To learn how to extend the router, see the [extensibility guide](https://graphql-hive.com/docs/router/extensibility/plugin_system).
-- To learn more about the plugin system API, see the [API reference](https://graphql-hive.com/docs/router/extensibility/plugin_system).
-- If you don't need to extend the router, refer to the [getting started guide](https://graphql-hive.com/docs/router/getting-started).
+- To learn more about the router itself, see the [router documentation](https://the-guild.dev/graphql/hive/docs/router).
+- To learn how to extend the router, see the [extensibility guide](https://the-guild.dev/graphql/hive/docs/router/guides/extending-the-router).
+- To learn more about the plugin system API, see the [API reference](https://the-guild.dev/graphql/hive/docs/router/plugin-system).
+- If you don't need to extend the router, refer to the [getting started guide](https://the-guild.dev/graphql/hive/docs/router/getting-started).

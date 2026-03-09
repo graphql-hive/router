@@ -44,6 +44,19 @@ where
     Self: Sized,
     TResponse: FromGraphQLErrorToResponse,
 {
+    /// Continue with the regular flow of the hook
+    /// This is called in most cases when you don't short-circuit the hook with a response or an error.
+    ///
+    /// Example:
+    /// ```
+    /// async fn on_graphql_params<'exec>(
+    ///     &'exec self,
+    ///    payload: OnGraphQLParamsStartHookPayload<'exec>,
+    /// ) -> OnGraphQLParamsStartHookResult<'exec> {
+    ///    // manipulate payload if needed...
+    ///    payload.proceed()
+    /// }
+    /// ```
     fn proceed<'exec>(self) -> StartHookResult<'exec, Self, TEndPayload, TResponse> {
         StartHookResult {
             payload: self,
@@ -51,6 +64,7 @@ where
         }
     }
 
+    /// End the hook execution and return a response to the client immediately, skipping the rest of the execution flow.
     fn end_with_response<'exec>(
         self,
         output: TResponse,
@@ -61,6 +75,25 @@ where
         }
     }
 
+    /// End the hook execution with a GraphQL error,
+    /// returning a response with the appropriate error format to the client immediately, skipping the rest of the execution flow.
+    ///
+    /// Example:
+    /// ```
+    /// fn on_http_request<'req>(
+    ///     &'req self,
+    ///     payload: OnHttpRequestHookPayload<'req>,
+    /// ) -> OnHttpRequestHookResult<'req> {
+    ///     if payload.router_http_request.headers().get("authorization").is_none() {
+    ///         return payload.end_with_graphql_error(
+    ///             GraphQLError::from_message_and_code("Unauthorized", "UNAUTHORIZED"),
+    ///             StatusCode::UNAUTHORIZED,
+    ///         );
+    ///     }
+    ///  
+    ///     payload.proceed()
+    /// }
+    /// ```
     fn end_with_graphql_error<'exec>(
         self,
         error: GraphQLError,
@@ -75,6 +108,26 @@ where
         ))
     }
 
+    /// Attach a callback to be executed at the end of the hook, allowing you to manipulate the end payload or response.
+    /// This is useful when you want to execute some logic after the main execution of the hook
+    ///
+    /// Example:
+    /// ```
+    /// fn on_http_request<'req>(
+    ///     &'req self,
+    ///     payload: OnHttpRequestHookPayload<'req>,
+    /// ) -> OnHttpRequestHookResult<'req> {
+    ///     payload.on_end(|payload| {
+    ///         payload.map_response(|mut response| {
+    ///             response.response_mut().headers_mut().insert(
+    ///                 "x-served-by",
+    ///                 "hive-router".parse().unwrap(),
+    ///             );
+    ///             response
+    ///         }).proceed()
+    ///     })
+    /// }
+    /// ```
     fn on_end<'exec, F>(self, f: F) -> StartHookResult<'exec, Self, TEndPayload, TResponse>
     where
         F: FnOnce(TEndPayload) -> EndHookResult<TEndPayload, TResponse> + Send + 'exec,
@@ -101,6 +154,8 @@ where
     Self: Sized,
     TResponse: FromGraphQLErrorToResponse,
 {
+    /// Continue with the regular flow of the hook
+    /// This is called in most cases when you don't short-circuit the hook with a response or an error.
     fn proceed(self) -> EndHookResult<Self, TResponse> {
         EndHookResult {
             payload: self,
@@ -108,6 +163,7 @@ where
         }
     }
 
+    /// End the hook execution and return a response to the client immediately, skipping the rest of the execution flow.
     fn end_with_response(self, output: TResponse) -> EndHookResult<Self, TResponse> {
         EndHookResult {
             payload: self,
@@ -115,6 +171,29 @@ where
         }
     }
 
+    /// End the hook execution with a GraphQL error,
+    /// returning a response with the appropriate error format to the client immediately, skipping the rest of the execution flow.
+    ///
+    /// Example:
+    /// ```
+    /// use hive_router::{
+    ///     plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+    /// };
+    ///
+    /// fn on_http_request<'req>(
+    ///     &'req self,
+    ///     payload: OnHttpRequestHookPayload<'req>,
+    /// ) -> OnHttpRequestHookResult<'req> {
+    ///     if payload.router_http_request.headers().get("authorization").is_none() {
+    ///         return payload.end_with_graphql_error(
+    ///             GraphQLError::from_message_and_code("Unauthorized", "UNAUTHORIZED"),
+    ///             StatusCode::UNAUTHORIZED,
+    ///         );
+    ///     }
+    ///  
+    ///     payload.proceed()
+    /// }
+    /// ```
     fn end_with_graphql_error(
         self,
         error: GraphQLError,

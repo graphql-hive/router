@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use hive_router_query_planner::planner::plan_nodes::{
     FetchNodePathSegment, FetchRewrite, KeyRenamer, ValueSetter,
 };
@@ -30,6 +32,16 @@ trait RewriteApplier {
     );
 }
 
+fn entity_satisfies_any_type_condition(
+    possible_types: &PossibleTypes,
+    type_name: &str,
+    type_condition: &BTreeSet<String>,
+) -> bool {
+    type_condition
+        .iter()
+        .any(|condition| possible_types.entity_satisfies_type_condition(type_name, condition))
+}
+
 impl RewriteApplier for KeyRenamer {
     fn apply<'a>(&'a self, possible_types: &PossibleTypes, value: &mut Value<'a>) {
         self.apply_path(possible_types, value, &self.path)
@@ -53,9 +65,14 @@ impl RewriteApplier for KeyRenamer {
                     let type_name = obj
                         .iter()
                         .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
-                        .and_then(|(_, val)| val.as_str())
-                        .unwrap_or(type_condition);
-                    if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
+                        .and_then(|(_, val)| val.as_str());
+                    if type_name.is_none_or(|type_name| {
+                        entity_satisfies_any_type_condition(
+                            possible_types,
+                            type_name,
+                            type_condition,
+                        )
+                    }) {
                         self.apply_path(possible_types, value, remaining_path)
                     }
                 }
@@ -110,10 +127,14 @@ impl RewriteApplier for ValueSetter {
                         let type_name = map
                             .iter()
                             .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
-                            .and_then(|(_, val)| val.as_str())
-                            .unwrap_or(type_condition);
-                        if possible_types.entity_satisfies_type_condition(type_name, type_condition)
-                        {
+                            .and_then(|(_, val)| val.as_str());
+                        if type_name.is_none_or(|type_name| {
+                            entity_satisfies_any_type_condition(
+                                possible_types,
+                                type_name,
+                                type_condition,
+                            )
+                        }) {
                             self.apply_path(possible_types, data, remaining_path)
                         }
                     }
