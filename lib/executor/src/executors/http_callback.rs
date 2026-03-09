@@ -209,7 +209,14 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             ActiveSubscription {
                 verifier: verifier.clone(),
                 sender: tx,
-                last_heartbeat: Arc::new(Mutex::new(Instant::now())),
+                // initialize last_heartbeat to now + heartbeat_interval so the enforcer
+                // won't evict the subscription before the subgraph's initial check arrives.
+                // the initial check from the subgraph can take up to heartbeat_interval to
+                // arrive (due to network latency), and without this head start the enforcer
+                // would evict the subscription before the first heartbeat is recorded.
+                last_heartbeat: Arc::new(Mutex::new(
+                    Instant::now() + Duration::from_millis(self.heartbeat_interval_ms),
+                )),
             },
         );
 
