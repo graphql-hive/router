@@ -100,6 +100,7 @@ pub async fn callback_handler(
     match payload.action.as_str() {
         "check" => {
             trace!(subscription_id = %payload.id, "Received check message");
+            subscription.record_heartbeat();
             HttpResponse::NoContent()
                 .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
                 .finish()

@@ -10,14 +10,18 @@ use hive_router_internal::{
     authorization::metadata::AuthorizationMetadata,
     background_tasks::{BackgroundTask, BackgroundTasksManager},
 };
+use hive_router_plan_executor::response::graphql_error::GraphQLErrorExtensions;
+use std::time::Duration;
+
 use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
-    executors::http_callback::ActiveSubscriptionsMap,
+    executors::http_callback::{ActiveSubscriptionsMap, CallbackMessage},
     hooks::on_supergraph_load::{
         OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload, SupergraphData,
     },
     introspection::schema::SchemaWithMetadata,
     plugin_trait::{EndControlFlow, RouterPluginBoxed, StartControlFlow},
+    response::graphql_error::GraphQLError,
     SubgraphExecutorMap,
 };
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
@@ -96,6 +100,18 @@ impl SchemaState {
         let validate_cache_cache = validate_cache.clone();
         let normalize_cache_cache = normalize_cache.clone();
         let active_subs_clone = active_callback_subscriptions.clone();
+
+        // kick off subscriptions/subgraphs that are idling/timed out due to missed heartbeats
+        if let Some(ref callback_config) = router_config.subscriptions.callback {
+            if !callback_config.heartbeat_interval.is_zero() {
+                let enforcer_subs = active_callback_subscriptions.clone();
+                let heartbeat_interval = callback_config.heartbeat_interval;
+                bg_tasks_manager.register_task(HeartbeatEnforcerTask {
+                    active_subscriptions: enforcer_subs,
+                    heartbeat_interval,
+                });
+            }
+        }
 
         bg_tasks_manager.register_handle(async move {
             while let Some(new_sdl) = rx.recv().await {
@@ -293,6 +309,56 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
                 debug!("poll interval not configured for supergraph changes, breaking");
 
                 break;
+            }
+        }
+    }
+}
+
+struct HeartbeatEnforcerTask {
+    active_subscriptions: ActiveSubscriptionsMap,
+    heartbeat_interval: Duration,
+}
+
+#[async_trait]
+impl BackgroundTask for HeartbeatEnforcerTask {
+    fn id(&self) -> &str {
+        "http-callback-heartbeat-enforcer"
+    }
+
+    async fn run(&self, token: CancellationToken) {
+        use std::time::Instant;
+
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    debug!("heartbeat enforcer cancelled, stopping");
+                    return;
+                }
+                _ = ntex::time::sleep(self.heartbeat_interval) => {}
+            }
+
+            let mut timed_out = Vec::new();
+            for entry in self.active_subscriptions.iter() {
+                let last = *entry.value().last_heartbeat.lock().unwrap();
+                if Instant::now().duration_since(last) > self.heartbeat_interval {
+                    timed_out.push(entry.key().clone());
+                }
+            }
+
+            // separate iter so that we dont mess up the slice while looping
+            for id in timed_out {
+                debug!(
+                    subscription_id = %id,
+                    "terminating subscription due to missed heartbeat"
+                );
+                if let Some((_, sub)) = self.active_subscriptions.remove(&id) {
+                    let _ = sub.sender.send(CallbackMessage::Complete {
+                        errors: Some(vec![GraphQLError::from_message_and_extensions(
+                            "Subgraph gone due heartbeat timeout".to_string(),
+                            GraphQLErrorExtensions::new_from_code("SUBGRAPH_GONE"),
+                        )]),
+                    });
+                }
             }
         }
     }

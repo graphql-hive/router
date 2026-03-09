@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes};
@@ -32,6 +32,13 @@ type SubscriptionId = String;
 pub struct ActiveSubscription {
     pub verifier: String,
     pub sender: mpsc::UnboundedSender<CallbackMessage>,
+    pub last_heartbeat: Arc<Mutex<Instant>>,
+}
+
+impl ActiveSubscription {
+    pub fn record_heartbeat(&self) {
+        *self.last_heartbeat.lock().unwrap() = Instant::now();
+    }
 }
 
 #[derive(Debug)]
@@ -202,6 +209,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             ActiveSubscription {
                 verifier: verifier.clone(),
                 sender: tx,
+                last_heartbeat: Arc::new(Mutex::new(Instant::now())),
             },
         );
 
