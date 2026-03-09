@@ -19,6 +19,8 @@ mod hive_cdn_supergraph;
 #[cfg(test)]
 mod http;
 #[cfg(test)]
+mod http_callback;
+#[cfg(test)]
 mod introspection;
 #[cfg(test)]
 mod jwt;
