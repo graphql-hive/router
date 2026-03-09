@@ -1,0 +1,22 @@
+#:schema https://dystroy.org/bacon/.bacon.schema.json
+
+default_job = "check_router"
+
+[jobs.check_router]
+command = ["cargo", "check", "-p", "hive-router", "--all-targets"]
+need_stdout = true
+
+[jobs.test_e2e]
+command = ["cargo", "test", "-p", "e2e", "--", "--test-threads=5"]
+need_stdout = true # capture stdout and stderr (stderr is always captured)
+background = false # show compilation progress
+
+[keybindings]
+n = "no-op" # disable default "nextest"
+esc = "back"
+g = "scroll-to-top"
+shift-g = "scroll-to-bottom"
+k = "scroll-lines(-1)"
+j = "scroll-lines(1)"
+ctrl-u = "scroll-page(-1)"
+ctrl-d = "scroll-page(1)"
