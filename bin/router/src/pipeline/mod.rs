@@ -46,7 +46,6 @@ use crate::{
 
 pub mod authorization;
 pub mod body_read;
-pub mod callback_handler;
 pub mod coerce_variables;
 pub mod cors;
 pub mod csrf_prevention;
@@ -54,6 +53,7 @@ pub mod error;
 pub mod execution;
 pub mod execution_request;
 pub mod header;
+pub mod http_callback;
 pub mod introspection_policy;
 pub mod multipart_subscribe;
 pub mod normalize;

@@ -21,7 +21,7 @@ struct CallbackPayload {
     errors: Option<Vec<GraphQLError>>,
 }
 
-pub async fn callback_handler(
+pub async fn handler(
     req: HttpRequest,
     path: Path<String>,
     body: Bytes,

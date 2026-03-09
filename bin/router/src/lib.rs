@@ -21,10 +21,10 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     pipeline::{
-        callback_handler::callback_handler,
         error::handle_pipeline_error,
         graphql_request_handler,
         header::ResponseMode,
+        http_callback::handler,
         timeout::handle_timeout,
         usage_reporting::init_hive_usage_agent,
         validation::{
@@ -252,7 +252,7 @@ pub fn configure_ntex_app(
             "{}/{{subscription_id}}",
             callback_path.trim_end_matches('/'),
         );
-        cfg.route(&callback_route, web::post().to(callback_handler));
+        cfg.route(&callback_route, web::post().to(handler));
     }
     cfg.route(graphql_path, web::to(graphql_endpoint_handler))
         .route("/health", web::to(health_check_handler))
