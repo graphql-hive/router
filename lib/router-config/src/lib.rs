@@ -1,7 +1,7 @@
 pub mod authorization;
 pub mod cors;
 pub mod csrf;
-pub mod env_overrides;
+mod env_overrides;
 pub mod graphiql;
 pub mod headers;
 pub mod http_server;
