@@ -31,7 +31,7 @@ retry-policies = { workspace = true }
 recloser = "1.3.1"
 futures-util = { workspace = true }
 typify = "0.6.0"
-regress = "0.10.5"
+regress = "0.11.0"
 lazy_static = { workspace = true }
 async-dropper-simple = { version = "0.2.6", features = ["tokio", "no-default-bound"] }
 
