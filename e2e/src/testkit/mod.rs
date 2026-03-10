@@ -471,9 +471,7 @@ impl TestRouterBuilder {
     }
 
     pub fn build(self) -> TestRouter<Built> {
-        let mut config = self
-            .config
-            .unwrap_or_else(|| load_config(None).expect("failed to load router config from file"));
+        let mut config = self.config.unwrap_or_default();
         let mut _hold_until_drop: Vec<Box<dyn Any>> = vec![];
 
         // change the supergraph to use the test subgraphs address
