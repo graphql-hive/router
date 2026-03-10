@@ -1,5 +1,5 @@
 use config::{builder::BuilderState, ConfigBuilder, ConfigError};
-pub use envconfig::Envconfig;
+use envconfig::Envconfig;
 use tracing::debug;
 
 use crate::log::{LogFormat, LogLevel};
