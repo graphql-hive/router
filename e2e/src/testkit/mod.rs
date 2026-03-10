@@ -443,6 +443,11 @@ impl TestRouterBuilder {
         self
     }
 
+    pub fn set_config(mut self, config: HiveRouterConfig) -> Self {
+        self.config = Some(config);
+        self
+    }
+
     pub fn with_subgraphs(mut self, subgraphs: impl Into<SocketAddr>) -> Self {
         self.subgraphs_addr = Some(subgraphs.into());
         self
@@ -466,7 +471,9 @@ impl TestRouterBuilder {
     }
 
     pub fn build(self) -> TestRouter<Built> {
-        let mut config = self.config.unwrap_or_default();
+        let mut config = self
+            .config
+            .unwrap_or_else(|| load_config(None).expect("failed to load router config from file"));
         let mut _hold_until_drop: Vec<Box<dyn Any>> = vec![];
 
         // change the supergraph to use the test subgraphs address
