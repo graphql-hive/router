@@ -4,7 +4,7 @@ hive-router: patch
 --- 
 
 Support multiple endpoints for Hive Console CDN source for Supergraph.
-So you can pass endpoints separated by comma in the env var `HIVE_CDN_ENDPOINT` and it will be split and set as an array of endpoints in the config. This allows for better load balancing and failover when using Hive Console CDN as the source for the Supergraph.
+So you can pass endpoints separated by comma in the env var `HIVE_CDN_ENDPOINT`, so that if one CDN endpoint is not available, the router can fallback to the next one in the list.
 
 ```
 HIVE_CDN_ENDPOINT=https://cdn.graphql-hive.com/***,https://cdn-mirror.graphql-hive.com/***
