@@ -19,7 +19,7 @@ hive-router-config = { path = "../router-config", version = "0.0.24" }
 
 sonic-rs = { workspace = true }
 vrl = { workspace = true }
-humantime = "2.3.0"
+humantime = { workspace = true }
 bytes = { workspace = true }
 http = { workspace=true }
 http-body-util = { workspace = true }
@@ -56,8 +56,11 @@ opentelemetry_sdk = { workspace = true, features = [
     "rt-tokio-current-thread",
     "logs",
     "spec_unstable_metrics_views",
+    "experimental_metrics_periodicreader_with_async_runtime",
     "experimental_trace_batch_span_processor_with_async_runtime"
 ] }
+opentelemetry-prometheus = { workspace = true }
+prometheus = { workspace = true }
 opentelemetry-jaeger-propagator = { workspace = true }
 opentelemetry-zipkin = { workspace = true }
 tracing = { workspace = true }

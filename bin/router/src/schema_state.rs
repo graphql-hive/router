@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use graphql_tools::static_graphql::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
-use hive_router_internal::telemetry::TelemetryContext;
+use hive_router_internal::telemetry::{metrics::Metrics, TelemetryContext};
 use hive_router_internal::{
     authorization::metadata::AuthorizationMetadata,
     background_tasks::{BackgroundTask, BackgroundTasksManager},
@@ -30,6 +30,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
 
 use crate::{
+    cache_state::CacheState,
     pipeline::{authorization::AuthorizationMetadataError, normalize::GraphQLNormalizationPayload},
     supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
@@ -42,6 +43,7 @@ pub struct SchemaState {
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
+    pub telemetry_context: Arc<TelemetryContext>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -76,24 +78,31 @@ impl SchemaState {
         telemetry_context: Arc<TelemetryContext>,
         router_config: Arc<HiveRouterConfig>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
+        cache_state: Arc<CacheState>,
     ) -> Result<Self, SupergraphManagerError> {
         let (tx, mut rx) = mpsc::channel::<String>(1);
-        let background_loader = SupergraphBackgroundLoader::new(&router_config.supergraph, tx)?;
+        let background_loader = SupergraphBackgroundLoader::new(
+            &router_config.supergraph,
+            tx,
+            telemetry_context.metrics.clone(),
+        )?;
         bg_tasks_manager.register_task(SupergraphBackgroundLoaderTask(Arc::new(background_loader)));
 
         let swappable_data = Arc::new(ArcSwap::from(Arc::new(None)));
         let swappable_data_spawn_clone = swappable_data.clone();
-        let plan_cache = Cache::new(1000);
-        let validate_cache = Cache::new(1000);
-        let normalize_cache = Cache::new(1000);
+        let plan_cache = cache_state.plan_cache.clone();
+        let validate_cache = cache_state.validate_cache.clone();
+        let normalize_cache = cache_state.normalize_cache.clone();
 
         // This is cheap clone, as Cache is thread-safe and can be cloned without any performance penalty.
-        let task_plan_cache = plan_cache.clone();
-        let validate_cache_cache = validate_cache.clone();
-        let normalize_cache_cache = normalize_cache.clone();
+        let cache_state_for_invalidation = cache_state.clone();
 
+        let metrics = telemetry_context.metrics.clone();
+        let task_telemetry = telemetry_context.clone();
         bg_tasks_manager.register_handle(async move {
+            let supergraph_metrics = &metrics.supergraph;
             while let Some(new_sdl) = rx.recv().await {
+                let process_capture = supergraph_metrics.capture_process();
                 debug!("Received new supergraph SDL, building new supergraph state...");
 
                 let mut new_ast = parse_schema(&new_sdl);
@@ -132,7 +141,7 @@ impl SchemaState {
                 }
 
                 match new_supergraph_data.unwrap_or_else(|| {
-                    Self::build_data(router_config.clone(), telemetry_context.clone(), new_ast)
+                    Self::build_data(router_config.clone(), task_telemetry.clone(), new_ast)
                 }) {
                     Ok(mut new_supergraph_data) => {
                         if !on_end_callbacks.is_empty() {
@@ -156,6 +165,7 @@ impl SchemaState {
                                             end_payload.new_supergraph_data = data;
                                         }
                                         Err(err) => {
+                                            process_capture.finish_error();
                                             error!(
                                                 "Plugin ended supergraph load with error: {}",
                                                 err.message
@@ -173,12 +183,12 @@ impl SchemaState {
                         swappable_data_spawn_clone.store(Arc::new(Some(new_supergraph_data)));
                         debug!("Supergraph updated successfully");
 
-                        task_plan_cache.invalidate_all();
-                        validate_cache_cache.invalidate_all();
-                        normalize_cache_cache.invalidate_all();
+                        cache_state_for_invalidation.on_schema_change();
                         debug!("Schema-associated caches cleared successfully");
+                        process_capture.finish_ok();
                     }
                     Err(e) => {
+                        process_capture.finish_error();
                         error!("Failed to build new supergraph data: {}", e);
                     }
                 }
@@ -190,6 +200,7 @@ impl SchemaState {
             plan_cache,
             validate_cache,
             normalize_cache,
+            telemetry_context: telemetry_context.clone(),
         })
     }
 
@@ -220,18 +231,21 @@ impl SchemaState {
 pub struct SupergraphBackgroundLoader {
     loader: Box<dyn SupergraphLoader + Send + Sync>,
     sender: Arc<mpsc::Sender<String>>,
+    metrics: Arc<Metrics>,
 }
 
 impl SupergraphBackgroundLoader {
     pub fn new(
         config: &SupergraphSource,
         sender: mpsc::Sender<String>,
+        metrics: Arc<Metrics>,
     ) -> Result<Self, LoadSupergraphError> {
         let loader = resolve_from_config(config)?;
 
         Ok(Self {
             loader,
             sender: Arc::new(sender),
+            metrics,
         })
     }
 }
@@ -245,6 +259,7 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
     }
 
     async fn run(&self, token: CancellationToken) {
+        let supergraph_metrics = &self.0.metrics.supergraph;
         loop {
             if token.is_cancelled() {
                 trace!("Background task cancelled");
@@ -252,20 +267,26 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
                 break;
             }
 
+            let poll_capture = supergraph_metrics.capture_poll();
             match self.0.loader.load().await {
                 Ok(ReloadSupergraphResult::Unchanged) => {
                     debug!("Supergraph fetched successfully with no changes");
+                    poll_capture.finish_not_modified();
                 }
                 Ok(ReloadSupergraphResult::Changed { new_sdl }) => {
                     debug!("Supergraph loaded successfully with changes, updating...");
 
                     if self.0.sender.clone().send(new_sdl).await.is_err() {
                         error!("Failed to send new supergraph SDL: receiver dropped.");
+                        poll_capture.finish_error();
                         break;
                     }
+
+                    poll_capture.finish_updated();
                 }
                 Err(err) => {
                     error!("Failed to load supergraph: {}", err);
+                    poll_capture.finish_error();
                 }
             }
 
