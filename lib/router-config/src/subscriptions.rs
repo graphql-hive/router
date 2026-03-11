@@ -1,5 +1,5 @@
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
@@ -32,8 +32,11 @@ pub struct CallbackConfig {
     /// Example: `https://example.com:4000/callback`
     pub public_url: String,
     /// The path of the router's callback endpoint.
-    /// Defaults to `/callback`.
-    #[serde(default = "default_callback_path")]
+    /// Must be an absolute path starting with `/`. Defaults to `/callback`.
+    #[serde(
+        default = "default_callback_path",
+        deserialize_with = "deserialize_absolute_path"
+    )]
     pub path: String,
     /// The interval at which the subgraph must send heartbeat messages.
     /// If set to 0, heartbeats are disabled. Defaults to 5 seconds.
@@ -51,6 +54,19 @@ pub struct CallbackConfig {
 
 fn default_callback_path() -> String {
     "/callback".to_string()
+}
+
+fn deserialize_absolute_path<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let path = String::deserialize(deserializer)?;
+    if !path.starts_with('/') {
+        return Err(serde::de::Error::custom(format!(
+            "callback path must be absolute (start with /), got: {path:?}"
+        )));
+    }
+    Ok(path)
 }
 
 fn default_heartbeat_interval() -> Duration {
@@ -116,6 +132,42 @@ impl SubscriptionsConfig {
                 .and_then(|s| s.path.as_deref())
                 .or_else(|| ws.all.as_ref().and_then(|a| a.path.as_deref()))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callback_path_must_be_absolute() {
+        let err = serde_json::from_str::<CallbackConfig>(
+            r#"{"public_url": "http://localhost:4000/callback", "path": "callback"}"#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("callback path must be absolute (start with /)"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn callback_path_absolute_is_accepted() {
+        let config = serde_json::from_str::<CallbackConfig>(
+            r#"{"public_url": "http://localhost:4000/callback", "path": "/callback"}"#,
+        )
+        .unwrap();
+        assert_eq!(config.path, "/callback");
+    }
+
+    #[test]
+    fn callback_path_defaults_to_absolute() {
+        let config = serde_json::from_str::<CallbackConfig>(
+            r#"{"public_url": "http://localhost:4000/callback"}"#,
+        )
+        .unwrap();
+        assert_eq!(config.path, "/callback");
     }
 }
 
