@@ -10,13 +10,13 @@ use serde::Deserialize;
 use tracing::{debug, trace, warn};
 
 #[derive(Debug, Deserialize)]
-struct CallbackPayload {
+struct CallbackPayload<'a> {
     kind: String,
     action: String,
     id: String,
     verifier: String,
-    #[serde(default)]
-    payload: Option<sonic_rs::Value>,
+    #[serde(borrow, default)]
+    payload: Option<&'a serde_json::value::RawValue>,
     #[serde(default)]
     errors: Option<Vec<GraphQLError>>,
 }
@@ -44,7 +44,7 @@ pub async fn handler(
             .finish();
     }
 
-    let payload: CallbackPayload = match sonic_rs::from_slice(&body) {
+    let payload: CallbackPayload<'_> = match serde_json::from_slice(&body) {
         Ok(p) => p,
         Err(e) => {
             warn!("Failed to parse callback payload: {}", e);
@@ -107,20 +107,8 @@ pub async fn handler(
         }
         "next" => {
             trace!(subscription_id = %payload.id, "Received next message");
-            // TODO: this is a hot path. avoid `Value` re-serialization
             let data = match payload.payload {
-                Some(p) => match sonic_rs::to_vec(&p) {
-                    Ok(bytes) => BytesLib::from(bytes),
-                    Err(e) => {
-                        warn!(
-                            subscription_id = %payload.id,
-                            "Failed to serialize payload: {}", e
-                        );
-                        return HttpResponse::BadRequest()
-                            .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-                            .finish();
-                    }
-                },
+                Some(p) => BytesLib::copy_from_slice(p.get().as_bytes()),
                 None => {
                     warn!(
                         subscription_id = %payload.id,
