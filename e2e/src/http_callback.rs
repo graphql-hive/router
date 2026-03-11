@@ -175,4 +175,94 @@ mod http_callback_e2e_tests {
             "Expected 404 after client disconnect removed the subscription"
         );
     }
+
+    #[ntex::test]
+    async fn invalid_verifier_is_rejected() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router_port = get_available_port();
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .with_port(router_port)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    callback:
+                        public_url: http://0.0.0.0:{router_port}/callback
+                        subgraphs:
+                            - reviews
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let mut res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 100) {
+                        id
+                    }
+                }
+                "#,
+                None,
+                some_header_map!(
+                    http::header::ACCEPT => "text/event-stream"
+                ),
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        let chunk_bytes = res.next().await.unwrap().unwrap();
+        let chunk_str = std::str::from_utf8(&chunk_bytes).unwrap();
+        assert!(
+            chunk_str.contains(r#"{"data":{"reviewAdded":{"id":"1"}}}"#),
+            "Expected first emission, got: {}",
+            chunk_str
+        );
+
+        let subgraph_requests = subgraphs
+            .get_requests_log("reviews")
+            .expect("expected requests sent to reviews subgraph");
+        let body_bytes = subgraph_requests[0]
+            .body
+            .as_ref()
+            .expect("expected request body");
+        let body_json: sonic_rs::Value =
+            sonic_rs::from_slice(body_bytes).expect("expected valid JSON body");
+        let subscription_id = body_json["extensions"]["subscription"]["subscriptionId"]
+            .as_str()
+            .expect("expected subscriptionId in request extensions")
+            .to_string();
+
+        // Send a check with a verifier that doesn't match the subscription's verifier
+        let wrong_verifier = "this-is-not-the-correct-verifier";
+        let check_res = router
+            .serv()
+            .post(format!("/callback/{subscription_id}"))
+            .set_header("subscription-protocol", "callback/1.0")
+            .send_json(&json!({
+                "kind": "subscription",
+                "action": "check",
+                "id": subscription_id,
+                "verifier": wrong_verifier,
+            }))
+            .await
+            .expect("failed to send callback check request");
+
+        assert_eq!(
+            check_res.status(),
+            400,
+            "Expected 400 when using an invalid verifier"
+        );
+
+        // keep alive until the end of the test so the subscription stays active
+        drop(res);
+    }
 }
