@@ -213,30 +213,8 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         let verifier = Uuid::new_v4().to_string();
 
         let body = self.build_request_body(&execution_request, &subscription_id, &verifier)?;
-        let (guard, rx) = self.register_subscription(subscription_id, verifier);
 
-        self.send_subscription_request(
-            body,
-            execution_request.headers,
-            timeout,
-            &guard.subscription_id,
-        )
-        .await?;
-
-        Ok(self.build_subscription_stream(rx, guard))
-    }
-}
-
-impl HttpCallbackSubgraphExecutor {
-    /// Inserts the subscription entry into `active_subscriptions` and returns a `SubscriptionGuard`
-    /// (which removes the entry on drop) together with the message receiver.
-    fn register_subscription(
-        &self,
-        subscription_id: SubscriptionId,
-        verifier: String,
-    ) -> (SubscriptionGuard, mpsc::UnboundedReceiver<CallbackMessage>) {
-        let (tx, rx) = mpsc::unbounded_channel::<CallbackMessage>();
-
+        let (tx, mut rx) = mpsc::unbounded_channel::<CallbackMessage>();
         self.active_subscriptions.insert(
             subscription_id.clone(),
             ActiveSubscription {
@@ -253,21 +231,12 @@ impl HttpCallbackSubgraphExecutor {
             },
         );
 
+        // guard removes the entry from `active_subscriptions` when dropped
         let guard = SubscriptionGuard {
-            subscription_id,
+            subscription_id: subscription_id.clone(),
             active_subscriptions: self.active_subscriptions.clone(),
         };
 
-        (guard, rx)
-    }
-
-    async fn send_subscription_request(
-        &self,
-        body: Vec<u8>,
-        mut headers: HeaderMap,
-        timeout: Option<Duration>,
-        subscription_id: &str,
-    ) -> Result<(), SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
@@ -275,6 +244,7 @@ impl HttpCallbackSubgraphExecutor {
             .body(Full::new(Bytes::from(body)))
             .map_err(SubgraphExecutorError::RequestBuildFailure)?;
 
+        let mut headers = execution_request.headers;
         self.header_map.iter().for_each(|(key, value)| {
             headers.insert(key, value.clone());
         });
@@ -323,18 +293,9 @@ impl HttpCallbackSubgraphExecutor {
             return Err(SubgraphExecutorError::HttpCallbackStatusCodeNotOk(status));
         }
 
-        Ok(())
-    }
-
-    fn build_subscription_stream(
-        &self,
-        mut rx: mpsc::UnboundedReceiver<CallbackMessage>,
-        guard: SubscriptionGuard,
-    ) -> BoxStream<'static, SubgraphResponse<'static>> {
         let subgraph_name = self.subgraph_name.clone();
-        let subscription_id = guard.subscription_id.clone();
 
-        Box::pin(async_stream::stream! {
+        Ok(Box::pin(async_stream::stream! {
             // `guard` is held here; dropping the stream drops `guard`, removing the map entry.
             let _guard = guard;
 
@@ -373,6 +334,6 @@ impl HttpCallbackSubgraphExecutor {
             }
 
             trace!(subscription_id = %subscription_id, "HTTP callback subscription stream ended");
-        })
+        }))
     }
 }
