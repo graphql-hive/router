@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod http_callback_e2e_tests {
+    use futures::StreamExt;
     use ntex::http;
+    use sonic_rs::{json, JsonValueTrait};
 
     use crate::testkit::{
         get_available_port, some_header_map, ClientResponseExt, TestRouter, TestSubgraphs,
@@ -73,5 +75,104 @@ mod http_callback_e2e_tests {
 
         // completed stream
         assert!(body.contains("event: complete"));
+    }
+
+    #[ntex::test]
+    async fn client_disconnect_removes_subscription() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router_port = get_available_port();
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .with_port(router_port)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    callback:
+                        public_url: http://0.0.0.0:{router_port}/callback
+                        subgraphs:
+                            - reviews
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // Use a longer interval so we have time to cancel before the stream completes
+        let mut res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 100) {
+                        id
+                    }
+                }
+                "#,
+                None,
+                some_header_map!(
+                    http::header::ACCEPT => "text/event-stream"
+                ),
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        // Read first chunk to ensure the subscription is active
+        let chunk_bytes = res.next().await.unwrap().unwrap();
+        let chunk_str = std::str::from_utf8(&chunk_bytes).unwrap();
+        assert!(
+            chunk_str.contains(r#"{"data":{"reviewAdded":{"id":"1"}}}"#),
+            "Expected first emission, got: {}",
+            chunk_str
+        );
+
+        // Extract subscriptionId and verifier from the request the router sent to the subgraph
+        let subgraph_requests = subgraphs
+            .get_requests_log("reviews")
+            .expect("expected requests sent to reviews subgraph");
+        let body_bytes = subgraph_requests[0]
+            .body
+            .as_ref()
+            .expect("expected request body");
+        let body_json: sonic_rs::Value =
+            sonic_rs::from_slice(body_bytes).expect("expected valid JSON body");
+        let subscription_id = body_json["extensions"]["subscription"]["subscriptionId"]
+            .as_str()
+            .expect("expected subscriptionId in request extensions")
+            .to_string();
+        let verifier = body_json["extensions"]["subscription"]["verifier"]
+            .as_str()
+            .expect("expected verifier in request extensions")
+            .to_string();
+
+        // Disconnect the client — this should propagate to the router and remove the subscription
+        drop(res);
+
+        // Give the router a moment to process the disconnect and clean up
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // A check for the now-removed subscription should return 404
+        let check_res = router
+            .serv()
+            .post(format!("/callback/{subscription_id}"))
+            .set_header("subscription-protocol", "callback/1.0")
+            .send_json(&json!({
+                "kind": "subscription",
+                "action": "check",
+                "id": subscription_id,
+                "verifier": verifier,
+            }))
+            .await
+            .expect("failed to send callback check request");
+
+        assert_eq!(
+            check_res.status(),
+            404,
+            "Expected 404 after client disconnect removed the subscription"
+        );
     }
 }
