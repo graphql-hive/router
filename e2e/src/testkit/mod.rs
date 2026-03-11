@@ -443,6 +443,11 @@ impl TestRouterBuilder {
         self
     }
 
+    pub fn set_config(mut self, config: HiveRouterConfig) -> Self {
+        self.config = Some(config);
+        self
+    }
+
     pub fn with_subgraphs(mut self, subgraphs: impl Into<SocketAddr>) -> Self {
         self.subgraphs_addr = Some(subgraphs.into());
         self
