@@ -65,7 +65,8 @@ mod http_callback_e2e_tests {
         let body = res.string_body().await;
 
         // emitted at least one event
-        assert!(body.contains(r#"data: {"data":{"reviewAdded":{"id":"1"}}}"#));
+        assert!(body
+            .contains(r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#));
 
         // kicked off client
         assert!(body.contains(r#"data: {"data":null,"errors":[{"message":"Failed to execute request to subgraph","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_STREAM_ERROR","serviceName":"reviews"}}]}"#));
