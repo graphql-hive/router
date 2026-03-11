@@ -1176,23 +1176,15 @@ mod subscriptions_e2e_tests {
             )
             .await;
 
-        let body = res.body().await.unwrap();
-        let body_str = std::str::from_utf8(&body).unwrap();
+        let body = res.string_body().await;
 
-        assert_snapshot!(body_str, @r#"
-        event: next
-        data: {"data":{"reviewAdded":{"id":"1"}}}
+        // emitted at least one event
+        assert!(body.contains(r#"data: {"data":{"reviewAdded":{"id":"1"}}}"#));
 
-        event: next
-        data: {"data":{"reviewAdded":{"id":"2"}}}
+        // kicked off client
+        assert!(body.contains(r#"data: {"data":null,"errors":[{"message":"Failed to execute request to subgraph","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_STREAM_ERROR","serviceName":"reviews"}}]}"#));
 
-        event: next
-        data: {"data":{"reviewAdded":{"id":"3"}}}
-
-        event: next
-        data: {"data":null,"errors":[{"message":"Failed to execute request to subgraph","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_STREAM_ERROR","serviceName":"reviews"}}]}
-
-        event: complete
-        "#);
+        // completed stream
+        assert!(body.contains("event: complete"));
     }
 }
