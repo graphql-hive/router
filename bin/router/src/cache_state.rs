@@ -2,19 +2,19 @@ use std::sync::Arc;
 
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_internal::telemetry::TelemetryContext;
-use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use moka::future::Cache;
 use moka::Entry;
 
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::parser::ParseCacheEntry;
+use crate::pipeline::query_plan::CachedExecutionPlan;
 
 #[derive(Clone)]
 pub struct CacheState {
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
-    pub plan_cache: Cache<u64, Arc<QueryPlan>>,
+    pub plan_cache: Cache<u64, Arc<CachedExecutionPlan>>,
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -1,15 +1,147 @@
 use crate::projection::error::ProjectionError;
-use crate::projection::plan::{
-    FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
-    ProjectionValueSource,
-};
+use crate::projection::plan::FieldProjectionConditionError;
+use crate::response::flat::{FlatResponseData, FlatValue, ObjectId, ValueId};
 use crate::response::graphql_error::GraphQLError;
-use crate::response::value::Value;
+use ahash::AHashMap;
 use bytes::BufMut;
+use hive_router_query_planner::planner::plan_nodes::{
+    CompiledFieldProjectionCondition as FieldProjectionCondition, CompiledFieldProjectionPlan,
+    CompiledProjectionValueSource, CompiledTypeCondition as TypeCondition, FieldSymbolId,
+    SchemaInterner,
+};
 use sonic_rs::JsonValueTrait;
 use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
+
+#[derive(Default)]
+struct ProjectionRuntimeCache;
+
+#[derive(Debug, Clone)]
+pub enum StaticProjectionValueSource {
+    ResponseData {
+        selections: Option<Arc<Vec<StaticFieldProjectionPlan>>>,
+    },
+    Null,
+}
+
+#[derive(Debug, Clone)]
+pub struct StaticFieldProjectionPlan {
+    pub field_name: String,
+    pub response_key: String,
+    pub is_typename: bool,
+    pub parent_type_guard: Option<TypeCondition>,
+    pub conditions: Option<FieldProjectionCondition>,
+    pub value: StaticProjectionValueSource,
+}
+
+#[derive(Clone)]
+enum RuntimeProjectionValueSource {
+    ResponseData {
+        selections: Option<Arc<Vec<RuntimeFieldProjectionPlan>>>,
+    },
+    Null,
+}
+
+#[derive(Clone)]
+struct RuntimeFieldProjectionPlan {
+    field_name: String,
+    response_key: String,
+    field_symbol: Option<FieldSymbolId>,
+    is_typename: bool,
+    parent_type_guard: Option<TypeCondition>,
+    conditions: Option<FieldProjectionCondition>,
+    value: RuntimeProjectionValueSource,
+}
+
+impl ProjectionRuntimeCache {
+    fn value_for_field(
+        &mut self,
+        data: &FlatResponseData,
+        object_id: ObjectId,
+        field_symbol: Option<FieldSymbolId>,
+    ) -> Option<ValueId> {
+        let symbol = field_symbol?;
+        data.object_field_in_object_by_symbol(object_id, symbol)
+    }
+}
+
+fn compile_runtime_projection_plans(
+    plans: &[StaticFieldProjectionPlan],
+    data: &FlatResponseData,
+    cache: &mut AHashMap<(usize, usize, u64), Arc<Vec<RuntimeFieldProjectionPlan>>>,
+) -> Arc<Vec<RuntimeFieldProjectionPlan>> {
+    let key = (
+        plans.as_ptr() as usize,
+        plans.len(),
+        data.symbol_generation(),
+    );
+    if let Some(compiled) = cache.get(&key) {
+        return Arc::clone(compiled);
+    }
+
+    let mut runtime_plans = Vec::with_capacity(plans.len());
+    for plan in plans {
+        let field_name = plan.field_name.clone();
+        let response_key = plan.response_key.clone();
+        let field_symbol = data.symbol_for(&response_key);
+        let value = match &plan.value {
+            StaticProjectionValueSource::ResponseData { selections } => {
+                RuntimeProjectionValueSource::ResponseData {
+                    selections: selections
+                        .as_deref()
+                        .map(|s| compile_runtime_projection_plans(s, data, cache)),
+                }
+            }
+            StaticProjectionValueSource::Null => RuntimeProjectionValueSource::Null,
+        };
+
+        runtime_plans.push(RuntimeFieldProjectionPlan {
+            field_name,
+            response_key,
+            field_symbol,
+            is_typename: plan.is_typename,
+            parent_type_guard: plan.parent_type_guard.clone(),
+            conditions: plan.conditions.clone(),
+            value,
+        });
+    }
+
+    let runtime_plans = Arc::new(runtime_plans);
+    cache.insert(key, Arc::clone(&runtime_plans));
+    runtime_plans
+}
+
+pub fn compile_static_projection_plans(
+    plans: &[CompiledFieldProjectionPlan],
+    interner: &SchemaInterner,
+) -> Vec<StaticFieldProjectionPlan> {
+    plans
+        .iter()
+        .map(|plan| {
+            let value = match &plan.value {
+                CompiledProjectionValueSource::ResponseData { selections } => {
+                    StaticProjectionValueSource::ResponseData {
+                        selections: selections
+                            .as_deref()
+                            .map(|s| Arc::new(compile_static_projection_plans(s, interner))),
+                    }
+                }
+                CompiledProjectionValueSource::Null => StaticProjectionValueSource::Null,
+            };
+
+            StaticFieldProjectionPlan {
+                field_name: interner.resolve_field(&plan.field_name).to_string(),
+                response_key: interner.resolve_field(&plan.response_key).to_string(),
+                is_typename: plan.is_typename,
+                parent_type_guard: plan.parent_type_guard.clone(),
+                conditions: plan.conditions.clone(),
+                value,
+            }
+        })
+        .collect()
+}
 
 use crate::introspection::schema::SchemaMetadata;
 use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
@@ -27,8 +159,9 @@ use crate::utils::consts::{
 enum TypeName<'a> {
     Resolved(&'a str),
     Deferred {
-        selection: &'a FieldProjectionPlan,
-        data: Option<&'a Value<'a>>,
+        selection: &'a RuntimeFieldProjectionPlan,
+        data_id: Option<ValueId>,
+        store: &'a FlatResponseData<'a>,
         parent: Rc<TypeName<'a>>,
         schema: &'a SchemaMetadata,
         /// Cache for the resolved type name to avoid recomputation
@@ -44,14 +177,16 @@ impl<'a> TypeName<'a> {
 
     #[inline]
     fn deferred(
-        selection: &'a FieldProjectionPlan,
-        data: Option<&'a Value>,
+        selection: &'a RuntimeFieldProjectionPlan,
+        data_id: Option<ValueId>,
+        store: &'a FlatResponseData<'a>,
         parent: TypeName<'a>,
         schema: &'a SchemaMetadata,
     ) -> Self {
         TypeName::Deferred {
             selection,
-            data,
+            data_id,
+            store,
             parent: Rc::new(parent),
             schema,
             cached: OnceCell::new(),
@@ -64,29 +199,40 @@ impl<'a> TypeName<'a> {
             TypeName::Resolved(name) => Ok(name),
             TypeName::Deferred {
                 selection,
-                data,
+                data_id,
+                store,
                 parent,
                 schema,
                 cached,
             } => cached
-                .get_or_init(|| resolve_type_name(selection, *data, parent, schema))
+                .get_or_init(|| resolve_type_name(selection, *data_id, store, parent, schema))
                 .clone(),
         }
+    }
+}
+
+fn type_condition_matches(condition: &TypeCondition, type_name: &str) -> bool {
+    match condition {
+        TypeCondition::Exact(expected) => type_name == expected,
+        TypeCondition::OneOf(possible) => possible.contains(type_name),
     }
 }
 
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 pub fn project_by_operation(
-    data: &Value,
+    data: &FlatResponseData,
     errors: Vec<GraphQLError>,
     extensions: &HashMap<String, sonic_rs::Value>,
     operation_type_name: &str,
-    selections: &[FieldProjectionPlan],
+    selections: &[StaticFieldProjectionPlan],
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     response_size_estimate: usize,
     schema_metadata: &SchemaMetadata,
 ) -> Result<Vec<u8>, ProjectionError> {
+    let mut runtime_cache = ProjectionRuntimeCache::default();
+    let mut runtime_plan_cache = AHashMap::new();
+    let runtime_plans = compile_runtime_projection_plans(selections, data, &mut runtime_plan_cache);
     let mut buffer = Vec::with_capacity(response_size_estimate);
     buffer.put(OPEN_BRACE);
     buffer.put(QUOTE);
@@ -96,13 +242,15 @@ pub fn project_by_operation(
 
     let mut errors = errors;
 
-    if let Some(data_map) = data.as_object() {
+    if let Some(root_object_id) = data.root_object_id() {
         // Start with first as true to add the opening brace
         let mut first = true;
         project_selection_set_with_map(
-            data_map,
+            data,
+            root_object_id,
+            &mut runtime_cache,
             &mut errors,
-            selections,
+            runtime_plans.as_slice(),
             variable_values,
             TypeName::resolved(operation_type_name),
             &mut buffer,
@@ -146,63 +294,71 @@ pub fn project_by_operation(
     Ok(buffer)
 }
 
-pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
-    match data {
-        Value::Null => buffer.put(NULL),
-        Value::Bool(true) => buffer.put(TRUE),
-        Value::Bool(false) => buffer.put(FALSE),
-        Value::U64(num) => write_u64(buffer, *num),
-        Value::I64(num) => write_i64(buffer, *num),
-        Value::F64(num) => write_f64(buffer, *num),
-        Value::String(value) => write_and_escape_string(buffer, value),
-        Value::Object(value) => {
+fn serialize_flat_value_to_buffer(data: &FlatResponseData, id: ValueId, buffer: &mut Vec<u8>) {
+    match data.value_kind(id) {
+        Some(FlatValue::Null) | None => buffer.put(NULL),
+        Some(FlatValue::Bool(true)) => buffer.put(TRUE),
+        Some(FlatValue::Bool(false)) => buffer.put(FALSE),
+        Some(FlatValue::U64(num)) => write_u64(buffer, *num),
+        Some(FlatValue::I64(num)) => write_i64(buffer, *num),
+        Some(FlatValue::F64(num)) => write_f64(buffer, *num),
+        Some(FlatValue::String(value)) => write_and_escape_string(buffer, value),
+        Some(FlatValue::Object(obj_id)) => {
             buffer.put(OPEN_BRACE);
             let mut first = true;
-            for (key, val) in value.iter() {
-                if !first {
-                    buffer.put(COMMA);
+            if let Some(fields) = data.object_fields(*obj_id) {
+                for (key, value_id) in fields {
+                    if !first {
+                        buffer.put(COMMA);
+                    }
+                    write_and_escape_string(buffer, key.as_ref());
+                    buffer.put(COLON);
+                    serialize_flat_value_to_buffer(data, *value_id, buffer);
+                    first = false;
                 }
-                write_and_escape_string(buffer, key);
-                buffer.put(COLON);
-                serialize_value_to_buffer(val, buffer);
-                first = false;
             }
             buffer.put(CLOSE_BRACE);
         }
-        Value::Array(arr) => {
+        Some(FlatValue::List(list_id)) => {
             buffer.put(OPEN_BRACKET);
             let mut first = true;
-            for item in arr.iter() {
-                if !first {
-                    buffer.put(COMMA);
+            if let Some(items) = data.list_items(*list_id) {
+                for item in items {
+                    if !first {
+                        buffer.put(COMMA);
+                    }
+                    serialize_flat_value_to_buffer(data, *item, buffer);
+                    first = false;
                 }
-                serialize_value_to_buffer(item, buffer);
-                first = false;
             }
             buffer.put(CLOSE_BRACKET);
         }
-    };
+    }
 }
 
 fn project_selection_set<'a>(
-    data: &'a Value,
+    data: &'a FlatResponseData<'a>,
+    value_id: ValueId,
+    runtime_cache: &mut ProjectionRuntimeCache,
     errors: &mut Vec<GraphQLError>,
-    selection: &'a FieldProjectionPlan,
+    selection: &'a RuntimeFieldProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     buffer: &mut Vec<u8>,
     parent_type_name: TypeName<'a>,
     schema_metadata: &'a SchemaMetadata,
 ) -> Result<(), ProjectionError> {
-    match data {
-        Value::Array(arr) => {
+    match data.value_kind(value_id) {
+        Some(FlatValue::List(list_id)) => {
             buffer.put(OPEN_BRACKET);
             let mut first = true;
-            for item in arr.iter() {
+            for item in data.list_items(*list_id).unwrap_or(&[]) {
                 if !first {
                     buffer.put(COMMA);
                 }
                 project_selection_set(
-                    item,
+                    data,
+                    *item,
+                    runtime_cache,
                     errors,
                     selection,
                     variable_values,
@@ -214,22 +370,25 @@ fn project_selection_set<'a>(
             }
             buffer.put(CLOSE_BRACKET);
         }
-        Value::Object(obj) => {
+        Some(FlatValue::Object(object_id)) => {
             match &selection.value {
-                ProjectionValueSource::ResponseData {
+                RuntimeProjectionValueSource::ResponseData {
                     selections: Some(selections),
                 } => {
                     let mut first = true;
                     let type_name = TypeName::deferred(
                         selection,
-                        Some(data),
+                        Some(value_id),
+                        data,
                         parent_type_name,
                         schema_metadata,
                     );
                     project_selection_set_with_map(
-                        obj,
+                        data,
+                        *object_id,
+                        runtime_cache,
                         errors,
-                        selections,
+                        selections.as_slice(),
                         variable_values,
                         type_name,
                         buffer,
@@ -243,11 +402,11 @@ fn project_selection_set<'a>(
                         buffer.put(EMPTY_OBJECT);
                     }
                 }
-                ProjectionValueSource::ResponseData { selections: None } => {
+                RuntimeProjectionValueSource::ResponseData { selections: None } => {
                     // If the selection has no sub-selections, we serialize the whole object
-                    serialize_value_to_buffer(data, buffer);
+                    serialize_flat_value_to_buffer(data, value_id, buffer);
                 }
-                ProjectionValueSource::Null => {
+                RuntimeProjectionValueSource::Null => {
                     // This should not happen as we are in an object case, but just in case
                     buffer.put(NULL);
                 }
@@ -255,7 +414,7 @@ fn project_selection_set<'a>(
         }
         _ => {
             // If the data is not an object or array, we serialize it directly
-            serialize_value_to_buffer(data, buffer);
+            serialize_flat_value_to_buffer(data, value_id, buffer);
         }
     };
     Ok(())
@@ -264,9 +423,11 @@ fn project_selection_set<'a>(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map<'a>(
-    obj: &'a [(&str, Value)],
+    data: &'a FlatResponseData<'a>,
+    object_id: ObjectId,
+    runtime_cache: &mut ProjectionRuntimeCache,
     errors: &mut Vec<GraphQLError>,
-    plans: &'a [FieldProjectionPlan],
+    plans: &'a [RuntimeFieldProjectionPlan],
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     parent_type_name: TypeName<'a>,
     buffer: &mut Vec<u8>,
@@ -276,23 +437,20 @@ fn project_selection_set_with_map<'a>(
     for plan in plans {
         if let Some(guard) = &plan.parent_type_guard {
             let name = parent_type_name.get()?;
-            if !guard.matches(name) {
+            if !type_condition_matches(guard, name) {
                 // Seems like the field projection plan applies to other types, so move to the next one
                 continue;
             }
         }
 
-        let field_val = obj
-            .binary_search_by_key(&plan.response_key.as_str(), |(k, _)| *k)
-            .ok()
-            .map(|idx| &obj[idx].1);
+        let field_val = runtime_cache.value_for_field(data, object_id, plan.field_symbol);
 
         let res = if let Some(conditions) = &plan.conditions {
             let field_type_name_cell = OnceCell::new();
             let field_type_name_fn = || {
                 field_type_name_cell
                     .get_or_init(|| {
-                        resolve_type_name(plan, field_val, &parent_type_name, schema_metadata)
+                        resolve_type_name(plan, field_val, data, &parent_type_name, schema_metadata)
                     })
                     .clone()
             };
@@ -302,6 +460,7 @@ fn project_selection_set_with_map<'a>(
                 &parent_type_name_fn,
                 &field_type_name_fn,
                 field_val,
+                data,
                 variable_values,
             )
         } else {
@@ -323,11 +482,22 @@ fn project_selection_set_with_map<'a>(
                 buffer.put(COLON);
 
                 match &plan.value {
-                    ProjectionValueSource::Null => {
+                    RuntimeProjectionValueSource::Null => {
                         buffer.put(NULL);
                         continue;
                     }
-                    ProjectionValueSource::ResponseData { .. } => {
+                    RuntimeProjectionValueSource::ResponseData { selections: None } => {
+                        if plan.is_typename {
+                            buffer.put(QUOTE);
+                            buffer.put(parent_type_name.get()?.as_bytes());
+                            buffer.put(QUOTE);
+                        } else if let Some(field_val) = field_val {
+                            serialize_flat_value_to_buffer(data, field_val, buffer);
+                        } else {
+                            buffer.put(NULL);
+                        }
+                    }
+                    RuntimeProjectionValueSource::ResponseData { .. } => {
                         if plan.is_typename {
                             // If the field is TYPENAME_FIELD, we should set it to the parent type name
                             buffer.put(QUOTE);
@@ -335,7 +505,9 @@ fn project_selection_set_with_map<'a>(
                             buffer.put(QUOTE);
                         } else if let Some(field_val) = field_val {
                             project_selection_set(
+                                data,
                                 field_val,
+                                runtime_cache,
                                 errors,
                                 plan,
                                 variable_values,
@@ -401,7 +573,8 @@ fn check<'a, F, T>(
     cond: &FieldProjectionCondition,
     parent_type_name: &T,
     field_type_name: &F,
-    field_value: Option<&Value>,
+    field_value: Option<ValueId>,
+    data: &'a FlatResponseData<'a>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
 ) -> Result<(), FieldProjectionConditionError>
 where
@@ -414,6 +587,7 @@ where
             parent_type_name,
             field_type_name,
             field_value,
+            data,
             variable_values,
         )
         .and_then(|_| {
@@ -422,6 +596,7 @@ where
                 parent_type_name,
                 field_type_name,
                 field_value,
+                data,
                 variable_values,
             )
         }),
@@ -430,6 +605,7 @@ where
             parent_type_name,
             field_type_name,
             field_value,
+            data,
             variable_values,
         )
         .or_else(|_| {
@@ -438,6 +614,7 @@ where
                 parent_type_name,
                 field_type_name,
                 field_value,
+                data,
                 variable_values,
             )
         }),
@@ -467,22 +644,22 @@ where
             Ok(())
         }
         FieldProjectionCondition::ParentTypeCondition(type_condition) => {
-            if type_condition.matches(parent_type_name()?) {
+            if type_condition_matches(type_condition, parent_type_name()?) {
                 Ok(())
             } else {
                 Err(FieldProjectionConditionError::InvalidParentType)
             }
         }
         FieldProjectionCondition::FieldTypeCondition(type_condition) => {
-            if type_condition.matches(field_type_name()?) {
+            if type_condition_matches(type_condition, field_type_name()?) {
                 Ok(())
             } else {
                 Err(FieldProjectionConditionError::InvalidFieldType)
             }
         }
         FieldProjectionCondition::EnumValuesCondition(enum_values) => {
-            if let Some(Value::String(string_value)) = field_value {
-                if enum_values.contains(string_value.as_ref()) {
+            if let Some(string_value) = field_value.and_then(|id| data.value_as_str(id)) {
+                if enum_values.contains(string_value) {
                     Ok(())
                 } else {
                     Err(FieldProjectionConditionError::InvalidEnumValue)
@@ -500,8 +677,9 @@ where
 /// can only happen when field's projection rule lack a proper type guard,
 /// or the type guard was not correctly enforced, resulting in applying a plan for a different parent type.
 fn resolve_type_name<'a>(
-    plan: &'a FieldProjectionPlan,
-    field_val: Option<&'a Value>,
+    plan: &'a RuntimeFieldProjectionPlan,
+    field_val: Option<ValueId>,
+    data: &'a FlatResponseData<'a>,
     parent_type_name: &TypeName<'a>,
     schema_metadata: &'a SchemaMetadata,
 ) -> Result<&'a str, ProjectionError> {
@@ -510,12 +688,8 @@ fn resolve_type_name<'a>(
     }
 
     let typename_field = field_val
-        .and_then(|value| value.as_object())
-        .and_then(|obj| {
-            obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| *k)
-                .ok()
-                .and_then(|idx| obj[idx].1.as_str())
-        });
+        .and_then(|id| data.object_field(id, TYPENAME_FIELD_NAME))
+        .and_then(|id| data.value_as_str(id));
 
     if let Some(typename) = typename_field {
         return Ok(typename);
@@ -528,10 +702,10 @@ fn resolve_type_name<'a>(
         .ok_or_else(|| ProjectionError::MissingType(parent_type_name.to_string()))?;
 
     fields
-        .get(&plan.field_name)
+        .get(plan.field_name.as_str())
         .map(|field_info| field_info.output_type_name.as_str())
         .ok_or_else(|| ProjectionError::MissingField {
-            field_name: plan.field_name.to_string(),
+            field_name: plan.field_name.clone(),
             type_name: parent_type_name.to_string(),
         })
 }
@@ -550,9 +724,10 @@ mod tests {
 
     use crate::{
         introspection::schema::SchemaWithMetadata,
-        projection::{plan::FieldProjectionPlan, response::project_by_operation},
-        response::value::Value,
+        projection::{plan::compile_projection_from_operation, response::project_by_operation},
+        response::flat::FlatResponseData,
     };
+    use hive_router_query_planner::planner::plan_nodes::SchemaInterner;
 
     #[test]
     fn project_scalars_with_object_value() {
@@ -592,9 +767,14 @@ mod tests {
             })
             .unwrap();
         let normalized_operation: NormalizedDocument =
-            create_normalized_document(operation_ast.clone(), Some("GetMetadata".into()));
-        let (operation_type_name, selections) =
-            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
+            create_normalized_document(operation_ast.clone(), Some("GetMetadata"));
+        let interner = SchemaInterner::default();
+        let (operation_type_name, selections) = compile_projection_from_operation(
+            &normalized_operation.operation,
+            &schema_metadata,
+            &interner,
+        );
+        let static_selections = super::compile_static_projection_plans(&selections, &interner);
         let data_json = json!({
             "__typename": "Query",
             "metadatas": [
@@ -616,13 +796,13 @@ mod tests {
                 }
             ]
         });
-        let data = Value::from(data_json.as_ref());
+        let data = FlatResponseData::from_sonic_value_ref(data_json.as_ref());
         let projection = project_by_operation(
             &data,
             vec![],
             &HashMap::new(),
             operation_type_name,
-            &selections,
+            &static_selections,
             &None,
             1000,
             &schema_metadata,
@@ -699,9 +879,14 @@ mod tests {
             .unwrap();
 
         let normalized_operation: NormalizedDocument =
-            create_normalized_document(operation_ast.clone(), Some("SearchQuery".into()));
-        let (operation_type_name, selections) =
-            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
+            create_normalized_document(operation_ast.clone(), Some("SearchQuery"));
+        let interner = SchemaInterner::default();
+        let (operation_type_name, selections) = compile_projection_from_operation(
+            &normalized_operation.operation,
+            &schema_metadata,
+            &interner,
+        );
+        let static_selections = super::compile_static_projection_plans(&selections, &interner);
 
         let data_json = json!({
             "__typename": "Query",
@@ -722,13 +907,13 @@ mod tests {
                 }
             ]
         });
-        let data = Value::from(data_json.as_ref());
+        let data = FlatResponseData::from_sonic_value_ref(data_json.as_ref());
         let projection = project_by_operation(
             &data,
             vec![],
             &HashMap::new(),
             operation_type_name,
-            &selections,
+            &static_selections,
             &None,
             1000,
             &schema_metadata,

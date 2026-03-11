@@ -71,7 +71,7 @@ impl GraphQLError {
 
     pub fn normalize_entity_error(
         self,
-        entity_index_error_map: &HashMap<&usize, Vec<GraphQLErrorPath>>,
+        entity_index_error_map: &HashMap<usize, Vec<GraphQLErrorPath>>,
     ) -> Vec<GraphQLError> {
         if let Some(entity_index_and_path) = &self.entity_index_and_path() {
             if let Some(entity_error_paths) =

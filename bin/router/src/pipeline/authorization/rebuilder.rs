@@ -1,9 +1,11 @@
 use std::{collections::HashSet, sync::Arc};
 
-use hive_router_plan_executor::projection::plan::{FieldProjectionPlan, ProjectionValueSource};
 use hive_router_query_planner::ast::{
     operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
     value::Value,
+};
+use hive_router_query_planner::planner::plan_nodes::{
+    CompiledFieldProjectionPlan, CompiledProjectionValueSource, SchemaInterner,
 };
 
 use crate::pipeline::authorization::tree::{PathIndex, UnauthorizedPathTrie};
@@ -121,27 +123,30 @@ fn rebuild_authorized_selection_set<'op>(
 
 /// Rebuilds the projection plan to exclude unauthorized fields.
 pub(super) fn rebuild_authorized_projection_plan(
-    original_plans: &Vec<FieldProjectionPlan>,
+    original_plans: &Vec<CompiledFieldProjectionPlan>,
     unauthorized_path_trie: &UnauthorizedPathTrie,
-) -> Vec<FieldProjectionPlan> {
+    interner: &SchemaInterner,
+) -> Vec<CompiledFieldProjectionPlan> {
     rebuild_authorized_projection_plan_recursive(
         original_plans,
         unauthorized_path_trie,
         PathIndex::root(),
+        interner,
     )
     .unwrap_or_default()
 }
 
 /// Recursively filters projection plans. Unauthorized fields become null.
 fn rebuild_authorized_projection_plan_recursive(
-    original_plans: &Vec<FieldProjectionPlan>,
+    original_plans: &Vec<CompiledFieldProjectionPlan>,
     unauthorized_path_trie: &UnauthorizedPathTrie,
     path_position: PathIndex,
-) -> Option<Vec<FieldProjectionPlan>> {
+    interner: &SchemaInterner,
+) -> Option<Vec<CompiledFieldProjectionPlan>> {
     let mut authorized_plans = Vec::with_capacity(original_plans.len());
 
     for plan in original_plans {
-        let path_segment = &plan.response_key;
+        let path_segment = interner.resolve_field(&plan.response_key);
         let Some((child_path_position, is_unauthorized)) =
             unauthorized_path_trie.find_field(path_position, path_segment)
         else {
@@ -150,18 +155,19 @@ fn rebuild_authorized_projection_plan_recursive(
         };
 
         if is_unauthorized {
-            authorized_plans.push(plan.with_new_value(ProjectionValueSource::Null));
+            authorized_plans.push(plan.with_new_value(CompiledProjectionValueSource::Null));
             continue;
         }
 
         let new_value = match &plan.value {
-            ProjectionValueSource::ResponseData {
+            CompiledProjectionValueSource::ResponseData {
                 selections: Some(selections),
-            } => ProjectionValueSource::ResponseData {
+            } => CompiledProjectionValueSource::ResponseData {
                 selections: rebuild_authorized_projection_plan_recursive(
                     selections,
                     unauthorized_path_trie,
                     child_path_position,
+                    interner,
                 )
                 .map(Arc::new),
             },

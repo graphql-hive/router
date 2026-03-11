@@ -18,7 +18,6 @@ use hive_router_plan_executor::{
     plugin_trait::{EndControlFlow, RouterPluginBoxed, StartControlFlow},
     SubgraphExecutorMap,
 };
-use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::{
     planner::{Planner, PlannerError},
     utils::parsing::parse_schema,
@@ -31,7 +30,10 @@ use tracing::{debug, error, trace};
 
 use crate::{
     cache_state::CacheState,
-    pipeline::{authorization::AuthorizationMetadataError, normalize::GraphQLNormalizationPayload},
+    pipeline::{
+        authorization::AuthorizationMetadataError, normalize::GraphQLNormalizationPayload,
+        query_plan::CachedExecutionPlan,
+    },
     supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
@@ -40,7 +42,7 @@ use crate::{
 
 pub struct SchemaState {
     current_swapable: Arc<ArcSwap<Option<SupergraphData>>>,
-    pub plan_cache: Cache<u64, Arc<QueryPlan>>,
+    pub plan_cache: Cache<u64, Arc<CachedExecutionPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
     pub telemetry_context: Arc<TelemetryContext>,

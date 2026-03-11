@@ -7,10 +7,14 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
 use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::partition::partition_operation;
-use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
+use hive_router_plan_executor::projection::plan::compile_projection_from_operation;
+use hive_router_plan_executor::projection::response::{
+    compile_static_projection_plans, StaticFieldProjectionPlan,
+};
 use hive_router_query_planner::ast::normalization::error::NormalizationError;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
+use hive_router_query_planner::planner::plan_nodes::{CompiledFieldProjectionPlan, SchemaInterner};
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
@@ -25,7 +29,9 @@ pub struct GraphQLNormalizationPayload {
     pub operation_for_plan: Arc<OperationDefinition>,
     pub operation_for_introspection: Option<Arc<OperationDefinition>>,
     pub root_type_name: &'static str,
-    pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub projection_plan: Arc<Vec<CompiledFieldProjectionPlan>>,
+    pub static_projection_plan: Arc<Vec<StaticFieldProjectionPlan>>,
+    pub schema_interner: Arc<SchemaInterner>,
     pub operation_indentity: OperationIdentity,
 }
 
@@ -85,13 +91,20 @@ pub async fn normalize_request_with_cache(
                 );
 
                 let operation = doc.operation;
-                let (root_type_name, projection_plan) =
-                    FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
+                let (root_type_name, projection_plan) = compile_projection_from_operation(
+                    &operation,
+                    &supergraph.metadata,
+                    &supergraph.planner.interner,
+                );
                 let partitioned_operation = partition_operation(operation);
+                let static_projection_plan =
+                    compile_static_projection_plans(&projection_plan, &supergraph.planner.interner);
 
                 let payload = GraphQLNormalizationPayload {
                     root_type_name,
                     projection_plan: Arc::new(projection_plan),
+                    static_projection_plan: Arc::new(static_projection_plan),
+                    schema_interner: supergraph.planner.interner.clone(),
                     operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
                     operation_for_introspection: partitioned_operation
                         .introspection_operation

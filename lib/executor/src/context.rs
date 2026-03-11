@@ -7,15 +7,15 @@ use hive_router_query_planner::planner::plan_nodes::{
 use crate::{
     headers::plan::ResponseHeaderAggregator,
     response::{
+        flat::FlatResponseData,
         graphql_error::{GraphQLError, GraphQLErrorPath},
         storage::ResponsesStorage,
-        value::Value,
     },
 };
 
 pub struct ExecutionContext<'a> {
     pub response_storage: ResponsesStorage,
-    pub data: Value<'a>,
+    pub data: FlatResponseData<'a>,
     pub errors: Vec<GraphQLError>,
     pub output_rewrites: OutputRewritesStorage<'a>,
     pub response_headers_aggregator: ResponseHeaderAggregator,
@@ -27,14 +27,18 @@ impl<'a> Default for ExecutionContext<'a> {
             response_storage: Default::default(),
             output_rewrites: Default::default(),
             errors: Vec::new(),
-            data: Value::Null,
+            data: FlatResponseData::default(),
             response_headers_aggregator: Default::default(),
         }
     }
 }
 
 impl<'a> ExecutionContext<'a> {
-    pub fn new(query_plan: &'a QueryPlan, data: Value<'a>, errors: Vec<GraphQLError>) -> Self {
+    pub fn new(
+        query_plan: &'a QueryPlan,
+        data: FlatResponseData<'a>,
+        errors: Vec<GraphQLError>,
+    ) -> Self {
         ExecutionContext {
             data,
             errors,
@@ -48,7 +52,7 @@ impl<'a> ExecutionContext<'a> {
         subgraph_name: &str,
         affected_path: Option<&FlattenNodePath>,
         errors: Option<Vec<GraphQLError>>,
-        entity_index_error_map: Option<HashMap<&usize, Vec<GraphQLErrorPath>>>,
+        entity_index_error_map: Option<HashMap<usize, Vec<GraphQLErrorPath>>>,
     ) {
         if let Some(response_errors) = errors {
             let affected_path = affected_path.map(|path| path.to_string());

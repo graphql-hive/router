@@ -14,7 +14,7 @@ use crate::graph::Graph;
 use crate::planner::add_variables_to_fetch_steps;
 use crate::planner::best::find_best_combination;
 use crate::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
-use crate::planner::plan_nodes::QueryPlan;
+use crate::planner::plan_nodes::{QueryPlan, SchemaInterner};
 use crate::planner::query_plan::build_query_plan_from_fetch_graph;
 use crate::planner::walker::walk_operation;
 use crate::state::supergraph_state::SupergraphState;
@@ -82,8 +82,13 @@ pub fn build_query_plan_with_context(
     )?;
     add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)?;
 
-    let plan =
-        build_query_plan_from_fetch_graph(fetch_graph, &supergraph_state, &cancellation_token)?;
+    let interner = SchemaInterner::default();
+    let plan = build_query_plan_from_fetch_graph(
+        fetch_graph,
+        &supergraph_state,
+        &interner,
+        &cancellation_token,
+    )?;
 
     Ok(plan)
 }

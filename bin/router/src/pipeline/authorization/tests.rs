@@ -8,8 +8,10 @@ use hive_router_plan_executor::{
         partition::partition_operation,
         schema::{SchemaMetadata, SchemaWithMetadata},
     },
-    projection::plan::FieldProjectionPlan,
+    projection::plan::compile_projection_from_operation,
+    projection::response::compile_static_projection_plans,
 };
+use hive_router_query_planner::planner::plan_nodes::SchemaInterner;
 use hive_router_query_planner::{
     ast::normalization::normalize_operation, consumer_schema::ConsumerSchema,
     state::supergraph_state::SupergraphState, utils::parsing::parse_schema,
@@ -64,13 +66,17 @@ impl SupergraphTestData {
         let parsed_query = parse_query(operation).unwrap();
         let doc = normalize_operation(&self.supergraph_state, &parsed_query, None).unwrap();
         let operation = doc.operation;
+        let interner = SchemaInterner::default();
         let (root_type_name, projection_plan) =
-            FieldProjectionPlan::from_operation(&operation, &self.schema_metadata);
+            compile_projection_from_operation(&operation, &self.schema_metadata, &interner);
+        let static_projection_plan = compile_static_projection_plans(&projection_plan, &interner);
         let partitioned_operation = partition_operation(operation);
 
         let payload = GraphQLNormalizationPayload {
             root_type_name,
             projection_plan: Arc::new(projection_plan),
+            static_projection_plan: Arc::new(static_projection_plan),
+            schema_interner: Arc::new(interner),
             operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
             operation_for_introspection: partitioned_operation
                 .introspection_operation

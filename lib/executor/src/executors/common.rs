@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use hive_router_query_planner::planner::plan_nodes::SchemaInterner;
 use http::{HeaderMap, Uri};
 use sonic_rs::Value;
 
@@ -42,6 +43,7 @@ pub struct SubgraphExecutionRequest<'a> {
     pub headers: HeaderMap,
     pub representations: Option<Vec<u8>>,
     pub extensions: Option<SubgraphRequestExtensions>,
+    pub schema_interner: &'a SchemaInterner,
 }
 
 impl SubgraphExecutionRequest<'_> {

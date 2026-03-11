@@ -4,6 +4,10 @@ use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
 use std::sync::Arc;
 use tracing::warn;
 
+use hive_router_query_planner::planner::plan_nodes::{
+    CompiledFieldProjectionCondition, CompiledFieldProjectionPlan, CompiledProjectionValueSource,
+    CompiledTypeCondition, SchemaInterner,
+};
 use hive_router_query_planner::{
     ast::{
         operation::OperationDefinition,
@@ -755,6 +759,96 @@ impl FieldProjectionPlan {
             ),
             _ => None,
         }
+    }
+}
+
+pub fn compile_projection_from_operation(
+    operation: &OperationDefinition,
+    schema_metadata: &SchemaMetadata,
+    interner: &SchemaInterner,
+) -> (&'static str, Vec<CompiledFieldProjectionPlan>) {
+    let (root_type_name, plans) = FieldProjectionPlan::from_operation(operation, schema_metadata);
+    (
+        root_type_name,
+        plans
+            .iter()
+            .map(|plan| compiled_from_field_plan(plan, interner))
+            .collect(),
+    )
+}
+
+fn compiled_type_condition_from(condition: &TypeCondition) -> CompiledTypeCondition {
+    match condition {
+        TypeCondition::Exact(value) => CompiledTypeCondition::Exact(value.clone()),
+        TypeCondition::OneOf(values) => {
+            CompiledTypeCondition::OneOf(values.iter().cloned().collect())
+        }
+    }
+}
+
+fn compiled_condition_from(
+    condition: &FieldProjectionCondition,
+    interner: &SchemaInterner,
+) -> CompiledFieldProjectionCondition {
+    match condition {
+        FieldProjectionCondition::IncludeIfVariable(v) => {
+            CompiledFieldProjectionCondition::IncludeIfVariable(v.clone())
+        }
+        FieldProjectionCondition::SkipIfVariable(v) => {
+            CompiledFieldProjectionCondition::SkipIfVariable(v.clone())
+        }
+        FieldProjectionCondition::ParentTypeCondition(tc) => {
+            CompiledFieldProjectionCondition::ParentTypeCondition(compiled_type_condition_from(tc))
+        }
+        FieldProjectionCondition::FieldTypeCondition(tc) => {
+            CompiledFieldProjectionCondition::FieldTypeCondition(compiled_type_condition_from(tc))
+        }
+        FieldProjectionCondition::EnumValuesCondition(values) => {
+            CompiledFieldProjectionCondition::EnumValuesCondition(values.iter().cloned().collect())
+        }
+        FieldProjectionCondition::Or(a, b) => CompiledFieldProjectionCondition::Or(
+            Box::new(compiled_condition_from(a, interner)),
+            Box::new(compiled_condition_from(b, interner)),
+        ),
+        FieldProjectionCondition::And(a, b) => CompiledFieldProjectionCondition::And(
+            Box::new(compiled_condition_from(a, interner)),
+            Box::new(compiled_condition_from(b, interner)),
+        ),
+    }
+}
+
+fn compiled_from_field_plan(
+    plan: &FieldProjectionPlan,
+    interner: &SchemaInterner,
+) -> CompiledFieldProjectionPlan {
+    let value = match &plan.value {
+        ProjectionValueSource::ResponseData { selections } => {
+            let selections = selections.as_ref().map(|items| {
+                Arc::new(
+                    items
+                        .iter()
+                        .map(|item| compiled_from_field_plan(item, interner))
+                        .collect(),
+                )
+            });
+            CompiledProjectionValueSource::ResponseData { selections }
+        }
+        ProjectionValueSource::Null => CompiledProjectionValueSource::Null,
+    };
+
+    CompiledFieldProjectionPlan {
+        field_name: interner.intern_field(&plan.field_name),
+        response_key: interner.intern_field(&plan.response_key),
+        is_typename: plan.is_typename,
+        parent_type_guard: plan
+            .parent_type_guard
+            .as_ref()
+            .map(compiled_type_condition_from),
+        conditions: plan
+            .conditions
+            .as_ref()
+            .map(|cond| compiled_condition_from(cond, interner)),
+        value,
     }
 }
 

@@ -14,6 +14,9 @@ use hive_router_plan_executor::hooks::on_query_plan::{
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
+use hive_router_plan_executor::projection::request::{
+    compile_static_requires_registry, StaticRequiresRegistry,
+};
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
@@ -21,13 +24,23 @@ use tracing::Instrument;
 use xxhash_rust::xxh3::Xxh3;
 
 pub enum QueryPlanResult {
-    QueryPlan(Arc<QueryPlan>),
+    QueryPlan(Arc<CachedExecutionPlan>),
     EarlyResponse(PlanExecutionOutput),
 }
-static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| {
-    Arc::new(QueryPlan {
+
+pub struct CachedExecutionPlan {
+    pub query_plan: Arc<QueryPlan>,
+    pub static_requires_registry: Arc<StaticRequiresRegistry>,
+}
+
+static EMPTY_QUERY_PLAN: LazyLock<Arc<CachedExecutionPlan>> = LazyLock::new(|| {
+    let query_plan = Arc::new(QueryPlan {
         kind: QUERY_PLAN_KIND,
         node: None,
+    });
+    Arc::new(CachedExecutionPlan {
+        query_plan: query_plan.clone(),
+        static_requires_registry: Arc::new(StaticRequiresRegistry::new()),
     })
 });
 
@@ -116,7 +129,18 @@ pub async fn plan_operation_with_cache(
                         (&request_override_context.clone()).into(),
                         cancellation_token,
                     )
-                    .map(Arc::new)
+                    .map(|query_plan| {
+                        let query_plan = Arc::new(query_plan);
+                        let static_requires_registry = Arc::new(compile_static_requires_registry(
+                            &query_plan,
+                            &supergraph.planner.interner,
+                        ));
+
+                        Arc::new(CachedExecutionPlan {
+                            query_plan,
+                            static_requires_registry,
+                        })
+                    })
             })
             .await
             .map_err(PipelineError::from)
@@ -135,7 +159,7 @@ pub async fn plan_operation_with_cache(
 
         if !on_end_callbacks.is_empty() {
             let mut end_payload = OnQueryPlanEndHookPayload {
-                query_plan: plan,
+                query_plan: plan.query_plan.clone(),
                 cache_hint,
             };
             for callback in on_end_callbacks {
@@ -150,8 +174,14 @@ pub async fn plan_operation_with_cache(
                     }
                 }
             }
-            // Give the ownership back to variables
-            plan = end_payload.query_plan;
+            let static_requires_registry = Arc::new(compile_static_requires_registry(
+                &end_payload.query_plan,
+                &supergraph.planner.interner,
+            ));
+            plan = Arc::new(CachedExecutionPlan {
+                query_plan: end_payload.query_plan,
+                static_requires_registry,
+            });
         }
 
         Ok(QueryPlanResult::QueryPlan(plan))

@@ -16,6 +16,7 @@ use hive_router_plan_executor::execution::plan::{
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
+use hive_router_plan_executor::projection::request::StaticRequiresRegistry;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use sonic_rs::json;
@@ -33,6 +34,7 @@ pub enum ExposeQueryPlanMode {
 pub struct PlannedRequest<'req> {
     pub normalized_payload: &'req GraphQLNormalizationPayload,
     pub query_plan_payload: &'req QueryPlan,
+    pub static_requires_registry: &'req StaticRequiresRegistry,
     pub variable_payload: &'req CoerceVariablesPayload,
     pub client_request_details: &'req ClientRequestDetails<'req>,
     pub authorization_errors: Vec<AuthorizationError>,
@@ -121,6 +123,9 @@ pub async fn execute_plan(
             query_plan: planned_request.query_plan_payload,
             operation_for_plan: &planned_request.normalized_payload.operation_for_plan,
             projection_plan: &planned_request.normalized_payload.projection_plan,
+            static_projection_plan: &planned_request.normalized_payload.static_projection_plan,
+            static_requires_registry: planned_request.static_requires_registry,
+            schema_interner: &planned_request.normalized_payload.schema_interner,
             headers_plan: &app_state.headers_plan,
             variable_values: &planned_request.variable_payload.variables_map,
             extensions,

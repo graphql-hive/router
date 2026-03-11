@@ -32,9 +32,10 @@ use hive_router_config::HiveRouterConfig;
 use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_plan_executor::execution::client_request_details::JwtRequestDetails;
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
-use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
+use hive_router_plan_executor::projection::response::compile_static_projection_plans;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use hive_router_query_planner::ast::operation::OperationDefinition;
+use hive_router_query_planner::planner::plan_nodes::CompiledFieldProjectionPlan;
 
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLAuthorizeSpan;
 pub use metadata::{AuthorizationMetadataError, UserAuthContext};
@@ -57,7 +58,7 @@ pub enum AuthorizationDecision {
     /// The operation was modified to remove unauthorized parts. Continue with the new operation.
     Modified {
         new_operation_definition: OperationDefinition,
-        new_projection_plan: Vec<FieldProjectionPlan>,
+        new_projection_plan: Vec<CompiledFieldProjectionPlan>,
         errors: Vec<AuthorizationError>,
     },
     /// The operation should be aborted due to unauthorized access and reject mode being enabled.
@@ -118,16 +119,24 @@ pub fn enforce_operation_authorization(
             errors,
         } => {
             (
-                Arc::new(GraphQLNormalizationPayload {
-                    operation_for_plan: Arc::new(new_operation_definition),
-                    // These are cheap Arc clones
-                    operation_for_introspection: normalized_payload
-                        .operation_for_introspection
-                        .clone(),
-                    root_type_name: normalized_payload.root_type_name,
-                    projection_plan: Arc::new(new_projection_plan),
-                    operation_indentity: normalized_payload.operation_indentity.clone(),
-                }),
+                {
+                    let static_projection_plan = compile_static_projection_plans(
+                        &new_projection_plan,
+                        &normalized_payload.schema_interner,
+                    );
+                    Arc::new(GraphQLNormalizationPayload {
+                        operation_for_plan: Arc::new(new_operation_definition),
+                        // These are cheap Arc clones
+                        operation_for_introspection: normalized_payload
+                            .operation_for_introspection
+                            .clone(),
+                        root_type_name: normalized_payload.root_type_name,
+                        projection_plan: Arc::new(new_projection_plan),
+                        static_projection_plan: Arc::new(static_projection_plan),
+                        schema_interner: normalized_payload.schema_interner.clone(),
+                        operation_indentity: normalized_payload.operation_indentity.clone(),
+                    })
+                },
                 errors,
             )
         }
@@ -200,6 +209,7 @@ pub fn apply_authorization_to_operation(
     let new_projection_plan = rebuild_authorized_projection_plan(
         &normalized_payload.projection_plan,
         &unauthorized_path_trie,
+        &normalized_payload.schema_interner,
     );
 
     AuthorizationDecision::Modified {

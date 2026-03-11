@@ -50,6 +50,9 @@ pub enum SubgraphExecutorError {
     #[error("Failed to deserialize subgraph response: {0}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE")]
     ResponseDeserializationFailure(sonic_rs::Error),
+    #[error("Subgraph response contains an unknown key in data payload: {0}")]
+    #[strum(serialize = "INTERNAL_SERVER_ERROR")]
+    ResponseValidationFailure(String),
     #[error("Failed to initialize or load native TLS root certificates: {0}")]
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     NativeTlsCertificatesError(std::io::Error),

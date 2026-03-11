@@ -472,7 +472,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             response = end_payload.response;
         }
 
-        let response_result = response.deserialize_http_response();
+        let response_result = response.deserialize_http_response(execution_request.schema_interner);
         if let Some(mut http_request_capture) = http_request_capture {
             finish_capture_from_subgraph_result(
                 &mut http_request_capture.capture,
@@ -520,7 +520,10 @@ pub struct SubgraphHttpResponse {
 }
 
 impl SubgraphHttpResponse {
-    fn deserialize_http_response<'a>(self) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+    fn deserialize_http_response<'a>(
+        self,
+        schema_interner: &hive_router_query_planner::planner::plan_nodes::SchemaInterner,
+    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
         let bytes_ref: &[u8] = &self.body;
 
         // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'a`.
@@ -531,8 +534,15 @@ impl SubgraphHttpResponse {
         // creating a self-referential struct, which is why `unsafe` is required.
         let bytes_ref: &'a [u8] = unsafe { std::mem::transmute(bytes_ref) };
 
-        sonic_rs::from_slice(bytes_ref)
-            .map_err(SubgraphExecutorError::ResponseDeserializationFailure)
+        SubgraphResponse::from_slice_with_schema_interner(bytes_ref, schema_interner)
+            .map_err(|err| {
+                let msg = err.to_string();
+                if msg.contains("unknown key in data payload") {
+                    SubgraphExecutorError::ResponseValidationFailure(msg)
+                } else {
+                    SubgraphExecutorError::ResponseDeserializationFailure(err)
+                }
+            })
             .map(|mut resp: SubgraphResponse<'a>| {
                 // This is Arc
                 resp.headers = Some(self.headers);

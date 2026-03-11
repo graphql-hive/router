@@ -1,18 +1,55 @@
 use core::fmt;
+use std::cell::Cell;
 use std::sync::Arc;
 
-use crate::response::{graphql_error::GraphQLError, value::Value};
+use hive_router_query_planner::planner::plan_nodes::SchemaInterner;
+
+use crate::response::{
+    flat::{FlatResponseData, FlatValueSeed},
+    graphql_error::GraphQLError,
+};
 use bytes::Bytes;
 use http::HeaderMap;
 use serde::de::{self, Deserializer, MapAccess, Visitor};
 
+thread_local! {
+    static ACTIVE_SCHEMA_INTERNER: Cell<*const SchemaInterner> = const { Cell::new(std::ptr::null()) };
+}
+
+fn active_schema_interner<'a>() -> Option<&'a SchemaInterner> {
+    ACTIVE_SCHEMA_INTERNER.with(|cell| {
+        let ptr = cell.get();
+        if ptr.is_null() {
+            None
+        } else {
+            // SAFETY: pointer is set by `from_slice_with_schema_interner` for this thread,
+            // lives for the whole deserialization call, and reset afterwards.
+            Some(unsafe { &*ptr })
+        }
+    })
+}
+
 #[derive(Debug, Default)]
 pub struct SubgraphResponse<'a> {
-    pub data: Value<'a>,
+    pub data: FlatResponseData<'a>,
     pub errors: Option<Vec<GraphQLError>>,
-    pub extensions: Option<Value<'a>>,
+    pub extensions: Option<sonic_rs::Value>,
     pub headers: Option<Arc<HeaderMap>>,
     pub bytes: Option<Bytes>,
+}
+
+impl<'a> SubgraphResponse<'a> {
+    pub fn from_slice_with_schema_interner(
+        bytes: &'a [u8],
+        schema_interner: &SchemaInterner,
+    ) -> Result<Self, sonic_rs::Error> {
+        ACTIVE_SCHEMA_INTERNER.with(|cell| {
+            let previous = cell.replace(schema_interner as *const SchemaInterner);
+            let result = sonic_rs::from_slice(bytes);
+            cell.set(previous);
+            result
+        })
+    }
 }
 
 impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
@@ -36,7 +73,7 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
             where
                 A: MapAccess<'de>,
             {
-                let mut data = None;
+                let mut data: Option<FlatResponseData<'de>> = None;
                 let mut errors = None;
                 let mut extensions = None;
 
@@ -46,8 +83,17 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
                             if data.is_some() {
                                 return Err(de::Error::duplicate_field("data"));
                             }
-                            // Let Value's deserializer handle the data field
-                            data = Some(map.next_value()?);
+                            let mut flat_data = FlatResponseData::default();
+                            let root_id = if let Some(schema_interner) = active_schema_interner() {
+                                map.next_value_seed(FlatValueSeed::with_schema_interner(
+                                    &mut flat_data,
+                                    schema_interner,
+                                ))?
+                            } else {
+                                map.next_value_seed(FlatValueSeed::new(&mut flat_data))?
+                            };
+                            flat_data.set_root(root_id);
+                            data = Some(flat_data);
                         }
                         "errors" => {
                             if errors.is_some() {
@@ -71,7 +117,7 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
                 }
 
                 // Data field is required in a successful response, but might be null in case of errors
-                let data = data.unwrap_or(Value::Null);
+                let data = data.unwrap_or_default();
 
                 Ok(SubgraphResponse {
                     data,
@@ -91,6 +137,8 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
 
 #[cfg(test)]
 mod tests {
+    use hive_router_query_planner::planner::plan_nodes::SchemaInterner;
+
     // When subgraph returns an error with custom extensions but without `data` field
     #[test]
     fn deserialize_response_without_data_with_errors_with_extensions() {
@@ -120,5 +168,18 @@ mod tests {
             }
           }
         ]"###);
+    }
+
+    #[test]
+    fn deserialize_response_fails_for_unknown_data_key_in_strict_mode() {
+        let json_response = r#"{"data":{"unknown":1}}"#;
+        let interner = SchemaInterner::default();
+        let err = super::SubgraphResponse::from_slice_with_schema_interner(
+            json_response.as_bytes(),
+            &interner,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("unknown key in data payload"));
     }
 }

@@ -379,7 +379,7 @@ pub async fn execute_pipeline<'exec>(
     )
     .await?;
 
-    let query_plan_payload = match query_plan_result {
+    let cached_execution_plan = match query_plan_result {
         QueryPlanResult::QueryPlan(plan) => plan,
         QueryPlanResult::EarlyResponse(response) => {
             return Ok(response);
@@ -388,7 +388,8 @@ pub async fn execute_pipeline<'exec>(
 
     let planned_request = PlannedRequest {
         normalized_payload: &normalize_payload,
-        query_plan_payload: &query_plan_payload,
+        query_plan_payload: &cached_execution_plan.query_plan,
+        static_requires_registry: &cached_execution_plan.static_requires_registry,
         variable_payload,
         client_request_details,
         authorization_errors,

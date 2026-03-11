@@ -10,7 +10,7 @@ use crate::{
 use super::{
     error::QueryPlanError,
     fetch::fetch_graph::FetchGraph,
-    plan_nodes::{ParallelNode, PlanNode, QueryPlan, SequenceNode},
+    plan_nodes::{ParallelNode, PlanNode, QueryPlan, SchemaInterner, SequenceNode},
 };
 
 /// Tracks the in-degree of FetchGraph (DAG) in a dependency graph.
@@ -78,6 +78,7 @@ pub static QUERY_PLAN_KIND: &str = "QueryPlan";
 pub fn build_query_plan_from_fetch_graph(
     fetch_graph: FetchGraph<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
+    interner: &SchemaInterner,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryPlan, QueryPlanError> {
     let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
@@ -114,7 +115,7 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph));
+            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph, interner));
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 

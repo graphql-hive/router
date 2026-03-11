@@ -4,7 +4,7 @@ use error::QueryPlanError;
 use fetch::{error::FetchGraphError, fetch_graph::build_fetch_graph_from_query_tree};
 use graphql_tools::parser::schema;
 use petgraph::graph::NodeIndex;
-use plan_nodes::QueryPlan;
+use plan_nodes::{QueryPlan, SchemaInterner};
 use query_plan::build_query_plan_from_fetch_graph;
 use walker::{error::WalkOperationError, walk_operation};
 
@@ -31,6 +31,7 @@ pub mod walker;
 pub struct Planner {
     graph: Graph,
     pub supergraph: SupergraphState,
+    pub interner: Arc<SchemaInterner>,
     pub consumer_schema: Arc<ConsumerSchema>,
 }
 
@@ -99,11 +100,13 @@ impl Planner {
     ) -> Result<Self, PlannerError> {
         let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
         let consumer_schema = ConsumerSchema::new_from_supergraph(parsed_supergraph);
+        let interner = Arc::new(build_schema_interner(&supergraph_state));
 
         Ok(Planner {
             graph,
             consumer_schema: Arc::new(consumer_schema),
             supergraph: supergraph_state,
+            interner,
         })
     }
 
@@ -131,11 +134,47 @@ impl Planner {
             cancellation_token,
         )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
-        let query_plan =
-            build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph, cancellation_token)?;
+        let query_plan = build_query_plan_from_fetch_graph(
+            fetch_graph,
+            &self.supergraph,
+            &self.interner,
+            cancellation_token,
+        )?;
 
         Ok(query_plan)
     }
+}
+
+fn build_schema_interner(supergraph_state: &SupergraphState) -> SchemaInterner {
+    let interner = SchemaInterner::default();
+    interner.intern_field("__typename");
+    interner.intern_field("_entities");
+    interner.intern_field("_service");
+
+    for (type_name, def) in &supergraph_state.definitions {
+        interner.intern_type(type_name);
+
+        match def {
+            crate::state::supergraph_state::SupergraphDefinition::Object(obj) => {
+                for field_name in obj.fields.keys() {
+                    interner.intern_field(field_name);
+                }
+            }
+            crate::state::supergraph_state::SupergraphDefinition::Interface(interface) => {
+                for field_name in interface.fields.keys() {
+                    interner.intern_field(field_name);
+                }
+            }
+            crate::state::supergraph_state::SupergraphDefinition::InputObject(input) => {
+                for field_name in input.fields.keys() {
+                    interner.intern_field(field_name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    interner
 }
 
 pub fn add_variables_to_fetch_steps(

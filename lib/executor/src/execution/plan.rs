@@ -1,5 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 
+use ahash::AHashMap;
+
 use bytes::BufMut;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
@@ -9,7 +11,8 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        ConditionNode, FetchNode, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
+        CompiledFieldProjectionPlan, ConditionNode, FetchNode, FetchRewrite, FlattenNodePath,
+        PlanNode, QueryPlan, RuntimeCompiledSelectionSet, SchemaInterner,
     },
     state::supergraph_state::OperationKind,
 };
@@ -23,7 +26,6 @@ use crate::{
         client_request_details::ClientRequestDetails,
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
-        rewrites::FetchRewriteExt,
     },
     executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     headers::{
@@ -42,24 +44,27 @@ use crate::{
     plugin_context::PluginRequestState,
     plugin_trait::{EndControlFlow, StartControlFlow},
     projection::{
-        plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
+        request::{
+            bind_runtime_selection_set, project_requires_flat, StaticRequiresRegistry,
+            StaticRequiresSelectionSet,
+        },
+        response::project_by_operation,
     },
     response::{
-        graphql_error::{GraphQLError, GraphQLErrorPath},
-        merge::deep_merge,
+        flat::{FlatResponseData, PathArena, PathNodeId, ValueId},
+        graphql_error::GraphQLError,
         subgraph_response::SubgraphResponse,
-        value::Value,
     },
-    utils::{
-        consts::{CLOSE_BRACKET, OPEN_BRACKET},
-        traverse::{traverse_and_callback, traverse_and_callback_mut},
-    },
+    utils::consts::{CLOSE_BRACKET, OPEN_BRACKET},
 };
 
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub operation_for_plan: &'exec OperationDefinition,
-    pub projection_plan: &'exec Vec<FieldProjectionPlan>,
+    pub projection_plan: &'exec Vec<CompiledFieldProjectionPlan>,
+    pub static_projection_plan: &'exec Vec<crate::projection::response::StaticFieldProjectionPlan>,
+    pub static_requires_registry: &'exec StaticRequiresRegistry,
+    pub schema_interner: &'exec SchemaInterner,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: HashMap<String, sonic_rs::Value>,
@@ -88,9 +93,9 @@ pub async fn execute_query_plan<'exec>(
     let mut data = if let Some(introspection_query) = opts.introspection_context.query {
         resolve_introspection(introspection_query, opts.introspection_context)
     } else if opts.projection_plan.is_empty() {
-        Value::Null
+        FlatResponseData::default()
     } else {
-        Value::Object(Vec::new())
+        FlatResponseData::empty_object()
     };
 
     let mut errors = opts.initial_errors;
@@ -103,7 +108,11 @@ pub async fn execute_query_plan<'exec>(
 
     let mut on_end_callbacks = vec![];
 
-    if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
+    if let Some(plugin_req_state) = opts
+        .plugin_req_state
+        .as_ref()
+        .filter(|plugin_req_state| !plugin_req_state.plugins.is_empty())
+    {
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
@@ -143,6 +152,8 @@ pub async fn execute_query_plan<'exec>(
     let executor = Executor {
         variable_values: opts.variable_values,
         schema_metadata: opts.introspection_context.metadata,
+        schema_interner: opts.schema_interner,
+        static_requires_registry: opts.static_requires_registry,
         executors: opts.executors,
         client_request: opts.client_request,
         headers_plan: opts.headers_plan,
@@ -222,7 +233,7 @@ pub async fn execute_query_plan<'exec>(
         errors,
         &extensions,
         opts.operation_type_name,
-        opts.projection_plan,
+        opts.static_projection_plan,
         opts.variable_values,
         response_size_estimate,
         opts.introspection_context.metadata,
@@ -243,6 +254,8 @@ pub async fn execute_query_plan<'exec>(
 pub struct Executor<'exec> {
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub schema_metadata: &'exec SchemaMetadata,
+    pub schema_interner: &'exec SchemaInterner,
+    pub static_requires_registry: &'exec StaticRequiresRegistry,
     pub executors: &'exec SubgraphExecutorMap,
     pub client_request: &'exec ClientRequestDetails<'exec>,
     pub headers_plan: &'exec HeaderRulesPlan,
@@ -262,8 +275,10 @@ enum ExecutionJob<'exec> {
         subgraph_name: &'exec str,
         response: SubgraphResponse<'exec>,
         flatten_node_path: &'exec FlattenNodePath,
-        representation_hashes: Vec<u64>,
-        representation_hash_to_index: HashMap<u64, usize>,
+        target_value_ids: Vec<ValueId>,
+        target_error_path_ids: Vec<PathNodeId>,
+        target_error_path_arena: PathArena,
+        target_entity_indices: Vec<Option<usize>>,
     },
 }
 
@@ -356,7 +371,7 @@ impl<'exec> Executor<'exec> {
     fn prepare_job_future<'wave>(
         &'wave self,
         node: &'exec PlanNode,
-        data: &Value<'exec>,
+        data: &FlatResponseData<'exec>,
     ) -> Option<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
         match node {
             PlanNode::Fetch(fetch_node) => {
@@ -367,59 +382,113 @@ impl<'exec> Executor<'exec> {
                     PlanNode::Fetch(fetch_node) => fetch_node,
                     _ => return None,
                 };
-                let requires_nodes = fetch_node.requires.as_ref()?;
+                let static_requires = self.static_requires_registry.get(&fetch_node.id)?;
+                let mut runtime_requires_cache: AHashMap<
+                    (usize, u64),
+                    RuntimeCompiledSelectionSet,
+                > = AHashMap::new();
+                let mut requires_type_name_cache = AHashMap::new();
+                let typename_symbol = data.symbol_for("__typename");
 
-                let mut index = 0;
                 let normalized_path = flatten_node.path.as_slice();
                 let mut filtered_representations = Vec::new();
                 filtered_representations.put(OPEN_BRACKET);
                 let possible_types = &self.schema_metadata.possible_types;
-                let mut representation_hashes: Vec<u64> = Vec::new();
-                let mut representation_hash_to_index: HashMap<u64, usize> = HashMap::new();
-                let arena = bumpalo::Bump::new();
+                let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
+                let mut target_value_ids: Vec<ValueId> = Vec::new();
+                let mut target_error_path_ids: Vec<PathNodeId> = Vec::new();
+                let mut target_entity_indices: Vec<Option<usize>> = Vec::new();
 
-                traverse_and_callback(
-                    data,
-                    normalized_path,
-                    &self.schema_metadata.possible_types,
-                    &mut |entity| {
-                        let hash = entity.to_hash(&requires_nodes.items, possible_types);
+                let flatten_targets =
+                    data.collect_flatten_entities(normalized_path, possible_types);
 
-                        if !entity.is_null() {
-                            representation_hashes.push(hash);
+                for ((entity_id, path_id), index_in_targets) in flatten_targets
+                    .target_value_ids
+                    .iter()
+                    .zip(flatten_targets.path_ids.iter())
+                    .zip(0..)
+                {
+                    let entity_id = *entity_id;
+                    let path_id = *path_id;
+                    let runtime_requires = get_or_bind_runtime_selection_set(
+                        &mut runtime_requires_cache,
+                        data,
+                        static_requires,
+                    );
+                    let hash = data.hash_value_by_requires(
+                        entity_id,
+                        runtime_requires,
+                        self.schema_interner,
+                        possible_types,
+                        &mut requires_type_name_cache,
+                        typename_symbol,
+                    );
+                    let entity_index = representation_hash_to_index.get(&hash).copied();
+                    let is_null = matches!(
+                        data.value_kind(entity_id),
+                        Some(crate::response::flat::FlatValue::Null)
+                    );
+
+                    if !is_null {
+                        target_value_ids.push(entity_id);
+                        target_error_path_ids.push(path_id);
+                        target_entity_indices.push(entity_index);
+                    }
+
+                    if entity_index.is_some() {
+                        continue;
+                    }
+
+                    let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                        let mut tmp = data.clone_subtree_as_root(entity_id);
+                        for input_rewrite in input_rewrites {
+                            tmp.apply_fetch_rewrite(possible_types, input_rewrite);
                         }
-
-                        if representation_hash_to_index.contains_key(&hash) {
-                            return;
-                        }
-
-                        let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                            let new_entity = arena.alloc(entity.clone());
-                            for input_rewrite in input_rewrites {
-                                input_rewrite
-                                    .rewrite(&self.schema_metadata.possible_types, new_entity);
-                            }
-                            new_entity
-                        } else {
-                            entity
-                        };
-
-                        let is_projected = project_requires(
+                        let tmp_runtime_requires = get_or_bind_runtime_selection_set(
+                            &mut runtime_requires_cache,
+                            &tmp,
+                            static_requires,
+                        );
+                        project_requires_flat(
+                            self.schema_interner,
+                            &mut requires_type_name_cache,
+                            &tmp,
                             possible_types,
-                            &requires_nodes.items,
-                            entity,
+                            tmp_runtime_requires,
+                            tmp.root(),
                             &mut filtered_representations,
                             representation_hash_to_index.is_empty(),
                             None,
+                        )
+                    } else {
+                        let runtime_requires = get_or_bind_runtime_selection_set(
+                            &mut runtime_requires_cache,
+                            data,
+                            static_requires,
                         );
+                        project_requires_flat(
+                            self.schema_interner,
+                            &mut requires_type_name_cache,
+                            data,
+                            possible_types,
+                            runtime_requires,
+                            entity_id,
+                            &mut filtered_representations,
+                            representation_hash_to_index.is_empty(),
+                            None,
+                        )
+                    };
 
-                        if is_projected {
-                            representation_hash_to_index.insert(hash, index);
+                    if is_projected {
+                        let projected_index = index_in_targets;
+                        representation_hash_to_index.insert(hash, projected_index);
+                        if !is_null {
+                            if let Some(last) = target_entity_indices.last_mut() {
+                                *last = Some(projected_index);
+                            }
                         }
-
-                        index += 1;
-                    },
-                );
+                    }
+                }
 
                 filtered_representations.put(CLOSE_BRACKET);
 
@@ -442,8 +511,10 @@ impl<'exec> Executor<'exec> {
                             response: fetch_job.response(),
                             fetch_node_id: fetch_node.id,
                             subgraph_name: fetch_node.service_name.as_str(),
-                            representation_hashes,
-                            representation_hash_to_index,
+                            target_value_ids,
+                            target_error_path_ids,
+                            target_error_path_arena: flatten_targets.path_arena,
+                            target_entity_indices,
                         })
                     }
                     .boxed(),
@@ -496,82 +567,82 @@ impl<'exec> Executor<'exec> {
                     ctx.output_rewrites.get(job.fetch_node_id());
 
                 let (errors, entity_index_error_map) = match job {
-                    ExecutionJob::Fetch { mut response, .. } => {
+                    ExecutionJob::Fetch { response, .. } => {
                         if let Some(response_bytes) = response.bytes {
                             ctx.response_storage.add_response(response_bytes);
                         }
                         if let Some(output_rewrites) = output_rewrites {
+                            let mut response_data = response.data;
                             for output_rewrite in output_rewrites {
-                                output_rewrite.rewrite(
+                                response_data.apply_fetch_rewrite(
                                     &self.schema_metadata.possible_types,
-                                    &mut response.data,
+                                    output_rewrite,
                                 );
                             }
+                            ctx.data.merge_from(&response_data);
+                        } else {
+                            ctx.data.merge_from(&response.data);
                         }
-                        deep_merge(&mut ctx.data, response.data);
 
                         (response.errors, None)
                     }
                     ExecutionJob::FlattenFetch {
                         mut response,
-                        flatten_node_path,
-                        representation_hashes,
-                        ref representation_hash_to_index,
+                        target_value_ids,
+                        target_error_path_ids,
+                        target_entity_indices,
+                        target_error_path_arena,
                         ..
                     } => {
                         if let Some(response_bytes) = response.bytes {
                             ctx.response_storage.add_response(response_bytes);
                         }
-                        if let Some(mut entities) = response.data.take_entities() {
+                        if let Some(entity_value_ids) = response.data.entities_value_ids() {
+                            let entity_value_ids = entity_value_ids.to_vec();
                             if let Some(output_rewrites) = output_rewrites {
                                 for output_rewrite in output_rewrites {
-                                    for entity in &mut entities {
-                                        output_rewrite
-                                            .rewrite(&self.schema_metadata.possible_types, entity);
+                                    for entity_value_id in &entity_value_ids {
+                                        response.data.apply_fetch_rewrite_at_value(
+                                            &self.schema_metadata.possible_types,
+                                            *entity_value_id,
+                                            output_rewrite,
+                                        );
                                     }
                                 }
                             }
 
-                            let mut index = 0;
-                            let normalized_path = flatten_node_path.as_slice();
-                            // If there is an error in the response, then collect the paths for normalizing the error
-                            let initial_error_path = response.errors.as_ref().map(|_| {
-                                GraphQLErrorPath::with_capacity(normalized_path.len() + 2)
-                            });
                             let mut entity_index_error_map = response
                                 .errors
                                 .as_ref()
-                                .map(|_| HashMap::with_capacity(entities.len()));
-                            traverse_and_callback_mut(
-                                &mut ctx.data,
-                                normalized_path,
-                                self.schema_metadata,
-                                initial_error_path,
-                                &mut |target, error_path| {
-                                    let hash = representation_hashes[index];
-                                    if let Some(entity_index) =
-                                        representation_hash_to_index.get(&hash)
-                                    {
-                                        if let (Some(error_path), Some(entity_index_error_map)) =
-                                            (error_path, entity_index_error_map.as_mut())
-                                        {
-                                            let error_paths = entity_index_error_map
-                                                .entry(entity_index)
-                                                .or_insert_with(Vec::new);
-                                            error_paths.push(error_path);
-                                        }
-                                        if let Some(entity) = entities.get(*entity_index) {
-                                            // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
-                                            // The transmute is to satisfy the compiler, but the lifetime
-                                            // is valid.
-                                            let new_val: Value<'_> =
-                                                unsafe { std::mem::transmute(entity.clone()) };
-                                            deep_merge(target, new_val);
-                                        }
-                                    }
-                                    index += 1;
-                                },
-                            );
+                                .map(|_| HashMap::with_capacity(target_error_path_ids.len()));
+
+                            for ((path_id, target_value_id), maybe_entity_index) in
+                                target_error_path_ids
+                                    .into_iter()
+                                    .zip(target_value_ids.into_iter())
+                                    .zip(target_entity_indices.into_iter())
+                            {
+                                let Some(entity_index) = maybe_entity_index else {
+                                    continue;
+                                };
+
+                                if let Some(entity_index_error_map) =
+                                    entity_index_error_map.as_mut()
+                                {
+                                    let error_paths = entity_index_error_map
+                                        .entry(entity_index)
+                                        .or_insert_with(Vec::new);
+                                    error_paths.push(target_error_path_arena.materialize(path_id));
+                                }
+
+                                if let Some(entity_value_id) = entity_value_ids.get(entity_index) {
+                                    ctx.data.deep_merge_values(
+                                        target_value_id,
+                                        &response.data,
+                                        *entity_value_id,
+                                    );
+                                }
+                            }
                             (response.errors, entity_index_error_map)
                         } else {
                             (response.errors, None)
@@ -635,6 +706,7 @@ impl<'exec> Executor<'exec> {
                 representations,
                 headers: headers_map,
                 extensions: None,
+                schema_interner: self.schema_interner,
             };
 
             subgraph_operation_span.record_operation_identity(GraphQLSpanOperationIdentity {
@@ -720,6 +792,20 @@ fn select_fetch_variables<'a>(
     })
 }
 
+fn get_or_bind_runtime_selection_set<'a>(
+    cache: &'a mut AHashMap<(usize, u64), RuntimeCompiledSelectionSet>,
+    data: &FlatResponseData,
+    selection_set: &StaticRequiresSelectionSet,
+) -> &'a RuntimeCompiledSelectionSet {
+    let key = (
+        selection_set as *const StaticRequiresSelectionSet as usize,
+        data.symbol_generation(),
+    );
+    cache
+        .entry(key)
+        .or_insert_with(|| bind_runtime_selection_set(data, selection_set))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -730,6 +816,7 @@ mod tests {
         },
         headers::plan::HeaderRulesPlan,
         introspection::schema::SchemaMetadata,
+        response::flat::FlatResponseData,
         response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
         SubgraphExecutorMap,
     };
@@ -814,9 +901,9 @@ mod tests {
         use crate::response::graphql_error::{GraphQLError, GraphQLErrorPathSegment};
         use std::collections::HashMap;
         let mut ctx = ExecutionContext::default();
-        let mut entity_index_error_map: HashMap<&usize, Vec<GraphQLErrorPath>> = HashMap::new();
+        let mut entity_index_error_map: HashMap<usize, Vec<GraphQLErrorPath>> = HashMap::new();
         entity_index_error_map.insert(
-            &0,
+            0,
             vec![
                 GraphQLErrorPath {
                     segments: vec![
@@ -876,7 +963,7 @@ mod tests {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let mut subgraph_a = mockito::Server::new_async().await;
         let mut subgraph_b = mockito::Server::new_async().await;
-        let data = crate::response::value::Value::Null;
+        let data = FlatResponseData::default();
         let subgraph_endpoint_map = HashMap::from([
             (
                 "subgraph_a".to_string(),
@@ -891,9 +978,13 @@ mod tests {
                     .unwrap(),
             ),
         ]);
+        let static_requires_registry = super::StaticRequiresRegistry::new();
         let executor = Executor {
             variable_values: &None,
             schema_metadata: &SchemaMetadata::default(),
+            schema_interner:
+                &hive_router_query_planner::planner::plan_nodes::SchemaInterner::default(),
+            static_requires_registry: &static_requires_registry,
             executors: &SubgraphExecutorMap::from_http_endpoint_map(
                 &subgraph_endpoint_map,
                 HiveRouterConfig::default().into(),
@@ -931,7 +1022,7 @@ mod tests {
 
         // It is ok to have 'static lifetime here, because `data` is owned by `exec_ctx`, and `exec_ctx` lives for the entire duration of the test,
         // so the reference to `data` will never be dangling.
-        let data_ref: &'static crate::response::value::Value<'static> =
+        let data_ref: &'static FlatResponseData<'static> =
             unsafe { std::mem::transmute(&exec_ctx.data) };
 
         let (sender, receiver) = channel();
@@ -943,16 +1034,13 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(1000));
                 // data should have `from_a` field from subgraph_a's response,
                 // so data the merging process does not wait for subgraph_b's response to merge subgraph_a's response
-                if let Some(data) = data_ref.as_object() {
-                    let from_a_index = data.iter().position(|(k, _)| k == &"from_a");
-                    let from_a_value = from_a_index
-                        .and_then(|index| data.get(index))
-                        .and_then(|(_, v)| v.as_str());
-                    if let Some(from_a_value) = from_a_value {
-                        sender
-                            .send(from_a_value.to_string())
-                            .expect("Failed to send from_a value through channel");
-                    }
+                if let Some(from_a_value) = data_ref
+                    .object_field(data_ref.root(), "from_a")
+                    .and_then(|id| data_ref.value_as_str(id))
+                {
+                    sender
+                        .send(from_a_value.to_string())
+                        .expect("Failed to send from_a value through channel");
                 }
                 writer.write_fmt(format_args!(r#"{{"data":{{"from_b":"value_b"}}}}"#))
             })
@@ -984,6 +1072,7 @@ mod tests {
                             },
                             operation_name: None,
                             requires: None,
+                            compiled_requires: None,
                             input_rewrites: None,
                             output_rewrites: None,
                             variable_usages: None,
@@ -999,6 +1088,7 @@ mod tests {
                             },
                             operation_name: None,
                             requires: None,
+                            compiled_requires: None,
                             input_rewrites: None,
                             output_rewrites: None,
                             variable_usages: None,

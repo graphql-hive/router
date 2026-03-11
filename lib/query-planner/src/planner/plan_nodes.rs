@@ -13,13 +13,56 @@ use crate::{
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
+use lasso2::{Spur, ThreadedRodeo};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
     hash::{Hash, Hasher},
+    sync::Arc,
 };
 use xxhash_rust::xxh3::Xxh3;
+
+pub type FieldId = Spur;
+pub type TypeId = Spur;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FieldSymbolId(pub u32);
+
+#[derive(Debug)]
+pub struct SchemaInterner {
+    rodeo: ThreadedRodeo,
+}
+
+impl Default for SchemaInterner {
+    fn default() -> Self {
+        Self {
+            rodeo: ThreadedRodeo::new(),
+        }
+    }
+}
+
+impl SchemaInterner {
+    pub fn intern_field(&self, value: &str) -> FieldId {
+        self.rodeo.get_or_intern(value)
+    }
+
+    pub fn intern_type(&self, value: &str) -> TypeId {
+        self.rodeo.get_or_intern(value)
+    }
+
+    pub fn get_field(&self, value: &str) -> Option<FieldId> {
+        self.rodeo.get(value)
+    }
+
+    pub fn resolve_field<'a>(&'a self, id: &FieldId) -> &'a str {
+        self.rodeo.resolve(id)
+    }
+
+    pub fn resolve_type<'a>(&'a self, id: &TypeId) -> &'a str {
+        self.rodeo.resolve(id)
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -105,10 +148,147 @@ pub struct FetchNode {
     pub operation: SubgraphFetchOperation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires: Option<SelectionSet>,
+    #[serde(skip, default)]
+    pub compiled_requires: Option<CompiledSelectionSet>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompiledTypeCondition {
+    Exact(String),
+    OneOf(std::collections::HashSet<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompiledFieldProjectionCondition {
+    IncludeIfVariable(String),
+    SkipIfVariable(String),
+    ParentTypeCondition(CompiledTypeCondition),
+    FieldTypeCondition(CompiledTypeCondition),
+    EnumValuesCondition(std::collections::HashSet<String>),
+    Or(
+        Box<CompiledFieldProjectionCondition>,
+        Box<CompiledFieldProjectionCondition>,
+    ),
+    And(
+        Box<CompiledFieldProjectionCondition>,
+        Box<CompiledFieldProjectionCondition>,
+    ),
+}
+
+#[derive(Debug, Clone)]
+pub enum CompiledProjectionValueSource {
+    ResponseData {
+        selections: Option<Arc<Vec<CompiledFieldProjectionPlan>>>,
+    },
+    Null,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompiledFieldProjectionPlan {
+    pub field_name: FieldId,
+    pub response_key: FieldId,
+    pub is_typename: bool,
+    pub parent_type_guard: Option<CompiledTypeCondition>,
+    pub conditions: Option<CompiledFieldProjectionCondition>,
+    pub value: CompiledProjectionValueSource,
+}
+
+impl CompiledFieldProjectionPlan {
+    pub fn with_new_value(
+        &self,
+        new_value: CompiledProjectionValueSource,
+    ) -> CompiledFieldProjectionPlan {
+        CompiledFieldProjectionPlan {
+            field_name: self.field_name,
+            response_key: self.response_key,
+            parent_type_guard: self.parent_type_guard.clone(),
+            conditions: self.conditions.clone(),
+            is_typename: self.is_typename,
+            value: new_value,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CompiledFieldSelection {
+    pub name: FieldId,
+    pub selections: CompiledSelectionSet,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompiledInlineFragmentSelection {
+    pub type_condition: TypeId,
+    pub selections: CompiledSelectionSet,
+}
+
+#[derive(Debug, Clone)]
+pub enum CompiledSelectionItem {
+    Field(CompiledFieldSelection),
+    InlineFragment(CompiledInlineFragmentSelection),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CompiledSelectionSet {
+    pub items: Vec<CompiledSelectionItem>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeCompiledFieldSelection {
+    pub symbol: Option<FieldSymbolId>,
+    pub selections: RuntimeCompiledSelectionSet,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeCompiledInlineFragmentSelection {
+    pub type_condition: TypeId,
+    pub selections: RuntimeCompiledSelectionSet,
+}
+
+#[derive(Debug, Clone)]
+pub enum RuntimeCompiledSelectionItem {
+    Field(RuntimeCompiledFieldSelection),
+    InlineFragment(RuntimeCompiledInlineFragmentSelection),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeCompiledSelectionSet {
+    pub items: Vec<RuntimeCompiledSelectionItem>,
+}
+
+impl CompiledSelectionSet {
+    pub fn from_selection_set(selection_set: &SelectionSet, interner: &SchemaInterner) -> Self {
+        let items = selection_set
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                SelectionItem::Field(field) => {
+                    Some(CompiledSelectionItem::Field(CompiledFieldSelection {
+                        name: interner.intern_field(&field.name),
+                        selections: CompiledSelectionSet::from_selection_set(
+                            &field.selections,
+                            interner,
+                        ),
+                    }))
+                }
+                SelectionItem::InlineFragment(fragment) => Some(
+                    CompiledSelectionItem::InlineFragment(CompiledInlineFragmentSelection {
+                        type_condition: interner.intern_type(&fragment.type_condition),
+                        selections: CompiledSelectionSet::from_selection_set(
+                            &fragment.selections,
+                            interner,
+                        ),
+                    }),
+                ),
+                SelectionItem::FragmentSpread(_) => None,
+            })
+            .collect();
+
+        CompiledSelectionSet { items }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -395,19 +575,26 @@ impl FetchNode {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
+        interner: &SchemaInterner,
     ) -> Self {
         match step.is_entity_call() {
-            true => FetchNode {
-                id: step.id,
-                service_name: step.service_name.0.clone(),
-                variable_usages: step.variable_usages.clone(),
-                operation_kind: Some(OperationKind::Query),
-                operation_name: None,
-                operation: create_output_operation(step, supergraph),
-                requires: Some(create_input_selection_set(&step.input)),
-                input_rewrites: step.input_rewrites.clone(),
-                output_rewrites: step.output_rewrites.clone(),
-            },
+            true => {
+                let requires = create_input_selection_set(&step.input);
+                let compiled_requires =
+                    CompiledSelectionSet::from_selection_set(&requires, interner);
+                FetchNode {
+                    id: step.id,
+                    service_name: step.service_name.0.clone(),
+                    variable_usages: step.variable_usages.clone(),
+                    operation_kind: Some(OperationKind::Query),
+                    operation_name: None,
+                    operation: create_output_operation(step, supergraph),
+                    requires: Some(requires),
+                    compiled_requires: Some(compiled_requires),
+                    input_rewrites: step.input_rewrites.clone(),
+                    output_rewrites: step.output_rewrites.clone(),
+                }
+            }
             false => {
                 let operation_def = OperationDefinition {
                     name: None,
@@ -432,6 +619,7 @@ impl FetchNode {
                         hash,
                     },
                     requires: None,
+                    compiled_requires: None,
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
                 }
@@ -444,14 +632,15 @@ impl PlanNode {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
+        interner: &SchemaInterner,
     ) -> Self {
         let node = if step.response_path.is_empty() {
-            PlanNode::Fetch(FetchNode::from_fetch_step(step, supergraph))
+            PlanNode::Fetch(FetchNode::from_fetch_step(step, supergraph, interner))
         } else {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
                 node: Box::new(PlanNode::Fetch(FetchNode::from_fetch_step(
-                    step, supergraph,
+                    step, supergraph, interner,
                 ))),
             })
         };

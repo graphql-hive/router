@@ -10,8 +10,8 @@ use crate::plugin_context::{PluginContext, RouterHttpRequest};
 use crate::plugin_trait::{
     EndHookPayload, EndHookResult, FromGraphQLErrorToResponse, StartHookPayload, StartHookResult,
 };
+use crate::response::flat::FlatResponseData;
 use crate::response::graphql_error::GraphQLError;
-use crate::response::value::Value;
 
 pub struct OnExecuteStartHookPayload<'exec> {
     /// The incoming HTTP request to the router for which the GraphQL execution is happening.
@@ -38,7 +38,7 @@ pub struct OnExecuteStartHookPayload<'exec> {
 
     /// The root value of the execution
     /// Anything here will be merged into the execution result
-    pub data: Value<'exec>,
+    pub data: FlatResponseData<'exec>,
     /// Initial set of GraphQL errors in the execution result
     /// Any error passed here will be merged into the execution result errors list
     pub errors: Vec<GraphQLError>,
@@ -128,7 +128,7 @@ pub type OnExecuteStartHookResult<'exec> = StartHookResult<
 pub struct OnExecuteEndHookPayload<'exec> {
     /// The final value of the execution result. This will be sent to the client as the "data" field in the GraphQL response.
     /// Plugins can modify this value before proceeding, and the modified value will be sent to the client.
-    pub data: Value<'exec>,
+    pub data: FlatResponseData<'exec>,
     /// The final list of GraphQL errors in the execution result.
     /// This will be sent to the client as the "errors" field in the GraphQL response.
     /// Plugins can modify this list before proceeding, and the modified list will be sent to the client.
