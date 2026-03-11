@@ -49,6 +49,18 @@ pub enum CallbackMessage {
 
 pub type ActiveSubscriptionsMap = Arc<DashMap<SubscriptionId, ActiveSubscription>>;
 
+struct SubscriptionGuard {
+    subscription_id: SubscriptionId,
+    active_subscriptions: ActiveSubscriptionsMap,
+}
+
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        self.active_subscriptions.remove(&self.subscription_id);
+        trace!(subscription_id = %self.subscription_id, "HTTP callback subscription entry removed from active subscriptions");
+    }
+}
+
 pub struct HttpCallbackSubgraphExecutor {
     pub subgraph_name: String,
     pub endpoint: http::Uri,
@@ -201,13 +213,34 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         let verifier = Uuid::new_v4().to_string();
 
         let body = self.build_request_body(&execution_request, &subscription_id, &verifier)?;
+        let (guard, rx) = self.register_subscription(subscription_id, verifier);
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<CallbackMessage>();
+        self.send_subscription_request(
+            body,
+            execution_request.headers,
+            timeout,
+            &guard.subscription_id,
+        )
+        .await?;
+
+        Ok(self.build_subscription_stream(rx, guard))
+    }
+}
+
+impl HttpCallbackSubgraphExecutor {
+    /// Inserts the subscription entry into `active_subscriptions` and returns a `SubscriptionGuard`
+    /// (which removes the entry on drop) together with the message receiver.
+    fn register_subscription(
+        &self,
+        subscription_id: SubscriptionId,
+        verifier: String,
+    ) -> (SubscriptionGuard, mpsc::UnboundedReceiver<CallbackMessage>) {
+        let (tx, rx) = mpsc::unbounded_channel::<CallbackMessage>();
 
         self.active_subscriptions.insert(
             subscription_id.clone(),
             ActiveSubscription {
-                verifier: verifier.clone(),
+                verifier,
                 sender: tx,
                 // initialize last_heartbeat to now + heartbeat_interval so the enforcer
                 // won't evict the subscription before the subgraph's initial check arrives.
@@ -220,20 +253,28 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             },
         );
 
-        let mut req = match hyper::Request::builder()
+        let guard = SubscriptionGuard {
+            subscription_id,
+            active_subscriptions: self.active_subscriptions.clone(),
+        };
+
+        (guard, rx)
+    }
+
+    async fn send_subscription_request(
+        &self,
+        body: Vec<u8>,
+        mut headers: HeaderMap,
+        timeout: Option<Duration>,
+        subscription_id: &str,
+    ) -> Result<(), SubgraphExecutorError> {
+        let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
             .version(Version::HTTP_11)
             .body(Full::new(Bytes::from(body)))
-        {
-            Ok(req) => req,
-            Err(e) => {
-                self.active_subscriptions.remove(&subscription_id);
-                return Err(SubgraphExecutorError::RequestBuildFailure(e));
-            }
-        };
+            .map_err(SubgraphExecutorError::RequestBuildFailure)?;
 
-        let mut headers = execution_request.headers;
         self.header_map.iter().for_each(|(key, value)| {
             headers.insert(key, value.clone());
         });
@@ -248,27 +289,14 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
 
         let req_fut = self.http_client.request(req);
         let res = if let Some(timeout_duration) = timeout {
-            match tokio::time::timeout(timeout_duration, req_fut).await {
-                Ok(Ok(response)) => response,
-                Ok(Err(e)) => {
-                    self.active_subscriptions.remove(&subscription_id);
-                    return Err(SubgraphExecutorError::RequestFailure(e));
-                }
-                Err(_) => {
-                    self.active_subscriptions.remove(&subscription_id);
-                    return Err(SubgraphExecutorError::RequestTimeout(
-                        timeout_duration.as_millis(),
-                    ));
-                }
-            }
+            tokio::time::timeout(timeout_duration, req_fut)
+                .await
+                .map_err(|_| SubgraphExecutorError::RequestTimeout(timeout_duration.as_millis()))?
+                .map_err(SubgraphExecutorError::RequestFailure)?
         } else {
-            match req_fut.await {
-                Ok(response) => response,
-                Err(e) => {
-                    self.active_subscriptions.remove(&subscription_id);
-                    return Err(SubgraphExecutorError::RequestFailure(e));
-                }
-            }
+            req_fut
+                .await
+                .map_err(SubgraphExecutorError::RequestFailure)?
         };
 
         debug!(
@@ -279,7 +307,6 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         );
 
         if !res.status().is_success() {
-            self.active_subscriptions.remove(&subscription_id);
             let status = res.status();
             let (_, body) = res.into_parts();
             let body_bytes = body.collect().await.ok().map(|b| b.to_bytes());
@@ -296,22 +323,32 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             return Err(SubgraphExecutorError::HttpCallbackStatusCodeNotOk(status));
         }
 
-        let subgraph_name = self.subgraph_name.clone();
-        let active_subscriptions = self.active_subscriptions.clone();
-        let subscription_id_for_stream = subscription_id.clone();
+        Ok(())
+    }
 
-        Ok(Box::pin(async_stream::stream! {
-            trace!(subscription_id = %subscription_id_for_stream, "HTTP callback subscription stream started");
+    fn build_subscription_stream(
+        &self,
+        mut rx: mpsc::UnboundedReceiver<CallbackMessage>,
+        guard: SubscriptionGuard,
+    ) -> BoxStream<'static, SubgraphResponse<'static>> {
+        let subgraph_name = self.subgraph_name.clone();
+        let subscription_id = guard.subscription_id.clone();
+
+        Box::pin(async_stream::stream! {
+            // `guard` is held here; dropping the stream drops `guard`, removing the map entry.
+            let _guard = guard;
+
+            trace!(subscription_id = %subscription_id, "HTTP callback subscription stream started");
 
             while let Some(msg) = rx.recv().await {
                 match msg {
                     CallbackMessage::Next { payload } => {
-                        trace!(subscription_id = %subscription_id_for_stream, "received next payload");
+                        trace!(subscription_id = %subscription_id, "received next payload");
                         match SubgraphResponse::deserialize_from_bytes(payload) {
                             Ok(response) => yield response,
                             Err(e) => {
                                 error!(
-                                    subscription_id = %subscription_id_for_stream,
+                                    subscription_id = %subscription_id,
                                     error = %e,
                                     "failed to deserialize callback payload"
                                 );
@@ -321,7 +358,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                         }
                     }
                     CallbackMessage::Complete { errors } => {
-                        trace!(subscription_id = %subscription_id_for_stream, "received complete");
+                        trace!(subscription_id = %subscription_id, "received complete");
                         if let Some(errors) = errors {
                             if !errors.is_empty() {
                                 yield SubgraphResponse {
@@ -335,8 +372,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 }
             }
 
-            active_subscriptions.remove(&subscription_id_for_stream);
-            trace!(subscription_id = %subscription_id_for_stream, "HTTP callback subscription stream ended");
-        }))
+            trace!(subscription_id = %subscription_id, "HTTP callback subscription stream ended");
+        })
     }
 }
