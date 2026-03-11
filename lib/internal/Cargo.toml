@@ -19,7 +19,7 @@ hive-router-config = { path = "../router-config", version = "0.0.24" }
 
 sonic-rs = { workspace = true }
 vrl = { workspace = true }
-humantime = "2.3.0"
+humantime = { workspace = true }
 bytes = { workspace = true }
 http = { workspace=true }
 http-body-util = { workspace = true }
