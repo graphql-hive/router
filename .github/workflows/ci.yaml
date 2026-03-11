@@ -166,12 +166,12 @@ jobs:
             binary: "hive_router"
             config: bench/configs/hive-tracing.config.yaml
             compare_with_default: false
-          - name: "otlp-tracing"
+          - name: "otel"
             # turns otlp http/grpc to noop
             args: "--features noop_otlp_exporter"
             package: "hive-router"
             binary: "hive_router"
-            config: bench/configs/otlp-tracing.config.yaml
+            config: bench/configs/otel.config.yaml
             compare_with_default: false
           - name: "plugins"
             args: ""

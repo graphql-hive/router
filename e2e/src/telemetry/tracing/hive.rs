@@ -11,7 +11,7 @@ async fn test_hive_http_export() {
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = TestSubgraphs::builder().build().start().await;
 

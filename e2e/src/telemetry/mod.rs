@@ -1,5 +1,2 @@
-mod hive;
-mod otlp_attributes;
-mod otlp_basic;
-mod otlp_propagation;
-mod otlp_sampling;
+mod metrics;
+mod tracing;
