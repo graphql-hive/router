@@ -69,7 +69,7 @@ mod http_callback_e2e_tests {
             .contains(r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#));
 
         // kicked off client
-        assert!(body.contains(r#"data: {"data":null,"errors":[{"message":"Failed to execute request to subgraph","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_STREAM_ERROR","serviceName":"reviews"}}]}"#));
+        assert!(body.contains(r#"{"data":null,"errors":[{"message":"Subgraph gone due heartbeat timeout","extensions":{"code":"SUBGRAPH_GONE"}}]}"#));
 
         // completed stream
         assert!(body.contains("event: complete"));
