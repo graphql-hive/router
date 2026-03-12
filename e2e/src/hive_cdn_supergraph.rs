@@ -2,11 +2,13 @@
 mod hive_cdn_supergraph_e2e_tests {
     use std::time::Duration;
 
+    use hive_router_config::supergraph::SupergraphSource;
+    use hive_router_config::{load_config, primitives::single_or_multiple::SingleOrMultiple};
     use ntex::time;
     use sonic_rs::{JsonContainerTrait, JsonValueTrait};
     use tokio::time::sleep;
 
-    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
+    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn should_load_supergraph_from_endpoint() {
@@ -396,5 +398,82 @@ mod hive_cdn_supergraph_e2e_tests {
 
         mock1.assert();
         mock2.assert();
+    }
+
+    #[ntex::test]
+    async fn should_support_multiple_endpoints_from_env() {
+        let mut server1 = mockito::Server::new_async().await;
+
+        // Failing server so it will try the next one
+        let host1 = server1.host_with_port();
+        let mock1 = server1
+            .mock("GET", "/supergraph")
+            // 1 first attempt, 1 retry
+            .expect(2)
+            .match_header("x-hive-cdn-key", "dummy_key")
+            .with_status(500)
+            .create();
+
+        let mut server2 = mockito::Server::new_async().await;
+        let host2 = server2.host_with_port();
+        let mock2 = server2
+            .mock("GET", "/supergraph")
+            .expect(1)
+            .match_header("x-hive-cdn-key", "dummy_key")
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body(include_str!("../supergraph.graphql"))
+            .create();
+
+        let endpoints = vec![
+            format!("http://{host1}/supergraph"),
+            format!("http://{host2}/supergraph"),
+        ];
+
+        let _env_guard = EnvVarsGuard::new()
+            .set("HIVE_CDN_ENDPOINT", &endpoints.join(","))
+            .set("HIVE_CDN_KEY", "dummy_key")
+            .apply()
+            .await;
+
+        let router = TestRouter::builder();
+
+        let mut config = load_config(None)
+            .expect("failed to load router config from env with multiple endpoints");
+
+        match &mut config.supergraph {
+            SupergraphSource::HiveConsole {
+                endpoint: Some(SingleOrMultiple::Multiple(eps)),
+                retry_policy,
+                ..
+            } => {
+                assert_eq!(eps, &endpoints);
+                retry_policy.max_retries = 1; // set retries to 1 for the test
+            }
+            _ => panic!(
+                "Expected supergraph source to be Hive Console with multiple endpoints, got: {:#?}",
+                config.supergraph
+            ),
+        }
+
+        let router = router.set_config(config).build().start().await;
+
+        let res = router
+            .send_graphql_request("{ __type(name: \"Product\") { name } }", None, None)
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "__type": {
+              "name": "Product"
+            }
+          }
+        }
+        "#);
+
+        mock1.assert_async().await;
+        mock2.assert_async().await;
     }
 }

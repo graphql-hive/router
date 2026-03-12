@@ -128,6 +128,7 @@ pub async fn execute_plan(
             introspection_context: &introspection_context,
             operation_type_name: planned_request.normalized_payload.root_type_name,
             jwt_auth_forwarding,
+            graphql_error_recorder: app_state.telemetry_context.metrics.graphql.error_recorder(),
             executors: &supergraph.subgraph_executor_map,
             initial_errors: planned_request
                 .authorization_errors

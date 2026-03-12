@@ -29,9 +29,6 @@ pub enum SubgraphExecutorError {
     #[error("Failed to receive response: {0}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_FAILURE")]
     ResponseFailure(#[from] hyper::Error),
-    #[error("Received an empty response body from subgraph")]
-    #[strum(serialize = "SUBGRAPH_EMPTY_RESPONSE_BODY")]
-    EmptyResponseBody,
     #[error("Failed to serialize variable \"{0}\": {1}")]
     #[strum(serialize = "SUBGRAPH_VARIABLES_SERIALIZATION_FAILURE")]
     VariablesSerializationFailure(String, sonic_rs::Error),
@@ -43,7 +40,13 @@ pub enum SubgraphExecutorError {
     TimeoutExpressionResolution(String),
     #[error("Request to subgraph timed out after {0} milliseconds")]
     #[strum(serialize = "SUBGRAPH_REQUEST_TIMEOUT")]
-    RequestTimeout(u128),
+    RequestTimeout(String, u128),
+    #[error("Failed to read response body from subgraph \"{0}\": {1}")]
+    #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_READ_FAILURE")]
+    ResponseBodyReadFailure(String, String),
+    #[error("Received empty response body from subgraph \"{0}\"")]
+    #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_EMPTY")]
+    EmptyResponseBody(String),
     #[error("Failed to deserialize subgraph response: {0}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE")]
     ResponseDeserializationFailure(sonic_rs::Error),

@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-plan-executor"
-version = "6.6.0"
+version = "6.7.0"
 edition = "2021"
 description = "GraphQL query planner executor for Federation specification"
 license = "MIT"
@@ -15,9 +15,9 @@ authors = ["The Guild"]
 doctest = false
 
 [dependencies]
-hive-router-query-planner = { path = "../query-planner", version = "2.3.0" }
-hive-router-config = { path = "../router-config", version = "0.0.24" }
-hive-router-internal = { path = "../internal", version = "0.0.13" }
+hive-router-query-planner = { path = "../query-planner", version = "2.4.0" }
+hive-router-config = { path = "../router-config", version = "0.0.25" }
+hive-router-internal = { path = "../internal", version = "0.0.14" }
 graphql-tools =  { path = "../graphql-tools", version = "0.5.2" }
 
 async-trait = { workspace = true }
