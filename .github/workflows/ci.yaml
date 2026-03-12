@@ -39,7 +39,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
       - name: test e2e
         run: cargo test_e2e
-        timeout-minutes: 60
+        timeout-minutes: 10
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug
@@ -55,7 +55,7 @@ jobs:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: test plugin examples
         run: cargo test_plugin_examples
-        timeout-minutes: 60
+        timeout-minutes: 10
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug
