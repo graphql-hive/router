@@ -13,6 +13,7 @@ use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
 use http::StatusCode;
 use moka::future::Cache;
 use moka::Expiry;
+use ntex::web;
 use ntex::{http::HeaderMap, util::Bytes};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -36,6 +37,19 @@ pub struct SharedRouterResponse {
     pub headers: Arc<HeaderMap>,
     pub status: StatusCode,
     pub error_count: usize,
+}
+
+impl From<SharedRouterResponse> for web::HttpResponse {
+    fn from(shared_response: SharedRouterResponse) -> Self {
+        let mut response = web::HttpResponse::Ok();
+        response.status(shared_response.status);
+
+        for (header_name, header_value) in shared_response.headers.iter() {
+            response.set_header(header_name, header_value);
+        }
+
+        response.body(shared_response.body)
+    }
 }
 
 /// Default TTL for JWT claims cache entries (5 seconds)
