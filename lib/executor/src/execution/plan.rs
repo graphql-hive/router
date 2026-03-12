@@ -1061,6 +1061,7 @@ impl<'exec> Executor<'exec> {
                 extensions: None,
             };
 
+            let client_document_hash_str = opts.operation.hash.to_string();
             subgraph_operation_span.record_operation_identity(GraphQLSpanOperationIdentity {
                 name: opts.operation_name,
                 operation_type: match opts.operation_kind {
@@ -1068,7 +1069,7 @@ impl<'exec> Executor<'exec> {
                     Some(OperationKind::Mutation) => "mutation",
                     Some(OperationKind::Subscription) => "subscription",
                 },
-                client_document_hash: opts.operation.hash.to_string().as_str(),
+                client_document_hash: &client_document_hash_str,
             });
 
             if let Some(jwt_forwarding_plan) = &self.jwt_forwarding_plan {
