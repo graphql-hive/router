@@ -87,7 +87,10 @@ fn validate_payload(
     Ok(())
 }
 
-fn handle_check(subscription_id: &str, subscription: &Ref<'_, String, ActiveSubscription>) -> HttpResponse {
+fn handle_check(
+    subscription_id: &str,
+    subscription: &Ref<'_, String, ActiveSubscription>,
+) -> HttpResponse {
     trace!(subscription_id = %subscription_id, "Received check message");
     subscription.record_heartbeat();
     no_content()
