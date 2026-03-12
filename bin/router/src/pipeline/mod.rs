@@ -23,7 +23,6 @@ use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
 use http::{header::CONTENT_TYPE, Method};
-use ntex::http::body::{Body, ResponseBody};
 use ntex::web::{self, HttpRequest};
 
 use crate::{
@@ -86,26 +85,6 @@ fn response_from_shared(shared_response: SharedRouterResponse) -> web::HttpRespo
     }
 
     response.body(shared_response.body)
-}
-
-fn shared_response_from_http_response(
-    response: web::HttpResponse,
-    error_count: usize,
-) -> SharedRouterResponse {
-    let (response_head, response_body) = response.into_parts();
-    let body = match response_body {
-        ResponseBody::Body(body) | ResponseBody::Other(body) => match body {
-            Body::None | Body::Empty | Body::Message(_) => ntex::util::Bytes::new(),
-            Body::Bytes(bytes) => bytes,
-        },
-    };
-
-    SharedRouterResponse {
-        body,
-        headers: Arc::new(response_head.headers().clone()),
-        status: response_head.status(),
-        error_count,
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -218,184 +197,6 @@ async fn execute_post_classification_pipeline<'exec>(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn execute_full_request_pipeline<'exec>(
-    req: &'exec HttpRequest,
-    body_bytes: ntex::util::Bytes,
-    shared_state: &'exec Arc<RouterSharedState>,
-    schema_state: &'exec Arc<SchemaState>,
-    operation_span: &'exec GraphQLOperationSpan,
-    response_mode: &'exec ResponseMode,
-    plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
-    started_at: Instant,
-) -> Result<SharedRouterResponse, PipelineError> {
-    let body_for_dedupe = body_bytes.clone();
-
-    let deserialization_result =
-        deserialize_graphql_params(req, body_bytes, plugin_req_state).await?;
-
-    let graphql_params = match deserialization_result {
-        DeserializationResult::GraphQLParams(params) => params,
-        DeserializationResult::EarlyResponse(response) => {
-            return Ok(shared_response_from_http_response(response, 0));
-        }
-    };
-
-    write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
-
-    let client_name = req
-        .headers()
-        .get(
-            &shared_state
-                .router_config
-                .telemetry
-                .client_identification
-                .name_header,
-        )
-        .and_then(|v| v.to_str().ok());
-    let client_version = req
-        .headers()
-        .get(
-            &shared_state
-                .router_config
-                .telemetry
-                .client_identification
-                .version_header,
-        )
-        .and_then(|v| v.to_str().ok());
-
-    let parser_result =
-        parse_operation_with_cache(shared_state, &graphql_params, plugin_req_state).await?;
-
-    let parser_payload = match parser_result {
-        ParseResult::Payload(payload) => payload,
-        ParseResult::EarlyResponse(response) => {
-            return Ok(shared_response_from_http_response(response, 0));
-        }
-    };
-
-    operation_span.record_details(
-        &parser_payload.minified_document,
-        (&parser_payload).into(),
-        client_name,
-        client_version,
-        &parser_payload.hive_operation_hash,
-    );
-
-    let Some(ref supergraph) = **schema_state.current_supergraph() else {
-        return Err(PipelineError::NoSupergraphAvailable);
-    };
-
-    if let Some(response) = validate_operation_with_cache(
-        supergraph,
-        schema_state,
-        shared_state,
-        &parser_payload,
-        plugin_req_state,
-    )
-    .await?
-    {
-        return Ok(shared_response_from_http_response(response, 0));
-    }
-
-    let normalize_payload =
-        normalize_request_with_cache(supergraph, schema_state, &graphql_params, &parser_payload)
-            .await?;
-
-    write_graphql_operation_metric_identity(
-        req,
-        normalize_payload.operation_indentity.name.clone(),
-        Some(normalize_payload.operation_indentity.operation_type),
-    );
-
-    if req.method() == Method::GET {
-        if let Some(OperationKind::Mutation) = normalize_payload.operation_for_plan.operation_kind {
-            error!("Mutation is not allowed over GET, stopping");
-            return Err(PipelineError::MutationNotAllowedOverHttpGet);
-        }
-    }
-
-    let is_subscription = matches!(
-        normalize_payload.operation_for_plan.operation_kind,
-        Some(OperationKind::Subscription)
-    );
-
-    if is_subscription
-    // coming soon
-    // && !response_mode.can_stream()
-    {
-        return Err(PipelineError::SubscriptionsNotSupported);
-    }
-
-    let Some(single_content_type) = response_mode.single_content_type() else {
-        // streaming responses coming soon
-        return Err(PipelineError::UnsupportedContentType);
-    };
-
-    // Let's claim and deduplicate the request from here
-
-    if shared_state
-        .router_config
-        .traffic_shaping
-        .router
-        .dedupe_enabled
-        && matches!(
-            normalize_payload.operation_for_plan.operation_kind,
-            Some(OperationKind::Query)
-        )
-    {
-        let schema_checksum = schema_state.current_schema_checksum();
-        let fingerprint = inbound_request_fingerprint(req, &body_for_dedupe, schema_checksum);
-        let cell = shared_state
-            .router_in_flight_requests
-            .entry(fingerprint)
-            .or_default()
-            .clone();
-
-        let pipeline_result = cell
-            .get_or_try_init(|| async {
-                let pipeline_result = execute_post_classification_pipeline(
-                    req,
-                    graphql_params,
-                    &normalize_payload,
-                    supergraph,
-                    shared_state,
-                    schema_state,
-                    operation_span,
-                    plugin_req_state,
-                    started_at,
-                    single_content_type,
-                    client_name,
-                    client_version,
-                )
-                .await;
-
-                shared_state.router_in_flight_requests.remove(&fingerprint);
-                pipeline_result
-            })
-            .await?
-            .clone();
-
-        Ok(pipeline_result)
-    } else {
-        execute_post_classification_pipeline(
-            req,
-            graphql_params,
-            &normalize_payload,
-            supergraph,
-            shared_state,
-            schema_state,
-            operation_span,
-            plugin_req_state,
-            started_at,
-            single_content_type,
-            client_name,
-            client_version,
-        )
-        .await
-    }
-}
-
 pub mod authorization;
 pub mod body_read;
 pub mod coerce_variables;
@@ -479,17 +280,173 @@ pub async fn graphql_request_handler(
             });
         }
 
-        let shared_response = execute_full_request_pipeline(
-            req,
-            body_bytes,
-            shared_state,
+        let body_for_dedupe = body_bytes.clone();
+
+        let deserialization_result =
+            deserialize_graphql_params(req, body_bytes, &plugin_req_state).await?;
+
+        let graphql_params = match deserialization_result {
+            DeserializationResult::GraphQLParams(params) => params,
+            DeserializationResult::EarlyResponse(response) => {
+                return Ok(response);
+            }
+        };
+
+        write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
+
+        let client_name = req
+            .headers()
+            .get(
+                &shared_state
+                    .router_config
+                    .telemetry
+                    .client_identification
+                    .name_header,
+            )
+            .and_then(|v| v.to_str().ok());
+        let client_version = req
+            .headers()
+            .get(
+                &shared_state
+                    .router_config
+                    .telemetry
+                    .client_identification
+                    .version_header,
+            )
+            .and_then(|v| v.to_str().ok());
+
+        let parser_result =
+            parse_operation_with_cache(shared_state, &graphql_params, &plugin_req_state).await?;
+
+        let parser_payload = match parser_result {
+            ParseResult::Payload(payload) => payload,
+            ParseResult::EarlyResponse(response) => {
+                return Ok(response);
+            }
+        };
+
+        operation_span.record_details(
+            &parser_payload.minified_document,
+            (&parser_payload).into(),
+            client_name,
+            client_version,
+            &parser_payload.hive_operation_hash,
+        );
+
+        let Some(ref supergraph) = **schema_state.current_supergraph() else {
+            return Err(PipelineError::NoSupergraphAvailable);
+        };
+
+        if let Some(response) = validate_operation_with_cache(
+            supergraph,
             schema_state,
-            &operation_span,
-            response_mode,
+            shared_state,
+            &parser_payload,
             &plugin_req_state,
-            started_at,
+        )
+        .await?
+        {
+            return Ok(response);
+        }
+
+        let normalize_payload = normalize_request_with_cache(
+            supergraph,
+            schema_state,
+            &graphql_params,
+            &parser_payload,
         )
         .await?;
+
+        write_graphql_operation_metric_identity(
+            req,
+            normalize_payload.operation_indentity.name.clone(),
+            Some(normalize_payload.operation_indentity.operation_type),
+        );
+
+        if req.method() == Method::GET {
+            if let Some(OperationKind::Mutation) =
+                normalize_payload.operation_for_plan.operation_kind
+            {
+                error!("Mutation is not allowed over GET, stopping");
+                return Err(PipelineError::MutationNotAllowedOverHttpGet);
+            }
+        }
+
+        let is_subscription = matches!(
+            normalize_payload.operation_for_plan.operation_kind,
+            Some(OperationKind::Subscription)
+        );
+
+        if is_subscription
+        // coming soon
+        // && !response_mode.can_stream()
+        {
+            return Err(PipelineError::SubscriptionsNotSupported);
+        }
+
+        let Some(single_content_type) = response_mode.single_content_type() else {
+            // streaming responses coming soon
+            return Err(PipelineError::UnsupportedContentType);
+        };
+
+        // Let's claim and deduplicate the request from here
+
+        let shared_response = if shared_state
+            .router_config
+            .traffic_shaping
+            .router
+            .dedupe_enabled
+            && matches!(
+                normalize_payload.operation_for_plan.operation_kind,
+                Some(OperationKind::Query)
+            ) {
+            let schema_checksum = schema_state.current_schema_checksum();
+            let fingerprint = inbound_request_fingerprint(req, &body_for_dedupe, schema_checksum);
+            let cell = shared_state
+                .router_in_flight_requests
+                .entry(fingerprint)
+                .or_default()
+                .clone();
+
+            cell.get_or_try_init(|| async {
+                let pipeline_result = execute_post_classification_pipeline(
+                    req,
+                    graphql_params,
+                    &normalize_payload,
+                    supergraph,
+                    shared_state,
+                    schema_state,
+                    &operation_span,
+                    &plugin_req_state,
+                    started_at,
+                    single_content_type,
+                    client_name,
+                    client_version,
+                )
+                .await;
+
+                shared_state.router_in_flight_requests.remove(&fingerprint);
+                pipeline_result
+            })
+            .await?
+            .clone()
+        } else {
+            execute_post_classification_pipeline(
+                req,
+                graphql_params,
+                &normalize_payload,
+                supergraph,
+                shared_state,
+                schema_state,
+                &operation_span,
+                &plugin_req_state,
+                started_at,
+                single_content_type,
+                client_name,
+                client_version,
+            )
+            .await?
+        };
 
         let pipeline_error_count = shared_response.error_count;
         let response = response_from_shared(shared_response);
