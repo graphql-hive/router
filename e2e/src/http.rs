@@ -362,6 +362,67 @@ mod http_tests {
     }
 
     #[ntex::test]
+    async fn should_not_dedupe_inflight_router_mutation_requests() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                if request.path == "/products" {
+                    sleep(Duration::from_millis(300));
+                }
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let request_count = 8;
+        let mut requests = FuturesUnordered::new();
+
+        for _ in 0..request_count {
+            requests.push(router.send_graphql_request(
+                r#"
+                mutation {
+                    oneofTest(input: { string: "router-dedupe" }) {
+                        string
+                    }
+                }
+                "#,
+                None,
+                None,
+            ));
+        }
+
+        while let Some(response) = requests.next().await {
+            assert!(response.status().is_success(), "Expected 200 OK");
+        }
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert!(
+            products_requests >= request_count,
+            "expected no mutation dedupe at router level; got {products_requests} products requests for {request_count} incoming mutation requests"
+        );
+    }
+
+    #[ntex::test]
     async fn should_not_share_inflight_dedupe_entry_across_schema_reload() {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {

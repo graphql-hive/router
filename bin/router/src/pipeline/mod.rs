@@ -15,6 +15,7 @@ use hive_router_plan_executor::{
         client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
         plan::PlanExecutionOutput,
     },
+    hooks::on_graphql_params::GraphQLParams,
     hooks::on_supergraph_load::SupergraphData,
     plugin_context::{PluginContext, PluginRequestState},
 };
@@ -108,6 +109,116 @@ fn shared_response_from_http_response(
 }
 
 #[allow(clippy::too_many_arguments)]
+async fn execute_post_classification_pipeline<'exec>(
+    req: &'exec HttpRequest,
+    mut graphql_params: GraphQLParams,
+    normalize_payload: &Arc<GraphQLNormalizationPayload>,
+    supergraph: &'exec SupergraphData,
+    shared_state: &'exec Arc<RouterSharedState>,
+    schema_state: &'exec Arc<SchemaState>,
+    operation_span: &'exec GraphQLOperationSpan,
+    plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
+    started_at: Instant,
+    single_content_type: &'exec crate::pipeline::header::SingleContentType,
+    client_name: Option<&'exec str>,
+    client_version: Option<&'exec str>,
+) -> Result<SharedRouterResponse, PipelineError> {
+    let jwt_request_details = match &shared_state.jwt_auth_runtime {
+        Some(jwt_auth_runtime) => match jwt_auth_runtime
+            .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
+            .await?
+        {
+            Some(jwt_context) => JwtRequestDetails::Authenticated {
+                scopes: jwt_context.extract_scopes(),
+                claims: jwt_context.get_claims_value()?,
+                token: jwt_context.token_raw,
+                prefix: jwt_context.token_prefix,
+            },
+            None => JwtRequestDetails::Unauthenticated,
+        },
+        None => JwtRequestDetails::Unauthenticated,
+    };
+
+    let variable_payload =
+        coerce_request_variables(supergraph, &mut graphql_params.variables, normalize_payload)?;
+
+    let client_request_details = ClientRequestDetails {
+        method: req.method(),
+        url: req.uri(),
+        headers: req.headers(),
+        operation: OperationDetails {
+            name: normalize_payload.operation_for_plan.name.as_deref(),
+            kind: match normalize_payload.operation_for_plan.operation_kind {
+                Some(OperationKind::Query) => "query",
+                Some(OperationKind::Mutation) => "mutation",
+                Some(OperationKind::Subscription) => "subscription",
+                None => "query",
+            },
+            query: graphql_params.get_query()?,
+        },
+        jwt: jwt_request_details,
+    };
+
+    let pipeline_result = execute_pipeline(
+        &client_request_details,
+        normalize_payload,
+        &variable_payload,
+        supergraph,
+        shared_state,
+        schema_state,
+        operation_span,
+        plugin_req_state,
+    )
+    .await?;
+
+    if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+        usage_reporting::collect_usage_report(
+            supergraph.supergraph_schema.clone(),
+            started_at.elapsed(),
+            client_name,
+            client_version,
+            &client_request_details,
+            hive_usage_agent,
+            shared_state
+                .router_config
+                .telemetry
+                .hive
+                .as_ref()
+                .map(|c| &c.usage_reporting)
+                .expect(
+                    // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
+                    // the UsageAgent is only created when usage reporting is enabled.
+                    // Thus, this expect should never panic.
+                    "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
+                ),
+            pipeline_result.error_count,
+        )
+        .await;
+    }
+
+    let error_count = pipeline_result.error_count;
+    let mut response_builder = web::HttpResponse::Ok();
+
+    if let Some(response_headers_aggregator) = pipeline_result.response_headers_aggregator {
+        response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
+    }
+
+    let body = ntex::util::Bytes::from(pipeline_result.body);
+
+    let response = response_builder
+        .content_type(single_content_type.as_ref())
+        .status(pipeline_result.status_code)
+        .body(body.clone());
+
+    Ok(SharedRouterResponse {
+        body,
+        headers: Arc::new(response.headers().clone()),
+        status: response.status(),
+        error_count,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn execute_full_request_pipeline<'exec>(
     req: &'exec HttpRequest,
     body_bytes: ntex::util::Bytes,
@@ -118,10 +229,12 @@ async fn execute_full_request_pipeline<'exec>(
     plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
     started_at: Instant,
 ) -> Result<SharedRouterResponse, PipelineError> {
+    let body_for_dedupe = body_bytes.clone();
+
     let deserialization_result =
         deserialize_graphql_params(req, body_bytes, plugin_req_state).await?;
 
-    let mut graphql_params = match deserialization_result {
+    let graphql_params = match deserialization_result {
         DeserializationResult::GraphQLParams(params) => params,
         DeserializationResult::EarlyResponse(response) => {
             return Ok(shared_response_from_http_response(response, 0));
@@ -219,102 +332,68 @@ async fn execute_full_request_pipeline<'exec>(
         return Err(PipelineError::UnsupportedContentType);
     };
 
-    let jwt_request_details = match &shared_state.jwt_auth_runtime {
-        Some(jwt_auth_runtime) => match jwt_auth_runtime
-            .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
+    // Let's claim and deduplicate the request from here
+
+    if shared_state
+        .router_config
+        .traffic_shaping
+        .router
+        .dedupe_enabled
+        && matches!(
+            normalize_payload.operation_for_plan.operation_kind,
+            Some(OperationKind::Query)
+        )
+    {
+        let schema_checksum = schema_state.current_schema_checksum();
+        let fingerprint = inbound_request_fingerprint(req, &body_for_dedupe, schema_checksum);
+        let cell = shared_state
+            .router_in_flight_requests
+            .entry(fingerprint)
+            .or_default()
+            .clone();
+
+        let pipeline_result = cell
+            .get_or_try_init(|| async {
+                let pipeline_result = execute_post_classification_pipeline(
+                    req,
+                    graphql_params,
+                    &normalize_payload,
+                    supergraph,
+                    shared_state,
+                    schema_state,
+                    operation_span,
+                    plugin_req_state,
+                    started_at,
+                    single_content_type,
+                    client_name,
+                    client_version,
+                )
+                .await;
+
+                shared_state.router_in_flight_requests.remove(&fingerprint);
+                pipeline_result
+            })
             .await?
-        {
-            Some(jwt_context) => JwtRequestDetails::Authenticated {
-                scopes: jwt_context.extract_scopes(),
-                claims: jwt_context.get_claims_value()?,
-                token: jwt_context.token_raw,
-                prefix: jwt_context.token_prefix,
-            },
-            None => JwtRequestDetails::Unauthenticated,
-        },
-        None => JwtRequestDetails::Unauthenticated,
-    };
+            .clone();
 
-    let variable_payload = coerce_request_variables(
-        supergraph,
-        &mut graphql_params.variables,
-        &normalize_payload,
-    )?;
-
-    let client_request_details = ClientRequestDetails {
-        method: req.method(),
-        url: req.uri(),
-        headers: req.headers(),
-        operation: OperationDetails {
-            name: normalize_payload.operation_for_plan.name.as_deref(),
-            kind: match normalize_payload.operation_for_plan.operation_kind {
-                Some(OperationKind::Query) => "query",
-                Some(OperationKind::Mutation) => "mutation",
-                Some(OperationKind::Subscription) => "subscription",
-                None => "query",
-            },
-            query: graphql_params.get_query()?,
-        },
-        jwt: jwt_request_details,
-    };
-
-    let pipeline_result = execute_pipeline(
-        &client_request_details,
-        &normalize_payload,
-        &variable_payload,
-        supergraph,
-        shared_state,
-        schema_state,
-        operation_span,
-        plugin_req_state,
-    )
-    .await?;
-
-    if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-        usage_reporting::collect_usage_report(
-            supergraph.supergraph_schema.clone(),
-            started_at.elapsed(),
+        Ok(pipeline_result)
+    } else {
+        execute_post_classification_pipeline(
+            req,
+            graphql_params,
+            &normalize_payload,
+            supergraph,
+            shared_state,
+            schema_state,
+            operation_span,
+            plugin_req_state,
+            started_at,
+            single_content_type,
             client_name,
             client_version,
-            &client_request_details,
-            hive_usage_agent,
-            shared_state
-                .router_config
-                .telemetry
-                .hive
-                .as_ref()
-                .map(|c| &c.usage_reporting)
-                .expect(
-                    // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
-                    // the UsageAgent is only created when usage reporting is enabled.
-                    // Thus, this expect should never panic.
-                    "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
-                ),
-            pipeline_result.error_count,
         )
-        .await;
+        .await
     }
-
-    let error_count = pipeline_result.error_count;
-    let mut response_builder = web::HttpResponse::Ok();
-
-    if let Some(response_headers_aggregator) = pipeline_result.response_headers_aggregator {
-        response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
-    }
-
-    let body = ntex::util::Bytes::from(pipeline_result.body);
-
-    let response = response_builder
-        .content_type(single_content_type.as_ref())
-        .status(pipeline_result.status_code)
-        .body(body.clone());
-
-    Ok(SharedRouterResponse {
-        body,
-        headers: Arc::new(response.headers().clone()),
-        status: response.status(),
-        error_count,
-    })
 }
 
 pub mod authorization;
@@ -400,55 +479,17 @@ pub async fn graphql_request_handler(
             });
         }
 
-        let body_for_dedupe = body_bytes.clone();
-
-        let shared_response = if shared_state
-            .router_config
-            .traffic_shaping
-            .router
-            .dedupe_enabled
-        {
-            let schema_checksum = schema_state.current_schema_checksum();
-            let fingerprint = inbound_request_fingerprint(req, &body_for_dedupe, schema_checksum);
-            let cell = shared_state
-                .router_in_flight_requests
-                .entry(fingerprint)
-                .or_default()
-                .clone();
-
-            // TODO: Restrict inbound dedupe by operation kind once policy is finalized.
-            let dedupe_body_bytes = body_bytes.clone();
-            cell.get_or_try_init(|| async {
-                let pipeline_result = execute_full_request_pipeline(
-                    req,
-                    dedupe_body_bytes,
-                    shared_state,
-                    schema_state,
-                    &operation_span,
-                    response_mode,
-                    &plugin_req_state,
-                    started_at,
-                )
-                .await;
-
-                shared_state.router_in_flight_requests.remove(&fingerprint);
-                pipeline_result
-            })
-            .await?
-            .clone()
-        } else {
-            execute_full_request_pipeline(
-                req,
-                body_bytes,
-                shared_state,
-                schema_state,
-                &operation_span,
-                response_mode,
-                &plugin_req_state,
-                started_at,
-            )
-            .await?
-        };
+        let shared_response = execute_full_request_pipeline(
+            req,
+            body_bytes,
+            shared_state,
+            schema_state,
+            &operation_span,
+            response_mode,
+            &plugin_req_state,
+            started_at,
+        )
+        .await?;
 
         let pipeline_error_count = shared_response.error_count;
         let response = response_from_shared(shared_response);
