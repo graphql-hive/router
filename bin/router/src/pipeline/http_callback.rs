@@ -1,6 +1,7 @@
 use bytes::Bytes as BytesLib;
+use dashmap::mapref::one::Ref;
 use hive_router_plan_executor::executors::http_callback::{
-    ActiveSubscriptionsMap, CallbackMessage, CALLBACK_PROTOCOL_VERSION,
+    ActiveSubscription, ActiveSubscriptionsMap, CallbackMessage, CALLBACK_PROTOCOL_VERSION,
     SUBSCRIPTION_PROTOCOL_HEADER,
 };
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
@@ -21,14 +22,25 @@ struct CallbackPayload<'a> {
     errors: Option<Vec<GraphQLError>>,
 }
 
-pub async fn handler(
-    req: HttpRequest,
-    path: Path<String>,
-    body: Bytes,
-    active_subscriptions: web::types::State<ActiveSubscriptionsMap>,
-) -> HttpResponse {
-    let subscription_id_from_path = path.into_inner();
+fn bad_request() -> HttpResponse {
+    HttpResponse::BadRequest()
+        .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+        .finish()
+}
 
+fn not_found() -> HttpResponse {
+    HttpResponse::NotFound()
+        .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+        .finish()
+}
+
+fn no_content() -> HttpResponse {
+    HttpResponse::NoContent()
+        .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
+        .finish()
+}
+
+fn validate_protocol(req: &HttpRequest) -> Result<(), HttpResponse> {
     let protocol_header = req
         .headers()
         .get(SUBSCRIPTION_PROTOCOL_HEADER)
@@ -39,29 +51,29 @@ pub async fn handler(
             "Invalid or missing {} header, expected {}",
             SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION
         );
-        return HttpResponse::BadRequest()
-            .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-            .finish();
+        return Err(bad_request());
     }
 
-    let payload: CallbackPayload<'_> = match serde_json::from_slice(&body) {
-        Ok(p) => p,
-        Err(e) => {
-            warn!("Failed to parse callback payload: {}", e);
-            return HttpResponse::BadRequest()
-                .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-                .finish();
-        }
-    };
+    Ok(())
+}
 
+fn parse_payload(body: &Bytes) -> Result<CallbackPayload<'_>, HttpResponse> {
+    serde_json::from_slice(body).map_err(|e| {
+        warn!("Failed to parse callback payload: {}", e);
+        bad_request()
+    })
+}
+
+fn validate_payload(
+    payload: &CallbackPayload<'_>,
+    subscription_id_from_path: &str,
+) -> Result<(), HttpResponse> {
     if payload.kind != "subscription" {
         warn!(
             "Invalid callback kind: {}, expected 'subscription'",
             payload.kind
         );
-        return HttpResponse::BadRequest()
-            .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-            .finish();
+        return Err(bad_request());
     }
 
     if payload.id != subscription_id_from_path {
@@ -69,9 +81,82 @@ pub async fn handler(
             "Subscription ID mismatch: path='{}', body='{}'",
             subscription_id_from_path, payload.id
         );
-        return HttpResponse::BadRequest()
-            .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-            .finish();
+        return Err(bad_request());
+    }
+
+    Ok(())
+}
+
+fn handle_check(subscription_id: &str, subscription: &Ref<'_, String, ActiveSubscription>) -> HttpResponse {
+    trace!(subscription_id = %subscription_id, "Received check message");
+    subscription.record_heartbeat();
+    no_content()
+}
+
+fn handle_next(
+    subscription_id: &str,
+    payload: &CallbackPayload<'_>,
+    subscription: Ref<'_, String, ActiveSubscription>,
+    active_subscriptions: &ActiveSubscriptionsMap,
+) -> HttpResponse {
+    trace!(subscription_id = %subscription_id, "Received next message");
+
+    let data = match payload.payload {
+        Some(p) => BytesLib::copy_from_slice(p.get().as_bytes()),
+        None => {
+            warn!(subscription_id = %subscription_id, "Missing payload in next message");
+            return bad_request();
+        }
+    };
+
+    if subscription
+        .sender
+        .send(CallbackMessage::Next { payload: data })
+        .is_err()
+    {
+        debug!(subscription_id = %subscription_id, "Subscription receiver dropped");
+        drop(subscription);
+        active_subscriptions.remove(subscription_id);
+        return not_found();
+    }
+
+    no_content()
+}
+
+fn handle_complete(
+    subscription_id: &str,
+    payload: &CallbackPayload<'_>,
+    subscription: Ref<'_, String, ActiveSubscription>,
+    active_subscriptions: &ActiveSubscriptionsMap,
+) -> HttpResponse {
+    trace!(subscription_id = %subscription_id, "Received complete message");
+    let _ = subscription.sender.send(CallbackMessage::Complete {
+        errors: payload.errors.clone(),
+    });
+    drop(subscription);
+    active_subscriptions.remove(subscription_id);
+    no_content()
+}
+
+pub async fn handler(
+    req: HttpRequest,
+    path: Path<String>,
+    body: Bytes,
+    active_subscriptions: web::types::State<ActiveSubscriptionsMap>,
+) -> HttpResponse {
+    let subscription_id_from_path = path.into_inner();
+
+    if let Err(response) = validate_protocol(&req) {
+        return response;
+    }
+
+    let payload = match parse_payload(&body) {
+        Ok(p) => p,
+        Err(response) => return response,
+    };
+
+    if let Err(response) = validate_payload(&payload, &subscription_id_from_path) {
+        return response;
     }
 
     let subscription = match active_subscriptions.get(&payload.id) {
@@ -81,86 +166,26 @@ pub async fn handler(
                 subscription_id = %payload.id,
                 "Subscription not found, may have been terminated"
             );
-            return HttpResponse::NotFound()
-                .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-                .finish();
+            return not_found();
         }
     };
 
     if subscription.verifier != payload.verifier {
-        warn!(
-            subscription_id = %payload.id,
-            "Invalid verifier for subscription"
-        );
-        return HttpResponse::BadRequest()
-            .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-            .finish();
+        warn!(subscription_id = %payload.id, "Invalid verifier for subscription");
+        return bad_request();
     }
 
     match payload.action.as_str() {
-        "check" => {
-            trace!(subscription_id = %payload.id, "Received check message");
-            subscription.record_heartbeat();
-            HttpResponse::NoContent()
-                .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-                .finish()
-        }
-        "next" => {
-            trace!(subscription_id = %payload.id, "Received next message");
-            let data = match payload.payload {
-                Some(p) => BytesLib::copy_from_slice(p.get().as_bytes()),
-                None => {
-                    warn!(
-                        subscription_id = %payload.id,
-                        "Missing payload in next message"
-                    );
-                    return HttpResponse::BadRequest()
-                        .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-                        .finish();
-                }
-            };
-
-            if subscription
-                .sender
-                .send(CallbackMessage::Next { payload: data })
-                .is_err()
-            {
-                debug!(
-                    subscription_id = %payload.id,
-                    "Subscription receiver dropped"
-                );
-                drop(subscription);
-                active_subscriptions.remove(&payload.id);
-                return HttpResponse::NotFound()
-                    .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-                    .finish();
-            }
-
-            HttpResponse::NoContent()
-                .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-                .finish()
-        }
-        "complete" => {
-            trace!(subscription_id = %payload.id, "Received complete message");
-            let _ = subscription.sender.send(CallbackMessage::Complete {
-                errors: payload.errors,
-            });
-            drop(subscription);
-            active_subscriptions.remove(&payload.id);
-
-            HttpResponse::NoContent()
-                .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-                .finish()
-        }
+        "check" => handle_check(&payload.id, &subscription),
+        "next" => handle_next(&payload.id, &payload, subscription, &active_subscriptions),
+        "complete" => handle_complete(&payload.id, &payload, subscription, &active_subscriptions),
         _ => {
             warn!(
                 subscription_id = %payload.id,
                 action = %payload.action,
                 "Unknown callback action"
             );
-            HttpResponse::BadRequest()
-                .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-                .finish()
+            bad_request()
         }
     }
 }
