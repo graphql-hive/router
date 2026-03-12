@@ -2281,7 +2281,7 @@ dependencies = [
  "moka",
  "recloser",
  "regex-automata",
- "regress",
+ "regress 0.11.0",
  "reqwest",
  "reqwest-middleware",
  "reqwest-retry 0.8.0",
@@ -5149,6 +5149,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "regress"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07948de9abc2e83adbeb7543c061a5ddaf7d944afcafbdd6e6b39aeacd40504b"
+dependencies = [
+ "hashbrown 0.16.1",
+ "memchr",
+]
+
+[[package]]
 name = "rend"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6020,7 +6030,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.116",
@@ -6833,7 +6843,7 @@ dependencies = [
  "log",
  "proc-macro2",
  "quote",
- "regress",
+ "regress 0.10.5",
  "schemars 0.8.22",
  "semver",
  "serde",
