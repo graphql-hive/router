@@ -443,11 +443,12 @@ impl PlanOptimizer<'_> {
         match node {
             PlanNode::Fetch(_) | PlanNode::BatchFetch(_) => Ok(node),
             PlanNode::Flatten(flatten_node) => {
-                assert!(
-                    matches!(flatten_node.node.as_ref(), PlanNode::Fetch(_)),
-                    "FlattenNode is expected to wrap a FetchNode, got {:?}",
-                    flatten_node.node.as_ref()
-                );
+                if !matches!(flatten_node.node.as_ref(), PlanNode::Fetch(_)) {
+                    return Err(QueryPlanError::Internal(format!(
+                        "FlattenNode is expected to wrap a FetchNode, got {:?}",
+                        flatten_node.node.as_ref()
+                    )));
+                }
 
                 Ok(PlanNode::Flatten(flatten_node))
             }
