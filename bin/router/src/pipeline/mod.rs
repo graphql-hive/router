@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     hash::{Hash, Hasher},
     sync::Arc,
     time::Instant,
@@ -60,12 +59,12 @@ fn inbound_request_fingerprint(
 ) -> u64 {
     let mut hasher = Xxh3::new();
 
-    let mut headers = BTreeMap::new();
-    for (header_name, header_value) in req.headers().iter() {
-        if let Ok(value_str) = header_value.to_str() {
-            headers.insert(header_name.as_str(), value_str);
-        }
-    }
+    let mut headers: Vec<(&str, &str)> = req
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| value.to_str().ok().map(|v_str| (name.as_str(), v_str)))
+        .collect();
+    headers.sort_unstable_by_key(|(k, _)| *k);
 
     req.method().hash(&mut hasher);
     req.path().hash(&mut hasher);
