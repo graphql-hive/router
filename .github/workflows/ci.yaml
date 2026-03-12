@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
-      - uses: Swatinem/rust-cache@c676846f29d98ff6b0106d3608c7ffd4048af17b # v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: test plugin examples
