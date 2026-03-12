@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod entity_batching_e2e_tests {
     use std::collections::BTreeMap;
-    use std::time::Duration;
 
     use sonic_rs::JsonValueTrait;
 
@@ -26,7 +25,6 @@ mod entity_batching_e2e_tests {
             .build()
             .start()
             .await;
-
 
         let res = router
             .send_graphql_request(include_str!("../../bench/operation.graphql"), None, None)
