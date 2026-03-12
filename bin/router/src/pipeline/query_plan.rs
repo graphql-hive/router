@@ -44,12 +44,12 @@ pub async fn plan_operation_with_cache(
 
     async {
         let mut on_end_callbacks = vec![];
-        let filtered_operation_for_plan = &normalized_operation.operation_for_plan;
+        let mut filtered_operation_for_plan = normalized_operation.operation_for_plan.as_ref();
         if let Some(plugin_req_state) = plugin_req_state {
             let mut start_payload = OnQueryPlanStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
-                filtered_operation_for_plan: &normalized_operation.operation_for_plan,
+                filtered_operation_for_plan,
                 cancellation_token,
                 planner: &supergraph.planner,
             };
@@ -69,6 +69,8 @@ pub async fn plan_operation_with_cache(
                     }
                 }
             }
+
+            filtered_operation_for_plan = start_payload.filtered_operation_for_plan;
         };
 
         let metrics = &schema_state.telemetry_context.metrics;
@@ -76,8 +78,15 @@ pub async fn plan_operation_with_cache(
 
         let stable_override_context =
             StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
-        let plan_cache_key =
-            calculate_cache_key(filtered_operation_for_plan.hash(), &stable_override_context);
+        let operation_for_plan_hash = if std::ptr::eq(
+            filtered_operation_for_plan,
+            normalized_operation.operation_for_plan.as_ref(),
+        ) {
+            normalized_operation.operation_for_plan_hash
+        } else {
+            filtered_operation_for_plan.hash()
+        };
+        let plan_cache_key = calculate_cache_key(operation_for_plan_hash, &stable_override_context);
         let is_plan_operation_empty = filtered_operation_for_plan.selection_set.is_empty();
         let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
         let contains_introspection = normalized_operation.operation_for_introspection.is_some();

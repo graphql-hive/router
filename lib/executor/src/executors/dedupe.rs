@@ -1,7 +1,6 @@
-use ahash::AHasher;
 use ahash::RandomState;
 use std::collections::BTreeMap;
-use std::hash::{BuildHasherDefault, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use xxhash_rust::xxh3::Xxh3;
@@ -33,8 +32,6 @@ impl SendRequestOpts<'_> {
         hasher.finish()
     }
 }
-
-pub type ABuildHasher = BuildHasherDefault<AHasher>;
 
 static LEADER_COUNTER: AtomicU64 = AtomicU64::new(1);
 static LEADER_SALT: OnceLock<u64> = OnceLock::new();
