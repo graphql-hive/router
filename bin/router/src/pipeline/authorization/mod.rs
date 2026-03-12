@@ -25,7 +25,9 @@ use crate::pipeline::authorization::rebuilder::{
 use crate::pipeline::authorization::tree::UnauthorizedPathTrie;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::normalize::GraphQLNormalizationPayload;
+use crate::pipeline::normalize::{
+    precompute_normalized_operation_hashes, GraphQLNormalizationPayload,
+};
 
 use hive_router_config::authorization::UnauthorizedMode;
 use hive_router_config::HiveRouterConfig;
@@ -117,13 +119,25 @@ pub fn enforce_operation_authorization(
             new_projection_plan,
             errors,
         } => {
+            let (
+                operation_for_plan_hash,
+                operation_for_introspection_hash,
+                normalized_operation_hash,
+            ) = precompute_normalized_operation_hashes(
+                &new_operation_definition,
+                normalized_payload.operation_for_introspection.as_deref(),
+            );
+
             (
                 Arc::new(GraphQLNormalizationPayload {
                     operation_for_plan: Arc::new(new_operation_definition),
+                    operation_for_plan_hash,
                     // These are cheap Arc clones
                     operation_for_introspection: normalized_payload
                         .operation_for_introspection
                         .clone(),
+                    operation_for_introspection_hash,
+                    normalized_operation_hash,
                     root_type_name: normalized_payload.root_type_name,
                     projection_plan: Arc::new(new_projection_plan),
                     operation_indentity: normalized_payload.operation_indentity.clone(),

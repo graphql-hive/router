@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     hash::{Hash, Hasher},
     sync::Arc,
     time::Instant,
@@ -23,6 +24,7 @@ use hive_router_query_planner::{
 };
 use http::{header::CONTENT_TYPE, Method};
 use ntex::web::{self, HttpRequest};
+use sonic_rs::{JsonContainerTrait, JsonType, JsonValueTrait, Value};
 
 use crate::{
     pipeline::{
@@ -134,8 +136,6 @@ pub async fn graphql_request_handler(
                 context: plugin_context.clone(),
             });
         }
-
-        let body_for_dedupe = body_bytes.clone();
 
         let deserialization_result =
             deserialize_graphql_params(req, body_bytes, &plugin_req_state).await?;
@@ -253,8 +253,14 @@ pub async fn graphql_request_handler(
                 normalize_payload.operation_for_plan.operation_kind,
                 Some(OperationKind::Query)
             ) {
+            let variables_hash = hash_graphql_variables(&graphql_params.variables);
             let schema_checksum = schema_state.current_schema_checksum();
-            let fingerprint = inbound_request_fingerprint(req, &body_for_dedupe, schema_checksum);
+            let fingerprint = inbound_request_fingerprint(
+                req,
+                schema_checksum,
+                normalize_payload.normalized_operation_hash,
+                variables_hash,
+            );
             let cell = shared_state
                 .router_in_flight_requests
                 .entry(fingerprint)
@@ -496,8 +502,9 @@ pub async fn execute_pipeline<'exec>(
 
 fn inbound_request_fingerprint(
     req: &HttpRequest,
-    body: &ntex::util::Bytes,
     schema_checksum: u64,
+    normalized_operation_hash: u64,
+    variables_hash: u64,
 ) -> u64 {
     let mut hasher = Xxh3::new();
 
@@ -511,8 +518,73 @@ fn inbound_request_fingerprint(
     req.method().hash(&mut hasher);
     req.path().hash(&mut hasher);
     headers.hash(&mut hasher);
-    body.hash(&mut hasher);
     schema_checksum.hash(&mut hasher);
+    normalized_operation_hash.hash(&mut hasher);
+    variables_hash.hash(&mut hasher);
 
     hasher.finish()
+}
+
+fn hash_graphql_variables(variables: &HashMap<String, Value>) -> u64 {
+    let mut hasher = Xxh3::new();
+
+    let mut keys: Vec<&str> = variables.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+
+    keys.len().hash(&mut hasher);
+    for key in keys {
+        key.hash(&mut hasher);
+        if let Some(value) = variables.get(key) {
+            hash_graphql_value(value, &mut hasher);
+        }
+    }
+
+    hasher.finish()
+}
+
+fn hash_graphql_value(value: &Value, hasher: &mut Xxh3) {
+    match value.get_type() {
+        JsonType::Null => 0u8.hash(hasher),
+        JsonType::Boolean => {
+            1u8.hash(hasher);
+            value.as_bool().unwrap_or(false).hash(hasher);
+        }
+        JsonType::Number => {
+            2u8.hash(hasher);
+            if let Some(number) = value.as_i64() {
+                0u8.hash(hasher);
+                number.hash(hasher);
+            } else if let Some(number) = value.as_u64() {
+                1u8.hash(hasher);
+                number.hash(hasher);
+            } else if let Some(number) = value.as_f64() {
+                2u8.hash(hasher);
+                number.to_bits().hash(hasher);
+            }
+        }
+        JsonType::String => {
+            3u8.hash(hasher);
+            value.as_str().unwrap_or_default().hash(hasher);
+        }
+        JsonType::Object => {
+            4u8.hash(hasher);
+            if let Some(object) = value.as_object() {
+                object.len().hash(hasher);
+                for (key, nested_value) in object.iter() {
+                    key.hash(hasher);
+                    hash_graphql_value(nested_value, hasher);
+                }
+            }
+        }
+        JsonType::Array => {
+            5u8.hash(hasher);
+            if let Some(array) = value.as_array() {
+                let slice = array.as_slice();
+                slice.len().hash(hasher);
+                for item in slice {
+                    hash_graphql_value(item, hasher);
+                }
+            }
+        }
+    }
 }
