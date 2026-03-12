@@ -3,15 +3,19 @@ use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
+use hive_router_internal::inflight::InFlightMap;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
 use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
+use http::{header::HeaderName, StatusCode};
 use moka::future::Cache;
 use moka::Expiry;
-use std::sync::Arc;
+use ntex::web;
+use ntex::{http::HeaderMap, util::Bytes};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{collections::HashSet, sync::Arc};
 
 use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
@@ -22,6 +26,66 @@ use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
+pub type RouterInflightRequestsMap = InFlightMap<u64, SharedRouterResponse>;
+
+#[derive(Clone)]
+pub enum RouterRequestDedupeHeaderPolicy {
+    All,
+    None,
+    Include(HashSet<String>),
+}
+
+impl RouterRequestDedupeHeaderPolicy {
+    #[inline]
+    pub fn should_include(&self, header_name: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::None => false,
+            Self::Include(allowed_headers) => allowed_headers.contains(header_name),
+        }
+    }
+
+    pub fn from_config(headers: Option<&Vec<String>>) -> Result<Self, SharedStateError> {
+        match headers {
+            None => Ok(Self::All),
+            Some(headers) if headers.is_empty() => Ok(Self::None),
+            Some(headers) => {
+                let mut dedupe_headers = HashSet::with_capacity(headers.len());
+                for header in headers {
+                    let normalized = HeaderName::from_bytes(header.as_bytes()).map_err(|err| {
+                        SharedStateError::InvalidDedupeHeaderName {
+                            header: header.clone(),
+                            error: err.to_string(),
+                        }
+                    })?;
+                    dedupe_headers.insert(normalized.as_str().to_owned());
+                }
+                Ok(Self::Include(dedupe_headers))
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SharedRouterResponse {
+    pub body: Bytes,
+    pub headers: Arc<HeaderMap>,
+    pub status: StatusCode,
+    pub error_count: usize,
+}
+
+impl From<SharedRouterResponse> for web::HttpResponse {
+    fn from(shared_response: SharedRouterResponse) -> Self {
+        let mut response = web::HttpResponse::Ok();
+        response.status(shared_response.status);
+
+        for (header_name, header_value) in shared_response.headers.iter() {
+            response.set_header(header_name, header_value);
+        }
+
+        response.body(shared_response.body)
+    }
+}
 
 /// Default TTL for JWT claims cache entries (5 seconds)
 const DEFAULT_JWT_CACHE_TTL_SECS: u64 = 5;
@@ -79,6 +143,8 @@ pub struct RouterSharedState {
     pub introspection_policy: BooleanOrProgram,
     pub telemetry_context: Arc<TelemetryContext>,
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
+    pub in_flight_requests: RouterInflightRequestsMap,
+    pub in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy,
 }
 
 impl RouterSharedState {
@@ -114,6 +180,10 @@ impl RouterSharedState {
                 .map_err(Box::new)?,
             telemetry_context,
             plugins,
+            in_flight_requests: InFlightMap::default(),
+            in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy::from_config(
+                router_config.traffic_shaping.router.dedupe.headers.as_ref(),
+            )?,
         })
     }
 }
@@ -130,4 +200,27 @@ pub enum SharedStateError {
     UsageAgent(#[from] Box<AgentError>),
     #[error("invalid introspection config: {0}")]
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
+    #[error("invalid router dedupe header name '{header}': {error}")]
+    InvalidDedupeHeaderName { header: String, error: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RouterRequestDedupeHeaderPolicy;
+
+    #[test]
+    fn should_reject_invalid_router_dedupe_header_name() {
+        let headers = vec!["Invalid Header".to_string()];
+        let result = RouterRequestDedupeHeaderPolicy::from_config(Some(&headers));
+
+        assert!(result.is_err(), "expected invalid header policy to fail");
+        let error = match result {
+            Ok(_) => panic!("expected invalid header policy to fail"),
+            Err(err) => err.to_string(),
+        };
+        assert!(
+            error.contains("invalid router dedupe header name"),
+            "unexpected error: {error}"
+        );
+    }
 }
