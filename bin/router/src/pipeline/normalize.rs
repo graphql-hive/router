@@ -8,7 +8,6 @@ use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
-use hive_router_query_planner::ast::normalization::error::NormalizationError;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
 use xxhash_rust::xxh3::Xxh3;
@@ -68,10 +67,10 @@ pub async fn normalize_request_with_cache(
             None => parser_payload.cache_key,
         };
 
-        schema_state
+        Ok(schema_state
             .normalize_cache
             .entry(cache_key)
-            .or_try_insert_with::<_, NormalizationError>(async {
+            .or_try_insert_with(async {
                 let doc = normalize_operation(
                     &supergraph.planner.supergraph,
                     &parser_payload.parsed_operation,
@@ -106,7 +105,6 @@ pub async fn normalize_request_with_cache(
                 Ok(Arc::new(payload))
             })
             .await
-            .map_err(PipelineError::from)
             .into_result_with_hit_miss(|hit_miss| match hit_miss {
                 CacheHitMiss::Hit => {
                     normalize_span.record_cache_hit(true);
@@ -116,7 +114,7 @@ pub async fn normalize_request_with_cache(
                     normalize_span.record_cache_hit(false);
                     normalize_cache_capture.finish_miss();
                 }
-            })
+            })?)
     }
     .instrument(normalize_span.clone())
     .await
