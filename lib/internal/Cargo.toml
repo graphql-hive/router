@@ -33,6 +33,7 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
 ahash = { workspace = true }
+dashmap = { workspace = true }
 tokio-stream = "0.1.18"
 
 # telemetry

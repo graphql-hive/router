@@ -2382,6 +2382,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "criterion",
+ "dashmap",
  "futures",
  "hive-router-config",
  "http",
