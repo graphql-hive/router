@@ -1,9 +1,32 @@
 #[cfg(test)]
 mod http_tests {
+    use std::{
+        thread::sleep,
+        time::{Duration, Instant},
+    };
+
+    use futures::{stream::FuturesUnordered, StreamExt};
     use hive_router::pipeline::execution::EXPOSE_QUERY_PLAN_HEADER;
+    use mockito::Mock;
+    use ntex::time;
     use sonic_rs::JsonValueTrait;
 
     use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
+
+    async fn wait_until_mock_matched(mock: &Mock, timeout: Duration) -> Result<(), String> {
+        let started = Instant::now();
+        loop {
+            if mock.matched_async().await {
+                return Ok(());
+            }
+
+            time::sleep(Duration::from_millis(10)).await;
+
+            if started.elapsed() > timeout {
+                return Err(format!("timeout after {:?}", started.elapsed()));
+            }
+        }
+    }
 
     #[ntex::test]
     async fn should_allow_to_customize_graphql_endpoint() {
@@ -203,6 +226,249 @@ mod http_tests {
         assert!(
             subgraphs.get_requests_log("products").is_none(),
             "expected no requests to products subgraph"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_dedupe_inflight_router_requests_by_default() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                if request.path == "/products" {
+                    sleep(Duration::from_millis(300));
+                }
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let request_count = 12;
+        let mut requests = FuturesUnordered::new();
+
+        for _ in 0..request_count {
+            requests.push(router.send_graphql_request(
+                r#"
+                {
+                    topProducts {
+                        name
+                        price
+                    }
+                }
+                "#,
+                None,
+                None,
+            ));
+        }
+
+        while let Some(response) = requests.next().await {
+            assert!(response.status().is_success(), "Expected 200 OK");
+            let json_body = response.json_body().await;
+            assert!(json_body["data"]["topProducts"].is_array());
+            assert!(json_body["errors"].is_null());
+        }
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert!(
+            products_requests < request_count,
+            "expected fewer products subgraph requests than incoming requests with router inflight dedupe; got {products_requests} for {request_count} incoming requests"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_not_dedupe_inflight_router_requests_when_disabled() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                if request.path == "/products" {
+                    sleep(Duration::from_millis(300));
+                }
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                    router:
+                        dedupe_enabled: false
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let request_count = 12;
+        let mut requests = FuturesUnordered::new();
+
+        for _ in 0..request_count {
+            requests.push(router.send_graphql_request(
+                r#"
+                {
+                    topProducts {
+                        name
+                        price
+                    }
+                }
+                "#,
+                None,
+                None,
+            ));
+        }
+
+        while let Some(response) = requests.next().await {
+            assert!(response.status().is_success(), "Expected 200 OK");
+            let json_body = response.json_body().await;
+            assert!(json_body["data"]["topProducts"].is_array());
+            assert!(json_body["errors"].is_null());
+        }
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert!(
+            products_requests >= request_count,
+            "expected at least one products subgraph request per incoming request when router inflight dedupe is disabled; got {products_requests} for {request_count} incoming requests"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_not_share_inflight_dedupe_entry_across_schema_reload() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                if request.path == "/products" {
+                    sleep(Duration::from_millis(1500));
+                }
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let initial_supergraph = subgraphs.supergraph(include_str!("../supergraph.graphql"));
+        let changed_supergraph = initial_supergraph.replacen("first: Int = 5", "first: Int = 6", 1);
+        assert_ne!(initial_supergraph, changed_supergraph);
+
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let mock_initial = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_header("etag", "v1")
+            .with_body(initial_supergraph)
+            .create();
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: hive
+                    endpoint: http://{host}/supergraph
+                    key: dummy_key
+                    poll_interval: 100ms
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            {
+                topProducts {
+                    name
+                    price
+                }
+            }
+        "#;
+
+        let first_request = async { router.send_graphql_request(query, None, None).await };
+        let second_request = async {
+            let started = Instant::now();
+            while subgraphs
+                .get_requests_log("products")
+                .unwrap_or_default()
+                .is_empty()
+            {
+                assert!(
+                    started.elapsed() < Duration::from_secs(3),
+                    "first request did not reach products subgraph in time"
+                );
+                time::sleep(Duration::from_millis(25)).await;
+            }
+
+            mock_initial.remove();
+
+            let mock_changed = server
+                .mock("GET", "/supergraph")
+                .expect_at_least(1)
+                .with_status(200)
+                .with_header("content-type", "text/plain")
+                .with_header("etag", "v2")
+                .with_body(changed_supergraph)
+                .create();
+
+            wait_until_mock_matched(&mock_changed, Duration::from_secs(2))
+                .await
+                .expect("expected schema reload poll to fetch changed supergraph");
+
+            router.send_graphql_request(query, None, None).await
+        };
+
+        let (first_response, second_response) = futures::join!(first_request, second_request);
+
+        assert!(
+            first_response.status().is_success(),
+            "expected first request 200 OK"
+        );
+        assert!(
+            second_response.status().is_success(),
+            "expected second request 200 OK"
+        );
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert!(
+            products_requests >= 2,
+            "expected at least two products subgraph requests across schema reload to avoid sharing old in-flight dedupe entry; got {products_requests}"
         );
     }
 }

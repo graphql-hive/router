@@ -1,5 +1,11 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    collections::BTreeMap,
+    hash::{Hash, Hasher},
+    sync::Arc,
+    time::Instant,
+};
 use tracing::{error, Instrument};
+use xxhash_rust::xxh3::Xxh3;
 
 use hive_router_internal::telemetry::traces::spans::{
     graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
@@ -16,6 +22,7 @@ use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
 use http::{header::CONTENT_TYPE, Method};
+use ntex::http::body::{Body, ResponseBody};
 use ntex::web::{self, HttpRequest};
 
 use crate::{
@@ -40,11 +47,275 @@ use crate::{
         validation::validate_operation_with_cache,
     },
     schema_state::SchemaState,
-    shared_state::RouterSharedState,
+    shared_state::{RouterSharedState, SharedRouterResponse},
     GRAPHIQL_HTML,
 };
 
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
+
+fn inbound_request_fingerprint(
+    req: &HttpRequest,
+    body: &ntex::util::Bytes,
+    schema_checksum: u64,
+) -> u64 {
+    let mut hasher = Xxh3::new();
+
+    let mut headers = BTreeMap::new();
+    for (header_name, header_value) in req.headers().iter() {
+        if let Ok(value_str) = header_value.to_str() {
+            headers.insert(header_name.as_str(), value_str);
+        }
+    }
+
+    req.method().hash(&mut hasher);
+    req.path().hash(&mut hasher);
+    headers.hash(&mut hasher);
+    body.hash(&mut hasher);
+    schema_checksum.hash(&mut hasher);
+
+    hasher.finish()
+}
+
+fn response_from_shared(shared_response: SharedRouterResponse) -> web::HttpResponse {
+    let mut response = web::HttpResponse::Ok();
+    response.status(shared_response.status);
+
+    for (header_name, header_value) in shared_response.headers.iter() {
+        response.set_header(header_name, header_value);
+    }
+
+    response.body(shared_response.body)
+}
+
+fn shared_response_from_http_response(
+    response: web::HttpResponse,
+    error_count: usize,
+) -> SharedRouterResponse {
+    let (response_head, response_body) = response.into_parts();
+    let body = match response_body {
+        ResponseBody::Body(body) | ResponseBody::Other(body) => match body {
+            Body::None | Body::Empty | Body::Message(_) => ntex::util::Bytes::new(),
+            Body::Bytes(bytes) => bytes,
+        },
+    };
+
+    SharedRouterResponse {
+        body,
+        headers: Arc::new(response_head.headers().clone()),
+        status: response_head.status(),
+        error_count,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_full_request_pipeline<'exec>(
+    req: &'exec HttpRequest,
+    body_bytes: ntex::util::Bytes,
+    shared_state: &'exec Arc<RouterSharedState>,
+    schema_state: &'exec Arc<SchemaState>,
+    operation_span: &'exec GraphQLOperationSpan,
+    response_mode: &'exec ResponseMode,
+    plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
+    started_at: Instant,
+) -> Result<SharedRouterResponse, PipelineError> {
+    let deserialization_result =
+        deserialize_graphql_params(req, body_bytes, plugin_req_state).await?;
+
+    let mut graphql_params = match deserialization_result {
+        DeserializationResult::GraphQLParams(params) => params,
+        DeserializationResult::EarlyResponse(response) => {
+            return Ok(shared_response_from_http_response(response, 0));
+        }
+    };
+
+    write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
+
+    let client_name = req
+        .headers()
+        .get(
+            &shared_state
+                .router_config
+                .telemetry
+                .client_identification
+                .name_header,
+        )
+        .and_then(|v| v.to_str().ok());
+    let client_version = req
+        .headers()
+        .get(
+            &shared_state
+                .router_config
+                .telemetry
+                .client_identification
+                .version_header,
+        )
+        .and_then(|v| v.to_str().ok());
+
+    let parser_result =
+        parse_operation_with_cache(shared_state, &graphql_params, plugin_req_state).await?;
+
+    let parser_payload = match parser_result {
+        ParseResult::Payload(payload) => payload,
+        ParseResult::EarlyResponse(response) => {
+            return Ok(shared_response_from_http_response(response, 0));
+        }
+    };
+
+    operation_span.record_details(
+        &parser_payload.minified_document,
+        (&parser_payload).into(),
+        client_name,
+        client_version,
+        &parser_payload.hive_operation_hash,
+    );
+
+    let Some(ref supergraph) = **schema_state.current_supergraph() else {
+        return Err(PipelineError::NoSupergraphAvailable);
+    };
+
+    if let Some(response) = validate_operation_with_cache(
+        supergraph,
+        schema_state,
+        shared_state,
+        &parser_payload,
+        plugin_req_state,
+    )
+    .await?
+    {
+        return Ok(shared_response_from_http_response(response, 0));
+    }
+
+    let normalize_payload =
+        normalize_request_with_cache(supergraph, schema_state, &graphql_params, &parser_payload)
+            .await?;
+
+    write_graphql_operation_metric_identity(
+        req,
+        normalize_payload.operation_indentity.name.clone(),
+        Some(normalize_payload.operation_indentity.operation_type),
+    );
+
+    if req.method() == Method::GET {
+        if let Some(OperationKind::Mutation) = normalize_payload.operation_for_plan.operation_kind {
+            error!("Mutation is not allowed over GET, stopping");
+            return Err(PipelineError::MutationNotAllowedOverHttpGet);
+        }
+    }
+
+    let is_subscription = matches!(
+        normalize_payload.operation_for_plan.operation_kind,
+        Some(OperationKind::Subscription)
+    );
+
+    if is_subscription
+    // coming soon
+    // && !response_mode.can_stream()
+    {
+        return Err(PipelineError::SubscriptionsNotSupported);
+    }
+
+    let Some(single_content_type) = response_mode.single_content_type() else {
+        // streaming responses coming soon
+        return Err(PipelineError::UnsupportedContentType);
+    };
+
+    let jwt_request_details = match &shared_state.jwt_auth_runtime {
+        Some(jwt_auth_runtime) => match jwt_auth_runtime
+            .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
+            .await?
+        {
+            Some(jwt_context) => JwtRequestDetails::Authenticated {
+                scopes: jwt_context.extract_scopes(),
+                claims: jwt_context.get_claims_value()?,
+                token: jwt_context.token_raw,
+                prefix: jwt_context.token_prefix,
+            },
+            None => JwtRequestDetails::Unauthenticated,
+        },
+        None => JwtRequestDetails::Unauthenticated,
+    };
+
+    let variable_payload = coerce_request_variables(
+        supergraph,
+        &mut graphql_params.variables,
+        &normalize_payload,
+    )?;
+
+    let client_request_details = ClientRequestDetails {
+        method: req.method(),
+        url: req.uri(),
+        headers: req.headers(),
+        operation: OperationDetails {
+            name: normalize_payload.operation_for_plan.name.as_deref(),
+            kind: match normalize_payload.operation_for_plan.operation_kind {
+                Some(OperationKind::Query) => "query",
+                Some(OperationKind::Mutation) => "mutation",
+                Some(OperationKind::Subscription) => "subscription",
+                None => "query",
+            },
+            query: graphql_params.get_query()?,
+        },
+        jwt: jwt_request_details,
+    };
+
+    let pipeline_result = execute_pipeline(
+        &client_request_details,
+        &normalize_payload,
+        &variable_payload,
+        supergraph,
+        shared_state,
+        schema_state,
+        operation_span,
+        plugin_req_state,
+    )
+    .await?;
+
+    if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+        usage_reporting::collect_usage_report(
+            supergraph.supergraph_schema.clone(),
+            started_at.elapsed(),
+            client_name,
+            client_version,
+            &client_request_details,
+            hive_usage_agent,
+            shared_state
+                .router_config
+                .telemetry
+                .hive
+                .as_ref()
+                .map(|c| &c.usage_reporting)
+                .expect(
+                    // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
+                    // the UsageAgent is only created when usage reporting is enabled.
+                    // Thus, this expect should never panic.
+                    "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
+                ),
+            pipeline_result.error_count,
+        )
+        .await;
+    }
+
+    let error_count = pipeline_result.error_count;
+    let mut response_builder = web::HttpResponse::Ok();
+
+    if let Some(response_headers_aggregator) = pipeline_result.response_headers_aggregator {
+        response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
+    }
+
+    let body = ntex::util::Bytes::from(pipeline_result.body);
+
+    let response = response_builder
+        .content_type(single_content_type.as_ref())
+        .status(pipeline_result.status_code)
+        .body(body.clone());
+
+    Ok(SharedRouterResponse {
+        body,
+        headers: Arc::new(response.headers().clone()),
+        status: response.status(),
+        error_count,
+    })
+}
 
 pub mod authorization;
 pub mod body_read;
@@ -129,210 +400,74 @@ pub async fn graphql_request_handler(
             });
         }
 
-        let deserialization_result =
-            deserialize_graphql_params(req, body_bytes, &plugin_req_state).await?;
+        let body_for_dedupe = body_bytes.clone();
 
-        let mut graphql_params = match deserialization_result {
-            DeserializationResult::GraphQLParams(params) => params,
-            DeserializationResult::EarlyResponse(response) => {
-                return Ok(response);
-            }
-        };
-
-        write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
-
-        let client_name = req
-            .headers()
-            .get(
-                &shared_state
-                    .router_config
-                    .telemetry
-                    .client_identification
-                    .name_header,
-            )
-            .and_then(|v| v.to_str().ok());
-        let client_version = req
-            .headers()
-            .get(
-                &shared_state
-                    .router_config
-                    .telemetry
-                    .client_identification
-                    .version_header,
-            )
-            .and_then(|v| v.to_str().ok());
-
-        let parser_result =
-            parse_operation_with_cache(shared_state, &graphql_params, &plugin_req_state).await?;
-
-        let parser_payload = match parser_result {
-            ParseResult::Payload(payload) => payload,
-            ParseResult::EarlyResponse(response) => {
-                return Ok(response);
-            }
-        };
-
-        operation_span.record_details(
-            &parser_payload.minified_document,
-            (&parser_payload).into(),
-            client_name,
-            client_version,
-            &parser_payload.hive_operation_hash,
-        );
-
-        let Some(ref supergraph) = **schema_state.current_supergraph() else {
-            return Err(PipelineError::NoSupergraphAvailable);
-        };
-
-        if let Some(response) = validate_operation_with_cache(
-            supergraph,
-            schema_state,
-            shared_state,
-            &parser_payload,
-            &plugin_req_state,
-        )
-        .await?
+        let shared_response = if shared_state
+            .router_config
+            .traffic_shaping
+            .router
+            .dedupe_enabled
         {
-            return Ok(response);
-        }
+            let schema_checksum = schema_state.current_schema_checksum();
+            let fingerprint = inbound_request_fingerprint(req, &body_for_dedupe, schema_checksum);
+            let cell = shared_state
+                .router_in_flight_requests
+                .entry(fingerprint)
+                .or_default()
+                .clone();
 
-        let normalize_payload = normalize_request_with_cache(
-            supergraph,
-            schema_state,
-            &graphql_params,
-            &parser_payload,
-        )
-        .await?;
-
-        write_graphql_operation_metric_identity(
+            // TODO: Restrict inbound dedupe by operation kind once policy is finalized.
+            let dedupe_body_bytes = body_bytes.clone();
+            cell.get_or_try_init(|| async {
+                let pipeline_result = execute_full_request_pipeline(
                     req,
-                    normalize_payload.operation_indentity.name.clone(),
-                    Some(normalize_payload.operation_indentity.operation_type),
-                );
+                    dedupe_body_bytes,
+                    shared_state,
+                    schema_state,
+                    &operation_span,
+                    response_mode,
+                    &plugin_req_state,
+                    started_at,
+                )
+                .await;
 
-        if req.method() == Method::GET {
-            if let Some(OperationKind::Mutation) =
-                normalize_payload.operation_for_plan.operation_kind
-            {
-                error!("Mutation is not allowed over GET, stopping");
-                return Err(PipelineError::MutationNotAllowedOverHttpGet);
-            }
-        }
+                shared_state.router_in_flight_requests.remove(&fingerprint);
+                pipeline_result
+            })
+            .await?
+            .clone()
+        } else {
+            execute_full_request_pipeline(
+                req,
+                body_bytes,
+                shared_state,
+                schema_state,
+                &operation_span,
+                response_mode,
+                &plugin_req_state,
+                started_at,
+            )
+            .await?
+        };
 
-        let is_subscription = matches!(
-            normalize_payload.operation_for_plan.operation_kind,
-            Some(OperationKind::Subscription)
+        let pipeline_error_count = shared_response.error_count;
+        let response = response_from_shared(shared_response);
+
+        write_graphql_response_metric_status(
+            req,
+            if pipeline_error_count > 0 {
+                GraphQLResponseStatus::Error
+            } else {
+                GraphQLResponseStatus::Ok
+            },
         );
 
-        if is_subscription
-        // coming soon
-        // && !response_mode.can_stream()
-        {
-            return Err(PipelineError::SubscriptionsNotSupported);
-        }
-
-        let Some(single_content_type) = response_mode.single_content_type() else {
-            // streaming responses coming soon
-            return Err(PipelineError::UnsupportedContentType);
-        };
-
-        let jwt_request_details = match &shared_state.jwt_auth_runtime {
-            Some(jwt_auth_runtime) => match jwt_auth_runtime
-                .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
-                .await?
-            {
-                Some(jwt_context) => JwtRequestDetails::Authenticated {
-                    scopes: jwt_context.extract_scopes(),
-                    claims: jwt_context.get_claims_value()?,
-                    token: jwt_context.token_raw,
-                    prefix: jwt_context.token_prefix,
-                },
-                None => JwtRequestDetails::Unauthenticated,
-            },
-            None => JwtRequestDetails::Unauthenticated,
-        };
-
-        let variable_payload = coerce_request_variables(
-            supergraph,
-            &mut graphql_params.variables,
-            &normalize_payload,
-        )?;
-
-        let client_request_details = ClientRequestDetails {
-            method: req.method(),
-            url: req.uri(),
-            headers: req.headers(),
-            operation: OperationDetails {
-                name: normalize_payload.operation_for_plan.name.as_deref(),
-                kind: match normalize_payload.operation_for_plan.operation_kind {
-                    Some(OperationKind::Query) => "query",
-                    Some(OperationKind::Mutation) => "mutation",
-                    Some(OperationKind::Subscription) => "subscription",
-                    None => "query",
-                },
-                query: graphql_params.get_query()?,
-            },
-            jwt: jwt_request_details,
-        };
-
-        let pipeline_result  = execute_pipeline(
-            &client_request_details,
-            &normalize_payload,
-            &variable_payload,
-            supergraph,
-            shared_state,
-            schema_state,
-            &operation_span,
-            &plugin_req_state,
-        )
-        .await?;
-
-        write_graphql_response_metric_status(req, if pipeline_result.error_count > 0 {
-                    GraphQLResponseStatus::Error
-                } else {
-                    GraphQLResponseStatus::Ok
-                });
-
-        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-                    usage_reporting::collect_usage_report(
-                        supergraph.supergraph_schema.clone(),
-                        started_at.elapsed(),
-                        client_name,
-                        client_version,
-                        &client_request_details,
-                        hive_usage_agent,
-                        shared_state
-                                            .router_config
-                                            .telemetry
-                                            .hive
-                                            .as_ref()
-                                            .map(|c| &c.usage_reporting)
-                                            .expect(
-                                                // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
-                                                // the UsageAgent is only created when usage reporting is enabled.
-                                                // Thus, this expect should never panic.
-                                                "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
-                                            ),
-                        pipeline_result.error_count,
-                    )
-                    .await;
-                }
-
-        let mut response_builder = web::HttpResponse::Ok();
-
-        if let Some(response_headers_aggregator) = pipeline_result.response_headers_aggregator {
-            response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
-        }
-
-        Ok(response_builder
-            .content_type(single_content_type.as_ref())
-            .status(pipeline_result.status_code)
-            .body(pipeline_result.body))
+        Ok(response)
     }
     .instrument(operation_span.clone())
     .await
     .inspect_err(|_| {
-      write_graphql_response_metric_status(req, GraphQLResponseStatus::Error);
+        write_graphql_response_metric_status(req, GraphQLResponseStatus::Error);
     })
 }
 

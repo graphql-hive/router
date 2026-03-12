@@ -1,17 +1,22 @@
+use dashmap::DashMap;
 use graphql_tools::validation::validate::ValidationPlan;
 use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
 use hive_router_internal::telemetry::TelemetryContext;
+use hive_router_plan_executor::executors::dedupe::ABuildHasher;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
 use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
+use http::StatusCode;
 use moka::future::Cache;
 use moka::Expiry;
+use ntex::{http::HeaderMap, util::Bytes};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::OnceCell;
 
 use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
@@ -22,6 +27,16 @@ use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
+pub type RouterInflightRequestsMap =
+    Arc<DashMap<u64, Arc<OnceCell<SharedRouterResponse>>, ABuildHasher>>;
+
+#[derive(Clone)]
+pub struct SharedRouterResponse {
+    pub body: Bytes,
+    pub headers: Arc<HeaderMap>,
+    pub status: StatusCode,
+    pub error_count: usize,
+}
 
 /// Default TTL for JWT claims cache entries (5 seconds)
 const DEFAULT_JWT_CACHE_TTL_SECS: u64 = 5;
@@ -79,6 +94,7 @@ pub struct RouterSharedState {
     pub introspection_policy: BooleanOrProgram,
     pub telemetry_context: Arc<TelemetryContext>,
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
+    pub router_in_flight_requests: RouterInflightRequestsMap,
 }
 
 impl RouterSharedState {
@@ -114,6 +130,7 @@ impl RouterSharedState {
                 .map_err(Box::new)?,
             telemetry_context,
             plugins,
+            router_in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
         })
     }
 }

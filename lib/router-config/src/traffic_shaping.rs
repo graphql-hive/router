@@ -160,6 +160,13 @@ impl Default for TrafficShapingExecutorGlobalConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingRouterConfig {
+    /// Enables/disables in-flight request deduplication at the router endpoint level.
+    ///
+    /// When enabled, identical incoming GraphQL query requests that are processed at the same time
+    /// share the same in-flight execution result.
+    #[serde(default = "default_dedupe_enabled")]
+    pub dedupe_enabled: bool,
+
     /// Optional timeout configuration for incoming requests to the router.
     /// It starts from the moment the request is received by the router,
     /// and includes the entire processing of the request (validation, execution, etc.) until a response is sent back to the client.
@@ -180,6 +187,7 @@ fn default_router_request_timeout() -> Duration {
 impl Default for TrafficShapingRouterConfig {
     fn default() -> Self {
         Self {
+            dedupe_enabled: default_dedupe_enabled(),
             request_timeout: default_router_request_timeout(),
         }
     }
