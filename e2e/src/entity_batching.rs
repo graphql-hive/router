@@ -27,7 +27,6 @@ mod entity_batching_e2e_tests {
             .start()
             .await;
 
-        router.wait_for_ready(Some(Duration::from_secs(30))).await;
 
         let res = router
             .send_graphql_request(include_str!("../../bench/operation.graphql"), None, None)
