@@ -173,7 +173,7 @@ jobs:
         with:
           node-version-file: .node-version
       - name: download node addon artifacts
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: node_addon_*
           path: lib/node-addon
@@ -229,7 +229,7 @@ jobs:
             type=sha
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
       - name: download binary artifacts
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           pattern: hive_router_*
