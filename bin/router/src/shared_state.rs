@@ -1,23 +1,21 @@
-use dashmap::DashMap;
 use graphql_tools::validation::validate::ValidationPlan;
 use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
+use hive_router_internal::inflight::InFlightMap;
 use hive_router_internal::telemetry::TelemetryContext;
-use hive_router_plan_executor::executors::dedupe::ABuildHasher;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
 use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
-use http::StatusCode;
+use http::{header::HeaderName, StatusCode};
 use moka::future::Cache;
 use moka::Expiry;
 use ntex::web;
 use ntex::{http::HeaderMap, util::Bytes};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::OnceCell;
+use std::{collections::HashSet, sync::Arc};
 
 use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
@@ -28,8 +26,45 @@ use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
-pub type RouterInflightRequestsMap =
-    Arc<DashMap<u64, Arc<OnceCell<SharedRouterResponse>>, ABuildHasher>>;
+pub type RouterInflightRequestsMap = InFlightMap<u64, SharedRouterResponse>;
+
+#[derive(Clone)]
+pub enum RouterRequestDedupeHeaderPolicy {
+    All,
+    None,
+    Include(HashSet<String>),
+}
+
+impl RouterRequestDedupeHeaderPolicy {
+    #[inline]
+    pub fn should_include(&self, header_name: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::None => false,
+            Self::Include(allowed_headers) => allowed_headers.contains(header_name),
+        }
+    }
+
+    pub fn from_config(headers: Option<&Vec<String>>) -> Result<Self, SharedStateError> {
+        match headers {
+            None => Ok(Self::All),
+            Some(headers) if headers.is_empty() => Ok(Self::None),
+            Some(headers) => {
+                let mut dedupe_headers = HashSet::with_capacity(headers.len());
+                for header in headers {
+                    let normalized = HeaderName::from_bytes(header.as_bytes()).map_err(|err| {
+                        SharedStateError::InvalidDedupeHeaderName {
+                            header: header.clone(),
+                            error: err.to_string(),
+                        }
+                    })?;
+                    dedupe_headers.insert(normalized.as_str().to_owned());
+                }
+                Ok(Self::Include(dedupe_headers))
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct SharedRouterResponse {
@@ -109,6 +144,7 @@ pub struct RouterSharedState {
     pub telemetry_context: Arc<TelemetryContext>,
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     pub in_flight_requests: RouterInflightRequestsMap,
+    pub in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy,
 }
 
 impl RouterSharedState {
@@ -144,7 +180,10 @@ impl RouterSharedState {
                 .map_err(Box::new)?,
             telemetry_context,
             plugins,
-            in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
+            in_flight_requests: InFlightMap::default(),
+            in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy::from_config(
+                router_config.traffic_shaping.router.dedupe.headers.as_ref(),
+            )?,
         })
     }
 }
@@ -161,4 +200,6 @@ pub enum SharedStateError {
     UsageAgent(#[from] Box<AgentError>),
     #[error("invalid introspection config: {0}")]
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
+    #[error("invalid router dedupe header name '{header}': {error}")]
+    InvalidDedupeHeaderName { header: String, error: String },
 }

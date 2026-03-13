@@ -44,6 +44,10 @@ fn default_dedupe_enabled() -> bool {
     true
 }
 
+fn default_router_dedupe_headers() -> Option<Vec<String>> {
+    None
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingExecutorSubgraphConfig {
@@ -160,12 +164,8 @@ impl Default for TrafficShapingExecutorGlobalConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingRouterConfig {
-    /// Enables/disables in-flight request deduplication at the router endpoint level.
-    ///
-    /// When enabled, identical incoming GraphQL query requests that are processed at the same time
-    /// share the same in-flight execution result.
-    #[serde(default = "default_dedupe_enabled")]
-    pub dedupe_enabled: bool,
+    #[serde(default)]
+    pub dedupe: TrafficShapingRouterDedupeConfig,
 
     /// Optional timeout configuration for incoming requests to the router.
     /// It starts from the moment the request is received by the router,
@@ -180,6 +180,34 @@ pub struct TrafficShapingRouterConfig {
     pub request_timeout: Duration,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingRouterDedupeConfig {
+    /// Enables/disables in-flight request deduplication at the router endpoint level.
+    ///
+    /// When enabled, identical incoming GraphQL query requests that are processed at the same time
+    /// share the same in-flight execution result.
+    #[serde(default = "default_dedupe_enabled")]
+    pub enabled: bool,
+
+    /// Header list participating in the dedupe key.
+    ///
+    /// - null / omitted: include all headers (safest)
+    /// - []: include no headers
+    /// - ["authorization", "cookie"]: include only listed headers (case-insensitive)
+    #[serde(default = "default_router_dedupe_headers")]
+    pub headers: Option<Vec<String>>,
+}
+
+impl Default for TrafficShapingRouterDedupeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_dedupe_enabled(),
+            headers: default_router_dedupe_headers(),
+        }
+    }
+}
+
 fn default_router_request_timeout() -> Duration {
     Duration::from_secs(60)
 }
@@ -187,7 +215,7 @@ fn default_router_request_timeout() -> Duration {
 impl Default for TrafficShapingRouterConfig {
     fn default() -> Self {
         Self {
-            dedupe_enabled: default_dedupe_enabled(),
+            dedupe: TrafficShapingRouterDedupeConfig::default(),
             request_timeout: default_router_request_timeout(),
         }
     }

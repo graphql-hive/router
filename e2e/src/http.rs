@@ -318,7 +318,8 @@ mod http_tests {
                     all:
                         dedupe_enabled: false
                     router:
-                        dedupe_enabled: false
+                        dedupe:
+                            enabled: false
                 "#,
             )
             .build()

@@ -48,7 +48,7 @@ use crate::{
         validation::validate_operation_with_cache,
     },
     schema_state::SchemaState,
-    shared_state::{RouterSharedState, SharedRouterResponse},
+    shared_state::{RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse},
     GRAPHIQL_HTML,
 };
 
@@ -244,11 +244,8 @@ pub async fn graphql_request_handler(
             return Err(PipelineError::UnsupportedContentType);
         };
 
-        let request_dedupe_enabled = shared_state
-            .router_config
-            .traffic_shaping
-            .router
-            .dedupe_enabled;
+        let request_dedupe_enabled =
+            shared_state.router_config.traffic_shaping.router.dedupe.enabled;
 
         let shared_response = if request_dedupe_enabled
             && matches!(
@@ -259,35 +256,31 @@ pub async fn graphql_request_handler(
             let schema_checksum = schema_state.current_schema_checksum();
             let fingerprint = inbound_request_fingerprint(
                 req,
+                &shared_state.in_flight_requests_header_policy,
                 schema_checksum,
                 normalize_payload.normalized_operation_hash,
                 variables_hash,
             );
-            let cell = shared_state
+            let (shared_response, _role) = shared_state
                 .in_flight_requests
-                .entry(fingerprint)
-                .or_default()
-                .clone();
+                .claim(fingerprint)
+                .get_or_try_init(|| async {
+                    execute_planned_request(
+                        req,
+                        graphql_params,
+                        &normalize_payload,
+                        supergraph,
+                        shared_state,
+                        schema_state,
+                        &operation_span,
+                        &plugin_req_state,
+                        single_content_type,
+                    )
+                    .await
+                })
+                .await?;
 
-            cell.get_or_try_init(|| async {
-                let pipeline_result = execute_planned_request(
-                    req,
-                    graphql_params,
-                    &normalize_payload,
-                    supergraph,
-                    shared_state,
-                    schema_state,
-                    &operation_span,
-                    &plugin_req_state,
-                    single_content_type,
-                )
-                .await;
-
-                shared_state.in_flight_requests.remove(&fingerprint);
-                pipeline_result
-            })
-            .await?
-            .clone()
+            Arc::unwrap_or_clone(shared_response)
         } else {
             execute_planned_request(
                 req,
@@ -496,6 +489,7 @@ pub async fn execute_pipeline<'exec>(
 
 fn inbound_request_fingerprint(
     req: &HttpRequest,
+    dedupe_header_policy: &RouterRequestDedupeHeaderPolicy,
     schema_checksum: u64,
     normalized_operation_hash: u64,
     variables_hash: u64,
@@ -505,9 +499,14 @@ fn inbound_request_fingerprint(
     let mut headers: Vec<(&str, &str)> = req
         .headers()
         .iter()
+        .filter(|(name, _)| dedupe_header_policy.should_include(name.as_str()))
         .filter_map(|(name, value)| value.to_str().ok().map(|v_str| (name.as_str(), v_str)))
         .collect();
-    headers.sort_unstable_by_key(|(k, _)| *k);
+    headers.sort_unstable_by(|(left_name, left_value), (right_name, right_value)| {
+        left_name
+            .cmp(right_name)
+            .then_with(|| left_value.cmp(right_value))
+    });
 
     req.method().hash(&mut hasher);
     req.path().hash(&mut hasher);
