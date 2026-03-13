@@ -203,3 +203,24 @@ pub enum SharedStateError {
     #[error("invalid router dedupe header name '{header}': {error}")]
     InvalidDedupeHeaderName { header: String, error: String },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::RouterRequestDedupeHeaderPolicy;
+
+    #[test]
+    fn should_reject_invalid_router_dedupe_header_name() {
+        let headers = vec!["Invalid Header".to_string()];
+        let result = RouterRequestDedupeHeaderPolicy::from_config(Some(&headers));
+
+        assert!(result.is_err(), "expected invalid header policy to fail");
+        let error = match result {
+            Ok(_) => panic!("expected invalid header policy to fail"),
+            Err(err) => err.to_string(),
+        };
+        assert!(
+            error.contains("invalid router dedupe header name"),
+            "unexpected error: {error}"
+        );
+    }
+}

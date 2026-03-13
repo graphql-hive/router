@@ -533,4 +533,237 @@ mod http_tests {
             "expected at least two products subgraph requests across schema reload to avoid sharing old in-flight dedupe entry; got {products_requests}"
         );
     }
+
+    #[ntex::test]
+    async fn should_use_all_headers_in_router_dedupe_key_by_default() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                if request.path == "/products" {
+                    sleep(Duration::from_millis(300));
+                }
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            {
+                topProducts {
+                    name
+                    price
+                }
+            }
+        "#;
+
+        let (response_a, response_b) = futures::join!(
+            router.send_graphql_request(
+                query,
+                None,
+                some_header_map! {
+                    "x-user" => "a"
+                },
+            ),
+            router.send_graphql_request(
+                query,
+                None,
+                some_header_map! {
+                    "x-user" => "b"
+                },
+            )
+        );
+
+        assert!(
+            response_a.status().is_success(),
+            "Expected first request 200 OK"
+        );
+        assert!(
+            response_b.status().is_success(),
+            "Expected second request 200 OK"
+        );
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert!(
+            products_requests >= 2,
+            "expected at least two products subgraph requests when all headers are part of dedupe key; got {products_requests}"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_ignore_headers_in_router_dedupe_key_when_headers_is_empty() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                if request.path == "/products" {
+                    sleep(Duration::from_millis(300));
+                }
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                    router:
+                        dedupe:
+                            headers: []
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            {
+                topProducts {
+                    name
+                    price
+                }
+            }
+        "#;
+
+        let (response_a, response_b) = futures::join!(
+            router.send_graphql_request(
+                query,
+                None,
+                some_header_map! {
+                    "x-user" => "a"
+                },
+            ),
+            router.send_graphql_request(
+                query,
+                None,
+                some_header_map! {
+                    "x-user" => "b"
+                },
+            )
+        );
+
+        assert!(
+            response_a.status().is_success(),
+            "Expected first request 200 OK"
+        );
+        assert!(
+            response_b.status().is_success(),
+            "Expected second request 200 OK"
+        );
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert_eq!(
+            products_requests, 1,
+            "expected exactly one products subgraph request when router dedupe ignores headers"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_use_case_insensitive_header_allowlist_in_router_dedupe_key() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                if request.path == "/products" {
+                    sleep(Duration::from_millis(300));
+                }
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                    router:
+                        dedupe:
+                            headers: ["X-Tenant"]
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            {
+                topProducts {
+                    name
+                    price
+                }
+            }
+        "#;
+
+        let (response_a, response_b) = futures::join!(
+            router.send_graphql_request(
+                query,
+                None,
+                some_header_map! {
+                    "x-tenant" => "acme",
+                    "authorization" => "Bearer token-a"
+                },
+            ),
+            router.send_graphql_request(
+                query,
+                None,
+                some_header_map! {
+                    "X-TENANT" => "acme",
+                    "authorization" => "Bearer token-b"
+                },
+            )
+        );
+
+        assert!(
+            response_a.status().is_success(),
+            "Expected first request 200 OK"
+        );
+        assert!(
+            response_b.status().is_success(),
+            "Expected second request 200 OK"
+        );
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert_eq!(
+            products_requests, 1,
+            "expected exactly one products subgraph request when allowlisted header matches case-insensitively"
+        );
+    }
 }
