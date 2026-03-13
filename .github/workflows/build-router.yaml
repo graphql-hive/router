@@ -146,7 +146,7 @@ jobs:
         with:
           name: node_addon_${{ matrix.name }}
           path: |
-            lib/node-addon/*.node
+            lib/node-addon/dist/*.node
           if-no-files-found: error
 
       - name: Upload binaries to router release

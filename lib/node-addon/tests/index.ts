@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { QueryPlanner } from "./index.js";
+import { QueryPlanner } from "../dist/index.js";
 
 describe("fixtures", async () => {
   for (const fixtureName of await fs.readdir("fixture")) {

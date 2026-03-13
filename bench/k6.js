@@ -1,5 +1,7 @@
+// @ts-check
 import http from "k6/http";
 import { check } from "k6";
+// @ts-expect-error - This kind of imports are not supported by TypeScript, but we know it works in k6
 import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
 
 const endpoint = __ENV.ROUTER_ENDPOINT || "http://0.0.0.0:4000/graphql";
@@ -21,9 +23,15 @@ export default function () {
   makeGraphQLRequest();
 }
 
+/** @type {{ [x: string]: boolean; }} */
 let printIdentifiersMap = {};
+/** @type {{ [x: string]: boolean; }} */
 let runIdentifiersMap = {};
 
+/**
+ * @param {string} identifier
+ * @param {(string | number | boolean | ArrayBuffer | import("k6").JSONArray | import("k6").JSONObject | null)[]} args
+ */
 function printOnce(identifier, ...args) {
   if (printIdentifiersMap[identifier]) {
     return;
@@ -33,6 +41,10 @@ function printOnce(identifier, ...args) {
   printIdentifiersMap[identifier] = true;
 }
 
+/**
+ * @param {string} identifier
+ * @param {{ (): boolean; (): any; }} cb
+ */
 function runOnce(identifier, cb) {
   if (runIdentifiersMap[identifier]) {
     return true;
@@ -110,7 +122,11 @@ const graphqlRequest = {
   },
 };
 
+/**
+ * @param {any} data
+ */
 export function handleSummary(data) {
+  /** @type {{ [x: string]: string; }} */
   const out = {
     stdout: textSummary(data, { indent: " ", enableColors: true }),
   };
@@ -132,11 +148,7 @@ export function handleSummary(data) {
 }
 
 function sendGraphQLRequest() {
-  return http.post(
-    endpoint,
-    graphqlRequest.payload,
-    graphqlRequest.params,
-  );
+  return http.post(endpoint, graphqlRequest.payload, graphqlRequest.params);
 }
 
 function makeGraphQLRequest() {
@@ -144,11 +156,69 @@ function makeGraphQLRequest() {
   check(res, {
     "response code was 200": (res) => res.status == 200,
     "no graphql errors": (resp) => {
+      if (!resp.body) {
+        printOnce("no_response_body", `‼️ Got empty response body`);
+        return false;
+      }
+      if (typeof resp.body !== "string") {
+        printOnce(
+          "non_string_response_body",
+          `‼️ Got non-string response body:`,
+          resp.body,
+        );
+        return false;
+      }
       let has_errors = resp.body.includes(`"errors"`);
       if (has_errors) {
         const json = resp.json();
-        for (const error of json.errors) {
-          printOnce(error.message, `‼️ Got GraphQL error:`, error);
+        if (json == null || typeof json !== "object") {
+          printOnce(
+            "invalid_json_response",
+            `‼️ Got invalid JSON response:`,
+            resp.body,
+          );
+          return false;
+        }
+        if (Array.isArray(json)) {
+          printOnce(
+            "unexpected_array_response",
+            `‼️ Got unexpected array response:`,
+            json,
+          );
+          return false;
+        }
+        if (json.errors != null && !Array.isArray(json.errors)) {
+          printOnce(
+            "invalid_errors_field",
+            `‼️ Got invalid "errors" field in response:`,
+            json.errors,
+          );
+          return false;
+        }
+        if (Array.isArray(json.errors)) {
+          for (const error of json.errors) {
+            if (
+              error == null ||
+              typeof error !== "object" ||
+              Array.isArray(error)
+            ) {
+              printOnce(
+                "invalid_error_object",
+                `‼️ Got invalid error object in "errors" array:`,
+                error,
+              );
+              continue;
+            }
+            let message = 'unknown error';
+            if (typeof error.message === "string") {
+              message = error.message;
+            }
+            printOnce(
+              message,
+              `‼️ Got GraphQL error:`,
+              error,
+            );
+          }
         }
       }
 
@@ -174,20 +244,25 @@ function makeGraphQLRequest() {
   });
 }
 
+/**
+ * @param {string | number | boolean | import("k6").JSONArray | import("k6").JSONObject | null} x
+ */
 function checkResponseStructure(x) {
+  /**
+   * @param {any} obj
+   * @param {any} structure
+   */
   function checkRecursive(obj, structure) {
     if (obj == null) {
       return false;
     }
     for (var key in structure) {
-      if (
-        !obj.hasOwnProperty(key) ||
-        typeof obj[key] !== typeof structure[key]
-      ) {
+      const value = obj[key];
+      if (!obj.hasOwnProperty(key) || typeof value !== typeof structure[key]) {
         return false;
       }
       if (typeof structure[key] === "object" && structure[key] !== null) {
-        if (!checkRecursive(obj[key], structure[key])) {
+        if (!checkRecursive(value, structure[key])) {
           return false;
         }
       }
