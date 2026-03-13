@@ -279,10 +279,7 @@ pub async fn graphql_request_handler(
                     schema_state,
                     &operation_span,
                     &plugin_req_state,
-                    started_at,
                     single_content_type,
-                    client_name,
-                    client_version,
                 )
                 .await;
 
@@ -301,13 +298,36 @@ pub async fn graphql_request_handler(
                 schema_state,
                 &operation_span,
                 &plugin_req_state,
-                started_at,
                 single_content_type,
-                client_name,
-                client_version,
             )
             .await?
         };
+
+        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+            usage_reporting::collect_usage_report(
+                supergraph.supergraph_schema.clone(),
+                started_at.elapsed(),
+                client_name,
+                client_version,
+                normalize_payload.operation_for_plan.name.as_deref(),
+                &parser_payload.minified_document,
+                hive_usage_agent,
+                shared_state
+                    .router_config
+                    .telemetry
+                    .hive
+                    .as_ref()
+                    .map(|c| &c.usage_reporting)
+                    .expect(
+                        // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
+                        // the UsageAgent is only created when usage reporting is enabled.
+                        // Thus, this expect should never panic.
+                        "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
+                    ),
+                shared_response.error_count,
+            )
+            .await;
+        }
 
         let pipeline_error_count = shared_response.error_count;
         let response = shared_response.into();
@@ -340,10 +360,7 @@ async fn execute_planned_request<'exec>(
     schema_state: &'exec Arc<SchemaState>,
     operation_span: &'exec GraphQLOperationSpan,
     plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
-    started_at: Instant,
     single_content_type: &'exec SingleContentType,
-    client_name: Option<&'exec str>,
-    client_version: Option<&'exec str>,
 ) -> Result<SharedRouterResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
@@ -392,31 +409,6 @@ async fn execute_planned_request<'exec>(
         plugin_req_state,
     )
     .await?;
-
-    if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-        usage_reporting::collect_usage_report(
-            supergraph.supergraph_schema.clone(),
-            started_at.elapsed(),
-            client_name,
-            client_version,
-            &client_request_details,
-            hive_usage_agent,
-            shared_state
-                .router_config
-                .telemetry
-                .hive
-                .as_ref()
-                .map(|c| &c.usage_reporting)
-                .expect(
-                    // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
-                    // the UsageAgent is only created when usage reporting is enabled.
-                    // Thus, this expect should never panic.
-                    "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
-                ),
-            pipeline_result.error_count,
-        )
-        .await;
-    }
 
     let error_count = pipeline_result.error_count;
     let mut response_builder = web::HttpResponse::Ok();
