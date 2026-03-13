@@ -108,7 +108,7 @@ pub struct RouterSharedState {
     pub introspection_policy: BooleanOrProgram,
     pub telemetry_context: Arc<TelemetryContext>,
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
-    pub router_in_flight_requests: RouterInflightRequestsMap,
+    pub in_flight_requests: RouterInflightRequestsMap,
 }
 
 impl RouterSharedState {
@@ -144,7 +144,7 @@ impl RouterSharedState {
                 .map_err(Box::new)?,
             telemetry_context,
             plugins,
-            router_in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
+            in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
         })
     }
 }

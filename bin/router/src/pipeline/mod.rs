@@ -244,14 +244,16 @@ pub async fn graphql_request_handler(
             return Err(PipelineError::UnsupportedContentType);
         };
 
-        let shared_response = if shared_state
+        let request_dedupe_enabled = shared_state
             .router_config
             .traffic_shaping
             .router
-            .dedupe_enabled
+            .dedupe_enabled;
+
+        let shared_response = if request_dedupe_enabled
             && matches!(
                 normalize_payload.operation_for_plan.operation_kind,
-                Some(OperationKind::Query)
+                Some(OperationKind::Query) | None
             ) {
             let variables_hash = hash_graphql_variables(&graphql_params.variables);
             let schema_checksum = schema_state.current_schema_checksum();
@@ -262,7 +264,7 @@ pub async fn graphql_request_handler(
                 variables_hash,
             );
             let cell = shared_state
-                .router_in_flight_requests
+                .in_flight_requests
                 .entry(fingerprint)
                 .or_default()
                 .clone();
@@ -284,7 +286,7 @@ pub async fn graphql_request_handler(
                 )
                 .await;
 
-                shared_state.router_in_flight_requests.remove(&fingerprint);
+                shared_state.in_flight_requests.remove(&fingerprint);
                 pipeline_result
             })
             .await?

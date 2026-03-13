@@ -50,28 +50,32 @@ impl<'a> From<&'a OperationIdentity> for GraphQLSpanOperationIdentity<'a> {
     }
 }
 
-pub(crate) fn precompute_normalized_operation_hashes(
+pub(crate) fn hash_normalized_operation(
     operation_for_plan: &OperationDefinition,
     operation_for_introspection: Option<&OperationDefinition>,
-) -> (u64, Option<u64>, u64) {
+) -> NormalizedOperationHashes {
     let operation_for_plan_hash = operation_for_plan.hash();
     let operation_for_introspection_hash =
         operation_for_introspection.map(OperationDefinition::hash);
 
-    let mut normalized_operation_hasher = Xxh3::new();
-    operation_for_plan_hash.hash(&mut normalized_operation_hasher);
-    operation_for_introspection_hash
-        .is_some()
-        .hash(&mut normalized_operation_hasher);
+    let mut hasher = Xxh3::new();
+    operation_for_plan_hash.hash(&mut hasher);
+    operation_for_introspection_hash.is_some().hash(&mut hasher);
     if let Some(hash) = operation_for_introspection_hash {
-        hash.hash(&mut normalized_operation_hasher);
+        hash.hash(&mut hasher);
     }
 
-    (
+    NormalizedOperationHashes {
         operation_for_plan_hash,
         operation_for_introspection_hash,
-        normalized_operation_hasher.finish(),
-    )
+        combined_operation_hash: hasher.finish(),
+    }
+}
+
+pub(crate) struct NormalizedOperationHashes {
+    pub operation_for_plan_hash: u64,
+    pub operation_for_introspection_hash: Option<u64>,
+    pub combined_operation_hash: u64,
 }
 
 #[inline]
@@ -120,11 +124,7 @@ pub async fn normalize_request_with_cache(
                 let operation_for_introspection =
                     partitioned_operation.introspection_operation.map(Arc::new);
 
-                let (
-                    operation_for_plan_hash,
-                    operation_for_introspection_hash,
-                    normalized_operation_hash,
-                ) = precompute_normalized_operation_hashes(
+                let hashes = hash_normalized_operation(
                     &operation_for_plan,
                     operation_for_introspection.as_deref(),
                 );
@@ -133,10 +133,10 @@ pub async fn normalize_request_with_cache(
                     root_type_name,
                     projection_plan: Arc::new(projection_plan),
                     operation_for_plan,
-                    operation_for_plan_hash,
+                    operation_for_plan_hash: hashes.operation_for_plan_hash,
                     operation_for_introspection,
-                    operation_for_introspection_hash,
-                    normalized_operation_hash,
+                    operation_for_introspection_hash: hashes.operation_for_introspection_hash,
+                    normalized_operation_hash: hashes.combined_operation_hash,
                     operation_indentity: OperationIdentity {
                         name: doc.operation_name.clone(),
                         operation_type: parser_payload.operation_type,

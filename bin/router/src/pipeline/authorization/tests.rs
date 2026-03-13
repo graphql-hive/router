@@ -19,9 +19,7 @@ use crate::pipeline::{
     authorization::{
         apply_authorization_to_operation, metadata::AuthorizationMetadataExt, AuthorizationDecision,
     },
-    normalize::{
-        precompute_normalized_operation_hashes, GraphQLNormalizationPayload, OperationIdentity,
-    },
+    normalize::{hash_normalized_operation, GraphQLNormalizationPayload, OperationIdentity},
 };
 
 struct SupergraphTestData {
@@ -73,20 +71,17 @@ impl SupergraphTestData {
         let operation_for_introspection =
             partitioned_operation.introspection_operation.map(Arc::new);
 
-        let (operation_for_plan_hash, operation_for_introspection_hash, normalized_operation_hash) =
-            precompute_normalized_operation_hashes(
-                &operation_for_plan,
-                operation_for_introspection.as_deref(),
-            );
+        let hashes =
+            hash_normalized_operation(&operation_for_plan, operation_for_introspection.as_deref());
 
         let payload = GraphQLNormalizationPayload {
             root_type_name,
             projection_plan: Arc::new(projection_plan),
             operation_for_plan,
-            operation_for_plan_hash,
+            operation_for_plan_hash: hashes.operation_for_plan_hash,
             operation_for_introspection,
-            operation_for_introspection_hash,
-            normalized_operation_hash,
+            operation_for_introspection_hash: hashes.operation_for_introspection_hash,
+            normalized_operation_hash: hashes.combined_operation_hash,
             operation_indentity: OperationIdentity {
                 name: doc.operation_name.clone(),
                 operation_type: "query",
