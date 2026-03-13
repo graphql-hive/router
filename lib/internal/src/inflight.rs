@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     future::Future,
     hash::{BuildHasher, BuildHasherDefault, Hash},
@@ -15,13 +14,6 @@ pub type ABuildHasher = BuildHasherDefault<AHasher>;
 pub enum InFlightRole {
     Leader,
     Joiner,
-}
-
-impl InFlightRole {
-    #[inline]
-    pub fn is_leader(self) -> bool {
-        matches!(self, Self::Leader)
-    }
 }
 
 pub struct InFlightMap<K, V, S = ABuildHasher> {
@@ -103,14 +95,14 @@ where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<V, E>>,
     {
-        let did_initialize = AtomicBool::new(false);
+        let mut did_initialize = false;
         let key = self.key.clone();
         let map = self.map.clone();
 
         let value = self
             .cell
             .get_or_try_init(|| {
-                did_initialize.store(true, Ordering::Relaxed);
+                did_initialize = true;
                 async {
                     let _cleanup = InFlightCleanupGuard { key, map };
                     init().await.map(Arc::new)
@@ -119,7 +111,7 @@ where
             .await?
             .clone();
 
-        let role = if did_initialize.load(Ordering::Relaxed) {
+        let role = if did_initialize {
             InFlightRole::Leader
         } else {
             InFlightRole::Joiner

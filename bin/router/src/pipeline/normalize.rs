@@ -50,7 +50,7 @@ impl<'a> From<&'a OperationIdentity> for GraphQLSpanOperationIdentity<'a> {
     }
 }
 
-pub(crate) fn hash_normalized_operation(
+pub fn hash_normalized_operation(
     operation_for_plan: &OperationDefinition,
     operation_for_introspection: Option<&OperationDefinition>,
 ) -> NormalizedOperationHashes {
@@ -72,7 +72,7 @@ pub(crate) fn hash_normalized_operation(
     }
 }
 
-pub(crate) struct NormalizedOperationHashes {
+pub struct NormalizedOperationHashes {
     pub operation_for_plan_hash: u64,
     pub operation_for_introspection_hash: Option<u64>,
     pub combined_operation_hash: u64,
