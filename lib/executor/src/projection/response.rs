@@ -18,6 +18,27 @@ use crate::utils::consts::{
     QUOTE, TRUE, TYPENAME_FIELD_NAME,
 };
 
+enum ObjectFieldLookup<'a> {
+    Binary(&'a [(&'a str, Value<'a>)]),
+}
+
+impl<'a> ObjectFieldLookup<'a> {
+    #[inline]
+    fn new(obj: &'a [(&'a str, Value<'a>)]) -> Self {
+        Self::Binary(obj)
+    }
+
+    #[inline]
+    fn get(&self, key: &str) -> Option<&'a Value<'a>> {
+        match self {
+            Self::Binary(obj) => obj
+                .binary_search_by_key(&key, |(k, _)| *k)
+                .ok()
+                .map(|idx| &obj[idx].1),
+        }
+    }
+}
+
 /// Represents a type's name that can be either already resolved or lazily computed.
 /// This avoids computing the type name when it's not needed, which is important for performance.
 ///
@@ -75,6 +96,10 @@ impl<'a> TypeName<'a> {
     }
 }
 
+const DATA_START: &[u8] = b"{\"data\":";
+const ERRORS_START: &[u8] = b",\"errors\":[";
+const EXTENSIONS_START: &[u8] = b",\"extensions\":{";
+
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 pub fn project_by_operation(
@@ -88,11 +113,7 @@ pub fn project_by_operation(
     schema_metadata: &SchemaMetadata,
 ) -> Result<Vec<u8>, ProjectionError> {
     let mut buffer = Vec::with_capacity(response_size_estimate);
-    buffer.put(OPEN_BRACE);
-    buffer.put(QUOTE);
-    buffer.put("data".as_bytes());
-    buffer.put(QUOTE);
-    buffer.put(COLON);
+    buffer.put(DATA_START);
 
     let mut errors = errors;
 
@@ -120,11 +141,7 @@ pub fn project_by_operation(
     }
 
     if !errors.is_empty() {
-        buffer.put(COMMA);
-        buffer.put(QUOTE);
-        buffer.put("errors".as_bytes());
-        buffer.put(QUOTE);
-        buffer.put(COLON);
+        buffer.put(ERRORS_START);
         buffer.put_slice(
             &sonic_rs::to_vec(&errors)
                 .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?,
@@ -134,11 +151,7 @@ pub fn project_by_operation(
     if !extensions.is_empty() {
         let serialized_extensions = sonic_rs::to_vec(extensions)
             .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
-        buffer.put(COMMA);
-        buffer.put(QUOTE);
-        buffer.put("extensions".as_bytes());
-        buffer.put(QUOTE);
-        buffer.put(COLON);
+        buffer.put(EXTENSIONS_START);
         buffer.put_slice(&serialized_extensions);
     }
 
@@ -273,21 +286,71 @@ fn project_selection_set_with_map<'a>(
     first: &mut bool,
     schema_metadata: &'a SchemaMetadata,
 ) -> Result<(), ProjectionError> {
+    let field_lookup = ObjectFieldLookup::new(obj);
+    let parent_type_name_cache = OnceCell::new();
+
+    let parent_type_name_value = || {
+        parent_type_name_cache
+            .get_or_init(|| parent_type_name.get())
+            .clone()
+    };
+
     for plan in plans {
         if let Some(guard) = &plan.parent_type_guard {
-            let name = parent_type_name.get()?;
+            let name = parent_type_name_value()?;
             if !guard.matches(name) {
                 // Seems like the field projection plan applies to other types, so move to the next one
                 continue;
             }
         }
 
-        let field_val = obj
-            .binary_search_by_key(&plan.response_key.as_str(), |(k, _)| *k)
-            .ok()
-            .map(|idx| &obj[idx].1);
+        let field_val = field_lookup.get(plan.response_key.as_str());
 
-        let res = if let Some(conditions) = &plan.conditions {
+        if plan.conditions.is_none() {
+            write_projected_field_prefix(buffer, first, plan);
+            match &plan.value {
+                ProjectionValueSource::Null => {
+                    buffer.put(NULL);
+                    continue;
+                }
+                ProjectionValueSource::ResponseData { selections: None } if !plan.is_typename => {
+                    if let Some(field_val) = field_val {
+                        serialize_value_to_buffer(field_val, buffer);
+                    } else {
+                        buffer.put(NULL);
+                    }
+                    continue;
+                }
+                ProjectionValueSource::ResponseData { .. } => {
+                    if plan.is_typename {
+                        // If the field is TYPENAME_FIELD, we should set it to the parent type name
+                        buffer.put(QUOTE);
+                        buffer.put(parent_type_name_value()?.as_bytes());
+                        buffer.put(QUOTE);
+                    } else if let Some(field_val) = field_val {
+                        project_selection_set(
+                            field_val,
+                            errors,
+                            plan,
+                            variable_values,
+                            buffer,
+                            parent_type_name.clone(),
+                            schema_metadata,
+                        )?;
+                    } else {
+                        // If the field is not found in the object, set it to Null
+                        buffer.put(NULL);
+                    }
+                    continue;
+                }
+            }
+        }
+
+        let conditions = plan
+            .conditions
+            .as_ref()
+            .expect("conditions must be present in this branch");
+        let res = {
             let field_type_name_cell = OnceCell::new();
             let field_type_name_fn = || {
                 field_type_name_cell
@@ -296,7 +359,7 @@ fn project_selection_set_with_map<'a>(
                     })
                     .clone()
             };
-            let parent_type_name_fn = || parent_type_name.get();
+            let parent_type_name_fn = || parent_type_name_value();
             check(
                 conditions,
                 &parent_type_name_fn,
@@ -304,23 +367,11 @@ fn project_selection_set_with_map<'a>(
                 field_val,
                 variable_values,
             )
-        } else {
-            Ok(())
         };
 
         match res {
             Ok(_) => {
-                if *first {
-                    buffer.put(OPEN_BRACE);
-                } else {
-                    buffer.put(COMMA);
-                }
-                *first = false;
-
-                buffer.put(QUOTE);
-                buffer.put(plan.response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
+                write_projected_field_prefix(buffer, first, plan);
 
                 match &plan.value {
                     ProjectionValueSource::Null => {
@@ -362,38 +413,33 @@ fn project_selection_set_with_map<'a>(
                 continue;
             }
             Err(FieldProjectionConditionError::InvalidEnumValue) => {
-                if *first {
-                    buffer.put(OPEN_BRACE);
-                } else {
-                    buffer.put(COMMA);
-                }
-                *first = false;
-
-                buffer.put(QUOTE);
-                buffer.put(plan.response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
+                write_projected_field_prefix(buffer, first, plan);
                 buffer.put(NULL);
                 errors.push(GraphQLError::from("Value is not a valid enum value"));
             }
             Err(FieldProjectionConditionError::InvalidFieldType) => {
-                if *first {
-                    buffer.put(OPEN_BRACE);
-                } else {
-                    buffer.put(COMMA);
-                }
-                *first = false;
-
                 // Skip this field as the field type does not match
-                buffer.put(QUOTE);
-                buffer.put(plan.response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
+                write_projected_field_prefix(buffer, first, plan);
                 buffer.put(NULL);
             }
         }
     }
     Ok(())
+}
+
+#[inline]
+fn write_projected_field_prefix(
+    buffer: &mut Vec<u8>,
+    first: &mut bool,
+    plan: &FieldProjectionPlan,
+) {
+    if *first {
+        buffer.put(OPEN_BRACE);
+    } else {
+        buffer.put(COMMA);
+    }
+    *first = false;
+    buffer.put_slice(&plan.response_key_serialized);
 }
 
 #[inline]

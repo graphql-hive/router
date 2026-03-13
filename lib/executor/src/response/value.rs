@@ -103,13 +103,23 @@ impl<'a> Value<'a> {
         selection_items: &[SelectionItem],
         possible_types: &PossibleTypes,
     ) {
+        let object_typename = obj
+            .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
+            .ok()
+            .map(|idx| &obj[idx].1)
+            .and_then(|value| value.as_str());
+
         for item in selection_items {
             match item {
                 SelectionItem::Field(field_selection) => {
                     let field_name = &field_selection.name;
-                    if let Ok(idx) = obj.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
-                        let (key, value) = &obj[idx];
-                        key.hash(state);
+                    let value = obj
+                        .binary_search_by_key(&field_name.as_str(), |(k, _)| k)
+                        .ok()
+                        .map(|idx| &obj[idx].1);
+
+                    if let Some(value) = value {
+                        field_name.as_str().hash(state);
                         value.hash_with_requires(
                             state,
                             &field_selection.selections.items,
@@ -119,11 +129,7 @@ impl<'a> Value<'a> {
                 }
                 SelectionItem::InlineFragment(inline_fragment) => {
                     let type_condition = &inline_fragment.type_condition;
-                    let type_name = obj
-                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                        .ok()
-                        .and_then(|idx| obj[idx].1.as_str())
-                        .unwrap_or(type_condition);
+                    let type_name = object_typename.unwrap_or(type_condition);
 
                     if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
                         Value::hash_object_with_requires(

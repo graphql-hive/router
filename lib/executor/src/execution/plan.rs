@@ -52,13 +52,16 @@ use crate::{
     },
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
-        merge::deep_merge,
+        merge::{deep_merge, deep_merge_ref},
         subgraph_response::SubgraphResponse,
         value::Value,
     },
     utils::{
         consts::{CLOSE_BRACKET, OPEN_BRACKET},
-        traverse::{traverse_and_callback, traverse_and_callback_mut},
+        traverse::{
+            traverse_and_callback, traverse_and_callback_mut,
+            traverse_and_callback_mut_no_error_path,
+        },
     },
 };
 
@@ -637,43 +640,60 @@ impl<'exec> Executor<'exec> {
                             let mut index = 0;
                             let normalized_path = flatten_node_path.as_slice();
                             // If there is an error in the response, then collect the paths for normalizing the error
-                            let initial_error_path = response.errors.as_ref().map(|_| {
-                                GraphQLErrorPath::with_capacity(normalized_path.len() + 2)
-                            });
-                            let mut entity_index_error_map = response
-                                .errors
-                                .as_ref()
-                                .map(|_| HashMap::with_capacity(entities.len()));
-                            traverse_and_callback_mut(
-                                &mut ctx.data,
-                                normalized_path,
-                                self.schema_metadata,
-                                initial_error_path,
-                                &mut |target, error_path| {
-                                    let hash = representation_hashes[index];
-                                    if let Some(entity_index) =
-                                        representation_hash_to_index.get(&hash)
-                                    {
-                                        if let (Some(error_path), Some(entity_index_error_map)) =
-                                            (error_path, entity_index_error_map.as_mut())
+                            let entity_index_error_map = if response.errors.is_some() {
+                                let initial_error_path = Some(GraphQLErrorPath::with_capacity(
+                                    normalized_path.len() + 2,
+                                ));
+                                let mut error_map = Some(HashMap::with_capacity(entities.len()));
+
+                                traverse_and_callback_mut(
+                                    &mut ctx.data,
+                                    normalized_path,
+                                    self.schema_metadata,
+                                    initial_error_path,
+                                    &mut |target, error_path| {
+                                        let hash = representation_hashes[index];
+                                        if let Some(entity_index) =
+                                            representation_hash_to_index.get(&hash)
                                         {
-                                            let error_paths = entity_index_error_map
-                                                .entry(entity_index)
-                                                .or_insert_with(Vec::new);
-                                            error_paths.push(error_path);
+                                            if let (
+                                                Some(error_path),
+                                                Some(entity_index_error_map),
+                                            ) = (error_path, error_map.as_mut())
+                                            {
+                                                let error_paths = entity_index_error_map
+                                                    .entry(entity_index)
+                                                    .or_insert_with(Vec::new);
+                                                error_paths.push(error_path);
+                                            }
+                                            if let Some(entity) = entities.get(*entity_index) {
+                                                deep_merge_ref(target, entity);
+                                            }
                                         }
-                                        if let Some(entity) = entities.get(*entity_index) {
-                                            // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
-                                            // The transmute is to satisfy the compiler, but the lifetime
-                                            // is valid.
-                                            let new_val: Value<'_> =
-                                                unsafe { std::mem::transmute(entity.clone()) };
-                                            deep_merge(target, new_val);
+                                        index += 1;
+                                    },
+                                );
+
+                                error_map
+                            } else {
+                                traverse_and_callback_mut_no_error_path(
+                                    &mut ctx.data,
+                                    normalized_path,
+                                    self.schema_metadata,
+                                    &mut |target| {
+                                        let hash = representation_hashes[index];
+                                        if let Some(entity_index) =
+                                            representation_hash_to_index.get(&hash)
+                                        {
+                                            if let Some(entity) = entities.get(*entity_index) {
+                                                deep_merge_ref(target, entity);
+                                            }
                                         }
-                                    }
-                                    index += 1;
-                                },
-                            );
+                                        index += 1;
+                                    },
+                                );
+                                None
+                            };
 
                             ctx.handle_errors(
                                 subgraph_name,
@@ -872,42 +892,60 @@ impl<'exec> Executor<'exec> {
         for path_state in &alias_state.paths {
             let mut index = 0;
             let normalized_path = path_state.merge_path.as_slice();
-            let initial_error_path = has_alias_errors
+            let initial_error_path =
                 // Small extra capacity for path segments that will be appended later.
-                .then(|| GraphQLErrorPath::with_capacity(normalized_path.len() + 2));
+                GraphQLErrorPath::with_capacity(normalized_path.len() + 2);
 
             // For each visited target:
-            traverse_and_callback_mut(
-                &mut ctx.data,
-                normalized_path,
-                self.schema_metadata,
-                initial_error_path,
-                &mut |target_data, error_path| {
-                    let hash = path_state.representation_hashes[index];
-                    // Find matching entity index from hash->index map
-                    if let Some(entity_index) = alias_state.representation_hash_to_index.get(&hash)
-                    {
-                        // If this alias has errors, we also collect target paths
-                        // so one subgraph error can be copied to all matching targets.
-                        if let (Some(error_path), Some(entity_index_error_map)) =
-                            (error_path, entity_index_error_map.as_mut())
+            if has_alias_errors {
+                traverse_and_callback_mut(
+                    &mut ctx.data,
+                    normalized_path,
+                    self.schema_metadata,
+                    Some(initial_error_path),
+                    &mut |target_data, error_path| {
+                        let hash = path_state.representation_hashes[index];
+                        // Find matching entity index from hash->index map
+                        if let Some(entity_index) =
+                            alias_state.representation_hash_to_index.get(&hash)
                         {
-                            let error_paths = entity_index_error_map
-                                .entry(entity_index)
-                                .or_insert_with(Vec::new);
-                            error_paths.push(error_path);
+                            // If this alias has errors, we also collect target paths
+                            // so one subgraph error can be copied to all matching targets.
+                            if let (Some(error_path), Some(entity_index_error_map)) =
+                                (error_path, entity_index_error_map.as_mut())
+                            {
+                                let error_paths = entity_index_error_map
+                                    .entry(entity_index)
+                                    .or_insert_with(Vec::new);
+                                error_paths.push(error_path);
+                            }
+                            if let Some(entity) = entities.get(*entity_index) {
+                                deep_merge_ref(target_data, entity);
+                            }
                         }
-                        if let Some(entity) = entities.get(*entity_index) {
-                            // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
-                            // The transmute is to satisfy the compiler, but the lifetime is valid.
-                            let new_val: Value<'_> = unsafe { std::mem::transmute(entity.clone()) };
-                            deep_merge(target_data, new_val);
-                        }
-                    }
 
-                    index += 1;
-                },
-            );
+                        index += 1;
+                    },
+                );
+            } else {
+                traverse_and_callback_mut_no_error_path(
+                    &mut ctx.data,
+                    normalized_path,
+                    self.schema_metadata,
+                    &mut |target_data| {
+                        let hash = path_state.representation_hashes[index];
+                        if let Some(entity_index) =
+                            alias_state.representation_hash_to_index.get(&hash)
+                        {
+                            if let Some(entity) = entities.get(*entity_index) {
+                                deep_merge_ref(target_data, entity);
+                            }
+                        }
+
+                        index += 1;
+                    },
+                );
+            }
         }
 
         entity_index_error_map

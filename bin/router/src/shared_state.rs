@@ -37,6 +37,16 @@ pub enum RouterRequestDedupeHeaderPolicy {
 
 impl RouterRequestDedupeHeaderPolicy {
     #[inline]
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    #[inline]
+    pub fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    #[inline]
     pub fn should_include(&self, header_name: &str) -> bool {
         match self {
             Self::All => true,

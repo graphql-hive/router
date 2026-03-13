@@ -111,6 +111,7 @@ pub enum ProjectionValueSource {
 pub struct FieldProjectionPlan {
     pub field_name: String,
     pub response_key: String,
+    pub response_key_serialized: Arc<[u8]>,
     pub is_typename: bool,
     /// A condition that checks the name of the parent object.
     /// This is used to ensure that fields inside a fragment (e.g., `... on User`)
@@ -197,6 +198,14 @@ impl FieldProjectionCondition {
 }
 
 impl FieldProjectionPlan {
+    fn response_key_serialized(response_key: &str) -> Arc<[u8]> {
+        let mut serialized = Vec::with_capacity(response_key.len() + 3);
+        serialized.push(b'"');
+        serialized.extend_from_slice(response_key.as_bytes());
+        serialized.extend_from_slice(b"\":");
+        serialized.into()
+    }
+
     pub fn from_operation(
         operation: &OperationDefinition,
         schema_metadata: &SchemaMetadata,
@@ -664,6 +673,7 @@ impl FieldProjectionPlan {
 
         let new_plan = FieldProjectionPlan {
             field_name: field_name.to_string(),
+            response_key_serialized: Self::response_key_serialized(&response_key),
             response_key,
             parent_type_guard,
             is_typename: field_name == TYPENAME_FIELD_NAME,
@@ -733,6 +743,7 @@ impl FieldProjectionPlan {
         FieldProjectionPlan {
             field_name: self.field_name.clone(),
             response_key: self.response_key.clone(),
+            response_key_serialized: self.response_key_serialized.clone(),
             parent_type_guard: self.parent_type_guard.clone(),
             conditions: self.conditions.clone(),
             is_typename: self.is_typename,

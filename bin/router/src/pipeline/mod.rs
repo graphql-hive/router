@@ -496,12 +496,20 @@ fn inbound_request_fingerprint(
 ) -> u64 {
     let mut hasher = Xxh3::new();
 
-    let mut headers: Vec<(&str, &str)> = req
-        .headers()
-        .iter()
-        .filter(|(name, _)| dedupe_header_policy.should_include(name.as_str()))
-        .filter_map(|(name, value)| value.to_str().ok().map(|v_str| (name.as_str(), v_str)))
-        .collect();
+    let mut headers: Vec<(&str, &[u8])> = if dedupe_header_policy.is_none() {
+        Vec::new()
+    } else if dedupe_header_policy.is_all() {
+        req.headers()
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_bytes()))
+            .collect()
+    } else {
+        req.headers()
+            .iter()
+            .filter(|(name, _)| dedupe_header_policy.should_include(name.as_str()))
+            .map(|(name, value)| (name.as_str(), value.as_bytes()))
+            .collect()
+    };
     headers.sort_unstable_by(|(left_name, left_value), (right_name, right_value)| {
         left_name
             .cmp(right_name)
@@ -510,7 +518,11 @@ fn inbound_request_fingerprint(
 
     req.method().hash(&mut hasher);
     req.path().hash(&mut hasher);
-    headers.hash(&mut hasher);
+    headers.len().hash(&mut hasher);
+    for (name, value) in headers {
+        name.hash(&mut hasher);
+        value.hash(&mut hasher);
+    }
     schema_checksum.hash(&mut hasher);
     normalized_operation_hash.hash(&mut hasher);
     variables_hash.hash(&mut hasher);

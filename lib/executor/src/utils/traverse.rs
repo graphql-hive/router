@@ -4,7 +4,10 @@ use hive_router_query_planner::planner::plan_nodes::FlattenNodePathSegment;
 
 use crate::{
     introspection::schema::{PossibleTypes, SchemaMetadata},
-    response::{graphql_error::GraphQLErrorPath, value::Value},
+    response::{
+        graphql_error::{GraphQLErrorPath, GraphQLErrorPathSegment},
+        value::Value,
+    },
     utils::consts::TYPENAME_FIELD_NAME,
 };
 
@@ -27,64 +30,102 @@ pub fn traverse_and_callback_mut<'a, Callback>(
 ) where
     Callback: FnMut(&mut Value<'a>, Option<GraphQLErrorPath>),
 {
+    let mut current_error_path = current_error_path;
+    traverse_and_callback_mut_inner(
+        current_data,
+        remaining_path,
+        schema_metadata,
+        current_error_path.as_mut(),
+        callback,
+    );
+}
+
+fn traverse_and_callback_mut_inner<'a, Callback>(
+    current_data: &mut Value<'a>,
+    remaining_path: &[FlattenNodePathSegment],
+    schema_metadata: &SchemaMetadata,
+    current_error_path: Option<&mut GraphQLErrorPath>,
+    callback: &mut Callback,
+) where
+    Callback: FnMut(&mut Value<'a>, Option<GraphQLErrorPath>),
+{
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {
-            // If the path is empty, we call the callback on each item in the array
-            // We iterate because we want the entity objects directly
-            for (index, item) in arr.iter_mut().enumerate() {
-                let current_error_path_for_index = current_error_path
-                    .as_ref()
-                    .map(|current_error_path| current_error_path.concat_index(index));
-                callback(item, current_error_path_for_index);
+            if let Some(path) = current_error_path {
+                for (index, item) in arr.iter_mut().enumerate() {
+                    path.segments.push(GraphQLErrorPathSegment::Index(index));
+                    callback(item, Some(path.clone()));
+                    path.segments.pop();
+                }
+            } else {
+                for item in arr.iter_mut() {
+                    callback(item, None);
+                }
             }
         } else {
-            // If the path is empty and current_data is not an array, just call the callback
-            callback(current_data, current_error_path);
+            callback(current_data, current_error_path.map(|path| path.clone()));
         }
         return;
     }
 
     match &remaining_path[0] {
         FlattenNodePathSegment::List => {
-            // If the key is List, we expect current_data to be an array
             if let Value::Array(arr) = current_data {
                 let rest_of_path = &remaining_path[1..];
-                for (index, item) in arr.iter_mut().enumerate() {
-                    let current_error_path_for_index = current_error_path
-                        .as_ref()
-                        .map(|current_error_path| current_error_path.concat_index(index));
-                    traverse_and_callback_mut(
-                        item,
-                        rest_of_path,
-                        schema_metadata,
-                        current_error_path_for_index,
-                        callback,
-                    );
+                if let Some(path) = current_error_path {
+                    for (index, item) in arr.iter_mut().enumerate() {
+                        path.segments.push(GraphQLErrorPathSegment::Index(index));
+                        traverse_and_callback_mut_inner(
+                            item,
+                            rest_of_path,
+                            schema_metadata,
+                            Some(path),
+                            callback,
+                        );
+                        path.segments.pop();
+                    }
+                } else {
+                    for item in arr.iter_mut() {
+                        traverse_and_callback_mut_inner(
+                            item,
+                            rest_of_path,
+                            schema_metadata,
+                            None,
+                            callback,
+                        );
+                    }
                 }
             }
         }
         FlattenNodePathSegment::Field(field_name) => {
-            // If the key is Field, we expect current_data to be an object
             if let Value::Object(map) = current_data {
                 if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
                     let (_, next_data) = map.get_mut(idx).unwrap();
                     let rest_of_path = &remaining_path[1..];
-                    let current_error_path_for_field =
-                        current_error_path.map(|current_error_path| {
-                            current_error_path.concat_str(field_name.clone())
-                        });
-                    traverse_and_callback_mut(
-                        next_data,
-                        rest_of_path,
-                        schema_metadata,
-                        current_error_path_for_field,
-                        callback,
-                    );
+                    if let Some(path) = current_error_path {
+                        path.segments
+                            .push(GraphQLErrorPathSegment::String(field_name.clone()));
+                        traverse_and_callback_mut_inner(
+                            next_data,
+                            rest_of_path,
+                            schema_metadata,
+                            Some(path),
+                            callback,
+                        );
+                        path.segments.pop();
+                    } else {
+                        traverse_and_callback_mut_inner(
+                            next_data,
+                            rest_of_path,
+                            schema_metadata,
+                            None,
+                            callback,
+                        );
+                    }
                 }
             }
         }
         FlattenNodePathSegment::TypeCondition(type_condition) => {
-            // If the key is Cast, we expect current_data to be an object or an array
             if let Value::Object(obj) = current_data {
                 let maybe_type_name = obj
                     .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
@@ -99,7 +140,7 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                     )
                 }) {
                     let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback_mut(
+                    traverse_and_callback_mut_inner(
                         current_data,
                         rest_of_path,
                         schema_metadata,
@@ -108,16 +149,109 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                     );
                 }
             } else if let Value::Array(arr) = current_data {
-                // If the current data is an array, we need to check each item
-                for (index, item) in arr.iter_mut().enumerate() {
-                    let current_error_path_for_index = current_error_path
-                        .as_ref()
-                        .map(|current_error_path| current_error_path.concat_index(index));
-                    traverse_and_callback_mut(
+                if let Some(path) = current_error_path {
+                    for (index, item) in arr.iter_mut().enumerate() {
+                        path.segments.push(GraphQLErrorPathSegment::Index(index));
+                        traverse_and_callback_mut_inner(
+                            item,
+                            remaining_path,
+                            schema_metadata,
+                            Some(path),
+                            callback,
+                        );
+                        path.segments.pop();
+                    }
+                } else {
+                    for item in arr.iter_mut() {
+                        traverse_and_callback_mut_inner(
+                            item,
+                            remaining_path,
+                            schema_metadata,
+                            None,
+                            callback,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn traverse_and_callback_mut_no_error_path<'a, Callback>(
+    current_data: &mut Value<'a>,
+    remaining_path: &[FlattenNodePathSegment],
+    schema_metadata: &SchemaMetadata,
+    callback: &mut Callback,
+) where
+    Callback: FnMut(&mut Value<'a>),
+{
+    if remaining_path.is_empty() {
+        if let Value::Array(arr) = current_data {
+            for item in arr.iter_mut() {
+                callback(item);
+            }
+        } else {
+            callback(current_data);
+        }
+        return;
+    }
+
+    match &remaining_path[0] {
+        FlattenNodePathSegment::List => {
+            if let Value::Array(arr) = current_data {
+                let rest_of_path = &remaining_path[1..];
+                for item in arr.iter_mut() {
+                    traverse_and_callback_mut_no_error_path(
+                        item,
+                        rest_of_path,
+                        schema_metadata,
+                        callback,
+                    );
+                }
+            }
+        }
+        FlattenNodePathSegment::Field(field_name) => {
+            if let Value::Object(map) = current_data {
+                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
+                    let (_, next_data) = map.get_mut(idx).unwrap();
+                    let rest_of_path = &remaining_path[1..];
+                    traverse_and_callback_mut_no_error_path(
+                        next_data,
+                        rest_of_path,
+                        schema_metadata,
+                        callback,
+                    );
+                }
+            }
+        }
+        FlattenNodePathSegment::TypeCondition(type_condition) => {
+            if let Value::Object(obj) = current_data {
+                let maybe_type_name = obj
+                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
+                    .ok()
+                    .and_then(|idx| obj[idx].1.as_str());
+
+                if maybe_type_name.is_none_or(|type_name| {
+                    entity_satisfies_any_type_condition(
+                        &schema_metadata.possible_types,
+                        type_name,
+                        type_condition,
+                    )
+                }) {
+                    let rest_of_path = &remaining_path[1..];
+                    traverse_and_callback_mut_no_error_path(
+                        current_data,
+                        rest_of_path,
+                        schema_metadata,
+                        callback,
+                    );
+                }
+            } else if let Value::Array(arr) = current_data {
+                for item in arr.iter_mut() {
+                    traverse_and_callback_mut_no_error_path(
                         item,
                         remaining_path,
                         schema_metadata,
-                        current_error_path_for_index,
                         callback,
                     );
                 }
