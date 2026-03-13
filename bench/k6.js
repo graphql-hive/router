@@ -210,7 +210,7 @@ function makeGraphQLRequest() {
               continue;
             }
             let message = 'unknown error';
-            if (error != null && typeof error === "object" && typeof error.message === "string") {
+            if (typeof error.message === "string") {
               message = error.message;
             }
             printOnce(
