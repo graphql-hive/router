@@ -24,8 +24,8 @@ pub struct QueryPlanner {
 impl QueryPlanner {
     #[napi(constructor)]
     pub fn new(supergraph_sdl: String) -> Result<Self> {
-        let parsed_supergraph = safe_parse_schema(&supergraph_sdl)
-            .map_err(|err| QueryPlanError::SchemaParseError(err))?;
+        let parsed_supergraph =
+            safe_parse_schema(&supergraph_sdl).map_err(QueryPlanError::SchemaParse)?;
 
         let planner = Planner::new_from_supergraph(&parsed_supergraph).map_err(|err| {
             napi::Error::from_reason(format!("Failed to create query planner: {}", err))
@@ -68,7 +68,7 @@ impl QueryPlanner {
     ) -> Result<serde_json::Value> {
         let cancellation_token = Arc::new(CancellationToken::new());
         if let Some(signal) = signal {
-        let cancellation_token_clone = Arc::clone(&cancellation_token);
+            let cancellation_token_clone = Arc::clone(&cancellation_token);
             signal.on_abort(move || {
                 cancellation_token_clone.cancel();
             });
@@ -82,8 +82,9 @@ impl QueryPlanner {
             &cancellation_token,
         )?;
 
-        serde_json::to_value(&query_plan)
-            .map_err(|err| napi::Error::from_reason(format!("Failed to serialize query plan: {}", err)))
+        serde_json::to_value(&query_plan).map_err(|err| {
+            napi::Error::from_reason(format!("Failed to serialize query plan: {}", err))
+        })
     }
 
     #[napi(ts_return_type = "Promise<QueryPlan>")]
@@ -95,12 +96,15 @@ impl QueryPlanner {
         percentage_value: f64,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<QueryPlanTask<'a>> {
-        AsyncTask::with_optional_signal(QueryPlanTask {
-            planner: &self.planner,
-            query,
-            operation_name,
-            active_labels,
-            percentage_value,
-        }, signal)
+        AsyncTask::with_optional_signal(
+            QueryPlanTask {
+                planner: &self.planner,
+                query,
+                operation_name,
+                active_labels,
+                percentage_value,
+            },
+            signal,
+        )
     }
 }

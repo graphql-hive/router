@@ -1,19 +1,24 @@
 use std::collections::HashSet;
 
 use graphql_tools::parser::{query, schema};
-use hive_router_query_planner::{ast::normalization::{error::NormalizationError, normalize_operation}, graph::{PERCENTAGE_SCALE_FACTOR, PlannerOverrideContext}, planner::{Planner, PlannerError, plan_nodes::QueryPlan}, utils::{cancellation::CancellationToken, parsing::safe_parse_operation}};
+use hive_router_query_planner::{
+    ast::normalization::{error::NormalizationError, normalize_operation},
+    graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
+    planner::{plan_nodes::QueryPlan, Planner, PlannerError},
+    utils::{cancellation::CancellationToken, parsing::safe_parse_operation},
+};
 use napi::{Task, Unknown};
 
 #[derive(Debug, thiserror::Error)]
 pub enum QueryPlanError {
     #[error("Failed to parse supergraph SDL: {0}")]
-    SchemaParseError(#[from] schema::ParseError),
+    SchemaParse(#[from] schema::ParseError),
     #[error("Failed to parse query: {0}")]
-    QueryParseError(#[from] query::ParseError),
+    QueryParse(#[from] query::ParseError),
     #[error("Failed to normalize operation: {0}")]
-    NormalizationError(#[from] NormalizationError),
+    Normalization(#[from] NormalizationError),
     #[error("Failed to plan query: {0}")]
-    PlannerError(#[from] PlannerError),
+    Planner(#[from] PlannerError),
 }
 
 impl From<QueryPlanError> for napi::Error {
@@ -32,11 +37,8 @@ pub fn query_plan(
 ) -> core::result::Result<QueryPlan, QueryPlanError> {
     let parsed_operation = safe_parse_operation(query)?;
 
-    let normalized_operation = normalize_operation(
-        &planner.supergraph,
-        &parsed_operation,
-        operation_name.as_deref(),
-    )?;
+    let normalized_operation =
+        normalize_operation(&planner.supergraph, &parsed_operation, operation_name)?;
 
     let request_override_context = PlannerOverrideContext::new(
         active_labels,
@@ -46,7 +48,7 @@ pub fn query_plan(
     Ok(planner.plan_from_normalized_operation(
         &normalized_operation.operation,
         request_override_context,
-        &cancellation_token,
+        cancellation_token,
     )?)
 }
 
@@ -73,7 +75,11 @@ impl<'a> Task for QueryPlanTask<'a> {
         )?)
     }
 
-    fn resolve(&mut self, env: napi::Env, output: Self::Output) -> Result<Self::JsValue, napi::Error> {
+    fn resolve(
+        &mut self,
+        env: napi::Env,
+        output: Self::Output,
+    ) -> Result<Self::JsValue, napi::Error> {
         env.to_js_value(&output)
     }
 }
