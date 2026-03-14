@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use graphql_tools::parser::{query, schema};
 use hive_router_query_planner::{
@@ -58,6 +58,7 @@ pub struct QueryPlanTask<'a> {
     pub operation_name: Option<String>,
     pub active_labels: HashSet<String>,
     pub percentage_value: f64,
+    pub cancellation_token: Arc<CancellationToken>,
 }
 
 impl<'a> Task for QueryPlanTask<'a> {
@@ -71,7 +72,7 @@ impl<'a> Task for QueryPlanTask<'a> {
             self.operation_name.as_deref(),
             std::mem::take(&mut self.active_labels),
             self.percentage_value,
-            &Default::default(), // TODO: Pass cancellation token from JS
+            &self.cancellation_token,
         )?)
     }
 

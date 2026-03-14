@@ -16,6 +16,9 @@ use crate::query_plan::{QueryPlanError, QueryPlanTask};
 #[napi]
 pub struct QueryPlanner {
     planner: Planner,
+    pub consumer_schema: String,
+    pub override_labels: Vec<String>,
+    pub override_percentages: Vec<f64>,
 }
 
 // TODO: Did not find struct `QueryPlanner` parsed before expand #[napi] for impl?
@@ -31,28 +34,28 @@ impl QueryPlanner {
             napi::Error::from_reason(format!("Failed to create query planner: {}", err))
         })?;
 
-        Ok(QueryPlanner { planner })
-    }
-
-    #[napi(getter)]
-    pub fn consumer_schema(&self) -> String {
-        self.planner.consumer_schema.document.to_string()
-    }
-
-    #[napi(getter)]
-    pub fn override_labels(&self) -> HashSet<String> {
-        self.planner.supergraph.progressive_overrides.flags.clone()
-    }
-
-    #[napi(getter)]
-    pub fn override_percentages(&self) -> Vec<f64> {
-        self.planner
+        let consumer_schema = planner.consumer_schema.document.to_string();
+        let override_labels = planner
+            .supergraph
+            .progressive_overrides
+            .flags
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let override_percentages = planner
             .supergraph
             .progressive_overrides
             .percentages
             .iter()
-            .map(|p: &u64| (*p as f64) / (PERCENTAGE_SCALE_FACTOR as f64))
-            .collect()
+            .map(|p| (*p as f64) / (PERCENTAGE_SCALE_FACTOR as f64))
+            .collect();
+
+        Ok(QueryPlanner {
+            planner,
+            consumer_schema,
+            override_labels,
+            override_percentages,
+        })
     }
 
     // queryplan located in query-plan.d.ts and will be merged with index.d.ts on build
@@ -67,13 +70,7 @@ impl QueryPlanner {
         signal: Option<AbortSignal>,
         env: &'a Env,
     ) -> Result<Unknown<'a>> {
-        let cancellation_token = Arc::new(CancellationToken::new());
-        if let Some(signal) = signal {
-            let cancellation_token_clone = Arc::clone(&cancellation_token);
-            signal.on_abort(move || {
-                cancellation_token_clone.cancel();
-            });
-        }
+        let cancellation_token = create_cancellation_token(&signal);
         let query_plan = query_plan::query_plan(
             &self.planner,
             query.as_str(),
@@ -95,6 +92,7 @@ impl QueryPlanner {
         percentage_value: f64,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<QueryPlanTask<'a>> {
+        let cancellation_token = create_cancellation_token(&signal);
         AsyncTask::with_optional_signal(
             QueryPlanTask {
                 planner: &self.planner,
@@ -102,8 +100,20 @@ impl QueryPlanner {
                 operation_name,
                 active_labels,
                 percentage_value,
+                cancellation_token,
             },
             signal,
         )
     }
+}
+
+fn create_cancellation_token(signal: &Option<AbortSignal>) -> Arc<CancellationToken> {
+    let cancellation_token = Arc::new(CancellationToken::new());
+    if let Some(signal) = signal {
+        let cancellation_token_for_abort = Arc::clone(&cancellation_token);
+        signal.on_abort(move || {
+            cancellation_token_for_abort.cancel();
+        });
+    }
+    cancellation_token
 }
