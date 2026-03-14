@@ -13,6 +13,8 @@ tokio = { workspace = true }
 serde_json = { workspace = true }
 napi = { version = "3.0.0", features = ["async", "serde-json"] }
 napi-derive = "3.0.0"
+thiserror = { workspace = true }
+graphql-tools = { path = "../graphql-tools", version = "0.5.2" }
 
 [build-dependencies]
 napi-build = "2"

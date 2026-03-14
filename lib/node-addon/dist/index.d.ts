@@ -6,6 +6,7 @@ export declare class QueryPlanner {
   get overrideLabels(): Set<string>
   get overridePercentages(): Array<number>
   plan(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): QueryPlan
+  planAsync(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): Promise<QueryPlan>
 }
 
 export interface QueryPlan {

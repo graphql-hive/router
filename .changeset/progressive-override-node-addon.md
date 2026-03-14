@@ -21,6 +21,10 @@ Two new getters have been added to the `QueryPlanner` class: `overrideLabels` an
 
 The `QueryPlanner.plan` method is now a synchronous method that returns a `QueryPlan` directly, instead of returning a `Promise`. This change was made to simplify the API and to allow for better error handling. If the query planning process encounters an error, it will throw an exception that can be caught by the caller.
 
+## `QueryPlanner.planAsync` is now a `Promise`
+
+The `QueryPlanner.planAsync` method is now an asynchronous method that returns a `Promise` that resolves to a `QueryPlan`. This method is intended for use cases where the query planning process may take a long time, and the caller wants to avoid blocking the main thread. The `planAsync` method accepts the same parameters as the `plan` method, including the new `activeLabels`, `percentageValue`, and `signal` parameters.
+
 ## `QueryPlanner` constructor now uses `safe_parse_schema`
 
 The `QueryPlanner` constructor now uses the `safe_parse_schema` function to parse the supergraph SDL. This function is a safer alternative to the previous parsing method, as it returns a `Result` that can be handled gracefully in case of parsing errors. If the SDL cannot be parsed, the constructor will return an error instead of panicking.
@@ -30,3 +34,5 @@ The `QueryPlanner` constructor now uses the `safe_parse_schema` function to pars
 - The `QueryPlanner` struct now holds a `Planner` instance directly, instead of an `Arc<Planner>`. This change was made to simplify the internal implementation and to avoid unnecessary reference counting. Since the `QueryPlanner` is not designed to be shared across threads, there is no need for the additional overhead of an `Arc`.
 
 - `AbortSignal` and `CancellationToken` integration to give the ability to cancel the query planning process to the Node addon consumer.
+
+- `QueryPlanner.planAsync` is introduced with [`AsyncTask`](https://napi.rs/docs/concepts/async-tasks) to allow for non-blocking query planning in the Node addon.
