@@ -58,14 +58,15 @@ impl QueryPlanner {
     // queryplan located in query-plan.d.ts and will be merged with index.d.ts on build
     // because of napi-rs limitations, the queryplan from hive-query-planner cannot be used
     #[napi(ts_return_type = "QueryPlan")]
-    pub fn plan(
+    pub fn plan<'a>(
         &self,
         query: String,
         operation_name: Option<String>,
         active_labels: HashSet<String>,
         percentage_value: f64,
         signal: Option<AbortSignal>,
-    ) -> Result<serde_json::Value> {
+        env: &'a Env,
+    ) -> Result<Unknown<'a>> {
         let cancellation_token = Arc::new(CancellationToken::new());
         if let Some(signal) = signal {
             let cancellation_token_clone = Arc::clone(&cancellation_token);
@@ -82,9 +83,7 @@ impl QueryPlanner {
             &cancellation_token,
         )?;
 
-        serde_json::to_value(&query_plan).map_err(|err| {
-            napi::Error::from_reason(format!("Failed to serialize query plan: {}", err))
-        })
+        env.to_js_value(&query_plan)
     }
 
     #[napi(ts_return_type = "Promise<QueryPlan>")]

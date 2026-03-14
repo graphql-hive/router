@@ -3,6 +3,8 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { QueryPlanner } from "../dist/index.js";
 
+const PLAN_METHODS = ['plan', 'planAsync'] as const;
+
 describe("fixtures", async () => {
   for (const fixtureName of await fs.readdir("fixture")) {
     const fixtureDir = path.join("fixture", fixtureName);
@@ -17,11 +19,13 @@ describe("fixtures", async () => {
         path.join(fixtureDir, queryFile),
         "utf-8",
       );
-      it(`should plan ${fixtureName}/${queryFile}`, async (t) => {
-        const planner = new QueryPlanner(supergraph);
-        const plan = await planner.plan(query, undefined, new Set(), 0);
-        t.assert.snapshot(plan);
-      });
+      for (const planMethod of PLAN_METHODS) {
+        it(`should ${planMethod} ${fixtureName}/${queryFile}`, async (t) => {
+          const planner = new QueryPlanner(supergraph);
+          const plan = await planner[planMethod](query, undefined, new Set(), 0);
+          t.assert.snapshot(plan);
+        });
+      }
     }
   }
 });

@@ -10,7 +10,6 @@ crate-type = ["cdylib"]
 [dependencies]
 hive-router-query-planner = { path = "../query-planner", version = "2.0.0" }
 tokio = { workspace = true }
-serde_json = { workspace = true }
 napi = { version = "3.0.0", features = ["async", "serde-json"] }
 napi-derive = "3.0.0"
 thiserror = { workspace = true }
