@@ -3,7 +3,9 @@
 export declare class QueryPlanner {
   constructor(supergraphSdl: string)
   get consumerSchema(): string
-  plan(query: string, operationName?: string | undefined | null): Promise<QueryPlan>
+  get overrideLabels(): Set<string>
+  get overridePercentages(): Array<number>
+  plan(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): QueryPlan
 }
 
 export interface QueryPlan {
