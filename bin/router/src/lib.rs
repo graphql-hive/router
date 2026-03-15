@@ -51,12 +51,18 @@ use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use hive_router_config::humantime_serde;
 use hive_router_config::{load_config, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
-use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
-use hive_router_internal::telemetry::{
-    otel::tracing_opentelemetry::OpenTelemetrySpanExt,
-    traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
-};
 pub use hive_router_internal::BoxError;
+use hive_router_internal::{
+    logging::context::LoggerContext,
+    telemetry::{
+        otel::tracing_opentelemetry::OpenTelemetrySpanExt,
+        traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
+    },
+};
+use hive_router_internal::{
+    logging::logger_span::LoggerRootSpan,
+    telemetry::metrics::catalog::values::GraphQLResponseStatus,
+};
 pub use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 pub use hive_router_plan_executor::executors::http::SubgraphHttpResponse;
 pub use hive_router_plan_executor::response::graphql_error::GraphQLError;
@@ -68,33 +74,11 @@ pub use ntex::main;
 use ntex::web::{self, HttpRequest};
 pub use sonic_rs;
 pub use tokio;
+use tokio::time::Instant;
 pub use tracing;
 use tracing::{info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
-
-#[inline]
-async fn correlated_graphql_endpoint_handler(
-    request: HttpRequest,
-    body_stream: web::types::Payload,
-    schema_state: web::types::State<Arc<SchemaState>>,
-    app_state: web::types::State<Arc<RouterSharedState>>,
-) -> Response {
-    let root_logging_span = LoggerRootSpan::create(&request);
-
-    async {
-        let start = Instant::now();
-        let logging_context = app_state.logging_context.clone();
-        logging_context.http_request_start(&request);
-        let response =
-            graphql_endpoint_handler(request, body_stream, schema_state, app_state).await;
-        logging_context.http_request_end(start.elapsed(), &response);
-
-        response
-    }
-    .instrument(root_logging_span.span)
-    .await
-}
 
 #[inline]
 async fn graphql_endpoint_handler(
@@ -103,14 +87,22 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
+    let start = Instant::now();
+    let root_logging_span = LoggerRootSpan::create(&request);
     let http_request_capture = app_state
         .telemetry_context
         .metrics
         .http_server
         .capture_request(&request);
 
+    let logging_context = app_state.logging_context.clone();
+    logging_context.http_request_start(&request);
+
     let response =
-        graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone()).await;
+        graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone())
+            .instrument(root_logging_span.span)
+            .await;
+    logging_context.http_request_end(start.elapsed(), &response);
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -159,6 +151,7 @@ async fn graphql_endpoint_dispatch(
             schema_state.get_ref(),
             &root_http_request_span,
             &mut response_mode,
+            app_state.logging_context.clone(),
         );
 
         // Handle the request with a timeout. If the timeout is reached, a timeout error response will be generated.
@@ -167,6 +160,7 @@ async fn graphql_endpoint_dispatch(
             Ok(response) => response,
             // If the request handler returns an error, convert it to an HTTP response.
             Err(err) => {
+                tracing::error!(error = %err, "request handler has failed");
                 write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
                 handle_pipeline_error(err, &app_state, &response_mode)
             }
@@ -193,13 +187,13 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         .prometheus
         .as_ref()
         .and_then(|prom| prom.to_attached());
-    info!("hive-router@{} starting...", ROUTER_VERSION);
+    info!(version = ROUTER_VERSION, "hive-router starting...",);
     let http_config = router_config.http.clone();
     let addr = router_config.http.address();
     let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
-        telemetry.tracing_context.clone(),
+        telemetry.context.clone(),
         telemetry.logging_context.clone(),
         &mut bg_tasks_manager,
         plugin_registry,
@@ -231,7 +225,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     .await
     .map_err(RouterInitError::HttpServerStartError);
 
-    info!("server stopped, clearing background tasks");
+    info!("server stopped");
     bg_tasks_manager.shutdown();
     telemetry.graceful_shutdown().await;
 
@@ -252,6 +246,7 @@ pub async fn invoke_shutdown_hooks(shared_state: &RouterSharedState) {
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     telemetry_context: TelemetryContext,
+    logger_context: LoggerContext,
     bg_tasks_manager: &mut background_tasks::BackgroundTasksManager,
     plugin_registry: PluginRegistry,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), RouterInitError> {

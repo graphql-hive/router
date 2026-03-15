@@ -75,7 +75,7 @@ impl LoggerContext {
             .graphql
             .response
             .error_count
-            .then(|| error_count);
+            .then_some(error_count);
 
         info!(error_count, "graphql operation completed");
     }

@@ -620,6 +620,7 @@ impl TestRouter<Built> {
         let (shared_state, schema_state) = configure_app_from_config(
             config,
             telemetry.context.clone(),
+            telemetry.logging_context.clone(),
             &mut bg_tasks_manager,
             self.plugins
                 .iter()

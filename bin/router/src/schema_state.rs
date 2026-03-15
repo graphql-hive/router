@@ -27,7 +27,7 @@ use moka::future::Cache;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, trace};
 
 use crate::{
     cache_state::CacheState,
@@ -188,12 +188,8 @@ impl SchemaState {
                         process_capture.finish_ok();
                     }
                     Err(e) => {
-<<<<<<< HEAD
                         process_capture.finish_error();
                         error!("Failed to build new supergraph data: {}", e);
-=======
-                        error!(error = %e, "Failed to build new supergraph data");
->>>>>>> 8d3dbf3a (wip)
                     }
                 }
             }

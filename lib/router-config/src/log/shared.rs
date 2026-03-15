@@ -54,9 +54,9 @@ impl LogLevel {
     }
 }
 
-impl Into<LevelFilter> for &LogLevel {
-    fn into(self) -> LevelFilter {
-        match self {
+impl From<&LogLevel> for LevelFilter {
+    fn from(val: &LogLevel) -> Self {
+        match val {
             LogLevel::Debug => LevelFilter::DEBUG,
             LogLevel::Info => LevelFilter::INFO,
             LogLevel::Warn => LevelFilter::WARN,

@@ -291,6 +291,8 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
+        logger_context.graphql_request_end(pipeline_result.error_count);
+
         write_graphql_response_metric_status(req, if pipeline_result.error_count > 0 {
                     GraphQLResponseStatus::Error
                 } else {
@@ -327,8 +329,6 @@ pub async fn graphql_request_handler(
         if let Some(response_headers_aggregator) = pipeline_result.response_headers_aggregator {
             response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
         }
-
-        logger_context.graphql_request_end(response.error_count);
 
         Ok(response_builder
             .content_type(single_content_type.as_ref())
