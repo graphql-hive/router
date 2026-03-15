@@ -41,7 +41,7 @@ impl LoggerContext {
         body_size: usize,
         client_name: Option<&str>,
         client_version: Option<&str>,
-        query: &str,
+        query: Option<&str>,
         operation_name: Option<&str>,
         _variables: &HashMap<std::string::String, sonic_rs::Value>,
         _extensions: Option<&HashMap<std::string::String, sonic_rs::Value>>,
