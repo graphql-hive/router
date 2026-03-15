@@ -38,6 +38,7 @@ impl LoggerContext {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn graphql_request_start(
         &self,
         body_size: usize,
@@ -107,7 +108,7 @@ impl LoggerContext {
 #[inline]
 fn obtain_headers<'req, 'cfg>(
     header_map: &'req ntex::http::HeaderMap,
-    headers_list: &'cfg Vec<HttpHeaderName>,
+    headers_list: &'cfg [HttpHeaderName],
 ) -> BTreeMap<&'cfg str, Option<&'req str>> {
     headers_list
         .iter()

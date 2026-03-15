@@ -96,13 +96,19 @@ async fn graphql_endpoint_handler(
         .capture_request(&request);
 
     let logging_context = app_state.logging_context.clone();
-    logging_context.http_request_start(&request);
 
-    let response =
-        graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone())
-            .instrument(root_logging_span.span)
-            .await;
-    logging_context.http_request_end(start.elapsed(), &response);
+    // "instrument" here wrap both "http_request_start" and "http_request_end" so the two root log lines
+    // will be correlated with the request_id identifier
+    let response = async {
+        logging_context.http_request_start(&request);
+        let inner_res =
+            graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone()).await;
+        logging_context.http_request_end(start.elapsed(), &inner_res);
+
+        inner_res
+    }
+    .instrument(root_logging_span.span)
+    .await;
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation

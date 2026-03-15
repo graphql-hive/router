@@ -249,7 +249,7 @@ impl RequestAccepts for HttpRequest {
         };
 
         let accept = Accept::from_str(accept_header).map_err(|err| {
-            error!("Failed to parse Accept header: {}", err);
+            error!(error = %err, "failed to parse Accept header");
             PipelineError::InvalidHeaderValue(ACCEPT)
         })?;
 

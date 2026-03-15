@@ -9,7 +9,7 @@ use http::{header::CONTENT_TYPE, Method};
 use ntex::util::Bytes;
 use ntex::web::types::Query;
 use ntex::web::HttpRequest;
-use tracing::{trace, warn};
+use tracing::{debug, error};
 
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::header::SingleContentType;
@@ -118,50 +118,48 @@ pub async fn deserialize_graphql_params(
             let http_method = req.method();
             match *http_method {
                 Method::GET => {
-                    trace!("processing GET GraphQL operation");
                     let query_params_str = req
                         .uri()
                         .query()
                         .ok_or_else(|| PipelineError::GetInvalidQueryParams)?;
                     let query_params = Query::<GETQueryParams>::from_query(query_params_str)?.0;
 
-                    trace!("parsed GET query params: {:?}", query_params);
-
-                    query_params.try_into()?
+                    query_params.try_into().inspect(|_| {
+                        debug!("graphql params extracted from query string, using GET");
+                    })?
                 }
                 Method::POST => {
-                    trace!("Processing POST GraphQL request");
-
                     match req.headers().get(CONTENT_TYPE) {
                         Some(value) => {
                             let content_type_str = value
                                 .to_str()
                                 .map_err(|_| PipelineError::InvalidHeaderValue(CONTENT_TYPE))?;
                             if !content_type_str.contains(SingleContentType::JSON.as_ref()) {
-                                warn!(
-                                    "Invalid content type on a POST request: {}",
-                                    content_type_str
+                                error!(
+                                    content_type = content_type_str,
+                                    "Invalid content type on a POST request",
                                 );
                                 return Err(PipelineError::UnsupportedContentType);
                             }
                         }
                         None => {
-                            trace!("POST without content type detected");
                             return Err(PipelineError::MissingContentTypeHeader);
                         }
                     }
 
                     let execution_request = unsafe {
                         sonic_rs::from_slice_unchecked::<GraphQLParams>(&body).map_err(|e| {
-                            warn!("Failed to parse body: {}", e);
+                            error!(error = %e, "Failed to parse body");
                             PipelineError::FailedToParseBody(e)
                         })?
                     };
 
+                    debug!("graphql params extracted from payload, using POST");
+
                     execution_request
                 }
                 _ => {
-                    warn!("unsupported HTTP method: {}", http_method);
+                    error!(value = %http_method, "unsupported HTTP method");
 
                     return Err(PipelineError::UnsupportedHttpMethod(http_method.to_owned()));
                 }

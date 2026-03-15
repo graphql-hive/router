@@ -95,10 +95,7 @@ impl PersistedDocumentsManager {
     ) -> Result<String, PersistedDocumentsError> {
         let cdn_document_id = str::replace(document_id, "~", "/");
         let cdn_artifact_url = format!("{}/apps/{}", endpoint, cdn_document_id);
-        info!(
-            "Fetching document {} from CDN: {}",
-            document_id, cdn_artifact_url
-        );
+        info!(document_id, cdn_artifact_url, "fetching document from CDN");
         let response_fut = self.client.get(cdn_artifact_url).send();
 
         let response = circuit_breaker
@@ -115,8 +112,8 @@ impl PersistedDocumentsManager {
                 .await
                 .map_err(PersistedDocumentsError::FailedToReadCDNResponse)?;
             debug!(
-                "Document fetched from CDN: {}, storing in local cache",
-                document
+                document,
+                "Document fetched from CDN, storing in local cache",
             );
             self.cache
                 .insert(document_id.into(), document.clone())
@@ -125,13 +122,13 @@ impl PersistedDocumentsManager {
             return Ok(document);
         }
 
-        warn!(
-            "Document fetch from CDN failed: HTTP {}, Body: {:?}",
-            response.status(),
-            response
+        warn!(status = %response.status(), "Document fetch from CDN failed");
+        debug!(
+            body = response
                 .text()
                 .await
-                .unwrap_or_else(|_| "Unavailable".to_string())
+                .unwrap_or_else(|_| "Unavailable".to_string()),
+            "response body"
         );
 
         Err(PersistedDocumentsError::DocumentNotFound)
@@ -145,14 +142,13 @@ impl PersistedDocumentsManager {
 
         match cached_record {
             Some(document) => {
-                debug!("Document {} found in cache: {}", document_id, document);
-
+                debug!(document_id, "Document found in cache");
                 Ok(document)
             }
             None => {
                 debug!(
-                    "Document {} not found in cache. Fetching from CDN",
-                    document_id
+                    document_id,
+                    "Document not found in cache. Fetching from CDN",
                 );
                 let mut last_error: Option<PersistedDocumentsError> = None;
                 for (endpoint, circuit_breaker) in &self.endpoints_with_circuit_breakers {

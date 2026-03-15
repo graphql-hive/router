@@ -232,7 +232,7 @@ impl UsageAgentExt for UsageAgent {
             }
             self.flush()
                 .await
-                .unwrap_or_else(|e| tracing::error!("Failed to flush usage reports: {}", e));
+                .unwrap_or_else(|e| tracing::error!(error = %e, "Failed to flush usage reports"));
         }
     }
 
@@ -249,7 +249,7 @@ impl UsageAgentExt for UsageAgent {
 impl AsyncDrop for UsageAgentInner {
     async fn async_drop(&mut self) {
         if let Err(e) = self.flush().await {
-            tracing::error!("Failed to flush usage reports during drop: {}", e);
+            tracing::error!(error = %e, "Failed to flush usage reports during drop");
         }
     }
 }
