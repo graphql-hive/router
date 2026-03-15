@@ -7,6 +7,8 @@ use hive_router_config::{log::service::LogFieldsConfig, primitives::http_header:
 use ntex::http::body::{BodySize, MessageBody};
 use tracing::info;
 
+use crate::logging::sonic_valuable::SonicMapRef;
+
 #[derive(Clone, Default)]
 pub struct LoggerContext {
     fields_config: LogFieldsConfig,
@@ -43,8 +45,8 @@ impl LoggerContext {
         client_version: Option<&str>,
         query: Option<&str>,
         operation_name: Option<&str>,
-        _variables: &HashMap<std::string::String, sonic_rs::Value>,
-        _extensions: Option<&HashMap<std::string::String, sonic_rs::Value>>,
+        variables: &HashMap<String, sonic_rs::Value>,
+        extensions: Option<&HashMap<String, sonic_rs::Value>>,
     ) {
         let cfg = &self.fields_config.graphql.request;
         let body_size_bytes = cfg.body_size_bytes.then_some(body_size as i64);
@@ -52,8 +54,8 @@ impl LoggerContext {
         let client_version = cfg.client_version.then_some(client_version);
         let operation = cfg.operation.then_some(query);
         let operation_name = cfg.operation_name.then_some(operation_name.unwrap_or(""));
-        // let variables = cfg.variables.then(|| variables);
-        // let extensions = cfg.extensions.then(|| extensions);
+        let variables = cfg.variables.then_some(SonicMapRef(variables));
+        let extensions = cfg.extensions.then(|| extensions.map(SonicMapRef));
 
         info!(
             body_size_bytes,
@@ -61,9 +63,8 @@ impl LoggerContext {
             client_version,
             operation,
             operation_name,
-            // TODO: figure this out due to sonic_rs
-            // variables = tracing::field::valuable(&variables),
-            // extensions = tracing::field::valuable(&extensions),
+            variables = tracing::field::valuable(&variables),
+            extensions = tracing::field::valuable(&extensions),
             "graphql operation started"
         );
     }

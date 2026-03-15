@@ -2,6 +2,7 @@ pub mod context;
 pub mod file;
 pub mod logger_span;
 pub mod request_id;
+pub mod sonic_valuable;
 pub mod stdout;
 pub mod utils;
 
