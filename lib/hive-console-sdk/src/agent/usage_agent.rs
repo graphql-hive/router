@@ -99,12 +99,13 @@ impl UsageAgentInner {
             match operation {
                 Err(e) => {
                     tracing::warn!(
-                        "Dropping operation \"{}\" (phase: PROCESSING): {}",
-                        op.operation_name
+                        error = e,
+                        operation_name = op
+                            .operation_name
                             .clone()
                             .or_else(|| Some("anonymous".to_string()))
                             .unwrap(),
-                        e
+                        "Dropping operation (phase: PROCESSING) due to error",
                     );
                     continue;
                 }
