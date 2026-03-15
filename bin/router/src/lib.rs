@@ -271,6 +271,7 @@ pub async fn configure_app_from_config(
 
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
+    let logger_context_arc = Arc::new(logger_context);
     let cache_state = Arc::new(CacheState::new());
 
     if router_config_arc.telemetry.metrics.is_enabled() {
@@ -280,6 +281,7 @@ pub async fn configure_app_from_config(
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,
         telemetry_context_arc.clone(),
+        logger_context_arc.clone(),
         router_config_arc.clone(),
         plugins_arc.clone(),
         cache_state.clone(),
@@ -310,7 +312,7 @@ pub async fn configure_app_from_config(
         telemetry_context_arc,
         plugins_arc,
         cache_state,
-        Arc::new(logger_context),
+        logger_context_arc,
     )?);
 
     Ok((shared_state, schema_state_arc))

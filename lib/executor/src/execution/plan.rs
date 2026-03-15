@@ -732,7 +732,7 @@ mod tests {
 
     use super::select_fetch_variables;
     use hive_router_config::HiveRouterConfig;
-    use hive_router_internal::telemetry::TelemetryContext;
+    use hive_router_internal::{logging::context::LoggerContext, telemetry::TelemetryContext};
     use hive_router_query_planner::{
         ast::{
             document::Document,
@@ -896,6 +896,7 @@ mod tests {
                 Arc::new(TelemetryContext::from_propagation_config(
                     &Default::default(),
                 )),
+                Arc::new(LoggerContext::default()),
             )
             .unwrap(),
             client_request: &ClientRequestDetails {

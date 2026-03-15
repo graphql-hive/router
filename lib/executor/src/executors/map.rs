@@ -9,10 +9,12 @@ use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
     HiveRouterConfig,
 };
-use hive_router_internal::expressions::vrl::core::Value as VrlValue;
 use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
 use hive_router_internal::{
     expressions::vrl::compiler::Program as VrlProgram, telemetry::TelemetryContext,
+};
+use hive_router_internal::{
+    expressions::vrl::core::Value as VrlValue, logging::context::LoggerContext,
 };
 use http::Uri;
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
@@ -71,6 +73,7 @@ pub struct SubgraphExecutorMap {
     max_connections_per_host: usize,
     in_flight_requests: InflightRequestsMap,
     telemetry_context: Arc<TelemetryContext>,
+    logger_context: Arc<LoggerContext>,
 }
 
 fn build_https_executor() -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
@@ -85,6 +88,7 @@ impl SubgraphExecutorMap {
         config: Arc<HiveRouterConfig>,
         global_timeout: DurationOrProgram,
         telemetry_context: Arc<TelemetryContext>,
+        logger_context: Arc<LoggerContext>,
     ) -> Result<Self, SubgraphExecutorError> {
         let client: HttpClient = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
@@ -106,6 +110,7 @@ impl SubgraphExecutorMap {
             timeouts_by_subgraph: Default::default(),
             global_timeout,
             telemetry_context,
+            logger_context,
         })
     }
 
@@ -113,6 +118,7 @@ impl SubgraphExecutorMap {
         subgraph_endpoint_map: &HashMap<SubgraphName, String>,
         config: Arc<HiveRouterConfig>,
         telemetry_context: Arc<TelemetryContext>,
+        logger_context: Arc<LoggerContext>,
     ) -> Result<Self, SubgraphExecutorError> {
         let global_timeout = DurationOrProgram::compile(
             &config.traffic_shaping.all.request_timeout,
@@ -121,8 +127,12 @@ impl SubgraphExecutorMap {
         .map_err(|err| {
             SubgraphExecutorError::RequestTimeoutExpressionBuild("all".to_string(), err.diagnostics)
         })?;
-        let mut subgraph_executor_map =
-            SubgraphExecutorMap::new(config.clone(), global_timeout, telemetry_context)?;
+        let mut subgraph_executor_map = SubgraphExecutorMap::new(
+            config.clone(),
+            global_timeout,
+            telemetry_context,
+            logger_context,
+        )?;
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.iter() {
             let endpoint_config = config
@@ -169,6 +179,7 @@ impl SubgraphExecutorMap {
         let mut on_end_callbacks = vec![];
 
         let mut execution_result: Option<SubgraphResponse<'exec>> = None;
+
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
             let mut start_payload = OnSubgraphExecuteStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
@@ -197,6 +208,8 @@ impl SubgraphExecutorMap {
             execution_request = start_payload.execution_request;
             executor = start_payload.executor;
         }
+
+        self.logger_context.subgraph_request_start(subgraph_name);
 
         let mut execution_result = match execution_result {
             Some(execution_result) => execution_result,
@@ -231,6 +244,8 @@ impl SubgraphExecutorMap {
                 execution_result = end_payload.execution_result;
             }
         }
+
+        self.logger_context.subgraph_request_end(subgraph_name);
 
         Ok(execution_result)
     }

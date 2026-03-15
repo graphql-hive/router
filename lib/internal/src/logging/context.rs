@@ -71,6 +71,16 @@ impl LoggerContext {
     }
 
     #[inline]
+    pub fn subgraph_request_start(&self, subgraph_name: &str) {
+        info!(subgraph = subgraph_name, "subgraph request started");
+    }
+
+    #[inline]
+    pub fn subgraph_request_end(&self, subgraph_name: &str) {
+        info!(subgraph = subgraph_name, "subgraph request ended");
+    }
+
+    #[inline]
     pub fn graphql_request_end(&self, error_count: usize) {
         let error_count = self
             .fields_config

@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use graphql_tools::static_graphql::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
+use hive_router_internal::logging::context::LoggerContext;
 use hive_router_internal::telemetry::{metrics::Metrics, TelemetryContext};
 use hive_router_internal::{
     authorization::metadata::AuthorizationMetadata,
@@ -76,6 +77,7 @@ impl SchemaState {
     pub async fn new_from_config(
         bg_tasks_manager: &mut BackgroundTasksManager,
         telemetry_context: Arc<TelemetryContext>,
+        logger_context: Arc<LoggerContext>,
         router_config: Arc<HiveRouterConfig>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         cache_state: Arc<CacheState>,
@@ -141,7 +143,7 @@ impl SchemaState {
                 }
 
                 match new_supergraph_data.unwrap_or_else(|| {
-                    Self::build_data(router_config.clone(), task_telemetry.clone(), new_ast)
+                    Self::build_data(router_config.clone(), task_telemetry.clone(), logger_context.clone(), new_ast)
                 }) {
                     Ok(mut new_supergraph_data) => {
                         if !on_end_callbacks.is_empty() {
@@ -206,6 +208,7 @@ impl SchemaState {
     fn build_data(
         router_config: Arc<HiveRouterConfig>,
         telemetry_context: Arc<TelemetryContext>,
+        logger_context: Arc<LoggerContext>,
         parsed_supergraph_sdl: Document,
     ) -> Result<SupergraphData, SupergraphManagerError> {
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
@@ -215,6 +218,7 @@ impl SchemaState {
             &planner.supergraph.subgraph_endpoint_map,
             router_config,
             telemetry_context,
+            logger_context,
         )?;
 
         Ok(SupergraphData {

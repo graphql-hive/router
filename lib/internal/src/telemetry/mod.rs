@@ -16,8 +16,8 @@ use tracing_subscriber::filter::{filter_fn, Targets};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
-use crate::telemetry::metrics::Metrics;
 use crate::logging::logger_span::ROUTER_INTERNAL_LOGGER_TARGET;
+use crate::telemetry::metrics::Metrics;
 use crate::telemetry::traces::build_trace_provider;
 
 pub mod error;
