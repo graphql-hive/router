@@ -89,7 +89,7 @@ pub async fn graphql_request_handler(
 
     // agree on the response content type
     *response_mode = req.negotiate()?;
-    debug!(%response_mode, "response mode set");
+    debug!(%response_mode, "response mode negotiated");
 
     if *response_mode == ResponseMode::GraphiQL {
         if shared_state.router_config.graphiql.enabled {
@@ -295,7 +295,7 @@ pub async fn graphql_request_handler(
             jwt: jwt_request_details,
         };
 
-        let pipeline_result  = execute_pipeline(
+        let pipeline_result = execute_pipeline(
             &client_request_details,
             &normalize_payload,
             &variable_payload,

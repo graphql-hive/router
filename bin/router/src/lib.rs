@@ -55,8 +55,9 @@ pub use hive_router_internal::BoxError;
 use hive_router_internal::{
     logging::context::LoggerContext,
     telemetry::{
+        otel::opentelemetry::Context as OTELContext,
         otel::tracing_opentelemetry::OpenTelemetrySpanExt,
-        traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
+        traces::spans::http_request::HttpServerRequestSpan, TelemetryContext, TraceContextExt,
     },
 };
 use hive_router_internal::{
@@ -87,8 +88,11 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
+    let parent_ctx = app_state
+        .telemetry_context
+        .extract_context(&HeaderExtractor(request.headers()));
     let start = Instant::now();
-    let root_logging_span = LoggerRootSpan::create(&request);
+    let root_logging_span = LoggerRootSpan::create(&request, &parent_ctx);
     let http_request_capture = app_state
         .telemetry_context
         .metrics
@@ -101,8 +105,14 @@ async fn graphql_endpoint_handler(
     // will be correlated with the request_id identifier
     let response = async {
         logging_context.http_request_start(&request);
-        let inner_res =
-            graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone()).await;
+        let inner_res = graphql_endpoint_dispatch(
+            &request,
+            body_stream,
+            schema_state,
+            app_state.clone(),
+            parent_ctx,
+        )
+        .await;
         logging_context.http_request_end(start.elapsed(), &inner_res);
 
         inner_res
@@ -136,12 +146,10 @@ async fn graphql_endpoint_dispatch(
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
+    otel_ctx: OTELContext,
 ) -> web::HttpResponse {
-    let parent_ctx = app_state
-        .telemetry_context
-        .extract_context(&HeaderExtractor(request.headers()));
     let root_http_request_span = HttpServerRequestSpan::from_request(request);
-    let _ = root_http_request_span.set_parent(parent_ctx);
+    let _ = root_http_request_span.set_parent(otel_ctx);
 
     async {
         // Set it to the default value in case of the negotiation failing,

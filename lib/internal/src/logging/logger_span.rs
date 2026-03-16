@@ -1,8 +1,7 @@
 use std::borrow::Borrow;
-
 use tracing::{info_span, Span};
 
-use crate::logging::request_id::obtain_req_correlation_id;
+use crate::{logging::request_id::obtain_req_correlation_id, telemetry::otel};
 
 pub static ROUTER_INTERNAL_LOGGER_TARGET: &str = "hive-router-logger";
 
@@ -25,8 +24,11 @@ impl Borrow<Span> for LoggerRootSpan {
 }
 
 impl LoggerRootSpan {
-    pub fn create(request: &ntex::web::HttpRequest) -> Self {
-        let request_id = obtain_req_correlation_id(request);
+    pub fn create(
+        request: &ntex::web::HttpRequest,
+        otel_ctx: &otel::opentelemetry::Context,
+    ) -> Self {
+        let request_id = obtain_req_correlation_id(request, otel_ctx);
         let span = info_span!(target: ROUTER_INTERNAL_LOGGER_TARGET, "request",
           req_id = %request_id,
         );
