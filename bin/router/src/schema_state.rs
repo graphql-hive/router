@@ -24,10 +24,7 @@ use hive_router_query_planner::{
     utils::parsing::parse_schema,
 };
 use moka::future::Cache;
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
@@ -43,7 +40,6 @@ use crate::{
 
 pub struct SchemaState {
     current_swapable: Arc<ArcSwap<Option<SupergraphData>>>,
-    current_schema_checksum: Arc<AtomicU64>,
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
@@ -77,10 +73,6 @@ impl SchemaState {
         self.current_supergraph().is_some()
     }
 
-    pub fn current_schema_checksum(&self) -> u64 {
-        self.current_schema_checksum.load(Ordering::Relaxed)
-    }
-
     pub async fn new_from_config(
         bg_tasks_manager: &mut BackgroundTasksManager,
         telemetry_context: Arc<TelemetryContext>,
@@ -98,8 +90,6 @@ impl SchemaState {
 
         let swappable_data = Arc::new(ArcSwap::from(Arc::new(None)));
         let swappable_data_spawn_clone = swappable_data.clone();
-        let current_schema_checksum = Arc::new(AtomicU64::new(0));
-        let current_schema_checksum_spawn_clone = current_schema_checksum.clone();
         let plan_cache = cache_state.plan_cache.clone();
         let validate_cache = cache_state.validate_cache.clone();
         let normalize_cache = cache_state.normalize_cache.clone();
@@ -190,10 +180,6 @@ impl SchemaState {
                             new_supergraph_data = end_payload.new_supergraph_data;
                         }
 
-                        current_schema_checksum_spawn_clone.store(
-                            new_supergraph_data.planner.consumer_schema.hash,
-                            Ordering::Relaxed,
-                        );
                         swappable_data_spawn_clone.store(Arc::new(Some(new_supergraph_data)));
                         debug!("Supergraph updated successfully");
 
@@ -211,7 +197,6 @@ impl SchemaState {
 
         Ok(Self {
             current_swapable: swappable_data,
-            current_schema_checksum,
             plan_cache,
             validate_cache,
             normalize_cache,
