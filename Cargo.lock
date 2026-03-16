@@ -3474,7 +3474,7 @@ dependencies = [
 
 [[package]]
 name = "node-addon"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "graphql-tools",
  "hive-router-query-planner",
