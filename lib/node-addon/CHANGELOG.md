@@ -1,4 +1,10 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.16 (2026-03-16)
+
+### Fixes
+
+- Add missing `*.node` binaries to the `dist` folder in the distributed package.
+
 ## 0.0.15 (2026-03-16)
 
 ### Features
