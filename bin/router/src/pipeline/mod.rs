@@ -253,7 +253,7 @@ pub async fn graphql_request_handler(
                 Some(OperationKind::Query) | None
             ) {
             let variables_hash = hash_graphql_variables(&graphql_params.variables);
-            let schema_checksum = schema_state.current_schema_checksum();
+            let schema_checksum = supergraph.schema_checksum();
             let fingerprint = inbound_request_fingerprint(
                 req,
                 &shared_state.in_flight_requests_header_policy,
