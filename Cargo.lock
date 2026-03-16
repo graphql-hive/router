@@ -3476,12 +3476,12 @@ dependencies = [
 name = "node-addon"
 version = "0.0.14"
 dependencies = [
+ "graphql-tools",
  "hive-router-query-planner",
  "napi",
  "napi-build",
  "napi-derive",
- "serde_json",
- "tokio",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

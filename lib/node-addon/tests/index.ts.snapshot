@@ -9,15 +9,15 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
         "nodes": [
           {
             "kind": "Fetch",
-            "operation": "{topProducts{__typename upc name price weight}}",
+            "serviceName": "products",
             "operationKind": "query",
-            "serviceName": "products"
+            "operation": "{topProducts{__typename upc name price weight}}"
           },
           {
             "kind": "Fetch",
-            "operation": "{users{__typename id username name}}",
+            "serviceName": "accounts",
             "operationKind": "query",
-            "serviceName": "accounts"
+            "operation": "{users{__typename id username name}}"
           }
         ]
       },
@@ -26,13 +26,21 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
         "nodes": [
           {
             "kind": "Flatten",
+            "path": [
+              {
+                "Field": "topProducts"
+              },
+              "@"
+            ],
             "node": {
               "kind": "Fetch",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate inStock}}}",
+              "serviceName": "inventory",
               "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate inStock}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
+                  "typeCondition": "Product",
                   "selections": [
                     {
                       "kind": "Field",
@@ -50,24 +58,21 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                       "kind": "Field",
                       "name": "upc"
                     }
-                  ],
-                  "typeCondition": "Product"
+                  ]
                 }
-              ],
-              "serviceName": "inventory"
-            },
-            "path": [
-              {
-                "Field": "topProducts"
-              },
-              "@"
-            ]
+              ]
+            }
           },
           {
+            "kind": "BatchFetch",
+            "serviceName": "reviews",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id reviews{id body product{__typename upc}} username}}\\n",
             "entityBatch": {
               "aliases": [
                 {
                   "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
                   "paths": [
                     [
                       {
@@ -76,10 +81,10 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                       "@"
                     ]
                   ],
-                  "representationsVariableName": "__batch_reps_0",
                   "requires": [
                     {
                       "kind": "InlineFragment",
+                      "typeCondition": "Product",
                       "selections": [
                         {
                           "kind": "Field",
@@ -89,13 +94,13 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                           "kind": "Field",
                           "name": "upc"
                         }
-                      ],
-                      "typeCondition": "Product"
+                      ]
                     }
                   ]
                 },
                 {
                   "alias": "_e1",
+                  "representationsVariableName": "__batch_reps_1",
                   "paths": [
                     [
                       {
@@ -104,10 +109,10 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                       "@"
                     ]
                   ],
-                  "representationsVariableName": "__batch_reps_1",
                   "requires": [
                     {
                       "kind": "InlineFragment",
+                      "typeCondition": "User",
                       "selections": [
                         {
                           "kind": "Field",
@@ -117,17 +122,12 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                           "kind": "Field",
                           "name": "id"
                         }
-                      ],
-                      "typeCondition": "User"
+                      ]
                     }
                   ]
                 }
               ]
-            },
-            "kind": "BatchFetch",
-            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id reviews{id body product{__typename upc}} username}}\\n",
-            "operationKind": "query",
-            "serviceName": "reviews"
+            }
           }
         ]
       },
@@ -135,10 +135,15 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
         "kind": "Parallel",
         "nodes": [
           {
+            "kind": "BatchFetch",
+            "serviceName": "products",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{price weight name}}}",
             "entityBatch": {
               "aliases": [
                 {
                   "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
                   "paths": [
                     [
                       {
@@ -201,10 +206,10 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                       }
                     ]
                   ],
-                  "representationsVariableName": "__batch_reps_0",
                   "requires": [
                     {
                       "kind": "InlineFragment",
+                      "typeCondition": "Product",
                       "selections": [
                         {
                           "kind": "Field",
@@ -214,23 +219,23 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                           "kind": "Field",
                           "name": "upc"
                         }
-                      ],
-                      "typeCondition": "Product"
+                      ]
                     }
                   ]
                 }
               ]
-            },
-            "kind": "BatchFetch",
-            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{price weight name}}}",
-            "operationKind": "query",
-            "serviceName": "products"
+            }
           },
           {
+            "kind": "BatchFetch",
+            "serviceName": "accounts",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{name}}}",
             "entityBatch": {
               "aliases": [
                 {
                   "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
                   "paths": [
                     [
                       {
@@ -266,10 +271,10 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                       }
                     ]
                   ],
-                  "representationsVariableName": "__batch_reps_0",
                   "requires": [
                     {
                       "kind": "InlineFragment",
+                      "typeCondition": "User",
                       "selections": [
                         {
                           "kind": "Field",
@@ -279,25 +284,25 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                           "kind": "Field",
                           "name": "id"
                         }
-                      ],
-                      "typeCondition": "User"
+                      ]
                     }
                   ]
                 }
               ]
-            },
-            "kind": "BatchFetch",
-            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{name}}}",
-            "operationKind": "query",
-            "serviceName": "accounts"
+            }
           }
         ]
       },
       {
+        "kind": "BatchFetch",
+        "serviceName": "inventory",
+        "operationKind": "query",
+        "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{inStock shippingEstimate}}}",
         "entityBatch": {
           "aliases": [
             {
               "alias": "_e0",
+              "representationsVariableName": "__batch_reps_0",
               "paths": [
                 [
                   {
@@ -360,10 +365,10 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                   }
                 ]
               ],
-              "representationsVariableName": "__batch_reps_0",
               "requires": [
                 {
                   "kind": "InlineFragment",
+                  "typeCondition": "Product",
                   "selections": [
                     {
                       "kind": "Field",
@@ -381,17 +386,12 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                       "kind": "Field",
                       "name": "weight"
                     }
-                  ],
-                  "typeCondition": "Product"
+                  ]
                 }
               ]
             }
           ]
-        },
-        "kind": "BatchFetch",
-        "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{inStock shippingEstimate}}}",
-        "operationKind": "query",
-        "serviceName": "inventory"
+        }
       }
     ]
   }
@@ -403,9 +403,421 @@ exports[`fixtures > should plan simple-inaccessible/test-2.graphql 1`] = `
   "kind": "QueryPlan",
   "node": {
     "kind": "Fetch",
-    "operation": "{usersInFriends{id friends(type: FRIEND){id}}}",
+    "serviceName": "friends",
     "operationKind": "query",
-    "serviceName": "friends"
+    "operation": "{usersInFriends{id friends(type: FRIEND){id}}}"
+  }
+}
+`;
+
+exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
+{
+  "kind": "QueryPlan",
+  "node": {
+    "kind": "Sequence",
+    "nodes": [
+      {
+        "kind": "Parallel",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "products",
+            "operationKind": "query",
+            "operation": "{topProducts{__typename upc name price weight}}"
+          },
+          {
+            "kind": "Fetch",
+            "serviceName": "accounts",
+            "operationKind": "query",
+            "operation": "{users{__typename id username name}}"
+          }
+        ]
+      },
+      {
+        "kind": "Parallel",
+        "nodes": [
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "topProducts"
+              },
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "inventory",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate inStock}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "weight"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "BatchFetch",
+            "serviceName": "reviews",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id reviews{id body product{__typename upc}} username}}\\n",
+            "entityBatch": {
+              "aliases": [
+                {
+                  "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
+                  "paths": [
+                    [
+                      {
+                        "Field": "topProducts"
+                      },
+                      "@"
+                    ]
+                  ],
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "upc"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "alias": "_e1",
+                  "representationsVariableName": "__batch_reps_1",
+                  "paths": [
+                    [
+                      {
+                        "Field": "users"
+                      },
+                      "@"
+                    ]
+                  ],
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "User",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "kind": "Parallel",
+        "nodes": [
+          {
+            "kind": "BatchFetch",
+            "serviceName": "products",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{price weight name}}}",
+            "entityBatch": {
+              "aliases": [
+                {
+                  "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
+                  "paths": [
+                    [
+                      {
+                        "Field": "topProducts"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "author"
+                      },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ],
+                    [
+                      {
+                        "Field": "users"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ],
+                    [
+                      {
+                        "Field": "users"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "author"
+                      },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ]
+                  ],
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "upc"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "BatchFetch",
+            "serviceName": "accounts",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{name}}}",
+            "entityBatch": {
+              "aliases": [
+                {
+                  "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
+                  "paths": [
+                    [
+                      {
+                        "Field": "topProducts"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "author"
+                      }
+                    ],
+                    [
+                      {
+                        "Field": "users"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "author"
+                      }
+                    ]
+                  ],
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "User",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "kind": "BatchFetch",
+        "serviceName": "inventory",
+        "operationKind": "query",
+        "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{inStock shippingEstimate}}}",
+        "entityBatch": {
+          "aliases": [
+            {
+              "alias": "_e0",
+              "representationsVariableName": "__batch_reps_0",
+              "paths": [
+                [
+                  {
+                    "Field": "topProducts"
+                  },
+                  "@",
+                  {
+                    "Field": "reviews"
+                  },
+                  "@",
+                  {
+                    "Field": "author"
+                  },
+                  {
+                    "Field": "reviews"
+                  },
+                  "@",
+                  {
+                    "Field": "product"
+                  }
+                ],
+                [
+                  {
+                    "Field": "users"
+                  },
+                  "@",
+                  {
+                    "Field": "reviews"
+                  },
+                  "@",
+                  {
+                    "Field": "product"
+                  }
+                ],
+                [
+                  {
+                    "Field": "users"
+                  },
+                  "@",
+                  {
+                    "Field": "reviews"
+                  },
+                  "@",
+                  {
+                    "Field": "product"
+                  },
+                  {
+                    "Field": "reviews"
+                  },
+                  "@",
+                  {
+                    "Field": "author"
+                  },
+                  {
+                    "Field": "reviews"
+                  },
+                  "@",
+                  {
+                    "Field": "product"
+                  }
+                ]
+              ],
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "weight"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+`;
+
+exports[`fixtures > should planAsync simple-inaccessible/test-2.graphql 1`] = `
+{
+  "kind": "QueryPlan",
+  "node": {
+    "kind": "Fetch",
+    "serviceName": "friends",
+    "operationKind": "query",
+    "operation": "{usersInFriends{id friends(type: FRIEND){id}}}"
   }
 }
 `;
