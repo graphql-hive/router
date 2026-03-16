@@ -180,10 +180,10 @@ jobs:
       - name: prepare artifacts
         working-directory: lib/node-addon
         run: |
-          mv ./node_addon_linux_arm64/* .
-          mv ./node_addon_linux_amd64/* .
-          mv ./node_addon_macos_arm64/* .
-          mv ./node_addon_macos_amd64/* .
+          mv ./node_addon_linux_arm64/* ./dist
+          mv ./node_addon_linux_amd64/* ./dist
+          mv ./node_addon_macos_arm64/* ./dist
+          mv ./node_addon_macos_amd64/* ./dist
       - name: publish
         working-directory: lib/node-addon
         env:
