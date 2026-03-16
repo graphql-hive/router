@@ -55,7 +55,6 @@ export interface EntityBatchAlias {
   representationsVariableName: string;
   paths: FlattenNodePathSegment[][];
   requires: RequiresSelection[];
-  entitiesSelection: RequiresSelection[];
   inputRewrites?: InputRewrite[];
   outputRewrites?: OutputRewrite[];
 }
