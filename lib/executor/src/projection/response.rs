@@ -88,11 +88,7 @@ pub fn project_by_operation(
     schema_metadata: &SchemaMetadata,
 ) -> Result<Vec<u8>, ProjectionError> {
     let mut buffer = Vec::with_capacity(response_size_estimate);
-    buffer.put(OPEN_BRACE);
-    buffer.put(QUOTE);
-    buffer.put("data".as_bytes());
-    buffer.put(QUOTE);
-    buffer.put(COLON);
+    buffer.put_slice(b"{\"data\":");
 
     let mut errors = errors;
 
@@ -120,11 +116,7 @@ pub fn project_by_operation(
     }
 
     if !errors.is_empty() {
-        buffer.put(COMMA);
-        buffer.put(QUOTE);
-        buffer.put("errors".as_bytes());
-        buffer.put(QUOTE);
-        buffer.put(COLON);
+        buffer.put_slice(b",\"errors\":");
         buffer.put_slice(
             &sonic_rs::to_vec(&errors)
                 .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?,
@@ -134,11 +126,7 @@ pub fn project_by_operation(
     if !extensions.is_empty() {
         let serialized_extensions = sonic_rs::to_vec(extensions)
             .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
-        buffer.put(COMMA);
-        buffer.put(QUOTE);
-        buffer.put("extensions".as_bytes());
-        buffer.put(QUOTE);
-        buffer.put(COLON);
+        buffer.put_slice(b",\"extensions\":");
         buffer.put_slice(&serialized_extensions);
     }
 
