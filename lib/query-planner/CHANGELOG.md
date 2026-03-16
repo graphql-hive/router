@@ -30,6 +30,159 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.5.0 (2026-03-16)
+
+### Features
+
+#### Introduce BatchFetch for compatible entity fetches to improve query performance
+
+When multiple `Flatten(Fetch)` steps target the same subgraph and have compatible shape, the planner can group them into one batched fetch operation with aliases.
+
+Batching keeps execution depth the same, but **reduces request fanout**.
+In our benchmark query, **downstream requests drop from `13` to `7`** while the number of execution waves stays unchanged.
+This should also reduce pressure on subgraphs, because entities are resolved in one batched subgraph call instead of being resolved across multiple incoming GraphQL requests, where the lack of DataLoader or another caching layer could otherwise cause duplicate resolution work.
+
+Before: 
+
+```graphql
+Parallel {
+  Flatten(path: "products.@") {
+    Fetch(service: "inventory") {
+      {
+        ... on Product {
+          upc
+        }
+      } =>
+      {
+        ... on Product {
+          shippingEstimate
+        }
+      }
+    }
+  }
+  Flatten(path: "topProducts.@") {
+    Fetch(service: "inventory") {
+      {
+        ... on Product {
+          upc
+        }
+      } =>
+      {
+        ... on Product {
+          shippingEstimate
+        }
+      }
+    }
+  }
+}
+```
+
+After:
+
+```graphql
+BatchFetch(service: "inventory") {
+  {
+    _e0 {
+      paths: [
+        "products.@"
+        "topProducts.@"
+      ]
+      {
+        ... on Product {
+          upc
+        }
+      }
+    }
+  }
+  {
+    _e0: _entities(representations: $__batch_reps_0) {
+      ... on Product {
+        shippingEstimate
+      }
+    }
+  }
+}
+```
+
+When two entity fetches go to the same subgraph but request different output fields, they are batched into one `BatchFetch` node with two aliases, but share the same variables, to reduce the payload size.
+
+```
+BatchFetch(service: "inventory") {
+  {
+    _e0 {
+      paths: [
+        "products.@"
+      ]
+      {
+        ... on Product {
+          upc
+        }
+      }
+    }
+    _e1 {
+      paths: [
+        "products.@"
+      ]
+      {
+        ... on Product {
+          upc
+        }
+      }
+    }
+  }
+  {
+    _e0: _entities(representations: $__batch_reps_0) {
+      ... on Product {
+        shippingEstimate
+      }
+    }
+    _e1: _entities(representations: $__batch_reps_0) {
+      ... on Product {
+        inStock
+      }
+    }
+  }
+}
+```
+
+### Fixes
+
+- Implements `AsRef` trait for `graphql_tools::parser::query::ast::TypeCondition`
+
+#### Public API Changes
+
+### Progressive Override support in `QueryPlanner.plan`
+
+Now `QueryPlanner.plan` accepts two additional parameters: `activeLabels` and `percentageValue`. These parameters are used to determine which overrides should be applied when generating the query plan. The `activeLabels` parameter is a set of labels that are currently active, and the `percentageValue` parameter is a number between 0 and 100 that represents the percentage of traffic that should be routed to the overrides.
+
+### `AbortSignal` support in `QueryPlanner.plan`
+
+The `QueryPlanner.plan` method now also accepts an optional `signal` parameter of type `AbortSignal`. This allows the caller to abort the query planning process if it takes too long or if the user cancels the operation. If the signal is aborted, the `plan` method will throw an error.
+
+### `overrideLabels` and `overridePercentages` getters
+
+Two new getters have been added to the `QueryPlanner` class: `overrideLabels` and `overridePercentages`. The `overrideLabels` getter returns a set of all the labels that are defined in the planner's supergraph, while the `overridePercentages` getter returns an array of all the percentage values that are defined in the planner's supergraph. These getters can be used by the caller to determine which overrides are available and how they are configured.
+
+### `QueryPlanner.plan` is no longer a `Promise`
+
+The `QueryPlanner.plan` method is now a synchronous method that returns a `QueryPlan` directly, instead of returning a `Promise`. This change was made to simplify the API and to allow for better error handling. If the query planning process encounters an error, it will throw an exception that can be caught by the caller.
+
+### `QueryPlanner.planAsync` is now a `Promise`
+
+The `QueryPlanner.planAsync` method is now an asynchronous method that returns a `Promise` that resolves to a `QueryPlan`. This method is intended for use cases where the query planning process may take a long time, and the caller wants to avoid blocking the main thread. The `planAsync` method accepts the same parameters as the `plan` method, including the new `activeLabels`, `percentageValue`, and `signal` parameters.
+
+### `QueryPlanner` constructor now uses `safe_parse_schema`
+
+The `QueryPlanner` constructor now uses the `safe_parse_schema` function to parse the supergraph SDL. This function is a safer alternative to the previous parsing method, as it returns a `Result` that can be handled gracefully in case of parsing errors. If the SDL cannot be parsed, the constructor will return an error instead of panicking.
+
+## Implementation changes
+
+- The `QueryPlanner` struct now holds a `Planner` instance directly, instead of an `Arc<Planner>`. This change was made to simplify the internal implementation and to avoid unnecessary reference counting. Since the `QueryPlanner` is not designed to be shared across threads, there is no need for the additional overhead of an `Arc`.
+
+- `AbortSignal` and `CancellationToken` integration to give the ability to cancel the query planning process to the Node addon consumer.
+
+- `QueryPlanner.planAsync` is introduced with [`AsyncTask`](https://napi.rs/docs/concepts/async-tasks) to allow for non-blocking query planning in the Node addon.
+
 ## 2.4.0 (2026-03-12)
 
 ### Features
