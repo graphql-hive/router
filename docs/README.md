@@ -1925,8 +1925,8 @@ Configuration for subgraphs using the HTTP Callback protocol.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**heartbeat\_interval**|`string`|The interval at which the subgraph must send heartbeat messages.<br/>If set to 0, heartbeats are disabled. Defaults to 5 seconds.<br/>Default: `"5s"`<br/>|no|
-|**path**|`string`|The path of the router's callback endpoint.<br/>Must be an absolute path starting with `/`. Defaults to `/callback`.<br/>Default: `"/callback"`<br/>|no|
-|**public\_url**|`string`|The public URL that subgraphs will use to send callback messages to this router.<br/><br/>Your public_url must match the server address combined with the router's path.<br/>Meaning, if your server is `http://localhost:4000` and the path is `/callback`,<br/>your `public_url` should be `http://localhost:4000/callback`.<br/><br/>Example: `https://example.com:4000/callback`<br/>|yes|
+|**path**|`string`|The path of the router's callback endpoint.<br/>Must be an absolute path starting with `/`. Defaults to `/callback`.<br/>Default: `"/callback"`<br/>Pattern: `^/`<br/>|no|
+|**public\_url**|`string`|The public URL that subgraphs will use to send callback messages to this router.<br/><br/>Your public_url must match the server address combined with the router's path.<br/>Meaning, if your server is `http://localhost:4000` and the path is `/callback`,<br/>your `public_url` should be `http://localhost:4000/callback`.<br/><br/>Example: `https://example.com:4000/callback`<br/>Format: `"uri"`<br/>|yes|
 |[**subgraphs**](#subscriptionscallbacksubgraphs)|`string[]`|The list of subgraph names that use the HTTP callback protocol.<br/>Default: <br/>|no|
 
 **Additional Properties:** not allowed  
