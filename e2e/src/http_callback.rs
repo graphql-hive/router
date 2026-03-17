@@ -70,7 +70,7 @@ mod http_callback_e2e_tests {
         assert!(body
             .contains(r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#));
 
-        // kicked off client
+        // kicked off client, eventually
         assert!(body.contains(r#"{"data":null,"errors":[{"message":"Subgraph gone due heartbeat timeout","extensions":{"code":"SUBGRAPH_GONE"}}]}"#));
 
         // completed stream

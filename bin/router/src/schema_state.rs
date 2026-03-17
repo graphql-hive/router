@@ -340,7 +340,11 @@ impl BackgroundTask for HeartbeatEnforcerTask {
             let mut timed_out = Vec::new();
             for entry in self.active_subscriptions.iter() {
                 let last = *entry.value().last_heartbeat.lock().unwrap();
-                if Instant::now().duration_since(last) > self.heartbeat_interval {
+                if Instant::now().duration_since(last)
+                    > self.heartbeat_interval +
+                        // add a grace period if latency increases due to usage
+                        std::time::Duration::from_millis(500)
+                {
                     timed_out.push(entry.key().clone());
                 }
             }
