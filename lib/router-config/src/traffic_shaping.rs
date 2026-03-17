@@ -44,10 +44,6 @@ fn default_dedupe_enabled() -> bool {
     true
 }
 
-fn default_router_dedupe_headers() -> Option<Vec<String>> {
-    None
-}
-
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingExecutorSubgraphConfig {
@@ -190,20 +186,44 @@ pub struct TrafficShapingRouterDedupeConfig {
     #[serde(default = "default_dedupe_enabled")]
     pub enabled: bool,
 
-    /// Header list participating in the dedupe key.
+    /// Header configuration participating in the dedupe key.
     ///
-    /// - null / omitted: include all headers (safest)
-    /// - []: include no headers
-    /// - ["authorization", "cookie"]: include only listed headers (case-insensitive)
-    #[serde(default = "default_router_dedupe_headers")]
-    pub headers: Option<Vec<String>>,
+    /// Accepted forms:
+    /// - `all`
+    /// - `none`
+    /// - `{ include: ["authorization", "cookie"] }`
+    ///
+    /// Header names are case-insensitive and validated as standard HTTP header names.
+    #[serde(default)]
+    pub headers: TrafficShapingRouterDedupeHeadersConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TrafficShapingRouterDedupeHeadersKeyword {
+    #[default]
+    All,
+    None,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub enum TrafficShapingRouterDedupeHeadersConfig {
+    Keyword(TrafficShapingRouterDedupeHeadersKeyword),
+    Include { include: Vec<String> },
+}
+
+impl Default for TrafficShapingRouterDedupeHeadersConfig {
+    fn default() -> Self {
+        Self::Keyword(TrafficShapingRouterDedupeHeadersKeyword::All)
+    }
 }
 
 impl Default for TrafficShapingRouterDedupeConfig {
     fn default() -> Self {
         Self {
             enabled: default_dedupe_enabled(),
-            headers: default_router_dedupe_headers(),
+            headers: Default::default(),
         }
     }
 }
@@ -215,7 +235,7 @@ fn default_router_request_timeout() -> Duration {
 impl Default for TrafficShapingRouterConfig {
     fn default() -> Self {
         Self {
-            dedupe: TrafficShapingRouterDedupeConfig::default(),
+            dedupe: Default::default(),
             request_timeout: default_router_request_timeout(),
         }
     }
