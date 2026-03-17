@@ -1,8 +1,10 @@
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use url::Url;
+
+use crate::primitives::absolute_path::AbsolutePath;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
@@ -34,11 +36,8 @@ pub struct CallbackConfig {
     pub public_url: Url,
     /// The path of the router's callback endpoint.
     /// Must be an absolute path starting with `/`. Defaults to `/callback`.
-    #[serde(
-        default = "default_callback_path",
-        deserialize_with = "deserialize_absolute_path"
-    )]
-    pub path: String,
+    #[serde(default = "default_callback_path")]
+    pub path: AbsolutePath,
     /// The interval at which the subgraph must send heartbeat messages.
     /// If set to 0, heartbeats are disabled. Defaults to 5 seconds.
     #[serde(
@@ -53,21 +52,8 @@ pub struct CallbackConfig {
     pub subgraphs: HashSet<String>,
 }
 
-fn default_callback_path() -> String {
-    "/callback".to_string()
-}
-
-fn deserialize_absolute_path<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let path = String::deserialize(deserializer)?;
-    if !path.starts_with('/') {
-        return Err(serde::de::Error::custom(format!(
-            "callback path must be absolute (start with /), got: {path:?}"
-        )));
-    }
-    Ok(path)
+fn default_callback_path() -> AbsolutePath {
+    AbsolutePath::try_from("/callback").expect("default callback path is valid")
 }
 
 fn default_heartbeat_interval() -> Duration {
@@ -148,7 +134,7 @@ mod tests {
         .unwrap_err();
         assert!(
             err.to_string()
-                .contains("callback path must be absolute (start with /)"),
+                .contains("path must be absolute (start with /)"),
             "unexpected error: {err}"
         );
     }
@@ -159,7 +145,7 @@ mod tests {
             r#"{"public_url": "http://localhost:4000/callback", "path": "/callback"}"#,
         )
         .unwrap();
-        assert_eq!(config.path, "/callback");
+        assert_eq!(config.path.as_str(), "/callback");
     }
 
     #[test]
@@ -168,7 +154,7 @@ mod tests {
             r#"{"public_url": "http://localhost:4000/callback"}"#,
         )
         .unwrap();
-        assert_eq!(config.path, "/callback");
+        assert_eq!(config.path.as_str(), "/callback");
     }
 }
 
