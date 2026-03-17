@@ -9,7 +9,7 @@ use ntex::util::Bytes;
 use ntex::web::{self, types::Path, HttpRequest, HttpResponse};
 use serde::Deserialize;
 use strum::EnumString;
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 #[derive(Debug, Deserialize, EnumString)]
 #[serde(rename_all = "lowercase")]
