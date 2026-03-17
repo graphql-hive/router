@@ -165,7 +165,7 @@ pub async fn handler(
     let subscription = match active_subscriptions.get(&payload.id) {
         Some(sub) => sub,
         None => {
-            debug!(
+            warn!(
                 subscription_id = %payload.id,
                 "Subscription not found, may have been terminated"
             );
