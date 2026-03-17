@@ -3,6 +3,8 @@ use std::{collections::HashMap, time::Duration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::primitives::http_header::HttpHeaderName;
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingConfig {
@@ -210,7 +212,7 @@ pub enum TrafficShapingRouterDedupeHeadersKeyword {
 #[serde(untagged)]
 pub enum TrafficShapingRouterDedupeHeadersConfig {
     Keyword(TrafficShapingRouterDedupeHeadersKeyword),
-    Include { include: Vec<String> },
+    Include { include: Vec<HttpHeaderName> },
 }
 
 impl Default for TrafficShapingRouterDedupeHeadersConfig {
