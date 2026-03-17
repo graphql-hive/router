@@ -9,6 +9,9 @@ use dashmap::{mapref::entry::Entry, DashMap};
 use tokio::sync::OnceCell;
 
 pub type ABuildHasher = BuildHasherDefault<AHasher>;
+type InFlightValue<V> = Arc<V>;
+type InFlightCell<V> = Arc<OnceCell<InFlightValue<V>>>;
+type InFlightInnerMap<K, V, S> = DashMap<K, InFlightCell<V>, S>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InFlightRole {
@@ -17,7 +20,7 @@ pub enum InFlightRole {
 }
 
 pub struct InFlightMap<K, V, S = ABuildHasher> {
-    inner: Arc<DashMap<K, Arc<OnceCell<Arc<V>>>, S>>,
+    inner: Arc<InFlightInnerMap<K, V, S>>,
 }
 
 impl<K, V, S> Clone for InFlightMap<K, V, S> {
@@ -80,7 +83,7 @@ where
 
 pub struct InFlightClaim<K, V, S = ABuildHasher> {
     key: K,
-    cell: Arc<OnceCell<Arc<V>>>,
+    cell: InFlightCell<V>,
     map: InFlightMap<K, V, S>,
 }
 
