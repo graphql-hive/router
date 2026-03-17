@@ -253,6 +253,11 @@ pub async fn graphql_request_handler(
                 Some(OperationKind::Query) | None
             ) {
             let variables_hash = hash_graphql_variables(&graphql_params.variables);
+            let extensions_hash = graphql_params
+                .extensions
+                .as_ref()
+                .map_or(0, hash_graphql_extensions);
+
             let schema_checksum = supergraph.schema_checksum();
             let fingerprint = inbound_request_fingerprint(
                 req,
@@ -260,6 +265,7 @@ pub async fn graphql_request_handler(
                 schema_checksum,
                 normalize_payload.normalized_operation_hash,
                 variables_hash,
+                extensions_hash,
             );
             let (shared_response, _role) = shared_state
                 .in_flight_requests
@@ -493,6 +499,7 @@ fn inbound_request_fingerprint(
     schema_checksum: u64,
     normalized_operation_hash: u64,
     variables_hash: u64,
+    extensions_hash: u64,
 ) -> u64 {
     let mut hasher = Xxh3::new();
 
@@ -514,6 +521,7 @@ fn inbound_request_fingerprint(
     schema_checksum.hash(&mut hasher);
     normalized_operation_hash.hash(&mut hasher);
     variables_hash.hash(&mut hasher);
+    extensions_hash.hash(&mut hasher);
 
     hasher.finish()
 }
@@ -533,6 +541,11 @@ fn hash_graphql_variables(variables: &HashMap<String, Value>) -> u64 {
     }
 
     hasher.finish()
+}
+
+fn hash_graphql_extensions(extensions: &HashMap<String, Value>) -> u64 {
+    // reused as hash_graphql_variables has the same function signature
+    hash_graphql_variables(extensions)
 }
 
 fn hash_graphql_value(value: &Value, hasher: &mut Xxh3) {
