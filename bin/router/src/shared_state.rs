@@ -12,7 +12,7 @@ use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
 use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
-use http::{header::HeaderName, StatusCode};
+use http::StatusCode;
 use moka::future::Cache;
 use moka::Expiry;
 use ntex::web;
@@ -49,34 +49,26 @@ impl RouterRequestDedupeHeaderPolicy {
     }
 }
 
-impl TryFrom<&TrafficShapingRouterDedupeHeadersConfig> for RouterRequestDedupeHeaderPolicy {
-    type Error = SharedStateError;
-
-    fn try_from(headers: &TrafficShapingRouterDedupeHeadersConfig) -> Result<Self, Self::Error> {
+impl From<&TrafficShapingRouterDedupeHeadersConfig> for RouterRequestDedupeHeaderPolicy {
+    fn from(headers: &TrafficShapingRouterDedupeHeadersConfig) -> Self {
         match headers {
             TrafficShapingRouterDedupeHeadersConfig::Keyword(
                 TrafficShapingRouterDedupeHeadersKeyword::All,
-            ) => Ok(Self::All),
+            ) => Self::All,
             TrafficShapingRouterDedupeHeadersConfig::Keyword(
                 TrafficShapingRouterDedupeHeadersKeyword::None,
-            ) => Ok(Self::None),
+            ) => Self::None,
             TrafficShapingRouterDedupeHeadersConfig::Include { include } => {
                 if include.is_empty() {
-                    return Ok(Self::None);
+                    return Self::None;
                 }
 
                 let mut dedupe_headers = HashSet::with_capacity(include.len());
                 for header in include {
-                    let normalized = HeaderName::from_bytes(header.as_bytes()).map_err(|err| {
-                        SharedStateError::InvalidDedupeHeaderName {
-                            header: header.clone(),
-                            error: err.to_string(),
-                        }
-                    })?;
-                    dedupe_headers.insert(normalized.as_str().to_owned());
+                    dedupe_headers.insert(header.get_header_ref().as_str().to_owned());
                 }
 
-                Ok(Self::Include(dedupe_headers))
+                Self::Include(dedupe_headers)
             }
         }
     }
@@ -202,7 +194,7 @@ impl RouterSharedState {
                 .router
                 .dedupe
                 .headers)
-                .try_into()?,
+                .into(),
         })
     }
 }
@@ -219,8 +211,6 @@ pub enum SharedStateError {
     UsageAgent(#[from] Box<AgentError>),
     #[error("invalid introspection config: {0}")]
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
-    #[error("invalid router dedupe header name '{header}': {error}")]
-    InvalidDedupeHeaderName { header: String, error: String },
 }
 
 #[cfg(test)]
@@ -231,30 +221,12 @@ mod tests {
     };
 
     #[test]
-    fn should_reject_invalid_router_dedupe_header_name() {
-        let headers = TrafficShapingRouterDedupeHeadersConfig::Include {
-            include: vec!["Invalid Header".to_string()],
-        };
-        let result = RouterRequestDedupeHeaderPolicy::try_from(&headers);
-
-        assert!(result.is_err(), "expected invalid header policy to fail");
-        let error = match result {
-            Ok(_) => panic!("expected invalid header policy to fail"),
-            Err(err) => err.to_string(),
-        };
-        assert!(
-            error.contains("invalid router dedupe header name"),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[test]
     fn should_map_header_variants_to_policy() {
         let all = TrafficShapingRouterDedupeHeadersConfig::Keyword(
             TrafficShapingRouterDedupeHeadersKeyword::All,
         );
         assert!(matches!(
-            RouterRequestDedupeHeaderPolicy::try_from(&all).unwrap(),
+            RouterRequestDedupeHeaderPolicy::from(&all),
             RouterRequestDedupeHeaderPolicy::All
         ));
 
@@ -262,14 +234,14 @@ mod tests {
             TrafficShapingRouterDedupeHeadersKeyword::None,
         );
         assert!(matches!(
-            RouterRequestDedupeHeaderPolicy::try_from(&none).unwrap(),
+            RouterRequestDedupeHeaderPolicy::from(&none),
             RouterRequestDedupeHeaderPolicy::None
         ));
 
         let include = TrafficShapingRouterDedupeHeadersConfig::Include {
-            include: vec!["Authorization".to_string()],
+            include: vec!["Authorization".into()],
         };
-        let include_policy = RouterRequestDedupeHeaderPolicy::try_from(&include).unwrap();
+        let include_policy = RouterRequestDedupeHeaderPolicy::from(&include);
         assert!(matches!(
             include_policy,
             RouterRequestDedupeHeaderPolicy::Include(_)
