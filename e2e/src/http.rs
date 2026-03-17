@@ -230,11 +230,11 @@ mod http_tests {
     }
 
     #[ntex::test]
-    async fn should_dedupe_inflight_router_requests_by_default() {
+    async fn should_not_dedupe_inflight_router_requests_by_default() {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(300));
+                    sleep(Duration::from_millis(50));
                 }
                 None
             })
@@ -252,74 +252,6 @@ mod http_tests {
                 traffic_shaping:
                     all:
                         dedupe_enabled: false
-                "#,
-            )
-            .build()
-            .start()
-            .await;
-
-        let request_count = 12;
-        let mut requests = FuturesUnordered::new();
-
-        for _ in 0..request_count {
-            requests.push(router.send_graphql_request(
-                r#"
-                {
-                    topProducts {
-                        name
-                        price
-                    }
-                }
-                "#,
-                None,
-                None,
-            ));
-        }
-
-        while let Some(response) = requests.next().await {
-            assert!(response.status().is_success(), "Expected 200 OK");
-            let json_body = response.json_body().await;
-            assert!(json_body["data"]["topProducts"].is_array());
-            assert!(json_body["errors"].is_null());
-        }
-
-        let products_requests = subgraphs
-            .get_requests_log("products")
-            .unwrap_or_default()
-            .len();
-
-        assert!(
-            products_requests < request_count,
-            "expected fewer products subgraph requests than incoming requests with router inflight dedupe; got {products_requests} for {request_count} incoming requests"
-        );
-    }
-
-    #[ntex::test]
-    async fn should_not_dedupe_inflight_router_requests_when_disabled() {
-        let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(300));
-                }
-                None
-            })
-            .build()
-            .start()
-            .await;
-
-        let router = TestRouter::builder()
-            .with_subgraphs(&subgraphs)
-            .inline_config(
-                r#"
-                supergraph:
-                    source: file
-                    path: supergraph.graphql
-                traffic_shaping:
-                    all:
-                        dedupe_enabled: false
-                    router:
-                        dedupe:
-                            enabled: false
                 "#,
             )
             .build()
@@ -358,16 +290,16 @@ mod http_tests {
 
         assert!(
             products_requests >= request_count,
-            "expected at least one products subgraph request per incoming request when router inflight dedupe is disabled; got {products_requests} for {request_count} incoming requests"
+            "expected at least one products subgraph request per incoming request when router inflight dedupe is disabled by default; got {products_requests} for {request_count} incoming requests"
         );
     }
 
     #[ntex::test]
-    async fn should_not_dedupe_inflight_router_mutation_requests() {
+    async fn should_dedupe_inflight_router_requests_when_enabled() {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(300));
+                    sleep(Duration::from_millis(50));
                 }
                 None
             })
@@ -385,6 +317,77 @@ mod http_tests {
                 traffic_shaping:
                     all:
                         dedupe_enabled: false
+                    router:
+                        dedupe:
+                            enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let request_count = 12;
+        let mut requests = FuturesUnordered::new();
+
+        for _ in 0..request_count {
+            requests.push(router.send_graphql_request(
+                r#"
+                {
+                    topProducts {
+                        name
+                        price
+                    }
+                }
+                "#,
+                None,
+                None,
+            ));
+        }
+
+        while let Some(response) = requests.next().await {
+            assert!(response.status().is_success(), "Expected 200 OK");
+            let json_body = response.json_body().await;
+            assert!(json_body["data"]["topProducts"].is_array());
+            assert!(json_body["errors"].is_null());
+        }
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert!(
+            products_requests < request_count,
+            "expected fewer products subgraph requests than incoming requests when router inflight dedupe is enabled; got {products_requests} for {request_count} incoming requests"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_not_dedupe_inflight_router_mutation_requests() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                if request.path == "/products" {
+                    sleep(Duration::from_millis(50));
+                }
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                    router:
+                        dedupe:
+                            enabled: true
                 "#,
             )
             .build()
@@ -464,6 +467,9 @@ mod http_tests {
                 traffic_shaping:
                     all:
                         dedupe_enabled: false
+                    router:
+                        dedupe:
+                            enabled: true
                 "#,
             ))
             .build()
@@ -539,7 +545,7 @@ mod http_tests {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(300));
+                    sleep(Duration::from_millis(50));
                 }
                 None
             })
@@ -557,6 +563,9 @@ mod http_tests {
                 traffic_shaping:
                     all:
                         dedupe_enabled: false
+                    router:
+                        dedupe:
+                            enabled: true
                 "#,
             )
             .build()
@@ -614,7 +623,7 @@ mod http_tests {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(300));
+                    sleep(Duration::from_millis(50));
                 }
                 None
             })
@@ -634,6 +643,7 @@ mod http_tests {
                         dedupe_enabled: false
                     router:
                         dedupe:
+                            enabled: true
                             headers: none
                 "#,
             )
@@ -692,7 +702,7 @@ mod http_tests {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(300));
+                    sleep(Duration::from_millis(50));
                 }
                 None
             })
@@ -712,6 +722,7 @@ mod http_tests {
                         dedupe_enabled: false
                     router:
                         dedupe:
+                            enabled: true
                             headers:
                                 include: ["X-Tenant"]
                 "#,

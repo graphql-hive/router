@@ -46,6 +46,10 @@ fn default_dedupe_enabled() -> bool {
     true
 }
 
+fn default_router_dedupe_enabled() -> bool {
+    false
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingExecutorSubgraphConfig {
@@ -185,7 +189,7 @@ pub struct TrafficShapingRouterDedupeConfig {
     ///
     /// When enabled, identical incoming GraphQL query requests that are processed at the same time
     /// share the same in-flight execution result.
-    #[serde(default = "default_dedupe_enabled")]
+    #[serde(default = "default_router_dedupe_enabled")]
     pub enabled: bool,
 
     /// Header configuration participating in the dedupe key.
@@ -224,7 +228,7 @@ impl Default for TrafficShapingRouterDedupeHeadersConfig {
 impl Default for TrafficShapingRouterDedupeConfig {
     fn default() -> Self {
         Self {
-            enabled: default_dedupe_enabled(),
+            enabled: default_router_dedupe_enabled(),
             headers: Default::default(),
         }
     }
