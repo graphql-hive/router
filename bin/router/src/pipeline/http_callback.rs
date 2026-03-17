@@ -8,12 +8,31 @@ use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use ntex::util::Bytes;
 use ntex::web::{self, types::Path, HttpRequest, HttpResponse};
 use serde::Deserialize;
+use strum::EnumString;
 use tracing::{debug, trace, warn};
+
+#[derive(Debug, Deserialize, EnumString)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+enum CallbackKind {
+    Subscription,
+}
+
+#[derive(Debug, Deserialize, EnumString)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+enum CallbackAction {
+    Check,
+    Next,
+    Complete,
+}
 
 #[derive(Debug, Deserialize)]
 struct CallbackPayload<'a> {
-    kind: String,
-    action: String,
+    // unused in code, but used for validation
+    #[allow(unused)]
+    kind: CallbackKind,
+    action: CallbackAction,
     id: String,
     verifier: String,
     #[serde(borrow, default)]
@@ -68,14 +87,6 @@ fn validate_payload(
     payload: &CallbackPayload<'_>,
     subscription_id_from_path: &str,
 ) -> Result<(), HttpResponse> {
-    if payload.kind != "subscription" {
-        warn!(
-            "Invalid callback kind: {}, expected 'subscription'",
-            payload.kind
-        );
-        return Err(bad_request());
-    }
-
     if payload.id != subscription_id_from_path {
         warn!(
             "Subscription ID mismatch: path='{}', body='{}'",
@@ -178,17 +189,13 @@ pub async fn handler(
         return bad_request();
     }
 
-    match payload.action.as_str() {
-        "check" => handle_check(&payload.id, &subscription),
-        "next" => handle_next(&payload.id, &payload, subscription, &active_subscriptions),
-        "complete" => handle_complete(&payload.id, &payload, subscription, &active_subscriptions),
-        _ => {
-            warn!(
-                subscription_id = %payload.id,
-                action = %payload.action,
-                "Unknown callback action"
-            );
-            bad_request()
+    match payload.action {
+        CallbackAction::Check => handle_check(&payload.id, &subscription),
+        CallbackAction::Next => {
+            handle_next(&payload.id, &payload, subscription, &active_subscriptions)
+        }
+        CallbackAction::Complete => {
+            handle_complete(&payload.id, &payload, subscription, &active_subscriptions)
         }
     }
 }
