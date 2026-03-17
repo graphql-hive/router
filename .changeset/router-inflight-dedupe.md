@@ -44,5 +44,6 @@ The router dedupe fingerprint includes:
 - normalized operation hash
 - GraphQL variables hash
 - schema checksum
+- GraphQL extensions
 
 Schema checksum is derived from the loaded `SupergraphData` snapshot used for execution, preventing cross-schema sharing during schema reload transitions.
