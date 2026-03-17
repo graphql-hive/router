@@ -1,5 +1,8 @@
 use graphql_tools::validation::validate::ValidationPlan;
 use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
+use hive_router_config::traffic_shaping::{
+    TrafficShapingRouterDedupeHeadersConfig, TrafficShapingRouterDedupeHeadersKeyword,
+};
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
@@ -44,14 +47,26 @@ impl RouterRequestDedupeHeaderPolicy {
             Self::Include(allowed_headers) => allowed_headers.contains(header_name),
         }
     }
+}
 
-    pub fn from_config(headers: Option<&Vec<String>>) -> Result<Self, SharedStateError> {
+impl TryFrom<&TrafficShapingRouterDedupeHeadersConfig> for RouterRequestDedupeHeaderPolicy {
+    type Error = SharedStateError;
+
+    fn try_from(headers: &TrafficShapingRouterDedupeHeadersConfig) -> Result<Self, Self::Error> {
         match headers {
-            None => Ok(Self::All),
-            Some(headers) if headers.is_empty() => Ok(Self::None),
-            Some(headers) => {
-                let mut dedupe_headers = HashSet::with_capacity(headers.len());
-                for header in headers {
+            TrafficShapingRouterDedupeHeadersConfig::Keyword(
+                TrafficShapingRouterDedupeHeadersKeyword::All,
+            ) => Ok(Self::All),
+            TrafficShapingRouterDedupeHeadersConfig::Keyword(
+                TrafficShapingRouterDedupeHeadersKeyword::None,
+            ) => Ok(Self::None),
+            TrafficShapingRouterDedupeHeadersConfig::Include { include } => {
+                if include.is_empty() {
+                    return Ok(Self::None);
+                }
+
+                let mut dedupe_headers = HashSet::with_capacity(include.len());
+                for header in include {
                     let normalized = HeaderName::from_bytes(header.as_bytes()).map_err(|err| {
                         SharedStateError::InvalidDedupeHeaderName {
                             header: header.clone(),
@@ -60,6 +75,7 @@ impl RouterRequestDedupeHeaderPolicy {
                     })?;
                     dedupe_headers.insert(normalized.as_str().to_owned());
                 }
+
                 Ok(Self::Include(dedupe_headers))
             }
         }
@@ -181,9 +197,12 @@ impl RouterSharedState {
             telemetry_context,
             plugins,
             in_flight_requests: InFlightMap::default(),
-            in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy::from_config(
-                router_config.traffic_shaping.router.dedupe.headers.as_ref(),
-            )?,
+            in_flight_requests_header_policy: (&router_config
+                .traffic_shaping
+                .router
+                .dedupe
+                .headers)
+                .try_into()?,
         })
     }
 }
@@ -207,11 +226,16 @@ pub enum SharedStateError {
 #[cfg(test)]
 mod tests {
     use super::RouterRequestDedupeHeaderPolicy;
+    use hive_router_config::traffic_shaping::{
+        TrafficShapingRouterDedupeHeadersConfig, TrafficShapingRouterDedupeHeadersKeyword,
+    };
 
     #[test]
     fn should_reject_invalid_router_dedupe_header_name() {
-        let headers = vec!["Invalid Header".to_string()];
-        let result = RouterRequestDedupeHeaderPolicy::from_config(Some(&headers));
+        let headers = TrafficShapingRouterDedupeHeadersConfig::Include {
+            include: vec!["Invalid Header".to_string()],
+        };
+        let result = RouterRequestDedupeHeaderPolicy::try_from(&headers);
 
         assert!(result.is_err(), "expected invalid header policy to fail");
         let error = match result {
@@ -222,5 +246,34 @@ mod tests {
             error.contains("invalid router dedupe header name"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn should_map_header_variants_to_policy() {
+        let all = TrafficShapingRouterDedupeHeadersConfig::Keyword(
+            TrafficShapingRouterDedupeHeadersKeyword::All,
+        );
+        assert!(matches!(
+            RouterRequestDedupeHeaderPolicy::try_from(&all).unwrap(),
+            RouterRequestDedupeHeaderPolicy::All
+        ));
+
+        let none = TrafficShapingRouterDedupeHeadersConfig::Keyword(
+            TrafficShapingRouterDedupeHeadersKeyword::None,
+        );
+        assert!(matches!(
+            RouterRequestDedupeHeaderPolicy::try_from(&none).unwrap(),
+            RouterRequestDedupeHeaderPolicy::None
+        ));
+
+        let include = TrafficShapingRouterDedupeHeadersConfig::Include {
+            include: vec!["Authorization".to_string()],
+        };
+        let include_policy = RouterRequestDedupeHeaderPolicy::try_from(&include).unwrap();
+        assert!(matches!(
+            include_policy,
+            RouterRequestDedupeHeaderPolicy::Include(_)
+        ));
+        assert!(include_policy.should_include("authorization"));
     }
 }
