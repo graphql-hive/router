@@ -25,11 +25,14 @@ use tokio::{
 use tracing::{info, warn};
 
 use hive_router::{
-    background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider, invoke_shutdown_hooks, plugins::plugins_service::PluginService,
-    telemetry::Telemetry, PluginRegistry, RouterSharedState, SchemaState,
+    add_callback_handler, background_tasks::BackgroundTasksManager, configure_app_from_config,
+    configure_ntex_app, init_rustls_crypto_provider, invoke_shutdown_hooks,
+    plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry,
+    RouterSharedState, SchemaState,
 };
-use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
+use hive_router_config::{
+    load_config, parse_yaml_config, subscriptions::CallbackConfig, HiveRouterConfig,
+};
 use hive_router_plan_executor::executors::websocket_client;
 use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 
@@ -539,7 +542,7 @@ impl TestRouterBuilder {
             wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: config.graphql_path().to_string(),
             websocket_path: config.websocket_path().map(|s| s.to_string()),
-            callback_path: config.callback_path().map(|s| s.to_string()),
+            callback_conf: config.callback_conf().cloned(),
             port: self.port,
             config: Some(config),
             plugins: self.plugins,
@@ -611,7 +614,7 @@ pub struct TestRouter<State> {
     wait_for_ready_on_start: bool,
     graphql_path: String,
     websocket_path: Option<String>,
-    callback_path: Option<String>,
+    callback_conf: Option<CallbackConfig>,
     port: u16,
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
@@ -656,7 +659,40 @@ impl TestRouter<Built> {
         let serv_active_subs = schema_state.active_callback_subscriptions.clone();
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
-        let serv_callback_path = self.callback_path.clone();
+
+        // when `listen` is set, the callback route lives on a dedicated server bound to that
+        // address as a background task; otherwise it is mounted on the main server
+        let serv_callback_path = match self.callback_conf {
+            Some(CallbackConfig {
+                listen: Some(listen),
+                ref path,
+                ..
+            }) => {
+                let cb_path = path.to_string();
+                let cb_addr = listen.to_string();
+                let cb_active_subs = schema_state.active_callback_subscriptions.clone();
+
+                let server = web::HttpServer::new(async move || {
+                    let active_subs = cb_active_subs.clone();
+                    let cb_path = cb_path.clone();
+                    web::App::new()
+                        .state(active_subs)
+                        .configure(move |m| add_callback_handler(m, &cb_path))
+                })
+                .bind(&cb_addr)
+                .expect("failed to bind callback server")
+                .run();
+
+                bg_tasks_manager.register_handle(async move {
+                    server.await.ok();
+                });
+
+                None
+            }
+            Some(ref cb) => Some(cb.path.to_string()),
+            None => None,
+        };
+
         let serv = test::server_with(test::config().port(self.port), move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
@@ -686,8 +722,12 @@ impl TestRouter<Built> {
                             m,
                             serv_graphql_path.as_ref(),
                             serv_websocket_path.as_deref(),
-                            serv_callback_path.as_deref(),
                         )
+                    })
+                    .configure(move |m| {
+                        if let Some(ref cb_path) = serv_callback_path {
+                            add_callback_handler(m, cb_path);
+                        }
                     })
             }
         })
@@ -701,7 +741,7 @@ impl TestRouter<Built> {
             wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: self.graphql_path,
             websocket_path: self.websocket_path,
-            callback_path: self.callback_path,
+            callback_conf: self.callback_conf,
             handle: Some(TestRouterHandle {
                 schema_state,
                 shared_state,

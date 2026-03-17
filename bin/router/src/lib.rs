@@ -45,8 +45,9 @@ pub use dashmap::DashMap;
 pub use graphql_tools;
 use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use hive_router_config::humantime_serde;
-use hive_router_config::{load_config, HiveRouterConfig};
+use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
+use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
 use hive_router_internal::telemetry::{
     otel::tracing_opentelemetry::OpenTelemetrySpanExt,
     traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
@@ -67,6 +68,31 @@ pub use tracing;
 use tracing::{info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
+
+struct CallbackServer(std::sync::Mutex<Option<ntex::server::Server>>);
+
+impl From<ntex::server::Server> for CallbackServer {
+    fn from(server: ntex::server::Server) -> Self {
+        Self(std::sync::Mutex::new(Some(server)))
+    }
+}
+
+#[async_trait]
+impl BackgroundTask for CallbackServer {
+    fn id(&self) -> &str {
+        "callback_server"
+    }
+
+    async fn run(&self, token: CancellationToken) {
+        token.cancelled().await;
+        // only poisoned if a thread panicked while holding the lock; since the only
+        // operation inside is .take(), that can't happen
+        let server = self.0.lock().unwrap().take();
+        if let Some(server) = server {
+            server.stop(true).await;
+        }
+    }
+}
 
 async fn graphql_endpoint_handler(
     request: HttpRequest,
@@ -126,7 +152,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let addr = router_config.address();
     let gql_path = router_config.graphql_path().to_string();
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
-    let callback_path = router_config.callback_path().map(|p| p.to_string());
+    let callback_conf = router_config.callback_conf().cloned();
 
     let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
@@ -139,21 +165,53 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
 
     let shared_state_clone = shared_state.clone();
     let active_subs = schema_state.active_callback_subscriptions.clone();
+
+    // when `listen` is set, the callback route lives on a dedicated server bound to that address
+    // otherwise, the callback route is mounted on the main server on the `callback_path`
+    let callback_path = match callback_conf {
+        Some(CallbackConfig {
+            listen: Some(listen),
+            ref path,
+            ..
+        }) => {
+            let cb_path = path.to_string();
+            let cb_addr = listen.to_string();
+            let cb_active_subs = active_subs.clone();
+            let cb_server = web::HttpServer::new(async move || {
+                let cb_active_subs = cb_active_subs.clone();
+                let cb_path = cb_path.clone();
+                web::App::new()
+                    .state(cb_active_subs)
+                    .configure(move |m| add_callback_handler(m, &cb_path))
+            })
+            .bind(&cb_addr)
+            .map_err(|err| RouterInitError::HttpCallbackServerBindError(cb_addr, err))?
+            .run();
+
+            bg_tasks_manager.register_task(CallbackServer::from(cb_server));
+
+            None
+        }
+        Some(ref cb) => Some(cb.path.to_string()),
+        None => None,
+    };
+
     let maybe_error = web::HttpServer::new(async move || {
         let lp_gql_path = gql_path.clone();
         let active_subs = active_subs.clone();
+        let callback_path = callback_path.clone();
         web::App::new()
             .middleware(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .state(active_subs)
-            .configure(|m| {
-                configure_ntex_app(
-                    m,
-                    gql_path.as_ref(),
-                    websocket_path.as_deref(),
-                    callback_path.as_deref(),
-                )
+            .configure(|m| configure_ntex_app(m, gql_path.as_ref(), websocket_path.as_deref()))
+            .configure(move |m| {
+                if let Some(ref cb_path) = callback_path {
+                    // callback_path will be some only if callback is enabled and if
+                    // its listen is not configured to be on another server
+                    add_callback_handler(m, cb_path);
+                }
             })
             .default_service(web::to(move || landing_page_handler(lp_gql_path.clone())))
     })
@@ -238,21 +296,21 @@ pub async fn configure_app_from_config(
     Ok((shared_state, schema_state_arc))
 }
 
+pub fn add_callback_handler(cfg: &mut web::ServiceConfig, callback_path: &str) {
+    let callback_route = format!(
+        "{}/{{subscription_id}}",
+        callback_path.trim_end_matches('/'),
+    );
+    cfg.route(&callback_route, web::post().to(handler));
+}
+
 pub fn configure_ntex_app(
     cfg: &mut web::ServiceConfig,
     graphql_path: &str,
     websocket_path: Option<&str>,
-    callback_path: Option<&str>,
 ) {
     if let Some(websocket_path) = websocket_path {
         cfg.route(websocket_path, web::get().to(ws_index));
-    }
-    if let Some(callback_path) = callback_path {
-        let callback_route = format!(
-            "{}/{{subscription_id}}",
-            callback_path.trim_end_matches('/'),
-        );
-        cfg.route(&callback_route, web::post().to(handler));
     }
     cfg.route(graphql_path, web::to(graphql_endpoint_handler))
         .route("/health", web::to(health_check_handler))

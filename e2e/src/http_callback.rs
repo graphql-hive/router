@@ -9,6 +9,61 @@ mod http_callback_e2e_tests {
     };
 
     #[ntex::test]
+    async fn listen_on_different_port() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let callback_port = get_available_port();
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            // .with_port(callback_port) router is on a different port than the callback listener
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    callback:
+                        heartbeat_interval: 200ms
+                        listen: 0.0.0.0:{callback_port}
+                        public_url: http://0.0.0.0:{callback_port}/callback
+                        subgraphs:
+                            - reviews
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map!(
+                    http::header::ACCEPT => "text/event-stream",
+                ),
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        let body = res.string_body().await;
+
+        assert!(body
+            .contains(r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#));
+        assert!(body.contains("event: complete"));
+    }
+
+    #[ntex::test]
     async fn complete_active_subscription_on_heartbeat_timeout() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
 

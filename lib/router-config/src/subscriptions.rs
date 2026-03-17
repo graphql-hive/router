@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::time::Duration;
 use url::Url;
 
@@ -47,6 +48,14 @@ pub struct CallbackConfig {
     )]
     #[schemars(with = "String")]
     pub heartbeat_interval: Duration,
+    /// The IP address and port the router will listen on for subscription callbacks.
+    /// When set, the router will start a dedicated HTTP server bound to this address
+    /// for receiving callback messages from subgraphs, separate from the main GraphQL server.
+    /// When not set, the callback handler is registered on the main server.
+    ///
+    /// Example: `0.0.0.0:4001`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen: Option<SocketAddr>,
     /// The list of subgraph names that use the HTTP callback protocol.
     #[serde(default)]
     pub subgraphs: HashSet<String>,

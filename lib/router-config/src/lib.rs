@@ -180,11 +180,8 @@ impl HiveRouterConfig {
         })
     }
 
-    pub fn callback_path(&self) -> Option<&str> {
-        self.subscriptions
-            .callback
-            .as_ref()
-            .map(|cb| cb.path.as_str())
+    pub fn callback_conf(&self) -> Option<&subscriptions::CallbackConfig> {
+        self.subscriptions.callback.as_ref()
     }
 }
 
