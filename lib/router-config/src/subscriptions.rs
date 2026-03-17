@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+use url::Url;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
@@ -20,7 +21,7 @@ pub struct SubscriptionsConfig {
 }
 
 /// Configuration for the HTTP Callback subscription mode.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct CallbackConfig {
     /// The public URL that subgraphs will use to send callback messages to this router.
@@ -30,7 +31,7 @@ pub struct CallbackConfig {
     /// your `public_url` should be `http://localhost:4000/callback`.
     ///
     /// Example: `https://example.com:4000/callback`
-    pub public_url: String,
+    pub public_url: Url,
     /// The path of the router's callback endpoint.
     /// Must be an absolute path starting with `/`. Defaults to `/callback`.
     #[serde(

@@ -2381,6 +2381,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tonic",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -5539,6 +5540,7 @@ dependencies = [
  "schemars_derive 1.2.1",
  "serde",
  "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -6936,6 +6938,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

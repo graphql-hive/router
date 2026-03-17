@@ -502,7 +502,7 @@ impl SubgraphExecutorMap {
                     subgraph_name.to_string(),
                     endpoint_uri,
                     self.client.clone(),
-                    callback_config.public_url.clone(),
+                    callback_config.public_url.to_string(),
                     heartbeat_interval_ms,
                     self.active_callback_subscriptions.clone(),
                 )
