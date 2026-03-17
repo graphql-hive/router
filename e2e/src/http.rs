@@ -634,7 +634,7 @@ mod http_tests {
                         dedupe_enabled: false
                     router:
                         dedupe:
-                            headers: []
+                            headers: none
                 "#,
             )
             .build()
@@ -712,7 +712,8 @@ mod http_tests {
                         dedupe_enabled: false
                     router:
                         dedupe:
-                            headers: ["X-Tenant"]
+                            headers:
+                                include: ["X-Tenant"]
                 "#,
             )
             .build()
