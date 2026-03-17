@@ -78,7 +78,7 @@ fn validate_protocol(req: &HttpRequest) -> Result<(), HttpResponse> {
 
 fn parse_payload(body: &Bytes) -> Result<CallbackPayload<'_>, HttpResponse> {
     sonic_rs::from_slice(body).map_err(|e| {
-        warn!("Failed to parse callback payload: {}", e);
+        error!("Failed to parse callback payload: {}", e);
         bad_request()
     })
 }
