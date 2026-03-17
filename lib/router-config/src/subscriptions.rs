@@ -12,7 +12,7 @@ pub struct SubscriptionsConfig {
     #[serde(default)]
     pub enabled: bool,
     /// Configuration for subgraphs using the HTTP Callback protocol.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callback: Option<CallbackConfig>,
     /// Configuration for subgraphs using WebSocket protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
