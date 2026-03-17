@@ -17,7 +17,7 @@ struct CallbackPayload<'a> {
     id: String,
     verifier: String,
     #[serde(borrow, default)]
-    payload: Option<&'a serde_json::value::RawValue>,
+    payload: Option<sonic_rs::LazyValue<'a>>,
     #[serde(default)]
     errors: Option<Vec<GraphQLError>>,
 }
@@ -58,7 +58,7 @@ fn validate_protocol(req: &HttpRequest) -> Result<(), HttpResponse> {
 }
 
 fn parse_payload(body: &Bytes) -> Result<CallbackPayload<'_>, HttpResponse> {
-    serde_json::from_slice(body).map_err(|e| {
+    sonic_rs::from_slice(body).map_err(|e| {
         warn!("Failed to parse callback payload: {}", e);
         bad_request()
     })
@@ -104,8 +104,8 @@ fn handle_next(
 ) -> HttpResponse {
     trace!(subscription_id = %subscription_id, "Received next message");
 
-    let data = match payload.payload {
-        Some(p) => BytesLib::copy_from_slice(p.get().as_bytes()),
+    let data = match &payload.payload {
+        Some(p) => BytesLib::copy_from_slice(p.as_raw_str().as_bytes()),
         None => {
             warn!(subscription_id = %subscription_id, "Missing payload in next message");
             return bad_request();
