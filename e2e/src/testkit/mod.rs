@@ -626,6 +626,13 @@ impl Drop for TestRouterHandle {
                         layer = "provider",
                         "shutdown completed"
                     );
+                    let _ = provider.force_flush();
+                    let _ = provider.shutdown();
+                    tracing::info!(
+                        component = "telemetry",
+                        layer = "provider",
+                        "shutdown completed"
+                    );
                 }
 
                 if let Some(provider) = metrics_provider {
@@ -700,12 +707,6 @@ impl TestRouter<Built> {
 
         let serv_shared_state = shared_state.clone();
         let serv_schema_state = schema_state.clone();
-        let paths = RouterPaths::new(self.graphql_path.clone());
-        paths
-            .detect_conflicts(&prometheus)
-            .expect("failed to detect endpoint conflicts");
-        let serv_paths = paths.clone();
-        let serv_prometheus = prometheus.clone();
         let serv_active_subs = schema_state.active_callback_subscriptions.clone();
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
@@ -743,15 +744,24 @@ impl TestRouter<Built> {
             None => None,
         };
 
+        let paths = RouterPaths::new(
+            serv_graphql_path,
+            serv_websocket_path,
+            serv_callback_path.clone(),
+        );
+        paths
+            .detect_conflicts(&prometheus)
+            .expect("failed to detect endpoint conflicts");
+
+        let serv_paths = paths.clone();
+        let serv_prometheus = prometheus.clone();
         let serv = test::server_with(test::config().port(self.port), move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
             let paths = serv_paths.clone();
             let prometheus = serv_prometheus.clone();
-            let active_subs = serv_active_subs.clone();
-            let serv_graphql_path = serv_graphql_path.clone();
-            let serv_websocket_path = serv_websocket_path.clone();
             let serv_callback_path = serv_callback_path.clone();
+            let active_subs = serv_active_subs.clone();
 
             // set the tracing dispatch on the server thread. the guard is
             // intentionally leaked: dropping it would restore the no-op default
@@ -770,9 +780,9 @@ impl TestRouter<Built> {
                     .state(schema_state)
                     .state(active_subs)
                     .configure(|m| configure_ntex_app(m, &paths, prometheus))
-                    .configure(move |m| {
-                        if let Some(ref cb_path) = serv_callback_path {
-                            add_callback_handler(m, cb_path);
+                    .configure(|m| {
+                        if let Some(ref callback) = serv_callback_path {
+                            add_callback_handler(m, callback);
                         }
                     })
             }
