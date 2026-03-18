@@ -144,7 +144,7 @@ async fn graphql_endpoint_dispatch(
             // If the request handler returns an error, convert it to an HTTP response.
             Err(err) => {
                 write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                handle_pipeline_error(err, &app_state, &response_mode)
+                handle_pipeline_error(&err, &app_state, &response_mode)
             }
         };
 
