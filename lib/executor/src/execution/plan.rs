@@ -1,6 +1,6 @@
 use std::collections::hash_map::Entry;
-use std::sync::Arc;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 use ahash::{HashMap as AHashMap, HashMapExt};
 use bytes::BufMut;
