@@ -54,7 +54,7 @@ pub fn minify_query_document<'a, T: Text<'a>>(doc: &Document<'a, T>) -> String {
 ///
 /// Key optimizations:
 /// - Direct buffer writing avoids intermediate allocations
-/// - Reusable buffers for number formatting (itoa, ryu) reduce allocation overhead
+/// - Reusable buffers for number formatting (itoa, zmij) reduce allocation overhead
 /// - Tracking `last_was_non_punctuator` allows spacing without post-processing
 struct Minifier {
     /// Accumulates the minified output as we traverse the AST
@@ -68,8 +68,8 @@ struct Minifier {
     /// Reusable buffer for converting integers to strings using the `itoa` crate,
     /// that's optimized for fast, allocation-free integer formatting.
     int_buffer: itoa::Buffer,
-    /// Reusable buffer for converting floats to strings using the `ryu` crate.
-    floats_buffer: ryu::Buffer,
+    /// Reusable buffer for converting floats to strings using the `zmij` crate.
+    floats_buffer: zmij::Buffer,
 }
 
 impl Minifier {
@@ -81,7 +81,7 @@ impl Minifier {
             last_was_non_punctuator: false,
             block_indent: 2,
             int_buffer: itoa::Buffer::new(),
-            floats_buffer: ryu::Buffer::new(),
+            floats_buffer: zmij::Buffer::new(),
         }
     }
 
@@ -422,8 +422,8 @@ impl Minifier {
                 self.last_was_non_punctuator = true;
             }
             Value::Float(f) => {
-                // Use ryu's format method for fast, accurate float-to-string conversion.
-                // ryu produces the shortest decimal representation that correctly round-trips,
+                // Use zmij's format method for fast, accurate float-to-string conversion.
+                // zmij produces the shortest decimal representation that correctly round-trips,
                 // which is more efficient than using Display or other methods.
                 let s = self.floats_buffer.format(*f);
                 if self.last_was_non_punctuator {

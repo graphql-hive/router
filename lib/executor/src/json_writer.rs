@@ -16,7 +16,7 @@ pub fn write_f64(writer: &mut Vec<u8>, value: f64) {
         return;
     }
 
-    let mut buffer = ryu::Buffer::new();
+    let mut buffer = zmij::Buffer::new();
     let s = buffer.format_finite(value);
     writer.put(s.as_bytes())
 }
@@ -517,6 +517,24 @@ fn format_string(input_str: &str, writer: &mut Vec<u8>, need_quote: bool) {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_write_f64_finite() {
+        let mut dst: Vec<u8> = Vec::new();
+
+        write_f64(&mut dst, 123.5);
+
+        assert_eq!(dst.as_slice(), b"123.5");
+    }
+
+    #[test]
+    fn test_write_f64_non_finite_is_null() {
+        let mut dst: Vec<u8> = Vec::new();
+
+        write_f64(&mut dst, f64::NAN);
+
+        assert_eq!(dst.as_slice(), b"null");
+    }
 
     #[test]
     fn test_quote() {
