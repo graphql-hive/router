@@ -141,15 +141,20 @@ impl HttpCallbackSubgraphExecutor {
             }
         }
 
-        if let Some(representations) = &execution_request.representations {
-            if first_variable {
-                body.put(FIRST_VARIABLE_STR);
-                first_variable = false;
-            } else {
-                body.put(COMMA);
+        if let Some(raw_variable_values) = &execution_request.raw_variable_values {
+            for (variable_name, variable_value) in raw_variable_values {
+                if first_variable {
+                    body.put(FIRST_VARIABLE_STR);
+                    first_variable = false;
+                } else {
+                    body.put(COMMA);
+                }
+                body.put(QUOTE);
+                body.put(variable_name.as_bytes());
+                body.put(QUOTE);
+                body.put(COLON);
+                body.extend_from_slice(variable_value);
             }
-            body.put("\"representations\":".as_bytes());
-            body.extend_from_slice(representations);
         }
 
         if !first_variable {
@@ -261,7 +266,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         let res = if let Some(timeout_duration) = timeout {
             tokio::time::timeout(timeout_duration, req_fut)
                 .await
-                .map_err(|_| SubgraphExecutorError::RequestTimeout(timeout_duration.as_millis()))?
+                .map_err(|_| SubgraphExecutorError::RequestTimeout(self.endpoint.to_string(), timeout_duration.as_millis()))?
                 .map_err(SubgraphExecutorError::RequestFailure)?
         } else {
             req_fut
