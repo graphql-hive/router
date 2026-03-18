@@ -77,7 +77,6 @@ mod body_limit_e2e_tests {
             .serv()
             .post(router.graphql_path())
             .header(http::header::CONTENT_TYPE, "application/json")
-            .header(http::header::CONTENT_LENGTH, "1000")
             .send_body(body)
             .await;
 
