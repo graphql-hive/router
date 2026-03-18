@@ -86,11 +86,11 @@ impl WebResponseError for CallbackError {
         match self {
             CallbackError::InvalidProtocolHeader
             | CallbackError::PayloadParseError(_)
-            | CallbackError::SubscriptionIdMismatch { .. }
             | CallbackError::MissingPayload { .. }
             | CallbackError::InvalidVerifier { .. } => StatusCode::BAD_REQUEST,
             CallbackError::SubscriptionNotFound { .. }
-            | CallbackError::SubscriptionDropped { .. } => StatusCode::NOT_FOUND,
+            | CallbackError::SubscriptionDropped { .. }
+            | CallbackError::SubscriptionIdMismatch { .. } => StatusCode::NOT_FOUND,
         }
     }
     fn error_response(&self, _: &HttpRequest) -> HttpResponse {
