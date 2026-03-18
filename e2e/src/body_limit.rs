@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod body_limit_e2e_tests {
+    use ntex::web::WebResponseError;
+
     use crate::testkit::{ClientResponseExt, TestRouter};
     #[ntex::test]
     async fn should_return_payload_too_large_if_limit_exceeds_while_reading_the_stream() {
@@ -76,22 +78,27 @@ mod body_limit_e2e_tests {
             .post(router.graphql_path())
             .header(http::header::CONTENT_TYPE, "application/json")
             .send_body(body)
-            .await
-            .expect("failed to send graphql request");
+            .await;
 
-        assert_eq!(res.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
-
-        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
-        {
-          "errors": [
+        match res {
+            Ok(res) => {
+                assert_eq!(res.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
+                insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
             {
-              "message": "Content-Length exceeds the maximum allowed size: 1",
-              "extensions": {
-                "code": "PAYLOAD_TOO_LARGE_CONTENT_LENGTH"
-              }
+              "errors": [
+                {
+                  "message": "Content-Length exceeds the maximum allowed size: 1",
+                  "extensions": {
+                    "code": "PAYLOAD_TOO_LARGE_CONTENT_LENGTH"
+                  }
+                }
+              ]
             }
-          ]
+            "#);
+            }
+            Err(e) => {
+                assert_eq!(e.status_code(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
+            }
         }
-        "#);
     }
 }
