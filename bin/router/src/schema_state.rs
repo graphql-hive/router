@@ -1,6 +1,7 @@
 use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
+use dashmap::DashMap;
 use graphql_tools::static_graphql::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
@@ -9,13 +10,18 @@ use hive_router_internal::{
     authorization::metadata::AuthorizationMetadata,
     background_tasks::{BackgroundTask, BackgroundTasksManager},
 };
+use hive_router_plan_executor::response::graphql_error::GraphQLErrorExtensions;
+use std::time::Duration;
+
 use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
+    executors::http_callback::{ActiveSubscriptionsMap, CallbackMessage},
     hooks::on_supergraph_load::{
         OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload, SupergraphData,
     },
     introspection::schema::SchemaWithMetadata,
     plugin_trait::{EndControlFlow, RouterPluginBoxed, StartControlFlow},
+    response::graphql_error::GraphQLError,
     SubgraphExecutorMap,
 };
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
@@ -42,6 +48,7 @@ pub struct SchemaState {
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
+    pub active_callback_subscriptions: ActiveSubscriptionsMap,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -86,11 +93,25 @@ impl SchemaState {
         let plan_cache = Cache::new(1000);
         let validate_cache = Cache::new(1000);
         let normalize_cache = Cache::new(1000);
+        let active_callback_subscriptions: ActiveSubscriptionsMap = Arc::new(DashMap::new());
 
         // This is cheap clone, as Cache is thread-safe and can be cloned without any performance penalty.
         let task_plan_cache = plan_cache.clone();
         let validate_cache_cache = validate_cache.clone();
         let normalize_cache_cache = normalize_cache.clone();
+        let active_subs_clone = active_callback_subscriptions.clone();
+
+        // kick off subscriptions/subgraphs that are idling/timed out due to missed heartbeats
+        if let Some(ref callback_config) = router_config.subscriptions.callback {
+            if !callback_config.heartbeat_interval.is_zero() {
+                let enforcer_subs = active_callback_subscriptions.clone();
+                let heartbeat_interval = callback_config.heartbeat_interval;
+                bg_tasks_manager.register_task(HeartbeatEnforcerTask {
+                    active_subscriptions: enforcer_subs,
+                    heartbeat_interval,
+                });
+            }
+        }
 
         bg_tasks_manager.register_handle(async move {
             while let Some(new_sdl) = rx.recv().await {
@@ -132,7 +153,12 @@ impl SchemaState {
                 }
 
                 match new_supergraph_data.unwrap_or_else(|| {
-                    Self::build_data(router_config.clone(), telemetry_context.clone(), new_ast)
+                    Self::build_data(
+                        router_config.clone(),
+                        telemetry_context.clone(),
+                        new_ast,
+                        active_subs_clone.clone(),
+                    )
                 }) {
                     Ok(mut new_supergraph_data) => {
                         if !on_end_callbacks.is_empty() {
@@ -190,6 +216,7 @@ impl SchemaState {
             plan_cache,
             validate_cache,
             normalize_cache,
+            active_callback_subscriptions,
         })
     }
 
@@ -197,6 +224,7 @@ impl SchemaState {
         router_config: Arc<HiveRouterConfig>,
         telemetry_context: Arc<TelemetryContext>,
         parsed_supergraph_sdl: Document,
+        active_callback_subscriptions: ActiveSubscriptionsMap,
     ) -> Result<SupergraphData, SupergraphManagerError> {
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
         let metadata = Arc::new(planner.consumer_schema.schema_metadata());
@@ -205,6 +233,7 @@ impl SchemaState {
             &planner.supergraph.subgraph_endpoint_map,
             router_config,
             telemetry_context,
+            active_callback_subscriptions,
         )?);
 
         Ok(SupergraphData {
@@ -280,6 +309,60 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
                 debug!("poll interval not configured for supergraph changes, breaking");
 
                 break;
+            }
+        }
+    }
+}
+
+struct HeartbeatEnforcerTask {
+    active_subscriptions: ActiveSubscriptionsMap,
+    heartbeat_interval: Duration,
+}
+
+#[async_trait]
+impl BackgroundTask for HeartbeatEnforcerTask {
+    fn id(&self) -> &str {
+        "http-callback-heartbeat-enforcer"
+    }
+
+    async fn run(&self, token: CancellationToken) {
+        use std::time::Instant;
+
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    debug!("heartbeat enforcer cancelled, stopping");
+                    return;
+                }
+                _ = ntex::time::sleep(self.heartbeat_interval) => {}
+            }
+
+            let mut timed_out = Vec::new();
+            for entry in self.active_subscriptions.iter() {
+                let last = *entry.value().last_heartbeat.lock().unwrap();
+                if Instant::now().duration_since(last)
+                    > self.heartbeat_interval +
+                        // add a grace period if latency increases due to usage
+                        std::time::Duration::from_millis(500)
+                {
+                    timed_out.push(entry.key().clone());
+                }
+            }
+
+            // separate iter so that we dont mess up the slice while looping
+            for id in timed_out {
+                debug!(
+                    subscription_id = %id,
+                    "terminating subscription due to missed heartbeat"
+                );
+                if let Some((_, sub)) = self.active_subscriptions.remove(&id) {
+                    let _ = sub.sender.send(CallbackMessage::Complete {
+                        errors: Some(vec![GraphQLError::from_message_and_extensions(
+                            "Subgraph gone due to heartbeat timeout".to_string(),
+                            GraphQLErrorExtensions::new_from_code("SUBGRAPH_GONE"),
+                        )]),
+                    });
+                }
             }
         }
     }

@@ -20,26 +20,56 @@ use futures_util::{future::BoxFuture, stream::BoxStream, Stream, StreamExt};
 use hive_router::pipeline::multipart_subscribe::APOLLO_MULTIPART_HTTP_CONTENT_TYPE;
 use hive_router::pipeline::sse::SSE_HEADER;
 use hive_router::pipeline::{multipart_subscribe, sse};
+use hive_router::tracing::error;
+use serde::{Deserialize, Serialize};
 use tower_service::Service;
 
-use crate::SubscriptionProtocol;
+use crate::HTTPStreamingSubscriptionProtocol;
 
 #[derive(Clone)]
 pub struct GraphQL<E> {
     executor: E,
-    subscriptions_protocol: SubscriptionProtocol,
+    subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
 }
 
 impl<E> GraphQL<E>
 where
     E: Clone,
 {
-    pub fn new(executor: E, subscriptions_protocol: SubscriptionProtocol) -> Self {
+    pub fn new(executor: E, subscriptions_protocol: HTTPStreamingSubscriptionProtocol) -> Self {
         Self {
             executor,
             subscriptions_protocol,
         }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CallbackSubscriptionExt {
+    callback_url: String,
+    subscription_id: String,
+    verifier: String,
+    #[serde(default)]
+    heartbeat_interval_ms: u64,
+}
+
+#[derive(Serialize)]
+struct CallbackMessage<'a> {
+    kind: &'a str,
+    action: &'a str,
+    id: &'a str,
+    verifier: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    errors: Option<Vec<GraphQLError>>,
+}
+
+// yeah I know there's a graphql error struct, but I want to avoid overengineering this
+#[derive(Serialize)]
+struct GraphQLError {
+    message: String,
 }
 
 impl<B, E> Service<HttpRequest<B>> for GraphQL<E>
@@ -58,6 +88,14 @@ where
     }
 
     fn call(&mut self, req: HttpRequest<B>) -> Self::Future {
+        let does_accept_callback = req
+            .headers()
+            .get("accept")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|accept|
+                // we dont handle spaces, we dont handle q weights, we dont care atm
+                accept.contains("application/json;callbackSpec=1.0"));
+
         let does_accept_multipart_mixed = req
             .headers()
             .get("accept")
@@ -82,12 +120,110 @@ where
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<usize>().ok());
 
+        let disable_heartbeats = req
+            .headers()
+            .get("x-disable-http-callback-heartbeats")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v == "true");
+
         let sub_prot = self.subscriptions_protocol.clone();
 
         let executor = self.executor.clone();
         let req = req.map(Body::new);
 
         Box::pin(async move {
+            if does_accept_callback {
+                let req = match GraphQLRequest::<GraphQLRejection>::from_request(req, &()).await {
+                    Ok(req) => req,
+                    Err(err) => return Ok(err.into_response()),
+                };
+
+                let gql_request = req.into_inner();
+
+                let sub_ext = match gql_request.extensions.get("subscription") {
+                    Some(val) => {
+                        let json = serde_json::to_value(val).unwrap();
+                        match serde_json::from_value::<CallbackSubscriptionExt>(json) {
+                            Ok(ext) => ext,
+                            Err(_) => {
+                                return Ok(HttpResponse::builder()
+                                    .status(400)
+                                    .body(Body::from(
+                                        r#"{"errors":[{"message":"Invalid subscription extension"}]}"#,
+                                    ))
+                                    .unwrap());
+                            }
+                        }
+                    }
+                    None => {
+                        return Ok(HttpResponse::builder()
+                            .status(400)
+                            .body(Body::from(
+                                r#"{"errors":[{"message":"Missing subscription extension"}]}"#,
+                            ))
+                            .unwrap());
+                    }
+                };
+
+                // no hyper, just keeping it simple
+                let client = reqwest::Client::new();
+
+                let check_msg = CallbackMessage {
+                    kind: "subscription",
+                    action: "check",
+                    id: &sub_ext.subscription_id,
+                    verifier: &sub_ext.verifier,
+                    payload: None,
+                    errors: None,
+                };
+                let check_resp = client
+                    .post(&sub_ext.callback_url)
+                    .header("subscription-protocol", "callback/1.0")
+                    .json(&check_msg)
+                    .send()
+                    .await;
+
+                match check_resp {
+                    Ok(resp) if resp.status() == 204 => {}
+                    Ok(resp) => {
+                        error!("callback check responded with: {}", resp.status());
+                        return Ok(HttpResponse::builder()
+                            .status(400)
+                            .body(Body::from(
+                                r#"{"errors":[{"message":"Callback check failed for whatever reason"}]}"#,
+                            ))
+                            .unwrap());
+                    }
+                    Err(err) => {
+                        error!("failed to send callback check request: {}", err);
+                        return Ok(HttpResponse::builder()
+                            .status(400)
+                            .body(Body::from(
+                                r#"{"errors":[{"message":"Failed to send callback check request"}]}"#,
+                            ))
+                            .unwrap());
+                    }
+                }
+
+                let stream = executor.execute_stream(gql_request, None);
+
+                tokio::spawn(emit_subscription_events(
+                    client,
+                    sub_ext.callback_url,
+                    sub_ext.subscription_id,
+                    sub_ext.verifier,
+                    sub_ext.heartbeat_interval_ms,
+                    disable_heartbeats,
+                    stream,
+                ));
+
+                return Ok(HttpResponse::builder()
+                    .status(200)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"data":null}"#))
+                    .unwrap());
+            }
+
             if !does_accept_multipart_mixed && !does_accept_event_stream {
                 let req =
                     match GraphQLBatchRequest::<GraphQLRejection>::from_request(req, &()).await {
@@ -107,9 +243,11 @@ where
             let stream = executor.execute_stream(req.0, None);
 
             let use_sse = match sub_prot {
-                SubscriptionProtocol::PreferMultipartFallbackSse => does_accept_event_stream,
-                SubscriptionProtocol::SseOnly => true,
-                SubscriptionProtocol::MultipartOnly => false,
+                HTTPStreamingSubscriptionProtocol::PreferMultipartFallbackSse => {
+                    does_accept_event_stream
+                }
+                HTTPStreamingSubscriptionProtocol::SseOnly => true,
+                HTTPStreamingSubscriptionProtocol::MultipartOnly => false,
             };
 
             if use_sse {
@@ -147,6 +285,119 @@ where
             }
         })
     }
+}
+
+async fn emit_subscription_events(
+    client: reqwest::Client,
+    callback_url: String,
+    subscription_id: String,
+    verifier: String,
+    heartbeat_interval_ms: u64,
+    disable_heartbeats: bool,
+    stream: impl Stream<Item = GraphQLResponse> + Send + Unpin + 'static,
+) {
+    let mut stream = std::pin::pin!(stream);
+
+    let heartbeat_enabled = heartbeat_interval_ms > 0;
+    let mut heartbeat_interval = if heartbeat_enabled {
+        Some(tokio::time::interval(Duration::from_millis(
+            heartbeat_interval_ms,
+        )))
+    } else {
+        None
+    };
+
+    // skip the first immediate tick
+    if let Some(ref mut interval) = heartbeat_interval {
+        interval.tick().await;
+    }
+
+    loop {
+        let next_event = if let Some(ref mut interval) = heartbeat_interval {
+            tokio::select! {
+                item = stream.next() => item.map(|r| CallbackEvent::Next(Box::new(r))),
+                _ = interval.tick() => Some(CallbackEvent::Heartbeat),
+            }
+        } else {
+            stream
+                .next()
+                .await
+                .map(|r| CallbackEvent::Next(Box::new(r)))
+        };
+
+        match next_event {
+            Some(CallbackEvent::Next(response)) => {
+                let payload =
+                    serde_json::to_value(&response).expect("Failed to serialize GraphQLResponse");
+                let msg = CallbackMessage {
+                    kind: "subscription",
+                    action: "next",
+                    id: &subscription_id,
+                    verifier: &verifier,
+                    payload: Some(payload),
+                    errors: None,
+                };
+                match send_callback(&client, &callback_url, &msg).await {
+                    Ok(status) if status.is_success() => {}
+                    // 404, or any other non-success status or error terminates the
+                    // subscription. this subgraph is for testing, we dont dwell
+                    // too much about learning the exact reason
+                    _ => return,
+                }
+            }
+            Some(CallbackEvent::Heartbeat) => {
+                if disable_heartbeats {
+                    continue;
+                }
+                let msg = CallbackMessage {
+                    kind: "subscription",
+                    action: "check",
+                    id: &subscription_id,
+                    verifier: &verifier,
+                    payload: None,
+                    errors: None,
+                };
+                match send_callback(&client, &callback_url, &msg).await {
+                    Ok(status) if status.is_success() => {}
+                    // 404, or any other non-success status or error terminates the
+                    // subscription. this subgraph is for testing, we dont dwell
+                    // too much about learning the exact reason
+                    _ => return,
+                }
+            }
+            None => {
+                let msg = CallbackMessage {
+                    kind: "subscription",
+                    action: "complete",
+                    id: &subscription_id,
+                    verifier: &verifier,
+                    payload: None,
+                    errors: None,
+                };
+                let _ = send_callback(&client, &callback_url, &msg).await;
+                return;
+            }
+        }
+    }
+}
+
+enum CallbackEvent {
+    Next(Box<GraphQLResponse>),
+    Heartbeat,
+}
+
+async fn send_callback(
+    client: &reqwest::Client,
+    url: &str,
+    msg: &CallbackMessage<'_>,
+) -> Result<reqwest::StatusCode, reqwest::Error> {
+    let resp = client
+        .post(url)
+        .header("subscription-protocol", "callback/1.0")
+        .json(msg)
+        .send()
+        .await?;
+    Ok(resp.status())
 }
 
 fn abrupt_terminate_after<S>(

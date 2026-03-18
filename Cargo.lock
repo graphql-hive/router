@@ -2311,6 +2311,7 @@ dependencies = [
  "arc-swap",
  "async-stream",
  "async-trait",
+ "bytes",
  "combine",
  "const-str",
  "cookie",
@@ -2380,6 +2381,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tonic",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2458,6 +2460,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
  "xxhash-rust",
 ]
 
@@ -3544,8 +3547,7 @@ dependencies = [
 [[package]]
 name = "ntex"
 version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36a4416847c6b284a2ce38952e0883cee3e20599b201d7b6a2d92afafb0fbc3e"
+source = "git+https://github.com/enisdenjo/ntex?branch=v3-4-0-tserv-port#e648645784aad984b3d8ca018ba20a7c37903dab"
 dependencies = [
  "base64",
  "bitflags 2.11.0",
@@ -5538,6 +5540,7 @@ dependencies = [
  "schemars_derive 1.2.1",
  "serde",
  "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -6167,6 +6170,8 @@ dependencies = [
  "http",
  "lazy_static",
  "rand 0.10.0",
+ "reqwest",
+ "serde",
  "serde_json",
  "tokio",
  "tower-service",
@@ -6933,6 +6938,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

@@ -36,6 +36,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          token: ${{ secrets.BOT_GITHUB_TOKEN }}
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
       - name: generate config schema
@@ -61,7 +63,19 @@ jobs:
           file: router-config.schema.json
           asset_name: router-config.schema.json
           tag: ${{ github.ref }}
-      - name: check config docs changes
+      - name: diff
+        run: git diff --pretty ./docs/README.md
+      - name: commit if changes
+        if: github.ref != 'refs/heads/main'
+        uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # v7.1.0
+        with:
+          file_pattern: ./docs/README.md
+          commit_message: "docs: update documentation"
+          commit_user_name: theguild-bot
+          commit_user_email: bot@the-guild.dev
+          commit_author: theguild-bot <bot@the-guild.dev> # dont use the actor as an author
+      - name: fail if changes
+        if: github.ref == 'refs/heads/main'
         run: git diff --exit-code ./docs/README.md
 
   binary:

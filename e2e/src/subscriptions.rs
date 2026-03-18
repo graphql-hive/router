@@ -6,7 +6,10 @@ mod subscriptions_e2e_tests {
     use reqwest::StatusCode;
     use sonic_rs::json;
 
-    use crate::testkit::{some_header_map, ResponseLike, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        get_available_port, some_header_map, ClientResponseExt, ResponseLike, TestRouter,
+        TestSubgraphs,
+    };
 
     #[ntex::test]
     async fn subscription_not_allowed_when_disabled() {
@@ -62,7 +65,9 @@ mod subscriptions_e2e_tests {
     #[ntex::test]
     async fn subscription_no_entity_resolution_sse_subgraph() {
         let subgraphs = TestSubgraphs::builder()
-            .with_subscriptions_protocol(subgraphs::SubscriptionProtocol::SseOnly)
+            .with_http_streaming_subscriptions_protocol(
+                subgraphs::HTTPStreamingSubscriptionProtocol::SseOnly,
+            )
             .build()
             .start()
             .await;
@@ -155,7 +160,9 @@ mod subscriptions_e2e_tests {
     #[ntex::test]
     async fn subscription_no_entity_resolution_multipart_subgraph() {
         let subgraphs = TestSubgraphs::builder()
-            .with_subscriptions_protocol(subgraphs::SubscriptionProtocol::MultipartOnly)
+            .with_http_streaming_subscriptions_protocol(
+                subgraphs::HTTPStreamingSubscriptionProtocol::MultipartOnly,
+            )
             .build()
             .start()
             .await;
@@ -484,6 +491,90 @@ mod subscriptions_e2e_tests {
         let body_str = std::str::from_utf8(&body).unwrap();
 
         assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}
+
+        event: complete
+        "#);
+    }
+
+    #[ntex::test]
+    async fn subscription_yes_entity_resolution_http_callback_subgraph() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router_port = get_available_port();
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .with_port(router_port)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    callback:
+                        public_url: http://0.0.0.0:{router_port}/callback
+                        subgraphs:
+                            - reviews
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map!(
+                        http::header::ACCEPT => "text/event-stream"
+                ),
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        assert_snapshot!(res.string_body().await, @r#"
         event: next
         data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}
 

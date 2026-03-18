@@ -107,3 +107,6 @@ tracing-subscriber = { version = "0.3.22", features = [
   "json",
 ] }
 tracing-tree = "0.4.0"
+
+[patch.crates-io]
+ntex = { git = "https://github.com/enisdenjo/ntex", branch = "v3-4-0-tserv-port" }

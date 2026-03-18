@@ -58,7 +58,7 @@ pub fn start_subgraphs_server(port: Option<u16>) -> (JoinHandle<()>, Sender<()>)
         .map(|v| v.to_string())
         .unwrap_or(std::env::var("PORT").unwrap_or("4200".to_owned()));
 
-    let mut app = subgraphs_app(SubscriptionProtocol::default());
+    let mut app = subgraphs_app(HTTPStreamingSubscriptionProtocol::default());
     app = app.route("/health", get(health_check_handler));
 
     println!("Starting server on http://{}:{}", host, port);
@@ -81,15 +81,19 @@ pub fn start_subgraphs_server(port: Option<u16>) -> (JoinHandle<()>, Sender<()>)
     (server_handle, shutdown_tx)
 }
 
+/// The protocol to use for GraphQL subscriptions over HTTP streaming.
+/// It is purely the streaming HTTP protocol, other subscription protocols
+/// are handled automatically through HTTP negotiation (like websocket upgrades
+/// or http callbacks).
 #[derive(Clone, Default)]
-pub enum SubscriptionProtocol {
+pub enum HTTPStreamingSubscriptionProtocol {
     #[default]
     PreferMultipartFallbackSse,
     MultipartOnly,
     SseOnly,
 }
 
-pub fn subgraphs_app(subscriptions_protocol: SubscriptionProtocol) -> Router<()> {
+pub fn subgraphs_app(subscriptions_protocol: HTTPStreamingSubscriptionProtocol) -> Router<()> {
     Router::new()
         .route(
             "/accounts",

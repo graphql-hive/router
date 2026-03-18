@@ -53,6 +53,7 @@ pub mod error;
 pub mod execution;
 pub mod execution_request;
 pub mod header;
+pub mod http_callback;
 pub mod introspection_policy;
 pub mod multipart_subscribe;
 pub mod normalize;

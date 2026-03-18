@@ -1,3 +1,4 @@
+pub mod absolute_path;
 pub mod file_path;
 pub mod http_header;
 pub mod retry_policy;

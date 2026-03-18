@@ -179,6 +179,10 @@ impl HiveRouterConfig {
                 .unwrap_or_else(|| self.graphql_path())
         })
     }
+
+    pub fn callback_conf(&self) -> Option<&subscriptions::CallbackConfig> {
+        self.subscriptions.callback.as_ref()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -1902,6 +1902,7 @@ Configuration for subscriptions.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**callback**](#subscriptionscallback)|`object`, `null`|Configuration for subgraphs using the HTTP Callback protocol.<br/>|yes|
 |**enabled**|`boolean`|Enables/disables subscriptions. By default, the subscriptions are disabled.<br/><br/>You can override this setting by setting the `SUBSCRIPTIONS_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
 |[**websocket**](#subscriptionswebsocket)|`object`, `null`|Configuration for subgraphs using WebSocket protocol.<br/>||
 
@@ -1913,6 +1914,33 @@ enabled: false
 
 ```
 
+<a name="subscriptionscallback"></a>
+### subscriptions\.callback: object,null
+
+Configuration for subgraphs using the HTTP Callback protocol.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**heartbeat\_interval**|`string`|The interval at which the subgraph must send heartbeat messages.<br/>If set to 0, heartbeats are disabled. Defaults to 5 seconds.<br/>Default: `"5s"`<br/>|no|
+|**listen**|`string`, `null`|The IP address and port the router will listen on for subscription callbacks.<br/>When set, the router will start a dedicated HTTP server bound to this address<br/>for receiving callback messages from subgraphs, separate from the main GraphQL server.<br/>When not set, the callback handler is registered on the main server.<br/><br/>Example: `0.0.0.0:4001`<br/>|no|
+|**path**|`string`|The path of the router's callback endpoint.<br/>Must be an absolute path starting with `/`. Defaults to `/callback`.<br/>Default: `"/callback"`<br/>Pattern: `^/`<br/>|no|
+|**public\_url**|`string`|The public URL that subgraphs will use to send callback messages to this router.<br/><br/>Your public_url must match the server address combined with the router's path.<br/>Meaning, if your server is `http://localhost:4000` and the path is `/callback`,<br/>your `public_url` should be `http://localhost:4000/callback`.<br/><br/>Example: `https://example.com:4000/callback`<br/>Format: `"uri"`<br/>|yes|
+|[**subgraphs**](#subscriptionscallbacksubgraphs)|`string[]`|The list of subgraph names that use the HTTP callback protocol.<br/>Default: <br/>|no|
+
+**Additional Properties:** not allowed  
+<a name="subscriptionscallbacksubgraphs"></a>
+#### subscriptions\.callback\.subgraphs\[\]: array
+
+The list of subgraph names that use the HTTP callback protocol.
+
+
+**Items**
+
+**Item Type:** `string`  
+**Unique Items:** yes  
 <a name="subscriptionswebsocket"></a>
 ### subscriptions\.websocket: object,null
 
@@ -1932,6 +1960,8 @@ Configuration for subgraphs using WebSocket protocol.
 
 The default configuration that will be applied to all subgraphs using
 WebSocket protocol, unless overridden by a specific subgraph configuration.
+
+When specified, all subgraphs (not claimed by `callback`) will use the WebSocket protocol.
 
 
 **Properties**
