@@ -126,7 +126,7 @@ mod http_callback_e2e_tests {
             .contains(r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#));
 
         // kicked off client, eventually
-        assert!(body.contains(r#"{"data":null,"errors":[{"message":"Subgraph gone due heartbeat timeout","extensions":{"code":"SUBGRAPH_GONE"}}]}"#));
+        assert!(body.contains(r#"{"data":null,"errors":[{"message":"Subgraph gone due to heartbeat timeout","extensions":{"code":"SUBGRAPH_GONE"}}]}"#));
 
         // completed stream
         assert!(body.contains("event: complete"));
