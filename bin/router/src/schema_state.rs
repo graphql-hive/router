@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use graphql_tools::static_graphql::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
+use hive_router_internal::logging::context::LoggerContext;
 use hive_router_internal::telemetry::{metrics::Metrics, TelemetryContext};
 use hive_router_internal::{
     authorization::metadata::AuthorizationMetadata,
@@ -27,7 +28,7 @@ use moka::future::Cache;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     cache_state::CacheState,
@@ -76,6 +77,7 @@ impl SchemaState {
     pub async fn new_from_config(
         bg_tasks_manager: &mut BackgroundTasksManager,
         telemetry_context: Arc<TelemetryContext>,
+        logger_context: Arc<LoggerContext>,
         router_config: Arc<HiveRouterConfig>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         cache_state: Arc<CacheState>,
@@ -141,7 +143,7 @@ impl SchemaState {
                 }
 
                 match new_supergraph_data.unwrap_or_else(|| {
-                    Self::build_data(router_config.clone(), task_telemetry.clone(), new_ast)
+                    Self::build_data(router_config.clone(), task_telemetry.clone(), logger_context.clone(), new_ast)
                 }) {
                     Ok(mut new_supergraph_data) => {
                         if !on_end_callbacks.is_empty() {
@@ -167,8 +169,8 @@ impl SchemaState {
                                         Err(err) => {
                                             process_capture.finish_error();
                                             error!(
-                                                "Plugin ended supergraph load with error: {}",
-                                                err.message
+                                              err = err.message,
+                                              "Plugin short-circuit with error while loading supergraph"
                                             );
                                             return;
                                         }
@@ -181,15 +183,14 @@ impl SchemaState {
                         }
 
                         swappable_data_spawn_clone.store(Arc::new(Some(new_supergraph_data)));
-                        debug!("Supergraph updated successfully");
-
+                        info!("Supergraph updated successfully, will be used for next request, clearing caches...");
                         cache_state_for_invalidation.on_schema_change();
                         debug!("Schema-associated caches cleared successfully");
                         process_capture.finish_ok();
                     }
                     Err(e) => {
                         process_capture.finish_error();
-                        error!("Failed to build new supergraph data: {}", e);
+                        error!(error = %e, "Failed to build new supergraph data");
                     }
                 }
             }
@@ -207,6 +208,7 @@ impl SchemaState {
     fn build_data(
         router_config: Arc<HiveRouterConfig>,
         telemetry_context: Arc<TelemetryContext>,
+        logger_context: Arc<LoggerContext>,
         parsed_supergraph_sdl: Document,
     ) -> Result<SupergraphData, SupergraphManagerError> {
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
@@ -216,6 +218,7 @@ impl SchemaState {
             &planner.supergraph.subgraph_endpoint_map,
             router_config,
             telemetry_context,
+            logger_context,
         )?;
 
         Ok(SupergraphData {
@@ -285,20 +288,20 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
                     poll_capture.finish_updated();
                 }
                 Err(err) => {
-                    error!("Failed to load supergraph: {}", err);
+                    error!(err = %err, "Failed to load supergraph");
                     poll_capture.finish_error();
                 }
             }
 
             if let Some(interval) = self.0.loader.reload_interval() {
                 debug!(
-                    "waiting for {:?}ms before checking again for supergraph changes",
-                    interval.as_millis()
+                    interval_ms = interval.as_millis(),
+                    "waiting checking again for supergraph changes",
                 );
 
                 ntex::time::sleep(*interval).await;
             } else {
-                debug!("poll interval not configured for supergraph changes, breaking");
+                debug!("supergraph will not be reloaded because polling is disabled");
 
                 break;
             }

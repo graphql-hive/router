@@ -14,7 +14,7 @@ use jsonwebtoken::{
     Algorithm, DecodingKey, Header, Validation,
 };
 use ntex::{http::header::HeaderValue, http::HeaderMap};
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::{
     jwt::{
@@ -94,7 +94,7 @@ impl JwtAuthRuntime {
                         let raw_cookies = match cookie_raw.to_str() {
                             Ok(cookies) => cookies.split(';'),
                             Err(e) => {
-                                warn!("jwt auth failed to convert cookie header to string, ignoring cookie. error: {}", e);
+                                warn!(error = %e, "jwt auth failed to convert cookie header to string, ignoring cookie");
                                 continue;
                             }
                         };
@@ -112,9 +112,9 @@ impl JwtAuthRuntime {
                                     // Should we reject the entire request in case of invalid cookies?
                                     // I think it's better to consider this as a user error? maybe return 400?
                                     warn!(
-                       "jwt auth failed to parse cookie value, ignoring cookie. error: {}",
-                       e
-                     );
+                                      error = %e,
+                                      "jwt auth failed to parse cookie value, ignoring cookie"
+                                    );
                                 }
                             }
                         }
@@ -173,7 +173,7 @@ impl JwtAuthRuntime {
                     .map(|token_data| (token_data, maybe_prefix, token))
             }
             Err(e) => {
-                warn!("jwt plugin failed to lookup token. error: {}", e);
+                warn!(error = %e, "jwt plugin failed to lookup token");
 
                 Err(JwtError::LookupFailed(e))
             }
@@ -313,10 +313,13 @@ impl JwtAuthRuntime {
                 token_prefix: maybe_prefix,
             })),
             Err(err) => {
-                warn!("jwt token error: {:?}", err);
                 if self.config.require_authentication.is_some_and(|v| v) {
+                    error!(error = %err, "jwt token error");
+
                     Err((*err).clone())
                 } else {
+                    warn!(error = %err, "jwt token validation error, ignoring error due to 'require_authentication' flag");
+
                     Ok(None)
                 }
             }

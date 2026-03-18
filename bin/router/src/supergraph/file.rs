@@ -3,7 +3,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use hive_router_config::primitives::file_path::FilePath;
 use tokio::{fs, sync::RwLock};
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use crate::supergraph::base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader};
 
@@ -41,23 +41,28 @@ impl SupergraphLoader for SupergraphFileLoader {
     async fn load(&self) -> Result<ReloadSupergraphResult, LoadSupergraphError> {
         let result = if self.poll_interval.is_some() {
             debug!(
-                "Loading supergraph from file path: '{}' and checking metadata for polling",
-                self.file_path.absolute
+                file_path = self.file_path.absolute,
+                "Loading supergraph from file (polling enabled)",
             );
 
             self.load_with_polling().await
         } else {
             debug!(
-                "Loading supergraph from file path: '{}'",
-                self.file_path.absolute
+                file_path = self.file_path.absolute,
+                "Loading supergraph from file (polling disabled)",
             );
 
             self.load_without_polling().await
         };
 
+        info!(
+            file_path = self.file_path.absolute,
+            "Supergraph successfully loaded from a local file"
+        );
+
         trace!(
-            "Supergraph loaded from file path: '{}', result: {:?}",
-            self.file_path.absolute,
+            file_path = self.file_path.absolute,
+            "Supergraph loaded from file, result: {:?}",
             result
         );
 
@@ -75,8 +80,8 @@ impl SupergraphFileLoader {
         poll_interval: Option<Duration>,
     ) -> Result<Box<Self>, LoadSupergraphError> {
         debug!(
-            "Creating supergraph source from file path: '{}'",
-            file_path.absolute
+            file_path = file_path.absolute,
+            "Creating supergraph source from a file",
         );
 
         Ok(Box::new(Self {

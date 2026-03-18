@@ -593,8 +593,8 @@ impl FieldProjectionPlan {
                 Some(fields) => fields,
                 None => {
                     warn!(
-                        "No fields found for type `{}` in schema metadata.",
-                        parent_type_name
+                        parent_type_name,
+                        "No fields found for type in schema metadata",
                     );
                     return;
                 }
@@ -603,8 +603,8 @@ impl FieldProjectionPlan {
                 Some(f) => f.output_type_name.clone(),
                 None => {
                     warn!(
-                        "Field `{}` not found in type `{}` in schema metadata.",
-                        field_name, parent_type_name
+                        field_name,
+                        parent_type_name, "Field not found in type in schema metadata",
                     );
                     return;
                 }

@@ -745,13 +745,9 @@ impl<'exec> Executor<'exec> {
 
     fn log_error(&self, error: &PlanExecutionError) {
         if let Some(subgraph_name) = error.subgraph_name() {
-            tracing::error!(
-                "Error executing plan with subgraph '{}': {}",
-                subgraph_name,
-                error
-            );
+            tracing::error!(subgraph_name, error = %error, "Error executing plan with subgraph");
         } else {
-            tracing::error!("Error executing plan: {}", error);
+            tracing::error!(error = %error, "Error executing plan");
         }
     }
 
@@ -1163,7 +1159,7 @@ mod tests {
     use super::select_fetch_variables;
     use graphql_tools::parser::query;
     use hive_router_config::HiveRouterConfig;
-    use hive_router_internal::telemetry::TelemetryContext;
+    use hive_router_internal::{logging::context::LoggerContext, telemetry::TelemetryContext};
     use hive_router_query_planner::{
         ast::{
             document::Document,
@@ -1429,6 +1425,7 @@ mod tests {
                 Arc::new(TelemetryContext::from_propagation_config(
                     &Default::default(),
                 )),
+                Arc::new(LoggerContext::default()),
             )
             .unwrap(),
             client_request: &ClientRequestDetails {

@@ -3,6 +3,7 @@ use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
+use hive_router_internal::logging::context::LoggerContext;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
@@ -79,9 +80,11 @@ pub struct RouterSharedState {
     pub introspection_policy: BooleanOrProgram,
     pub telemetry_context: Arc<TelemetryContext>,
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
+    pub logging_context: Arc<LoggerContext>,
 }
 
 impl RouterSharedState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
@@ -90,6 +93,7 @@ impl RouterSharedState {
         telemetry_context: Arc<TelemetryContext>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         cache_state: Arc<CacheState>,
+        logging_context: Arc<LoggerContext>,
     ) -> Result<Self, SharedStateError> {
         let parse_cache = cache_state.parse_cache.clone();
         Ok(Self {
@@ -114,6 +118,7 @@ impl RouterSharedState {
                 .map_err(Box::new)?,
             telemetry_context,
             plugins,
+            logging_context,
         })
     }
 }
