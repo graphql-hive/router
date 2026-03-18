@@ -380,14 +380,20 @@ impl RouterPaths {
         &self,
         prometheus: &Option<PrometheusAttached>,
     ) -> Result<(), RouterInitError> {
-        // A pair of context and actual path
+        // A pair of context and actual path (only include optional paths when present)
         let mut paths = vec![
             ("graphql", self.graphql.as_str()),
-            ("websocket", self.websocket.as_deref().unwrap_or_default()),
-            ("callback", self.callback.as_deref().unwrap_or_default()),
             ("health", self.health.as_str()),
             ("readiness", self.readiness.as_str()),
         ];
+
+        if let Some(ws) = self.websocket.as_deref() {
+            paths.push(("websocket", ws));
+        }
+
+        if let Some(cb) = self.callback.as_deref() {
+            paths.push(("callback", cb));
+        }
 
         if let Some(prom) = prometheus {
             paths.push(("prometheus", prom.endpoint.as_str()));
