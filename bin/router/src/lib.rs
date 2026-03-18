@@ -388,7 +388,10 @@ impl RouterPaths {
         ];
 
         if let Some(ws) = self.websocket.as_deref() {
-            paths.push(("websocket", ws));
+            // its safe to have graphql and websocket on same path
+            if ws != self.graphql.as_str() {
+                paths.push(("websocket", ws));
+            }
         }
 
         if let Some(cb) = self.callback.as_deref() {
