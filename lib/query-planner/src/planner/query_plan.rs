@@ -3,8 +3,11 @@ use std::collections::{HashMap, VecDeque};
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
 
 use crate::{
-    planner::fetch::state::MultiTypeFetchStep,
-    planner::plan_nodes::ConditionNode,
+    planner::{
+        fetch::state::MultiTypeFetchStep,
+        plan_nodes::PlanNode,
+        query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
+    },
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
 };
@@ -12,8 +15,10 @@ use crate::{
 use super::{
     error::QueryPlanError,
     fetch::fetch_graph::FetchGraph,
-    plan_nodes::{ParallelNode, PlanNode, QueryPlan, SequenceNode, SubscriptionNode},
+    plan_nodes::{ParallelNode, QueryPlan, SequenceNode, SubscriptionNode},
 };
+
+mod optimize;
 
 /// Tracks the in-degree of FetchGraph (DAG) in a dependency graph.
 /// The in-degree of a step is the number of its prerequisite parent steps
@@ -169,7 +174,8 @@ pub fn build_query_plan_from_fetch_graph(
         }
     }
 
-    let overall_plan_sequence = optimize_plan_sequence(overall_plan_sequence);
+    // First do light top-level normalization (e.g. flatten nested Sequence wrappers).
+    let overall_plan_sequence = optimize_top_level_sequence(overall_plan_sequence);
 
     // TODO: have it live where fetch node is created
     let overall_plan_sequence = wrap_subscription_fetch_nodes(overall_plan_sequence);
@@ -180,6 +186,9 @@ pub fn build_query_plan_from_fetch_graph(
             nodes: overall_plan_sequence,
         }),
     };
+
+    // Then run full recursive optimization + batching rewrites.
+    let root_node = optimize_root_node(root_node, supergraph)?;
 
     Ok(QueryPlan {
         kind: QUERY_PLAN_KIND,
@@ -208,91 +217,4 @@ fn wrap_subscription_fetch_nodes(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
             other => other,
         })
         .collect()
-}
-
-fn are_conditions_compatible(c1: &ConditionNode, c2: &ConditionNode) -> bool {
-    // They refer to different variables
-    if c1.condition != c2.condition {
-        return false;
-    }
-
-    // Skip and Skip
-    if c1.if_clause.is_none() && c2.if_clause.is_none() {
-        return true;
-    }
-
-    // Include and Include
-    if c1.else_clause.is_none() && c2.else_clause.is_none() {
-        return true;
-    }
-
-    // Skip/Include and Include/Skip
-    false
-}
-
-fn merge_two_condition_nodes(a: PlanNode, b: PlanNode) -> PlanNode {
-    let (mut a, mut b) = match (a, b) {
-        (PlanNode::Condition(c1), PlanNode::Condition(c2)) => (c1, c2),
-        _ => panic!("Can only merge two ConditionNodes"),
-    };
-
-    let is_if = a.if_clause.is_some();
-
-    let mut inner_nodes: Vec<PlanNode> = a
-        .if_clause
-        .take()
-        .or_else(|| a.else_clause.take())
-        .map(|n| n.into_nodes())
-        .unwrap_or_default()
-        .into_iter()
-        .chain(
-            b.if_clause
-                .take()
-                .or_else(|| b.else_clause.take())
-                .map(|n| n.into_nodes())
-                .unwrap_or_default(),
-        )
-        .collect();
-
-    // Use Sequence only if there are multiple nodes
-    let merged_body = if inner_nodes.len() == 1 {
-        inner_nodes.remove(0)
-    } else {
-        PlanNode::Sequence(SequenceNode { nodes: inner_nodes })
-    };
-
-    // Re-create the parent ConditionNode with the newly merged body.
-    if is_if {
-        PlanNode::Condition(ConditionNode {
-            condition: a.condition,
-            if_clause: Some(Box::new(merged_body)),
-            else_clause: None,
-        })
-    } else {
-        PlanNode::Condition(ConditionNode {
-            condition: a.condition,
-            if_clause: None,
-            else_clause: Some(Box::new(merged_body)),
-        })
-    }
-}
-
-fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
-    nodes.into_iter().fold(Vec::new(), |mut acc, current_node| {
-        match (acc.last_mut(), &current_node) {
-            // Check if the last node and the current node
-            // have compatible conditions
-            (Some(PlanNode::Condition(last_cond)), PlanNode::Condition(current_cond))
-                if are_conditions_compatible(last_cond, current_cond) =>
-            {
-                let last_node = acc.pop().unwrap();
-                let merged_node = merge_two_condition_nodes(last_node, current_node);
-                acc.push(merged_node);
-            }
-            _ => {
-                acc.push(current_node);
-            }
-        }
-        acc
-    })
 }

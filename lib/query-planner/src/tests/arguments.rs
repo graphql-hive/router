@@ -43,9 +43,12 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Parallel {
-          Flatten(path: "products.@") {
-            Fetch(service: "a") {
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              paths: [
+                "products.@"
+              ]
               {
                 ... on Product {
                   __typename
@@ -56,17 +59,12 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                   price: _internal_qp_alias_0
                   weight
                 }
-              } =>
-              {
-                ... on Product {
-                  isExpensiveCategory
-                  shippingEstimateEUR
-                }
               }
-            },
-          },
-          Flatten(path: "products.@") {
-            Fetch(service: "a") {
+            }
+            _e1 {
+              paths: [
+                "products.@"
+              ]
               {
                 ... on Product {
                   __typename
@@ -74,14 +72,22 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                   weight
                   upc
                 }
-              } =>
-              {
-                ... on Product {
-                  shippingEstimate
-                }
               }
-            },
-          },
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                isExpensiveCategory
+                shippingEstimateEUR
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                shippingEstimate
+              }
+            }
+          }
         },
       },
     },
@@ -100,21 +106,23 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             "operation": "{products{__typename upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
           },
           {
-            "kind": "Parallel",
-            "nodes": [
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "products"
-                  },
-                  "@"
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensiveCategory shippingEstimateEUR}}}",
+            "kind": "BatchFetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{isExpensiveCategory shippingEstimateEUR}} _e1: _entities(representations: $__batch_reps_1){...on Product{shippingEstimate}}}",
+            "entityBatch": {
+              "aliases": [
+                {
+                  "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
+                  "paths": [
+                    [
+                      {
+                        "Field": "products"
+                      },
+                      "@"
+                    ]
+                  ],
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -150,21 +158,18 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                       ]
                     }
                   ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "products"
-                  },
-                  "@"
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate}}}",
+                },
+                {
+                  "alias": "_e1",
+                  "representationsVariableName": "__batch_reps_1",
+                  "paths": [
+                    [
+                      {
+                        "Field": "products"
+                      },
+                      "@"
+                    ]
+                  ],
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -190,8 +195,8 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                     }
                   ]
                 }
-              }
-            ]
+              ]
+            }
           }
         ]
       }
@@ -934,39 +939,45 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             }
           },
         },
-        Parallel {
-          Flatten(path: "test") {
-            Fetch(service: "a") {
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              paths: [
+                "test"
+              ]
               {
                 ... on Test {
                   __typename
                   otherField: _internal_qp_alias_0
                   id
                 }
-              } =>
-              {
-                ... on Test {
-                  anotherWithRequiresAndArgs
-                }
               }
-            },
-          },
-          Flatten(path: "test") {
-            Fetch(service: "a") {
+            }
+            _e1 {
+              paths: [
+                "test"
+              ]
               {
                 ... on Test {
                   __typename
                   otherField
                   id
                 }
-              } =>
-              {
-                ... on Test {
-                  fieldWithRequiresAndArgs
-                }
               }
-            },
-          },
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Test {
+                anotherWithRequiresAndArgs
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Test {
+                fieldWithRequiresAndArgs
+              }
+            }
+          }
         },
       },
     },
@@ -1015,20 +1026,22 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             }
           },
           {
-            "kind": "Parallel",
-            "nodes": [
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "test"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{anotherWithRequiresAndArgs}}}",
+            "kind": "BatchFetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Test{anotherWithRequiresAndArgs}} _e1: _entities(representations: $__batch_reps_1){...on Test{fieldWithRequiresAndArgs}}}",
+            "entityBatch": {
+              "aliases": [
+                {
+                  "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
+                  "paths": [
+                    [
+                      {
+                        "Field": "test"
+                      }
+                    ]
+                  ],
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -1050,20 +1063,17 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
                       ]
                     }
                   ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "test"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
+                },
+                {
+                  "alias": "_e1",
+                  "representationsVariableName": "__batch_reps_1",
+                  "paths": [
+                    [
+                      {
+                        "Field": "test"
+                      }
+                    ]
+                  ],
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -1085,8 +1095,8 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
                     }
                   ]
                 }
-              }
-            ]
+              ]
+            }
           }
         ]
       }
@@ -1147,39 +1157,45 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             }
           },
         },
-        Parallel {
-          Flatten(path: "test") {
-            Fetch(service: "a") {
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              paths: [
+                "test"
+              ]
               {
                 ... on Test {
                   __typename
                   otherField: _internal_qp_alias_0
                   id
                 }
-              } =>
-              {
-                ... on Test {
-                  anotherWithRequiresAndArgs
-                }
               }
-            },
-          },
-          Flatten(path: "test") {
-            Fetch(service: "a") {
+            }
+            _e1 {
+              paths: [
+                "test"
+              ]
               {
                 ... on Test {
                   __typename
                   otherField: _internal_qp_alias_1
                   id
                 }
-              } =>
-              {
-                ... on Test {
-                  fieldWithRequiresAndArgs
-                }
               }
-            },
-          },
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Test {
+                anotherWithRequiresAndArgs
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Test {
+                fieldWithRequiresAndArgs
+              }
+            }
+          }
         },
       },
     },
@@ -1228,20 +1244,22 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             }
           },
           {
-            "kind": "Parallel",
-            "nodes": [
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "test"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{anotherWithRequiresAndArgs}}}",
+            "kind": "BatchFetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Test{anotherWithRequiresAndArgs}} _e1: _entities(representations: $__batch_reps_1){...on Test{fieldWithRequiresAndArgs}}}",
+            "entityBatch": {
+              "aliases": [
+                {
+                  "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
+                  "paths": [
+                    [
+                      {
+                        "Field": "test"
+                      }
+                    ]
+                  ],
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -1263,20 +1281,17 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                       ]
                     }
                   ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "test"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
+                },
+                {
+                  "alias": "_e1",
+                  "representationsVariableName": "__batch_reps_1",
+                  "paths": [
+                    [
+                      {
+                        "Field": "test"
+                      }
+                    ]
+                  ],
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -1299,8 +1314,8 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                     }
                   ]
                 }
-              }
-            ]
+              ]
+            }
           }
         ]
       }
@@ -1868,32 +1883,48 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
           }
         },
         Parallel {
-          Flatten(path: "secondProduct") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
+          BatchFetch(service: "a") {
+            {
+              _e0 {
+                paths: [
+                  "secondProduct"
+                  "firstProduct"
+                ]
+                {
+                  ... on Product {
+                    __typename
+                    id
+                  }
                 }
-              } =>
-              {
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
                 ... on Product {
                   category {
                     details
                   }
                 }
               }
-            },
+            }
           },
-          Flatten(path: "secondProduct") {
-            Fetch(service: "b") {
-              {
-                ... on Product {
-                  __typename
-                  id
+          BatchFetch(service: "b") {
+            {
+              _e0 {
+                paths: [
+                  "secondProduct"
+                  "firstProduct"
+                ]
+                {
+                  ... on Product {
+                    __typename
+                    id
+                  }
                 }
-              } =>
-              {
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
                 ... on Product {
                   category {
                     __typename
@@ -1901,75 +1932,31 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
                   }
                 }
               }
-            },
-          },
-          Flatten(path: "firstProduct") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  category {
-                    details
-                  }
-                }
-              }
-            },
-          },
-          Flatten(path: "firstProduct") {
-            Fetch(service: "b") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  category {
-                    __typename
-                    id
-                  }
-                }
-              }
-            },
+            }
           },
         },
-        Parallel {
-          Flatten(path: "secondProduct.category") {
-            Fetch(service: "c") {
+        BatchFetch(service: "c") {
+          {
+            _e0 {
+              paths: [
+                "secondProduct.category"
+                "firstProduct.category"
+              ]
               {
                 ... on Category {
                   __typename
                   id
                 }
-              } =>
-              {
-                ... on Category {
-                  name
-                }
               }
-            },
-          },
-          Flatten(path: "firstProduct.category") {
-            Fetch(service: "c") {
-              {
-                ... on Category {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Category {
-                  name
-                }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Category {
+                name
               }
-            },
-          },
+            }
+          }
         },
       },
     },
@@ -2027,32 +2014,48 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
           }
         },
         Parallel {
-          Flatten(path: "secondProduct") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
+          BatchFetch(service: "a") {
+            {
+              _e0 {
+                paths: [
+                  "secondProduct"
+                  "firstProduct"
+                ]
+                {
+                  ... on Product {
+                    __typename
+                    id
+                  }
                 }
-              } =>
-              {
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
                 ... on Product {
                   category {
                     details
                   }
                 }
               }
-            },
+            }
           },
-          Flatten(path: "secondProduct") {
-            Fetch(service: "b") {
-              {
-                ... on Product {
-                  __typename
-                  id
+          BatchFetch(service: "b") {
+            {
+              _e0 {
+                paths: [
+                  "secondProduct"
+                  "firstProduct"
+                ]
+                {
+                  ... on Product {
+                    __typename
+                    id
+                  }
                 }
-              } =>
-              {
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
                 ... on Product {
                   category {
                     __typename
@@ -2060,75 +2063,31 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                   }
                 }
               }
-            },
-          },
-          Flatten(path: "firstProduct") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  category {
-                    details
-                  }
-                }
-              }
-            },
-          },
-          Flatten(path: "firstProduct") {
-            Fetch(service: "b") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  category {
-                    __typename
-                    id
-                  }
-                }
-              }
-            },
+            }
           },
         },
-        Parallel {
-          Flatten(path: "secondProduct.category") {
-            Fetch(service: "c") {
+        BatchFetch(service: "c") {
+          {
+            _e0 {
+              paths: [
+                "secondProduct.category"
+                "firstProduct.category"
+              ]
               {
                 ... on Category {
                   __typename
                   id
                 }
-              } =>
-              {
-                ... on Category {
-                  name
-                }
               }
-            },
-          },
-          Flatten(path: "firstProduct.category") {
-            Fetch(service: "c") {
-              {
-                ... on Category {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Category {
-                  name
-                }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Category {
+                name
               }
-            },
-          },
+            }
+          }
         },
       },
     },
@@ -2153,29 +2112,41 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
             "kind": "Parallel",
             "nodes": [
               {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "secondProduct"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details}}}}",
-                  "requires": [
+                "kind": "BatchFetch",
+                "serviceName": "a",
+                "operationKind": "query",
+                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{category{details}}}}",
+                "entityBatch": {
+                  "aliases": [
                     {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
+                      "alias": "_e0",
+                      "representationsVariableName": "__batch_reps_0",
+                      "paths": [
+                        [
+                          {
+                            "Field": "secondProduct"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "firstProduct"
+                          }
+                        ]
+                      ],
+                      "requires": [
                         {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
+                          "kind": "InlineFragment",
+                          "typeCondition": "Product",
+                          "selections": [
+                            {
+                              "kind": "Field",
+                              "name": "__typename"
+                            },
+                            {
+                              "kind": "Field",
+                              "name": "id"
+                            }
+                          ]
                         }
                       ]
                     }
@@ -2183,89 +2154,41 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 }
               },
               {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "secondProduct"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "b",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{__typename id}}}}",
-                  "requires": [
+                "kind": "BatchFetch",
+                "serviceName": "b",
+                "operationKind": "query",
+                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{category{__typename id}}}}",
+                "entityBatch": {
+                  "aliases": [
                     {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
+                      "alias": "_e0",
+                      "representationsVariableName": "__batch_reps_0",
+                      "paths": [
+                        [
+                          {
+                            "Field": "secondProduct"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "firstProduct"
+                          }
+                        ]
+                      ],
+                      "requires": [
                         {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "firstProduct"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details}}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "firstProduct"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "b",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{__typename id}}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
+                          "kind": "InlineFragment",
+                          "typeCondition": "Product",
+                          "selections": [
+                            {
+                              "kind": "Field",
+                              "name": "__typename"
+                            },
+                            {
+                              "kind": "Field",
+                              "name": "id"
+                            }
+                          ]
                         }
                       ]
                     }
@@ -2275,23 +2198,33 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
             ]
           },
           {
-            "kind": "Parallel",
-            "nodes": [
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "secondProduct"
-                  },
-                  {
-                    "Field": "category"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "c",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Category{name}}}",
+            "kind": "BatchFetch",
+            "serviceName": "c",
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Category{name}}}",
+            "entityBatch": {
+              "aliases": [
+                {
+                  "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
+                  "paths": [
+                    [
+                      {
+                        "Field": "secondProduct"
+                      },
+                      {
+                        "Field": "category"
+                      }
+                    ],
+                    [
+                      {
+                        "Field": "firstProduct"
+                      },
+                      {
+                        "Field": "category"
+                      }
+                    ]
+                  ],
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -2309,41 +2242,8 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                     }
                   ]
                 }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "firstProduct"
-                  },
-                  {
-                    "Field": "category"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "c",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Category{name}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Category",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              }
-            ]
+              ]
+            }
           }
         ]
       }

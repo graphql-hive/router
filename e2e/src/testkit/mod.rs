@@ -27,7 +27,7 @@ use tracing::{info, warn};
 use hive_router::{
     add_callback_handler, background_tasks::BackgroundTasksManager, configure_app_from_config,
     configure_ntex_app, init_rustls_crypto_provider, invoke_shutdown_hooks,
-    plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry,
+    plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry, RouterPaths,
     RouterSharedState, SchemaState,
 };
 use hive_router_config::{
@@ -37,6 +37,30 @@ use hive_router_plan_executor::executors::websocket_client;
 use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 
 // utilities
+
+/// Retries the code wrapped 3 times before reporting the last error as failure.
+#[macro_export]
+macro_rules! flakey {
+    ($body:expr) => {{
+        use futures::FutureExt;
+        let mut last_err = None;
+        let attempts = 3;
+        for attempt in 1..=attempts {
+            let result = std::panic::AssertUnwindSafe($body).catch_unwind().await;
+            match result {
+                Ok(_) => return,
+                Err(e) => {
+                    eprintln!("Flakey attempt {}/{} failed", attempt, attempts);
+                    last_err = Some(e);
+                }
+            }
+        }
+        std::panic::resume_unwind(last_err.unwrap());
+    }};
+}
+
+// #[macro_export] always hoists to the crate root so we re-export it here module level
+pub use flakey;
 
 /// Binds a TCP listener to an OS-assigned port and returns that port number.
 /// The listener is immediately dropped, so the port is free for the caller to use.
@@ -476,6 +500,11 @@ impl TestRouterBuilder {
         self
     }
 
+    pub fn set_config(mut self, config: HiveRouterConfig) -> Self {
+        self.config = Some(config);
+        self
+    }
+
     pub fn with_subgraphs(mut self, subgraphs: impl Into<SocketAddr>) -> Self {
         self.subgraphs_addr = Some(subgraphs.into());
         self
@@ -584,28 +613,39 @@ impl Drop for TestRouterHandle {
         .join()
         .expect("shutdown hooks panicked");
 
-        // maybe shut down telemetry
-        if let Some(provider) = self.telemetry.provider.clone() {
-            let dispatch = tracing::dispatcher::get_default(|current| current.clone());
-            std::thread::spawn(move || {
-                tracing::dispatcher::with_default(&dispatch, || {
+        let traces_provider = self.telemetry.traces_provider.clone();
+        let metrics_provider = self.telemetry.metrics_provider.clone();
+        let dispatch = tracing::dispatcher::get_default(|current| current.clone());
+
+        std::thread::spawn(move || {
+            tracing::dispatcher::with_default(&dispatch, || {
+                if let Some(provider) = traces_provider {
                     tracing::info!(
                         component = "telemetry",
                         layer = "provider",
+                        layer = "provider",
+                        "shutdown completed"
+                    );
+                }
+
+                if let Some(provider) = metrics_provider {
+                    tracing::info!(
+                        component = "telemetry",
+                        layer = "metrics",
                         "shutdown scheduled"
                     );
                     let _ = provider.force_flush();
                     let _ = provider.shutdown();
                     tracing::info!(
                         component = "telemetry",
-                        layer = "provider",
+                        layer = "metrics",
                         "shutdown completed"
                     );
-                });
-            })
-            .join()
-            .expect("tracing shutdown panicked");
-        }
+                }
+            });
+        })
+        .join()
+        .expect("tracing shutdown panicked");
     }
 }
 
@@ -634,6 +674,10 @@ impl TestRouter<Built> {
         let (telemetry, subscriber) = Telemetry::init_testing_subscriber(&config)
             .expect("failed to initialize telemetry subscriber");
         let subscription_guard = tracing::subscriber::set_default(subscriber);
+        let prometheus = telemetry
+            .prometheus
+            .as_ref()
+            .and_then(|prom| prom.to_attached());
 
         let mut bg_tasks_manager = BackgroundTasksManager::new();
         let (shared_state, schema_state) = configure_app_from_config(
@@ -656,6 +700,12 @@ impl TestRouter<Built> {
 
         let serv_shared_state = shared_state.clone();
         let serv_schema_state = schema_state.clone();
+        let paths = RouterPaths::new(self.graphql_path.clone());
+        paths
+            .detect_conflicts(&prometheus)
+            .expect("failed to detect endpoint conflicts");
+        let serv_paths = paths.clone();
+        let serv_prometheus = prometheus.clone();
         let serv_active_subs = schema_state.active_callback_subscriptions.clone();
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
@@ -696,6 +746,8 @@ impl TestRouter<Built> {
         let serv = test::server_with(test::config().port(self.port), move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
+            let paths = serv_paths.clone();
+            let prometheus = serv_prometheus.clone();
             let active_subs = serv_active_subs.clone();
             let serv_graphql_path = serv_graphql_path.clone();
             let serv_websocket_path = serv_websocket_path.clone();
@@ -717,13 +769,7 @@ impl TestRouter<Built> {
                     .state(shared_state)
                     .state(schema_state)
                     .state(active_subs)
-                    .configure(|m| {
-                        configure_ntex_app(
-                            m,
-                            serv_graphql_path.as_ref(),
-                            serv_websocket_path.as_deref(),
-                        )
-                    })
+                    .configure(|m| configure_ntex_app(m, &paths, prometheus))
                     .configure(move |m| {
                         if let Some(ref cb_path) = serv_callback_path {
                             add_callback_handler(m, cb_path);

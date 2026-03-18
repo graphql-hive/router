@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::Instant};
 use tracing::{error, Instrument};
 
-use futures::Stream;
 use hive_router_internal::telemetry::traces::spans::{
     graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
 };
@@ -28,21 +27,24 @@ use crate::{
         error::PipelineError,
         execution::{execute_plan, PlannedRequest},
         execution_request::{deserialize_graphql_params, DeserializationResult, GetQueryStr},
-        header::{RequestAccepts, ResponseMode, StreamContentType, TEXT_HTML_MIME},
+        header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
-        multipart_subscribe::{
-            APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
-        },
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::{parse_operation_with_cache, ParseResult},
         progressive_override::request_override_context,
         query_plan::{plan_operation_with_cache, QueryPlanResult},
+        request_extensions::{
+            write_graphql_operation_metric_identity, write_graphql_response_metric_status,
+            write_request_body_size,
+        },
         validation::validate_operation_with_cache,
     },
     schema_state::SchemaState,
     shared_state::RouterSharedState,
     GRAPHIQL_HTML,
 };
+
+use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 
 pub mod authorization;
 pub mod body_read;
@@ -60,6 +62,7 @@ pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
+pub mod request_extensions;
 pub mod sse;
 pub mod timeout;
 pub mod usage_reporting;
@@ -114,6 +117,7 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
+        write_request_body_size(req, body_bytes.len() as u64);
         http_server_request_span.record_body_size(body_bytes.len());
 
         let mut plugin_req_state = None;
@@ -138,6 +142,8 @@ pub async fn graphql_request_handler(
                 return Ok(response);
             }
         };
+
+        write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
 
         let client_name = req
             .headers()
@@ -202,6 +208,12 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
+        write_graphql_operation_metric_identity(
+                    req,
+                    normalize_payload.operation_indentity.name.clone(),
+                    Some(normalize_payload.operation_indentity.operation_type),
+                );
+
         if req.method() == Method::GET {
             if let Some(OperationKind::Mutation) =
                 normalize_payload.operation_for_plan.operation_kind
@@ -217,7 +229,7 @@ pub async fn graphql_request_handler(
         );
 
         if is_subscription
-        && (!shared_state.router_config.subscriptions.enabled || !response_mode.can_stream())
+            && (!shared_state.router_config.subscriptions.enabled || !response_mode.can_stream())
         {
             // check early, even though we check again after pipeline execution below
             return Err(PipelineError::SubscriptionsNotSupported);
@@ -274,56 +286,20 @@ pub async fn graphql_request_handler(
         )
         .await?
         {
-            QueryPlanExecutionResult::Stream(result) => {
-                let stream_content_type = response_mode.
-                    stream_content_type().
-                    ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
-
-                let content_type_header = match stream_content_type {
-                    StreamContentType::IncrementalDelivery => {
-                        http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE)
-                    }
-                    StreamContentType::SSE => http::HeaderValue::from_static("text/event-stream"),
-                    StreamContentType::ApolloMultipartHTTP => {
-                        http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE)
-                    }
-                };
-
-                // TODO: why exactly do we need a type cast here?
-                let body: std::pin::Pin<
-                    Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
-                > = match stream_content_type {
-                    StreamContentType::IncrementalDelivery => Box::pin(
-                        multipart_subscribe::create_incremental_delivery_stream(result.body),
-                    ),
-                    StreamContentType::SSE => Box::pin(sse::create_stream(
-                        result.body,
-                        std::time::Duration::from_secs(10),
-                    )),
-                    StreamContentType::ApolloMultipartHTTP => {
-                        Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
-                            result.body,
-                            std::time::Duration::from_secs(10),
-                        ))
-                    }
-                };
-
-                let mut response_builder = web::HttpResponse::Ok();
-
-                if let Some(response_headers_aggregator) = result.response_headers_aggregator {
-                    response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
-                }
-
-                Ok(response_builder
-                    // .status(result.status) TODO: status codes in streaming responses?
-                    .header(http::header::CONTENT_TYPE, content_type_header)
-                    .streaming(body))
+            QueryPlanExecutionResult::Stream(_result) => {
+                todo!();
             },
             QueryPlanExecutionResult::Single(result) => {
                 let single_content_type = response_mode.
                     single_content_type().
                     // TODO: streaming single responses
                     ok_or(PipelineError::UnsupportedContentType)?;
+
+                write_graphql_response_metric_status(req, if result.error_count > 0 {
+                    GraphQLResponseStatus::Error
+                } else {
+                    GraphQLResponseStatus::Ok
+                });
 
                 if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
                     usage_reporting::collect_usage_report(
@@ -357,14 +333,17 @@ pub async fn graphql_request_handler(
                 }
 
                 Ok(response_builder
-                    .status(result.status_code)
                     .content_type(single_content_type.as_ref())
+                    .status(result.status_code)
                     .body(result.body))
-            },
+            }
         }
     }
     .instrument(operation_span.clone())
     .await
+    .inspect_err(|_| {
+      write_graphql_response_metric_status(req, GraphQLResponseStatus::Error);
+    })
 }
 
 #[inline]

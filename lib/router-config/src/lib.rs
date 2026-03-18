@@ -167,6 +167,14 @@ impl HiveRouterConfig {
         format!("{}:{}", self.http.host, self.http.port)
     }
 
+    pub fn host(&self) -> String {
+        self.http.host.clone()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.http.port
+    }
+
     pub fn graphql_path(&self) -> &str {
         &self.http.graphql_endpoint
     }

@@ -61,37 +61,43 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             id
           }
         },
-        Parallel {
-          Flatten(path: "viewer.review|[UserReview].product") {
-            Fetch(service: "b") {
+        BatchFetch(service: "b") {
+          {
+            _e0 {
+              paths: [
+                "viewer.review|[UserReview].product"
+              ]
               {
                 ... on Product {
                   __typename
                   id
                 }
-              } =>
-              {
-                ... on Product {
-                  pid
-                }
               }
-            },
-          },
-          Flatten(path: "viewer.review|[AnonymousReview].product") {
-            Fetch(service: "b") {
+            }
+            _e1 {
+              paths: [
+                "viewer.review|[AnonymousReview].product"
+              ]
               {
                 ... on Product {
                   __typename
                   id
                 }
-              } =>
-              {
-                ... on Product {
-                  b
-                }
               }
-            },
-          },
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                pid
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                b
+              }
+            }
+          }
         },
         Flatten(path: "viewer.review|[UserReview].product") {
           Fetch(service: "c") {

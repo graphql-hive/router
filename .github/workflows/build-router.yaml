@@ -39,7 +39,7 @@ jobs:
         with:
           token: ${{ secrets.BOT_GITHUB_TOKEN }}
       - name: setup rust
-        uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+        uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
       - name: generate config schema
         run: cargo router-config
       - name: setup node
@@ -56,7 +56,7 @@ jobs:
           path: router-config.schema.json
           if-no-files-found: error
       - name: Upload config to release
-        uses: svenstaro/upload-release-action@b98a3b12e86552593f3e4e577ca8a62aa2f3f22b # v2
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # v2
         if: ${{ github.event_name == 'release' }}
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -114,7 +114,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         name: checkout
       - name: setup rust (${{ matrix.rust_target }})
-        uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+        uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
         with:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
@@ -160,11 +160,11 @@ jobs:
         with:
           name: node_addon_${{ matrix.name }}
           path: |
-            lib/node-addon/*.node
+            lib/node-addon/dist/*.node
           if-no-files-found: error
 
       - name: Upload binaries to router release
-        uses: svenstaro/upload-release-action@b98a3b12e86552593f3e4e577ca8a62aa2f3f22b # v2
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # v2
         if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router/v')
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -187,17 +187,17 @@ jobs:
         with:
           node-version-file: .node-version
       - name: download node addon artifacts
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: node_addon_*
           path: lib/node-addon
       - name: prepare artifacts
         working-directory: lib/node-addon
         run: |
-          mv ./node_addon_linux_arm64/* .
-          mv ./node_addon_linux_amd64/* .
-          mv ./node_addon_macos_arm64/* .
-          mv ./node_addon_macos_amd64/* .
+          mv ./node_addon_linux_arm64/* ./dist
+          mv ./node_addon_linux_amd64/* ./dist
+          mv ./node_addon_macos_arm64/* ./dist
+          mv ./node_addon_macos_amd64/* ./dist
       - name: publish
         working-directory: lib/node-addon
         env:
@@ -207,7 +207,7 @@ jobs:
         working-directory: lib/node-addon
         run: npm pack
       - name: upload pack to release
-        uses: svenstaro/upload-release-action@b98a3b12e86552593f3e4e577ca8a62aa2f3f22b # v2
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file_glob: true
@@ -243,7 +243,7 @@ jobs:
             type=sha
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
       - name: download binary artifacts
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           pattern: hive_router_*
@@ -272,7 +272,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
       - name: docker pr comment
-        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2
+        uses: marocchino/sticky-pull-request-comment@70d2764d1a7d5d9560b100cbea0077fc8f633987 # v3
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
         with:
           header: ${{ github.workflow }}

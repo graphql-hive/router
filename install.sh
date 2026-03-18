@@ -101,7 +101,7 @@ get_version() {
 
 download_and_install() {
     ASSET_NAME="${BINARY_NAME}_${OS}_${ARCH}"
-    DOWNLOAD_URL="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/router%2F${VERSION}/${ASSET_NAME}"
+    DOWNLOAD_URL="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/hive-router%2F${VERSION}/${ASSET_NAME}"
 
     info "Downloading binary from: ${DOWNLOAD_URL}"
 

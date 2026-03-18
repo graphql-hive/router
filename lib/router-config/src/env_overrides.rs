@@ -92,7 +92,16 @@ impl EnvVarOverrides {
 
         if let Some(hive_console_cdn_endpoint) = self.hive_console_cdn_endpoint.take() {
             config = config.set_override("supergraph.source", "hive")?;
-            config = config.set_override("supergraph.endpoint", hive_console_cdn_endpoint)?;
+
+            if hive_console_cdn_endpoint.contains(",") {
+                let endpoints: Vec<String> = hive_console_cdn_endpoint
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                config = config.set_override("supergraph.endpoint", endpoints)?;
+            } else {
+                config = config.set_override("supergraph.endpoint", hive_console_cdn_endpoint)?;
+            }
 
             if let Some(hive_console_cdn_key) = self.hive_console_cdn_key.take() {
                 config = config.set_override("supergraph.key", hive_console_cdn_key)?;
