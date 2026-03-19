@@ -58,7 +58,6 @@ struct ResolvedSubgraphConfig<'a> {
 pub type InflightRequestsMap =
     Arc<DashMap<u64, Arc<OnceCell<(SubgraphHttpResponse, u64)>>, ABuildHasher>>;
 
-#[derive(Clone)]
 pub struct SubgraphExecutorMap {
     http_executors_by_subgraph: ExecutorsBySubgraphMap,
     subscription_executors_by_subgraph: ExecutorsBySubgraphMap,

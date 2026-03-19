@@ -69,14 +69,14 @@ use crate::{
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub operation_for_plan: &'exec OperationDefinition,
-    pub projection_plan: &'exec Vec<FieldProjectionPlan>,
-    pub headers_plan: &'exec HeaderRulesPlan,
+    pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub headers_plan: Arc<HeaderRulesPlan>,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: HashMap<String, sonic_rs::Value>,
     pub client_request: &'exec ClientRequestDetails<'exec>,
     pub introspection_context: &'exec IntrospectionContext<'exec>,
     pub operation_type_name: &'exec str,
-    pub executors: &'exec SubgraphExecutorMap,
+    pub executors: Arc<SubgraphExecutorMap>,
     pub jwt_auth_forwarding: Option<JwtAuthForwardingPlan>,
     pub graphql_error_recorder: Option<GraphQLErrorMetricsRecorder>,
     pub initial_errors: Vec<GraphQLError>,
@@ -152,7 +152,7 @@ pub async fn execute_query_plan<'exec>(
         // the only difference is that we get back a stream of results
         let mut headers_map = HeaderMap::new();
         modify_subgraph_request_headers(
-            opts.headers_plan,
+            &opts.headers_plan,
             &fetch_node.service_name,
             opts.client_request,
             &mut headers_map,
@@ -212,15 +212,15 @@ pub async fn execute_query_plan<'exec>(
         // clone all necessary data from the context for usage in the stream.
         // the stream will move all of these values inside its closure
         let subgraph_name: String = fetch_node.service_name.clone();
-        let projection_plan: Arc<Vec<FieldProjectionPlan>> = opts.projection_plan.clone().into();
-        let headers_plan: Arc<HeaderRulesPlan> = opts.headers_plan.clone().into();
+        let projection_plan: Arc<Vec<FieldProjectionPlan>> = opts.projection_plan.clone();
+        let headers_plan: Arc<HeaderRulesPlan> = opts.headers_plan.clone();
         let variable_values: Option<HashMap<String, sonic_rs::Value>> =
             opts.variable_values.clone();
         let extensions: HashMap<String, sonic_rs::Value> = opts.extensions.clone();
         let schema_metadata: Arc<SchemaMetadata> =
-            Arc::new(opts.introspection_context.metadata.clone());
+            opts.introspection_context.metadata.clone();
         let operation_type_name: String = opts.operation_type_name.to_string();
-        let executors: Arc<SubgraphExecutorMap> = opts.executors.clone().into();
+        let executors: Arc<SubgraphExecutorMap> = opts.executors.clone();
         let jwt_auth_forwarding: Option<JwtAuthForwardingPlan> = opts.jwt_auth_forwarding.clone();
         let initial_errors: Vec<GraphQLError> = opts.initial_errors.clone();
 
@@ -416,10 +416,10 @@ pub async fn execute_query_plan<'exec>(
     // We can directly create `Executor` instance here
     let executor = Executor {
         variable_values: opts.variable_values,
-        schema_metadata: opts.introspection_context.metadata,
-        executors: opts.executors,
+        schema_metadata: &opts.introspection_context.metadata,
+        executors: &opts.executors,
         client_request: opts.client_request,
-        headers_plan: opts.headers_plan,
+        headers_plan: &opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
         plugin_req_state: opts.plugin_req_state,
@@ -496,10 +496,10 @@ pub async fn execute_query_plan<'exec>(
         errors,
         &extensions,
         opts.operation_type_name,
-        opts.projection_plan,
+        &opts.projection_plan,
         opts.variable_values,
         response_size_estimate,
-        opts.introspection_context.metadata,
+        &opts.introspection_context.metadata,
     )
     .with_plan_context(LazyPlanContext {
         subgraph_name: || None,
