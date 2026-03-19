@@ -84,7 +84,7 @@ pub async fn heartbeat<T>(
 ) {
     loop {
         tokio::select! {
-            _ = ntex::time::sleep(HEARTBEAT_INTERVAL) => {
+            _ = tokio::time::sleep(HEARTBEAT_INTERVAL) => {
                 if Instant::now().duration_since(state.borrow().last_heartbeat) > HEARTBEAT_TIMEOUT
                 {
                     debug!("WebSocket heartbeat timeout, closing connection");
@@ -121,7 +121,7 @@ pub async fn handshake_timeout<T>(
     timeout_close_code: CloseCode,
 ) {
     tokio::select! {
-        _ = ntex::time::sleep(HANDSHAKE_TIMEOUT) => {
+        _ = tokio::time::sleep(HANDSHAKE_TIMEOUT) => {
             // handshake_received should always be here false, but double check
             // just to avoid any potential race conditions
             if !state.borrow().handshake_received {
