@@ -185,6 +185,7 @@ impl Drop for SubscriptionGuard {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_text_frame(
     text: String,
     sink: ws::WsSink,
