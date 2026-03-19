@@ -568,12 +568,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         if !is_multipart && !is_sse {
             return Err(SubgraphExecutorError::UnsupportedContentTypeError(
                 content_type.to_string(),
-                self.subgraph_name.clone(),
             ));
         }
-
-        // clone to avoid borrowing self in stream closures
-        let endpoint = self.endpoint.to_string();
 
         if is_multipart {
             debug!(
@@ -583,10 +579,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
             let boundary =
                 multipart_subscribe::parse_boundary_from_header(content_type).map_err(|e| {
-                    SubgraphExecutorError::SubscriptionStreamError(
-                        self.endpoint.to_string(),
-                        format!("Failed to parse boundary from Content-Type header: {}", e),
-                    )
+                    SubgraphExecutorError::MultipartBoundaryParseFailure(e.to_string())
                 })?;
             let stream = multipart_subscribe::parse_to_stream(boundary, body_stream);
 
@@ -599,10 +592,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                             yield Ok(response);
                         }
                         Err(e) => {
-                            yield Err(SubgraphExecutorError::SubscriptionStreamError(
-                                endpoint.clone(),
-                                e.to_string(),
-                            ));
+                            yield Err(SubgraphExecutorError::MultipartStreamError(e.to_string()));
                             return;
                         }
                     }
@@ -626,10 +616,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                             yield Ok(response);
                         }
                         Err(e) => {
-                            yield Err(SubgraphExecutorError::SubscriptionStreamError(
-                                endpoint.clone(),
-                                e.to_string(),
-                            ));
+                            yield Err(SubgraphExecutorError::SseStreamError(e.to_string()));
                             return;
                         }
                     }
