@@ -199,61 +199,44 @@ fn extract_body_after_headers(content: &str) -> &str {
 }
 
 fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
-    use sonic_rs::JsonValueTrait;
-
-    let parsed: sonic_rs::Value = sonic_rs::from_str(body).map_err(|e| {
-        ParseError::InvalidSubgraphResponse(SubgraphExecutorError::ResponseDeserializationFailure(
-            e,
-        ))
-    })?;
-
-    if is_heartbeat(&parsed) {
+    // cheap heartbeat check: subgraphs send `{}` as a keep-alive ping
+    if body == "{}" {
         return Ok(None);
     }
 
-    if let Some(transport_error) = extract_transport_error(&parsed) {
-        return SubgraphResponse::deserialize_from_bytes(Bytes::from(transport_error))
-            .map_err(ParseError::InvalidSubgraphResponse)
-            .map(Some);
-    }
+    let payload_lv = sonic_rs::get_from_str(body, &["payload"]);
 
-    if let Some(payload) = parsed.get("payload") {
-        if payload.is_null() {
-            return Ok(None);
+    match payload_lv {
+        Ok(lv) => {
+            let raw = lv.as_raw_str();
+
+            if raw == "null" {
+                // transport error: payload is null, check for top-level errors
+                if let Ok(errors_lv) = sonic_rs::get_from_str(body, &["errors"]) {
+                    let transport_err =
+                        format!(r#"{{"errors":{}}}"#, errors_lv.as_raw_str());
+                    return SubgraphResponse::deserialize_from_bytes(Bytes::from(transport_err))
+                        .map_err(ParseError::InvalidSubgraphResponse)
+                        .map(Some);
+                }
+                return Ok(None);
+            }
+
+            // happy path: deserialize the raw payload substring directly - no re-serialization
+            SubgraphResponse::deserialize_from_bytes(Bytes::copy_from_slice(raw.as_bytes()))
+                .map_err(ParseError::InvalidSubgraphResponse)
+                .map(Some)
         }
-        let payload_str = sonic_rs::to_string(payload).map_err(|e| {
-            ParseError::InvalidSubgraphResponse(
-                SubgraphExecutorError::ResponseDeserializationFailure(e),
-            )
-        })?;
-        return SubgraphResponse::deserialize_from_bytes(Bytes::from(payload_str))
-            .map_err(ParseError::InvalidSubgraphResponse)
-            .map(Some);
-    }
-
-    SubgraphResponse::deserialize_from_bytes(Bytes::from(body.to_owned()))
-        .map_err(ParseError::InvalidSubgraphResponse)
-        .map(Some)
-}
-
-fn is_heartbeat(value: &sonic_rs::Value) -> bool {
-    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
-
-    value.is_object() && value.as_object().is_some_and(|obj| obj.is_empty())
-}
-
-fn extract_transport_error(value: &sonic_rs::Value) -> Option<String> {
-    use sonic_rs::JsonValueTrait;
-
-    if value.get("payload").map(|v| v.is_null()).unwrap_or(false) {
-        if let Some(errors) = value.get("errors") {
-            return Some(format!(
-                r#"{{"errors":{}}}"#,
-                sonic_rs::to_string(errors).unwrap_or_default()
-            ));
+        Err(e) if e.is_not_found() => {
+            // no payload wrapper, treat the whole body as a subgraph response
+            SubgraphResponse::deserialize_from_bytes(Bytes::from(body.to_owned()))
+                .map_err(ParseError::InvalidSubgraphResponse)
+                .map(Some)
         }
+        Err(e) => Err(ParseError::InvalidSubgraphResponse(
+            SubgraphExecutorError::ResponseDeserializationFailure(e),
+        )),
     }
-    None
 }
 
 #[cfg(test)]
