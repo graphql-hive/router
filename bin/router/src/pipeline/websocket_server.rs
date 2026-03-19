@@ -18,11 +18,15 @@ use hive_router_plan_executor::executors::websocket_common::{
     handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
 };
 use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
+use hive_router_plan_executor::plugin_context::{
+    PluginContext, PluginRequestState, RouterHttpRequest,
+};
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
+use ntex::router::Path;
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
@@ -56,18 +60,22 @@ pub async fn ws_index(
         .find(|p| *p == WS_SUBPROTOCOL)
         .map(|_| WS_SUBPROTOCOL);
 
+    let plugin_context = req.extensions().get::<Arc<PluginContext>>().cloned();
+
     ws::start(
         req,
         accepted_subprotocol,
         fn_factory_with_config(move |sink: ws::WsSink| {
             let schema_state = schema_state.clone();
             let shared_state = shared_state.clone();
+            let plugin_context = plugin_context.clone();
             async move {
                 ws_service(
                     accepted_subprotocol.is_some(),
                     sink,
                     schema_state,
                     shared_state,
+                    plugin_context,
                 )
                 .await
             }
@@ -81,6 +89,7 @@ async fn ws_service(
     sink: ws::WsSink,
     schema_state: Arc<SchemaState>,
     shared_state: Arc<RouterSharedState>,
+    plugin_context: Option<Arc<PluginContext>>,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
     if !has_accepted_subprotocol {
@@ -92,6 +101,16 @@ async fn ws_service(
     } else {
         debug!("WebSocket connection accepted");
     }
+
+    let ws_uri: Rc<http::Uri> = Rc::new(
+        shared_state
+            .router_config
+            .websocket_path()
+            .expect("websocket path must exist because the websocket handler wouldn't have been mounted otherwise")
+            .parse()
+            .unwrap_or_else(|_| http::Uri::from_static("/graphql")),
+    );
+    let ws_path: Rc<Path<http::Uri>> = Rc::new(Path::new((*ws_uri).clone()));
 
     let (heartbeat_tx, heartbeat_rx) = oneshot::channel();
     let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
@@ -112,11 +131,22 @@ async fn ws_service(
         let state = state_for_service.clone();
         let schema_state = schema_state.clone();
         let shared_state = shared_state.clone();
+        let plugin_context = plugin_context.clone();
+        let ws_uri = ws_uri.clone();
+        let ws_path = ws_path.clone();
         async move {
             match parse_frame_to_text(frame, &state) {
-                Ok(text) => {
-                    Ok(handle_text_frame(text, sink, state, &schema_state, &shared_state).await)
-                }
+                Ok(text) => Ok(handle_text_frame(
+                    text,
+                    sink,
+                    state,
+                    &schema_state,
+                    &shared_state,
+                    plugin_context,
+                    &ws_uri,
+                    &ws_path,
+                )
+                .await),
                 Err(FrameNotParsedToText::Message(msg)) => Ok(Some(msg)),
                 Err(FrameNotParsedToText::Closed) => {
                     // we dont need to emit anything here because the conneciton is already closed
@@ -161,6 +191,9 @@ async fn handle_text_frame(
     state: WsStateRef,
     schema_state: &Arc<SchemaState>,
     shared_state: &Arc<RouterSharedState>,
+    plugin_context: Option<Arc<PluginContext>>,
+    ws_uri: &http::Uri,
+    ws_path: &Path<http::Uri>,
 ) -> Option<ws::Message> {
     let client_msg: ClientMessage = match sonic_rs::from_str(&text) {
         Ok(msg) => msg,
@@ -266,8 +299,29 @@ async fn handle_text_frame(
                     extensions: payload.extensions,
                 };
 
-                // TODO: we'll need this when plugins come through
-                let plugin_req_state = None;
+                // synthetic router http request for plugins - there's no real http request
+                // in the ws subscribe flow, so we assemble one from the ws path and merged headers.
+                // of course there is the http upgrade request, but that one is useless for the plugin system
+                let plugin_req_state = if let (Some(plugins), Some(ref plugin_context)) = (
+                    shared_state.plugins.as_ref(),
+                    plugin_context,
+                ) {
+                    Some(PluginRequestState {
+                        plugins: plugins.clone(),
+                        router_http_request: RouterHttpRequest {
+                            uri: &ws_uri,
+                            method: &Method::POST,
+                            version: http::Version::HTTP_11,
+                            headers: &headers,
+                            path: ws_uri.path(),
+                            query_string: ws_uri.query().unwrap_or(""),
+                            match_info: &ws_path,
+                        },
+                        context: plugin_context.clone(),
+                    })
+                } else {
+                    None
+                };
 
                 let client_name = headers
                     .get(
