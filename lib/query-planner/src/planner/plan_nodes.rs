@@ -577,15 +577,17 @@ impl PlanNode {
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
     ) -> Self {
-        let node = if step.response_path.is_empty() {
-            PlanNode::Fetch(FetchNode::from_fetch_step(step, supergraph))
-        } else {
+        let fetch = FetchNode::from_fetch_step(step, supergraph);
+
+        let node = if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
-                node: Box::new(PlanNode::Fetch(FetchNode::from_fetch_step(
-                    step, supergraph,
-                ))),
+                node: Box::new(PlanNode::Fetch(fetch)),
             })
+        } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
+            PlanNode::Subscription(SubscriptionNode { primary: fetch })
+        } else {
+            PlanNode::Fetch(fetch)
         };
 
         match step.condition.as_ref() {

@@ -8,14 +8,14 @@ use crate::{
         plan_nodes::PlanNode,
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
     },
-    state::supergraph_state::{OperationKind, SupergraphState},
+    state::supergraph_state::SupergraphState,
     utils::cancellation::CancellationToken,
 };
 
 use super::{
     error::QueryPlanError,
     fetch::fetch_graph::FetchGraph,
-    plan_nodes::{ParallelNode, QueryPlan, SequenceNode, SubscriptionNode},
+    plan_nodes::{ParallelNode, QueryPlan, SequenceNode},
 };
 
 mod optimize;
@@ -177,9 +177,6 @@ pub fn build_query_plan_from_fetch_graph(
     // First do light top-level normalization (e.g. flatten nested Sequence wrappers).
     let overall_plan_sequence = optimize_top_level_sequence(overall_plan_sequence);
 
-    // TODO: have it live where fetch node is created
-    let overall_plan_sequence = wrap_subscription_fetch_nodes(overall_plan_sequence);
-
     let root_node = match overall_plan_sequence.len() == 1 {
         true => overall_plan_sequence.into_iter().next().unwrap(),
         false => PlanNode::Sequence(SequenceNode {
@@ -194,27 +191,4 @@ pub fn build_query_plan_from_fetch_graph(
         kind: QUERY_PLAN_KIND,
         node: Some(root_node),
     })
-}
-
-/// Wrap subscription fetch ndoes with subscription operations in subscriptions.
-/// pretty much transforming, for example:
-/// `Sequence[FetchNode(subscription), Flatten...]`
-/// into:
-/// `Sequence[SubscriptionNode { primary: FetchNode }, Flatten...]`
-/// Leaves everything else intact.
-fn wrap_subscription_fetch_nodes(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
-    nodes
-        .into_iter()
-        .map(|node| match node {
-            PlanNode::Fetch(fetch)
-                if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) =>
-            {
-                PlanNode::Subscription(SubscriptionNode { primary: fetch })
-            }
-            PlanNode::Sequence(seq) => PlanNode::Sequence(SequenceNode {
-                nodes: wrap_subscription_fetch_nodes(seq.nodes),
-            }),
-            other => other,
-        })
-        .collect()
 }
