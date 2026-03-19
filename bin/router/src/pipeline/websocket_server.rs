@@ -309,13 +309,13 @@ async fn handle_text_frame(
                     Some(PluginRequestState {
                         plugins: plugins.clone(),
                         router_http_request: RouterHttpRequest {
-                            uri: &ws_uri,
+                            uri: ws_uri,
                             method: &Method::POST,
                             version: http::Version::HTTP_11,
                             headers: &headers,
                             path: ws_uri.path(),
                             query_string: ws_uri.query().unwrap_or(""),
-                            match_info: &ws_path,
+                            match_info: ws_path,
                         },
                         context: plugin_context.clone(),
                     })
