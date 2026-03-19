@@ -33,9 +33,7 @@ where
                 let event_bytes: Vec<u8> = buffer.drain(..boundary).collect();
 
                 match parse(&event_bytes) {
-                    Ok(events) if !events.is_empty() => {
-                        let sse_event = &events[0];
-
+                    Ok(Some(sse_event)) => {
                         match sse_event.event.as_deref() {
                             Some("next") if !sse_event.data.is_empty() => {
                                 match SubgraphResponse::deserialize_from_bytes(Bytes::from(sse_event.data.clone())) {
@@ -100,23 +98,21 @@ fn find_sse_event_boundary(buffer: &[u8]) -> Option<usize> {
     None
 }
 
-fn parse(raw: &[u8]) -> Result<Vec<SubgraphSseEvent>, ParseError> {
+// returns at most one event because the caller always passes exactly one event's bytes
+// (drained up to the \n\n boundary by find_sse_event_boundary)
+fn parse(raw: &[u8]) -> Result<Option<SubgraphSseEvent>, ParseError> {
     let text = std::str::from_utf8(raw).map_err(|e| ParseError::InvalidUtf8(e.to_string()))?;
 
-    let mut events = Vec::new();
     let mut current_event: Option<String> = None;
     let mut current_data_lines: Vec<String> = Vec::new();
 
     for line in text.lines() {
         if line.is_empty() {
             if current_event.is_some() || !current_data_lines.is_empty() {
-                // if the data lines are not empty, this is the second new line - event boundary
-                events.push(SubgraphSseEvent {
-                    event: current_event.clone(),
+                return Ok(Some(SubgraphSseEvent {
+                    event: current_event,
                     data: current_data_lines.join("\n"),
-                });
-                current_event = None;
-                current_data_lines.clear();
+                }));
             }
             continue;
         }
@@ -148,14 +144,13 @@ fn parse(raw: &[u8]) -> Result<Vec<SubgraphSseEvent>, ParseError> {
 
     // handle any remaining event that wasn't terminated with empty line(s)
     if current_event.is_some() || !current_data_lines.is_empty() {
-        let data = current_data_lines.join("\n");
-        events.push(SubgraphSseEvent {
+        return Ok(Some(SubgraphSseEvent {
             event: current_event,
-            data,
-        });
+            data: current_data_lines.join("\n"),
+        }));
     }
 
-    Ok(events)
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -169,33 +164,36 @@ data: some data
 
 "#;
 
-        let events = parse(sse_data).expect("Should parse valid SSE");
+        let event = parse(sse_data).expect("Should parse valid SSE");
 
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event, Some("next".to_string()));
-        assert_eq!(events[0].data, "some data");
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event, Some("next".to_string()));
+        assert_eq!(event.data, "some data");
     }
 
     #[test]
     fn test_parse_event_without_explicit_type() {
         let sse_data = b"data: some data\n\n";
 
-        let events = parse(sse_data).expect("Should parse valid SSE");
+        let event = parse(sse_data).expect("Should parse valid SSE");
 
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event, None);
-        assert_eq!(events[0].data, "some data");
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event, None);
+        assert_eq!(event.data, "some data");
     }
 
     #[test]
     fn test_parse_just_event() {
         let sse_data = b"event: complete\n\n";
 
-        let events = parse(sse_data).expect("Should parse valid SSE");
+        let event = parse(sse_data).expect("Should parse valid SSE");
 
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event, Some("complete".to_string()));
-        assert_eq!(events[0].data, "");
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event, Some("complete".to_string()));
+        assert_eq!(event.data, "");
     }
 
     #[test]
@@ -210,17 +208,12 @@ event: complete
 
 "#;
 
-        let events = parse(sse_data).expect("Should parse valid SSE");
+        let event = parse(sse_data).expect("Should parse valid SSE");
 
-        assert_eq!(events.len(), 3);
-        assert_eq!(events[0].event, Some("next".to_string()));
-        assert_eq!(events[0].data, "value 1");
-
-        assert_eq!(events[1].event, Some("next".to_string()));
-        assert_eq!(events[1].data, "value 2");
-
-        assert_eq!(events[2].event, Some("complete".to_string()));
-        assert_eq!(events[2].data, "");
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event, Some("next".to_string()));
+        assert_eq!(event.data, "value 1");
     }
 
     #[test]
@@ -229,11 +222,12 @@ event: complete
         // even though we'll not often see this in practice, good to cover
         let sse_data = b"event: next\ndata: line1\ndata: line2\n\n";
 
-        let events = parse(sse_data).expect("Should parse valid SSE");
+        let event = parse(sse_data).expect("Should parse valid SSE");
 
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event, Some("next".to_string()));
-        assert_eq!(events[0].data, "line1\nline2");
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event, Some("next".to_string()));
+        assert_eq!(event.data, "line1\nline2");
     }
 
     #[test]
@@ -241,31 +235,33 @@ event: complete
         // even though we'll never see this in practice
         let sse_data = b"event: next\ndata: line0";
 
-        let events = parse(sse_data).expect("Should parse valid SSE");
+        let event = parse(sse_data).expect("Should parse valid SSE");
 
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event, Some("next".to_string()));
-        assert_eq!(events[0].data, "line0");
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event, Some("next".to_string()));
+        assert_eq!(event.data, "line0");
     }
 
     #[test]
     fn test_parse_heartbeat() {
         let sse_data = b":\n\nevent: next\ndata: payload\n\n:\n\n";
 
-        let events = parse(sse_data).expect("Should parse valid SSE");
+        let event = parse(sse_data).expect("Should parse valid SSE");
 
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event, Some("next".to_string()));
-        assert_eq!(events[0].data, "payload");
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event, Some("next".to_string()));
+        assert_eq!(event.data, "payload");
     }
 
     #[test]
     fn test_parse_empty_input() {
         let sse_data = b"";
 
-        let events = parse(sse_data).expect("Should handle empty input");
+        let event = parse(sse_data).expect("Should handle empty input");
 
-        assert_eq!(events.len(), 0);
+        assert!(event.is_none());
     }
 
     #[tokio::test]
