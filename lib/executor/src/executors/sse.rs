@@ -7,6 +7,10 @@ use crate::{
     executors::error::SubgraphExecutorError, response::subgraph_response::SubgraphResponse,
 };
 
+// subgraphs are internal and generally safe, but this limit exists as defense-in-depth
+// to prevent a misbehaving subgraph from growing the buffer unboundedly until OOM
+const MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024; // 10MB
+
 #[derive(thiserror::Error, Debug)]
 pub enum ParseError {
     #[error("Invalid UTF-8 sequence: {0}")]
@@ -15,6 +19,8 @@ pub enum ParseError {
     StreamReadError(String),
     #[error("Invalid subgraph response: {0}")]
     InvalidSubgraphResponse(SubgraphExecutorError),
+    #[error("Buffer size limit exceeded: stream sent more than {MAX_BUFFER_SIZE} bytes without an event boundary")]
+    BufferSizeLimitExceeded,
 }
 
 pub fn parse_to_stream<B>(
@@ -66,6 +72,10 @@ where
                 Some(Ok(frame)) => {
                     if let Ok(data) = frame.into_data() {
                         buffer.extend_from_slice(data.chunk());
+                        if buffer.len() > MAX_BUFFER_SIZE {
+                            yield Err(ParseError::BufferSizeLimitExceeded);
+                            return;
+                        }
                     }
                 }
                 Some(Err(e)) => {
