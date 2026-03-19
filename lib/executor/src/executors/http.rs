@@ -554,7 +554,6 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }
 
         let (parts, body_stream) = res.into_parts();
-        let _response_headers = parts.headers.clone();
 
         let content_type = parts
             .headers
