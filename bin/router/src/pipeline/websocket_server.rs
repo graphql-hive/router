@@ -604,24 +604,25 @@ fn parse_headers_from_object(headers_obj: &sonic_rs::Object) -> HeaderMap {
     let mut header_map = HeaderMap::new();
 
     for (key, value) in headers_obj.iter() {
-        let value_str = if let Some(s) = value.as_str() {
-            Some(s.to_string())
+        let Ok(name) = HeaderName::try_from(key as &str) else {
+            continue;
+        };
+        let header_value = if let Some(s) = value.as_str() {
+            HeaderValue::try_from(s).ok()
         } else if let Some(b) = value.as_bool() {
-            Some(b.to_string())
-        } else if value.is_number() {
-            Some(value.to_string())
+            Some(HeaderValue::from_static(if b { "true" } else { "false" }))
+        } else if let Some(n) = value.as_i64() {
+            Some(HeaderValue::from(n))
+        } else if let Some(n) = value.as_u64() {
+            Some(HeaderValue::from(n))
+        } else if let Some(f) = value.as_f64() {
+            // f64 has no HeaderValue::From impl, string alloc unavoidable
+            HeaderValue::try_from(f.to_string()).ok()
         } else {
             None // ignore nulls, arrays, objects
         };
-
-        if let Some(val_str) = value_str {
-            let key_str: &str = key;
-            if let (Ok(name), Ok(val)) = (
-                HeaderName::try_from(key_str),
-                HeaderValue::try_from(val_str),
-            ) {
-                header_map.insert(name, val);
-            }
+        if let Some(val) = header_value {
+            header_map.insert(name, val);
         }
     }
 
