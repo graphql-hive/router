@@ -145,32 +145,37 @@ fn find_next_part(
     end_marker: &str,
     started: bool,
 ) -> Option<(usize, usize, bool)> {
-    let buffer_str = std::str::from_utf8(buffer).ok()?;
+    let delimiter_b = delimiter.as_bytes();
+    let end_marker_b = end_marker.as_bytes();
+
+    let find_bytes = |haystack: &[u8], needle: &[u8]| -> Option<usize> {
+        haystack.windows(needle.len()).position(|w| w == needle)
+    };
 
     if !started {
-        let pos = buffer_str.find(delimiter)?;
-        let after_delimiter = pos + delimiter.len();
-        let newline_pos = buffer_str[after_delimiter..].find('\n')?;
+        let pos = find_bytes(buffer, delimiter_b)?;
+        let after_delimiter = pos + delimiter_b.len();
+        let newline_pos = buffer[after_delimiter..].iter().position(|&b| b == b'\n')?;
         let skip_len = after_delimiter + newline_pos + 1;
         return Some((0, skip_len, false));
     }
 
-    let next_delimiter_pos = buffer_str.find(delimiter)?;
-    let is_end = buffer_str[next_delimiter_pos..].starts_with(end_marker);
+    let next_delimiter_pos = find_bytes(buffer, delimiter_b)?;
+    let is_end = buffer[next_delimiter_pos..].starts_with(end_marker_b);
 
     let skip_len = if is_end {
-        let after_end = next_delimiter_pos + end_marker.len();
-        if let Some(newline) = buffer_str[after_end..].find('\n') {
-            end_marker.len() + newline + 1
+        let after_end = next_delimiter_pos + end_marker_b.len();
+        if let Some(newline) = buffer[after_end..].iter().position(|&b| b == b'\n') {
+            end_marker_b.len() + newline + 1
         } else {
-            end_marker.len()
+            end_marker_b.len()
         }
     } else {
-        let after_delimiter = next_delimiter_pos + delimiter.len();
-        if let Some(newline) = buffer_str[after_delimiter..].find('\n') {
-            delimiter.len() + newline + 1
+        let after_delimiter = next_delimiter_pos + delimiter_b.len();
+        if let Some(newline) = buffer[after_delimiter..].iter().position(|&b| b == b'\n') {
+            delimiter_b.len() + newline + 1
         } else {
-            delimiter.len()
+            delimiter_b.len()
         }
     };
 
@@ -213,8 +218,7 @@ fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, Pars
             if raw == "null" {
                 // transport error: payload is null, check for top-level errors
                 if let Ok(errors_lv) = sonic_rs::get_from_str(body, &["errors"]) {
-                    let transport_err =
-                        format!(r#"{{"errors":{}}}"#, errors_lv.as_raw_str());
+                    let transport_err = format!(r#"{{"errors":{}}}"#, errors_lv.as_raw_str());
                     return SubgraphResponse::deserialize_from_bytes(Bytes::from(transport_err))
                         .map_err(ParseError::InvalidSubgraphResponse)
                         .map(Some);
