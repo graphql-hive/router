@@ -16,12 +16,11 @@ use uuid::Uuid;
 
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
-use crate::executors::http::HttpClient;
-use crate::json_writer::write_and_escape_string;
+use crate::executors::http::{build_request_body, HttpClient};
 use crate::plugin_context::PluginRequestState;
 use crate::response::graphql_error::GraphQLError;
 use crate::response::subgraph_response::SubgraphResponse;
-use crate::utils::consts::{CLOSE_BRACE, COLON, COMMA, QUOTE};
+use crate::utils::consts::{CLOSE_BRACE, COMMA};
 
 pub const CALLBACK_PROTOCOL_VERSION: &str = "callback/1.0";
 pub const SUBSCRIPTION_PROTOCOL_HEADER: &str = "subscription-protocol";
@@ -71,9 +70,6 @@ pub struct HttpCallbackSubgraphExecutor {
     pub active_subscriptions: ActiveSubscriptionsMap,
 }
 
-const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
-const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
-
 impl HttpCallbackSubgraphExecutor {
     pub fn new(
         subgraph_name: String,
@@ -114,54 +110,11 @@ impl HttpCallbackSubgraphExecutor {
         subscription_id: &str,
         verifier: &str,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
-        let mut body = Vec::with_capacity(4096);
-        body.put(FIRST_QUOTE_STR);
-        write_and_escape_string(&mut body, execution_request.query);
+        // build the base body (query + variables)
+        let mut body = build_request_body(execution_request)?;
+        // but strip the closing `}` so we can append extensions
+        body.truncate(body.len() - 1);
 
-        let mut first_variable = true;
-        if let Some(variables) = &execution_request.variables {
-            for (variable_name, variable_value) in variables {
-                if first_variable {
-                    body.put(FIRST_VARIABLE_STR);
-                    first_variable = false;
-                } else {
-                    body.put(COMMA);
-                }
-                body.put(QUOTE);
-                body.put(variable_name.as_bytes());
-                body.put(QUOTE);
-                body.put(COLON);
-                let value_str = sonic_rs::to_string(variable_value).map_err(|err| {
-                    SubgraphExecutorError::VariablesSerializationFailure(
-                        variable_name.to_string(),
-                        err,
-                    )
-                })?;
-                body.put(value_str.as_bytes());
-            }
-        }
-
-        if let Some(raw_variable_values) = &execution_request.raw_variable_values {
-            for (variable_name, variable_value) in raw_variable_values {
-                if first_variable {
-                    body.put(FIRST_VARIABLE_STR);
-                    first_variable = false;
-                } else {
-                    body.put(COMMA);
-                }
-                body.put(QUOTE);
-                body.put(variable_name.as_bytes());
-                body.put(QUOTE);
-                body.put(COLON);
-                body.extend_from_slice(variable_value);
-            }
-        }
-
-        if !first_variable {
-            body.put(CLOSE_BRACE);
-        }
-
-        // Build extensions with subscription callback info
         let callback_url = format!(
             "{}/{}",
             self.callback_base_url.trim_end_matches('/'),
@@ -213,7 +166,10 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> Result<BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>, SubgraphExecutorError> {
+    ) -> Result<
+        BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
+        SubgraphExecutorError,
+    > {
         let subscription_id = Uuid::new_v4().to_string();
         let verifier = Uuid::new_v4().to_string();
 

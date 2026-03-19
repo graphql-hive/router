@@ -73,6 +73,69 @@ struct HttpRequestTelemetryCapture<'a> {
     transport_duration: Duration,
 }
 
+pub fn build_request_body(
+    execution_request: &SubgraphExecutionRequest<'_>,
+) -> Result<Vec<u8>, SubgraphExecutorError> {
+    let mut body = Vec::with_capacity(4096);
+    body.put(FIRST_QUOTE_STR);
+    write_and_escape_string(&mut body, execution_request.query);
+    let mut first_variable = true;
+    if let Some(variables) = &execution_request.variables {
+        for (variable_name, variable_value) in variables {
+            if first_variable {
+                body.put(FIRST_VARIABLE_STR);
+                first_variable = false;
+            } else {
+                body.put(COMMA);
+            }
+            body.put(QUOTE);
+            body.put(variable_name.as_bytes());
+            body.put(QUOTE);
+            body.put(COLON);
+            let value_str = sonic_rs::to_string(variable_value).map_err(|err| {
+                SubgraphExecutorError::VariablesSerializationFailure(
+                    variable_name.to_string(),
+                    err,
+                )
+            })?;
+            body.put(value_str.as_bytes());
+        }
+    }
+    if let Some(raw_variable_values) = &execution_request.raw_variable_values {
+        for (variable_name, variable_value) in raw_variable_values {
+            if first_variable {
+                body.put(FIRST_VARIABLE_STR);
+                first_variable = false;
+            } else {
+                body.put(COMMA);
+            }
+            body.put(QUOTE);
+            body.put(variable_name.as_bytes());
+            body.put(QUOTE);
+            body.put(COLON);
+            body.extend_from_slice(variable_value);
+        }
+    }
+    // "first_variable" should be still true if there are no variables
+    if !first_variable {
+        body.put(CLOSE_BRACE);
+    }
+
+    if let Some(extensions) = &execution_request.extensions {
+        if !extensions.is_empty() {
+            let as_value = sonic_rs::to_value(extensions).unwrap();
+
+            body.put(COMMA);
+            body.put("\"extensions\":".as_bytes());
+            body.extend_from_slice(as_value.to_string().as_bytes());
+        }
+    }
+
+    body.put(CLOSE_BRACE);
+
+    Ok(body)
+}
+
 impl HTTPSubgraphExecutor {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -106,70 +169,6 @@ impl HTTPSubgraphExecutor {
             telemetry_context,
             config,
         }
-    }
-
-    fn build_request_body<'a>(
-        &self,
-        execution_request: &SubgraphExecutionRequest<'a>,
-    ) -> Result<Vec<u8>, SubgraphExecutorError> {
-        let mut body = Vec::with_capacity(4096);
-        body.put(FIRST_QUOTE_STR);
-        write_and_escape_string(&mut body, execution_request.query);
-        let mut first_variable = true;
-        if let Some(variables) = &execution_request.variables {
-            for (variable_name, variable_value) in variables {
-                if first_variable {
-                    body.put(FIRST_VARIABLE_STR);
-                    first_variable = false;
-                } else {
-                    body.put(COMMA);
-                }
-                body.put(QUOTE);
-                body.put(variable_name.as_bytes());
-                body.put(QUOTE);
-                body.put(COLON);
-                let value_str = sonic_rs::to_string(variable_value).map_err(|err| {
-                    SubgraphExecutorError::VariablesSerializationFailure(
-                        variable_name.to_string(),
-                        err,
-                    )
-                })?;
-                body.put(value_str.as_bytes());
-            }
-        }
-        if let Some(raw_variable_values) = &execution_request.raw_variable_values {
-            for (variable_name, variable_value) in raw_variable_values {
-                if first_variable {
-                    body.put(FIRST_VARIABLE_STR);
-                    first_variable = false;
-                } else {
-                    body.put(COMMA);
-                }
-                body.put(QUOTE);
-                body.put(variable_name.as_bytes());
-                body.put(QUOTE);
-                body.put(COLON);
-                body.extend_from_slice(variable_value);
-            }
-        }
-        // "first_variable" should be still true if there are no variables
-        if !first_variable {
-            body.put(CLOSE_BRACE);
-        }
-
-        if let Some(extensions) = &execution_request.extensions {
-            if !extensions.is_empty() {
-                let as_value = sonic_rs::to_value(extensions).unwrap();
-
-                body.put(COMMA);
-                body.put("\"extensions\":".as_bytes());
-                body.extend_from_slice(as_value.to_string().as_bytes());
-            }
-        }
-
-        body.put(CLOSE_BRACE);
-
-        Ok(body)
     }
 }
 
@@ -309,7 +308,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         timeout: Option<Duration>,
         plugin_req_state: &'a Option<PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
-        let mut body = self.build_request_body(&execution_request)?;
+        let mut body = build_request_body(&execution_request)?;
 
         self.header_map.iter().for_each(|(key, value)| {
             execution_request.headers.insert(key, value.clone());
@@ -499,7 +498,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         execution_request: SubgraphExecutionRequest<'a>,
         connection_timeout: Option<Duration>,
     ) -> Result<BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>, SubgraphExecutorError> {
-        let body = self.build_request_body(&execution_request)?;
+        let body = build_request_body(&execution_request)?;
 
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
