@@ -183,7 +183,8 @@ impl HiveRouterConfig {
         self.websocket.enabled.then(|| {
             self.websocket
                 .path
-                .as_deref()
+                .as_ref()
+                .map(|p| p.as_str())
                 .unwrap_or_else(|| self.graphql_path())
         })
     }

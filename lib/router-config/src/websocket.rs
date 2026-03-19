@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::primitives::absolute_path::AbsolutePath;
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct WebSocketConfig {
@@ -19,7 +21,7 @@ pub struct WebSocketConfig {
     /// By default, the WebSocket endpoint will be available at the `http.graphql_endpoint` (defaults to `/graphql`)
     /// if no path is specified and the clients will connect using `ws://<router-url>/<graphql_endpoint>`.
     #[serde(default)]
-    pub path: Option<String>,
+    pub path: Option<AbsolutePath>,
 
     /// Configuration for handling headers for WebSocket connections.
     #[serde(default)]

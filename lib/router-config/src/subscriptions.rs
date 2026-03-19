@@ -99,7 +99,7 @@ pub struct WebSocketSubgraphConfig {
     /// For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,
     /// the resulting WebSocket URL will be `ws://example.com/ws`.
     #[serde(default)]
-    pub path: Option<String>,
+    pub path: Option<AbsolutePath>,
 }
 
 impl SubscriptionsConfig {
@@ -125,8 +125,8 @@ impl SubscriptionsConfig {
         self.websocket.as_ref().and_then(|ws| {
             ws.subgraphs
                 .get(subgraph_name)
-                .and_then(|s| s.path.as_deref())
-                .or_else(|| ws.all.as_ref().and_then(|a| a.path.as_deref()))
+                .and_then(|s| s.path.as_ref().map(|p| p.as_str()))
+                .or_else(|| ws.all.as_ref().and_then(|a| a.path.as_ref().map(|p| p.as_str())))
         })
     }
 }
