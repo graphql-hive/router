@@ -1190,7 +1190,7 @@ mod subscriptions_e2e_tests {
         data: {"data":{"reviewAdded":{"id":"3"}}}
 
         event: next
-        data: {"data":null,"errors":[{"message":"Failed to execute request to subgraph","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_STREAM_ERROR","serviceName":"reviews"}}]}
+        data: {"errors":[{"message":"Failed to execute request to subgraph","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_STREAM_ERROR","serviceName":"reviews"}}]}
 
         event: complete
         "#);

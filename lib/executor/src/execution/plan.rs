@@ -211,6 +211,7 @@ pub async fn execute_query_plan<'exec>(
 
         // clone all necessary data from the context for usage in the stream.
         // the stream will move all of these values inside its closure
+        let subgraph_name: String = fetch_node.service_name.clone();
         let projection_plan: Arc<Vec<FieldProjectionPlan>> = opts.projection_plan.clone().into();
         let headers_plan: Arc<HeaderRulesPlan> = opts.headers_plan.clone().into();
         let variable_values: Option<HashMap<String, sonic_rs::Value>> =
@@ -236,7 +237,44 @@ pub async fn execute_query_plan<'exec>(
 
         let body_stream = Box::pin(async_stream::stream! {
             let mut response_stream = response_stream;
-            while let Some(response) = response_stream.next().await {
+            while let Some(stream_result) = response_stream.next().await {
+                let response = match stream_result {
+                    Ok(response) => response,
+                    // NOTE: I thought about going one way up and having the
+                    // PlanSubscriptionOutput.body be a `Result<Vec<u8>, SubgraphExecutorError>`
+                    // but that would put the burden on the caller to handle errors that are
+                    // internal to the execution of the query plan (subgraph executor errors).
+                    // furthermore, we want to always act on those errors the same way (stream and stop,
+                    // read below) and not allow the caller to decide and potentially decide wrong
+                    Err(err) => {
+                        // not a fatal error, but stream it and stop.
+                        // it's not fatal because the subgraph might recover and send more
+                        // events if the subgraph error is a network error. but we fail and stop
+                        // just to be on the safe side and avoid infinite error streaming because
+                        // we cannot guarantee that the subgraph will recover and clients might
+                        // simply ignore errors wasting the router's resources
+                        let error = GraphQLError::from_message_and_code(
+                            "Failed to execute request to subgraph",
+                            err.error_code(),
+                        )
+                        .add_subgraph_name(subgraph_name.clone());
+                        yield sonic_rs::to_vec(&[error])
+                            .map(|errors_bytes| {
+                                // serializing like this so that GraphQLErrorExtensions field order
+                                // is deterministic. sonic_rs::json! converts through sonic_rs::Value
+                                // (an internal map) which doesn't preserve serde field order, making it
+                                // non-deterministic and also less performant
+                                let mut buf = br#"{"errors":"#.to_vec();
+                                buf.extend_from_slice(&errors_bytes);
+                                buf.push(b'}');
+                                buf
+                            })
+                            .unwrap_or_else(|_| {
+                                br#"{"errors":[{"message":"Failed to serialize subgraph execution error"}]}"#.to_vec()
+                            });
+                        return;
+                    }
+                };
                 let client_request = ClientRequestDetails {
                     method: &client_method,
                     url: &client_url,
