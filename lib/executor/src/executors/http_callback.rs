@@ -213,7 +213,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-    ) -> Result<BoxStream<'static, SubgraphResponse<'static>>, SubgraphExecutorError> {
+    ) -> Result<BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>, SubgraphExecutorError> {
         let subscription_id = Uuid::new_v4().to_string();
         let verifier = Uuid::new_v4().to_string();
 
@@ -303,8 +303,6 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             return Err(SubgraphExecutorError::HttpCallbackStatusCodeNotOk(status));
         }
 
-        let subgraph_name = self.subgraph_name.clone();
-
         Ok(Box::pin(async_stream::stream! {
             // `guard` is held here; dropping the stream drops `guard`, removing the map entry.
             let _guard = guard;
@@ -316,14 +314,14 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                     CallbackMessage::Next { payload } => {
                         trace!(subscription_id = %subscription_id, "received next payload");
                         match SubgraphResponse::deserialize_from_bytes(payload) {
-                            Ok(response) => yield response,
+                            Ok(response) => yield Ok(response),
                             Err(e) => {
                                 error!(
                                     subscription_id = %subscription_id,
                                     error = %e,
                                     "failed to deserialize callback payload"
                                 );
-                                yield e.to_subgraph_response(&subgraph_name);
+                                yield Err(e);
                                 break;
                             }
                         }
@@ -332,10 +330,10 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                         trace!(subscription_id = %subscription_id, "received complete");
                         if let Some(errors) = errors {
                             if !errors.is_empty() {
-                                yield SubgraphResponse {
+                                yield Ok(SubgraphResponse {
                                     errors: Some(errors),
                                     ..Default::default()
-                                };
+                                });
                             }
                         }
                         break;

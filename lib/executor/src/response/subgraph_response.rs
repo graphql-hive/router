@@ -92,19 +92,6 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
     }
 }
 
-impl GraphQLError {
-    pub fn to_subgraph_response(self, subgraph_name: &str) -> SubgraphResponse<'static> {
-        // error.add_subgraph_name converts the str it to an owned String. So the resulting GraphQLError doesn't
-        // actually borrow subgraph_name - it owns a copy, the rest of the default data is also owned. so
-        // technically it is a SubgraphResponse<'static> because nothing inside it actually borrows from outside
-        let error_with_subgraph_name = self.add_subgraph_name(subgraph_name);
-        SubgraphResponse {
-            errors: Some(vec![error_with_subgraph_name]),
-            ..Default::default()
-        }
-    }
-}
-
 impl<'a> SubgraphResponse<'a> {
     pub fn deserialize_from_bytes(
         bytes: Bytes,
@@ -126,16 +113,6 @@ impl<'a> SubgraphResponse<'a> {
                 resp.bytes = Some(bytes);
                 resp
             })
-    }
-}
-
-impl SubgraphExecutorError {
-    pub fn to_subgraph_response(self, subgraph_name: &str) -> SubgraphResponse<'static> {
-        GraphQLError::from_message_and_code(
-            "Failed to execute request to subgraph",
-            self.error_code(),
-        )
-        .to_subgraph_response(subgraph_name)
     }
 }
 

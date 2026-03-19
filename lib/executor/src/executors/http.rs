@@ -498,7 +498,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         connection_timeout: Option<Duration>,
-    ) -> Result<BoxStream<'static, SubgraphResponse<'static>>, SubgraphExecutorError> {
+    ) -> Result<BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>, SubgraphExecutorError> {
         let body = self.build_request_body(&execution_request)?;
 
         let mut req = hyper::Request::builder()
@@ -575,7 +575,6 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         // clone to avoid borrowing self in stream closures
         let endpoint = self.endpoint.to_string();
-        let subgraph_name = self.subgraph_name.clone();
 
         if is_multipart {
             debug!(
@@ -598,14 +597,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     match result {
                         Ok(response) => {
                             trace!(response = ?response, "multipart subscription event received");
-                            yield response;
+                            yield Ok(response);
                         }
                         Err(e) => {
-                            let error = SubgraphExecutorError::SubscriptionStreamError(
+                            yield Err(SubgraphExecutorError::SubscriptionStreamError(
                                 endpoint.clone(),
                                 e.to_string(),
-                            );
-                            yield error.to_subgraph_response(subgraph_name.as_str());
+                            ));
                             return;
                         }
                     }
@@ -626,14 +624,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     match result {
                         Ok(response) => {
                             trace!(response = ?response, "SSE subscription event received");
-                            yield response;
+                            yield Ok(response);
                         }
                         Err(e) => {
-                            let error = SubgraphExecutorError::SubscriptionStreamError(
+                            yield Err(SubgraphExecutorError::SubscriptionStreamError(
                                 endpoint.clone(),
                                 e.to_string(),
-                            );
-                            yield error.to_subgraph_response(subgraph_name.as_str());
+                            ));
                             return;
                         }
                     }
