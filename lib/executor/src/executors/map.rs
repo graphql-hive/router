@@ -248,7 +248,10 @@ impl SubgraphExecutorMap {
         subgraph_name: &str,
         execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec>,
-    ) -> Result<BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>, SubgraphExecutorError> {
+    ) -> Result<
+        BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
+        SubgraphExecutorError,
+    > {
         let executor = self.get_or_create_subscription_executor(subgraph_name, client_request)?;
 
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;

@@ -139,8 +139,13 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
-    ) -> Result<BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>, SubgraphExecutorError> {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>();
+    ) -> Result<
+        BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
+        SubgraphExecutorError,
+    > {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<
+            Result<SubgraphResponse<'static>, SubgraphExecutorError>,
+        >();
 
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();

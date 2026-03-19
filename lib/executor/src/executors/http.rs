@@ -93,10 +93,7 @@ pub fn build_request_body(
             body.put(QUOTE);
             body.put(COLON);
             let value_str = sonic_rs::to_string(variable_value).map_err(|err| {
-                SubgraphExecutorError::VariablesSerializationFailure(
-                    variable_name.to_string(),
-                    err,
-                )
+                SubgraphExecutorError::VariablesSerializationFailure(variable_name.to_string(), err)
             })?;
             body.put(value_str.as_bytes());
         }
@@ -497,7 +494,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         connection_timeout: Option<Duration>,
-    ) -> Result<BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>, SubgraphExecutorError> {
+    ) -> Result<
+        BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
+        SubgraphExecutorError,
+    > {
         let body = build_request_body(&execution_request)?;
 
         let mut req = hyper::Request::builder()
