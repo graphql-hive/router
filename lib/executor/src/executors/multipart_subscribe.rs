@@ -38,7 +38,8 @@ pub enum ParseError {
 pub fn parse_boundary_from_header(content_type: &str) -> Result<&str, ParseError> {
     let content_type = content_type.trim();
 
-    let boundary_param_start = content_type
+    let content_type_lower = content_type.to_lowercase();
+    let boundary_param_start = content_type_lower
         .find("boundary=")
         .ok_or(ParseError::MissingBoundary)?;
     let value_start = boundary_param_start + "boundary=".len();
@@ -320,10 +321,17 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_boundary_from_header_case_sensitive() {
-        let content_type = "multipart/mixed; Boundary=graphql";
-        let boundary = parse_boundary_from_header(content_type);
-        assert!(matches!(boundary, Err(ParseError::MissingBoundary)));
+    fn test_parse_boundary_from_header_case_insensitive() {
+        let cases = [
+            "multipart/mixed; Boundary=graphql",
+            "multipart/mixed; BOUNDARY=graphql",
+            "multipart/mixed; boundary=graphql",
+            "multipart/mixed; bOuNdArY=graphql",
+        ];
+        for content_type in cases {
+            let boundary = parse_boundary_from_header(content_type).unwrap();
+            assert_eq!(boundary, "graphql", "failed for: {content_type}");
+        }
     }
 
     #[test]
