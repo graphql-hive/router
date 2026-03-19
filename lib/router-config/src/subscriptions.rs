@@ -126,7 +126,11 @@ impl SubscriptionsConfig {
             ws.subgraphs
                 .get(subgraph_name)
                 .and_then(|s| s.path.as_ref().map(|p| p.as_str()))
-                .or_else(|| ws.all.as_ref().and_then(|a| a.path.as_ref().map(|p| p.as_str())))
+                .or_else(|| {
+                    ws.all
+                        .as_ref()
+                        .and_then(|a| a.path.as_ref().map(|p| p.as_str()))
+                })
         })
     }
 }

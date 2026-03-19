@@ -217,8 +217,7 @@ pub async fn execute_query_plan<'exec>(
         let variable_values: Option<HashMap<String, sonic_rs::Value>> =
             opts.variable_values.clone();
         let extensions: HashMap<String, sonic_rs::Value> = opts.extensions.clone();
-        let schema_metadata: Arc<SchemaMetadata> =
-            opts.introspection_context.metadata.clone();
+        let schema_metadata: Arc<SchemaMetadata> = opts.introspection_context.metadata.clone();
         let operation_type_name: String = opts.operation_type_name.to_string();
         let executors: Arc<SubgraphExecutorMap> = opts.executors.clone();
         let jwt_auth_forwarding: Option<JwtAuthForwardingPlan> = opts.jwt_auth_forwarding.clone();
