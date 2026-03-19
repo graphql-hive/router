@@ -577,10 +577,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 "using multipart HTTP for subscription",
             );
 
-            let boundary =
-                multipart_subscribe::parse_boundary_from_header(content_type).map_err(|e| {
-                    SubgraphExecutorError::MultipartBoundaryParseFailure(e.to_string())
-                })?;
+            let boundary = multipart_subscribe::parse_boundary_from_header(content_type)
+                .map_err(|e| SubgraphExecutorError::MultipartBoundaryParseFailure(e.to_string()))?;
             let stream = multipart_subscribe::parse_to_stream(boundary, body_stream);
 
             Ok(Box::pin(async_stream::stream! {
