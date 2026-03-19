@@ -225,7 +225,7 @@ pub async fn execute_query_plan<'exec>(
         let initial_errors: Vec<GraphQLError> = opts.initial_errors.clone();
 
         // TODO: plugins for subscriptions are not yet supported
-        let plugin_req_state: &Option<PluginRequestState> = &None;
+        let plugin_req_state: Option<PluginRequestState<'static>> = None;
 
         let client_method = opts.client_request.method.clone();
         let client_url = opts.client_request.url.clone();
@@ -294,7 +294,7 @@ pub async fn execute_query_plan<'exec>(
                     client_request: &client_request,
                     headers_plan: &headers_plan,
                     jwt_forwarding_plan: jwt_auth_forwarding.clone(),
-                    plugin_req_state,
+                    plugin_req_state: &plugin_req_state,
                     // TODO: decide how and when to dedupe during entity resolution
                     dedupe_subgraph_requests: false,
                 };
