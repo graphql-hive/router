@@ -27,12 +27,12 @@ http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client"] }
 serde = { workspace = true }
 sonic-rs = { workspace = true }
-serde_json = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
+serde_json = { workspace = true }
 
 regex-automata = { workspace = true }
 bytes = { workspace = true }
