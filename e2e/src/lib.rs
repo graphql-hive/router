@@ -21,6 +21,8 @@ mod hive_cdn_supergraph;
 #[cfg(test)]
 mod http;
 #[cfg(test)]
+mod http_callback;
+#[cfg(test)]
 mod introspection;
 #[cfg(test)]
 mod jwt;
@@ -39,11 +41,15 @@ mod probes;
 #[cfg(test)]
 mod router_timeout;
 #[cfg(test)]
+mod subscriptions;
+#[cfg(test)]
 mod supergraph;
 #[cfg(test)]
 mod telemetry;
 #[cfg(test)]
 mod timeout_per_subgraph;
+#[cfg(test)]
+mod websocket;
 
 pub use insta;
 pub use mockito;

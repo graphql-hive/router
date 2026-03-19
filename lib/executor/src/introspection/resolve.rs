@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use graphql_tools::parser::query::Value as QueryValue;
 use graphql_tools::static_graphql::schema::{
@@ -20,7 +21,7 @@ use crate::response::value::Value;
 pub struct IntrospectionContext<'exec> {
     pub query: Option<&'exec OperationDefinition>,
     pub schema: &'exec Document,
-    pub metadata: &'exec SchemaMetadata,
+    pub metadata: Arc<SchemaMetadata>,
 }
 
 fn get_deprecation_reason(directives: &[Directive]) -> Option<&str> {

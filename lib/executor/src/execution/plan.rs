@@ -5,7 +5,11 @@ use std::sync::Arc;
 use ahash::{HashMap as AHashMap, HashMapExt};
 use bytes::BufMut;
 use futures::TryFutureExt;
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{
+    future::BoxFuture,
+    stream::{BoxStream, FuturesUnordered},
+    FutureExt, StreamExt,
+};
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
@@ -15,7 +19,7 @@ use hive_router_query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
         ConditionNode, EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
-        QueryPlan,
+        QueryPlan, SequenceNode,
     },
     state::supergraph_state::OperationKind,
 };
@@ -26,7 +30,7 @@ use tracing::Instrument;
 use crate::{
     context::ExecutionContext,
     execution::{
-        client_request_details::ClientRequestDetails,
+        client_request_details::{ClientRequestDetails, OperationDetails},
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
@@ -65,19 +69,30 @@ use crate::{
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub operation_for_plan: &'exec OperationDefinition,
-    pub projection_plan: &'exec Vec<FieldProjectionPlan>,
-    pub headers_plan: &'exec HeaderRulesPlan,
+    pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub headers_plan: Arc<HeaderRulesPlan>,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: HashMap<String, sonic_rs::Value>,
     pub client_request: &'exec ClientRequestDetails<'exec>,
     pub introspection_context: &'exec IntrospectionContext<'exec>,
     pub operation_type_name: &'exec str,
-    pub executors: &'exec SubgraphExecutorMap,
+    pub executors: Arc<SubgraphExecutorMap>,
     pub jwt_auth_forwarding: Option<JwtAuthForwardingPlan>,
     pub graphql_error_recorder: Option<GraphQLErrorMetricsRecorder>,
     pub initial_errors: Vec<GraphQLError>,
     pub span: &'exec GraphQLOperationSpan,
     pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
+}
+
+pub struct PlanSubscriptionOutput {
+    pub body: BoxStream<'static, Vec<u8>>,
+    pub response_headers_aggregator: Option<ResponseHeaderAggregator>,
+    pub error_count: usize,
+}
+
+pub enum QueryPlanExecutionResult {
+    Single(PlanExecutionOutput),
+    Stream(PlanSubscriptionOutput),
 }
 
 #[derive(Default)]
@@ -90,7 +105,259 @@ pub struct PlanExecutionOutput {
 
 pub async fn execute_query_plan<'exec>(
     opts: QueryPlanExecutionOpts<'exec>,
-) -> Result<PlanExecutionOutput, PlanExecutionError> {
+) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
+    let (subscription_node, remaining_nodes) = match &opts.query_plan.node {
+        // a subscription to a subgraph that contains all data and doesn't need entity resolution
+        Some(PlanNode::Subscription(sub)) => (Some(sub), None),
+        // a subscription that needs entity resolution. after emitting, it needs to execute the
+        // remaining plan nodes in the sequence
+        Some(PlanNode::Sequence(seq)) => match seq.nodes.first() {
+            Some(PlanNode::Subscription(sub)) => {
+                let remaining = if seq.nodes.len() > 1 {
+                    // TODO: why to_vec()? is it wasteful? it's actually a slice, we dont need it as Vec
+                    Some(seq.nodes[1..].to_vec())
+                } else {
+                    None
+                };
+                (Some(sub), remaining)
+            }
+            _ => (None, None),
+        },
+        _ => (None, None),
+    };
+
+    // subscription
+    if let Some(sub) = subscription_node {
+        // subscription
+
+        // the primary (fetch node) of the subscription is the
+        // subscription destination, we execute it first and it
+        // would give us back a stream of results
+        let fetch_node = sub.primary.clone();
+
+        // we assemble a synthetic query plan for entity resolution from remaining nodes
+        // because we might need entity resolution after receiving each subscription event
+        let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan {
+            kind: "QueryPlan",
+            node: remaining_nodes.map(|nodes| {
+                if nodes.len() == 1 {
+                    nodes.into_iter().next().unwrap()
+                } else {
+                    PlanNode::Sequence(SequenceNode { nodes })
+                }
+            }),
+        });
+
+        // we perform a regular subgraph request to the subscription subgraph
+        // the only difference is that we get back a stream of results
+        let mut headers_map = HeaderMap::new();
+        modify_subgraph_request_headers(
+            &opts.headers_plan,
+            &fetch_node.service_name,
+            opts.client_request,
+            &mut headers_map,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || Some(fetch_node.service_name.clone()),
+            affected_path: || None,
+        })?;
+        let variable_refs =
+            select_fetch_variables(opts.variable_values, fetch_node.variable_usages.as_ref());
+
+        let mut subgraph_request = SubgraphExecutionRequest {
+            query: fetch_node.operation.document_str.as_str(),
+            dedupe: false,
+            operation_name: fetch_node.operation_name.as_deref(),
+            variables: variable_refs,
+            headers: headers_map,
+            raw_variable_values: None,
+            extensions: None,
+        };
+
+        // TODO: otel instrumentation and stuff
+        // let subgraph_operation_span = GraphQLSubgraphOperationSpan::new(
+        //     fetch_node.service_name.as_str(),
+        //     &fetch_node.operation.document_str,
+        // );
+        // subgraph_operation_span.record_operation_identity(GraphQLSpanOperationIdentity {
+        //     name: subgraph_request.operation_name,
+        //     operation_type: match fetch_node.operation_kind {
+        //         Some(OperationKind::Query) | None => "query",
+        //         Some(OperationKind::Mutation) => "mutation",
+        //         Some(OperationKind::Subscription) => "subscription",
+        //     },
+        //     client_document_hash: fetch_node.operation.hash.to_string().as_str(),
+        // });
+
+        if let Some(jwt_forwarding_plan) = &opts.jwt_auth_forwarding {
+            subgraph_request.add_request_extensions_field(
+                jwt_forwarding_plan.extension_field_name.clone(),
+                jwt_forwarding_plan.extension_field_value.clone(),
+            );
+        }
+
+        let response_stream = opts
+            .executors
+            .subscribe(
+                &fetch_node.service_name,
+                subgraph_request,
+                opts.client_request,
+            )
+            .await
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: || Some(fetch_node.service_name.clone()),
+                affected_path: || None,
+            })?;
+
+        // clone all necessary data from the context for usage in the stream.
+        // the stream will move all of these values inside its closure
+        let subgraph_name: String = fetch_node.service_name.clone();
+        let projection_plan: Arc<Vec<FieldProjectionPlan>> = opts.projection_plan.clone();
+        let headers_plan: Arc<HeaderRulesPlan> = opts.headers_plan.clone();
+        let variable_values: Option<HashMap<String, sonic_rs::Value>> =
+            opts.variable_values.clone();
+        let extensions: HashMap<String, sonic_rs::Value> = opts.extensions.clone();
+        let schema_metadata: Arc<SchemaMetadata> = opts.introspection_context.metadata.clone();
+        let operation_type_name: String = opts.operation_type_name.to_string();
+        let executors: Arc<SubgraphExecutorMap> = opts.executors.clone();
+        let jwt_auth_forwarding: Option<JwtAuthForwardingPlan> = opts.jwt_auth_forwarding.clone();
+        let initial_errors: Vec<GraphQLError> = opts.initial_errors.clone();
+
+        // TODO: plugins for subscriptions are not yet supported
+        let plugin_req_state: Option<PluginRequestState<'static>> = None;
+
+        let client_method = opts.client_request.method.clone();
+        let client_url = opts.client_request.url.clone();
+        let client_headers = opts.client_request.headers.clone();
+        let client_operation_name = opts.client_request.operation.name.map(|s| s.to_string());
+        let client_operation_query = opts.client_request.operation.query.to_string();
+        let client_operation_kind = opts.client_request.operation.kind;
+        let client_jwt = opts.client_request.jwt.clone();
+
+        let body_stream = Box::pin(async_stream::stream! {
+            let mut response_stream = response_stream;
+            while let Some(stream_result) = response_stream.next().await {
+                let response = match stream_result {
+                    Ok(response) => response,
+                    // NOTE: I thought about going one way up and having the
+                    // PlanSubscriptionOutput.body be a `Result<Vec<u8>, SubgraphExecutorError>`
+                    // but that would put the burden on the caller to handle errors that are
+                    // internal to the execution of the query plan (subgraph executor errors).
+                    // furthermore, we want to always act on those errors the same way (stream and stop,
+                    // read below) and not allow the caller to decide and potentially decide wrong
+                    Err(err) => {
+                        // not a fatal error, but stream it and stop.
+                        // it's not fatal because the subgraph might recover and send more
+                        // events if the subgraph error is a network error. but we fail and stop
+                        // just to be on the safe side and avoid infinite error streaming because
+                        // we cannot guarantee that the subgraph will recover and clients might
+                        // simply ignore errors wasting the router's resources
+                        let error = GraphQLError::from_message_and_code(
+                            "Failed to execute request to subgraph",
+                            err.error_code(),
+                        )
+                        .add_subgraph_name(subgraph_name.clone());
+                        yield sonic_rs::to_vec(&[error])
+                            .map(|errors_bytes| {
+                                // serializing like this so that GraphQLErrorExtensions field order
+                                // is deterministic. sonic_rs::json! converts through sonic_rs::Value
+                                // (an internal map) which doesn't preserve serde field order, making it
+                                // non-deterministic and also less performant
+                                let mut buf = br#"{"errors":"#.to_vec();
+                                buf.extend_from_slice(&errors_bytes);
+                                buf.push(b'}');
+                                buf
+                            })
+                            .unwrap_or_else(|_| {
+                                br#"{"errors":[{"message":"Failed to serialize subgraph execution error"}]}"#.to_vec()
+                            });
+                        return;
+                    }
+                };
+                let client_request = ClientRequestDetails {
+                    method: &client_method,
+                    url: &client_url,
+                    headers: &client_headers,
+                    operation: OperationDetails {
+                        name: client_operation_name.as_deref(),
+                        query: &client_operation_query,
+                        kind: client_operation_kind,
+                    },
+                    jwt: client_jwt.clone(),
+                };
+
+                let executor = Executor {
+                    variable_values: &variable_values,
+                    schema_metadata: &schema_metadata,
+                    executors: &executors,
+                    client_request: &client_request,
+                    headers_plan: &headers_plan,
+                    jwt_forwarding_plan: jwt_auth_forwarding.clone(),
+                    plugin_req_state: &plugin_req_state,
+                    // TODO: decide how and when to dedupe during entity resolution
+                    dedupe_subgraph_requests: false,
+                };
+
+                let mut errors = initial_errors.clone();
+                if let Some(resp_errors) = response.errors {
+                    errors.extend(resp_errors);
+                }
+
+                let mut exec_ctx = ExecutionContext::new(response.data, errors);
+                if let Some(node) = &query_plan.node {
+                    executor.execute_plan_node(&mut exec_ctx, node).await;
+                }
+
+                let data = exec_ctx.data;
+                let errors = exec_ctx.errors;
+                let response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
+
+                // TODO: otel tracing and insturmentation for subscription events
+                // let error_count = exec_ctx.errors.len();
+                // if error_count > 0 {
+                //     opts.span.record_error_count(error_count);
+                //     opts.span
+                //         .record_errors(|| errors.iter().map(|e| e.into()).collect());
+                // }
+
+                match project_by_operation(
+                    &data,
+                    errors,
+                    &extensions,
+                    &operation_type_name,
+                    &projection_plan,
+                    &variable_values,
+                    response_size_estimate,
+                    &schema_metadata,
+                )
+                .with_plan_context(LazyPlanContext {
+                    subgraph_name: || None,
+                    affected_path: || None,
+                }) {
+                    Ok(body) => yield body,
+                    Err(err) => {
+                        // fatal error, stream it and stop
+                        yield sonic_rs::to_vec(&sonic_rs::json!({
+                            "errors": [GraphQLError::from(err)]
+                        }))
+                        .unwrap_or_else(|_| {
+                            br#"{"errors":[{"message":"Failed to serialize projection error"}]}"#.to_vec()
+                        });
+                        return;
+                    }
+                }
+            }
+        });
+
+        return Ok(QueryPlanExecutionResult::Stream(PlanSubscriptionOutput {
+            body: body_stream,
+            response_headers_aggregator: None,
+            error_count: 0, // NOTE: errors can only happen before streaming started
+        }));
+    }
+
+    // query or mutation
+
     let mut data = if let Some(introspection_query) = opts.introspection_context.query {
         resolve_introspection(introspection_query, opts.introspection_context)
     } else if opts.projection_plan.is_empty() {
@@ -128,7 +395,7 @@ pub async fn execute_query_plan<'exec>(
             match result.control_flow {
                 StartControlFlow::Proceed => { /* continue to next plugin */ }
                 StartControlFlow::EndWithResponse(response) => {
-                    return Ok(response);
+                    return Ok(QueryPlanExecutionResult::Single(response));
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -148,10 +415,10 @@ pub async fn execute_query_plan<'exec>(
     // We can directly create `Executor` instance here
     let executor = Executor {
         variable_values: opts.variable_values,
-        schema_metadata: opts.introspection_context.metadata,
-        executors: opts.executors,
+        schema_metadata: &opts.introspection_context.metadata,
+        executors: &opts.executors,
         client_request: opts.client_request,
-        headers_plan: opts.headers_plan,
+        headers_plan: &opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
         plugin_req_state: opts.plugin_req_state,
@@ -196,7 +463,7 @@ pub async fn execute_query_plan<'exec>(
             match result.control_flow {
                 EndControlFlow::Proceed => { /* continue to next callback */ }
                 EndControlFlow::EndWithResponse(response) => {
-                    return Ok(response);
+                    return Ok(QueryPlanExecutionResult::Single(response));
                 }
             }
         }
@@ -228,22 +495,22 @@ pub async fn execute_query_plan<'exec>(
         errors,
         &extensions,
         opts.operation_type_name,
-        opts.projection_plan,
+        &opts.projection_plan,
         opts.variable_values,
         response_size_estimate,
-        opts.introspection_context.metadata,
+        &opts.introspection_context.metadata,
     )
     .with_plan_context(LazyPlanContext {
         subgraph_name: || None,
         affected_path: || None,
     })?;
 
-    Ok(PlanExecutionOutput {
+    Ok(QueryPlanExecutionResult::Single(PlanExecutionOutput {
         body,
         response_headers_aggregator: exec_ctx.response_headers_aggregator.none_if_empty(),
         error_count,
         status_code,
-    })
+    }))
 }
 
 pub struct Executor<'exec> {
@@ -1161,6 +1428,7 @@ mod tests {
     };
 
     use super::select_fetch_variables;
+    use dashmap::DashMap;
     use graphql_tools::parser::query;
     use hive_router_config::HiveRouterConfig;
     use hive_router_internal::telemetry::TelemetryContext;
@@ -1313,6 +1581,7 @@ mod tests {
             Arc::new(TelemetryContext::from_propagation_config(
                 &Default::default(),
             )),
+            Arc::new(DashMap::new()),
         )
         .unwrap();
 
@@ -1429,6 +1698,7 @@ mod tests {
                 Arc::new(TelemetryContext::from_propagation_config(
                     &Default::default(),
                 )),
+                Arc::new(DashMap::new()),
             )
             .unwrap(),
             client_request: &ClientRequestDetails {

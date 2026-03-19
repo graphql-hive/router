@@ -1,5 +1,6 @@
 use std::{sync::Arc, vec};
 
+use futures_util::stream;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
@@ -10,6 +11,7 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
 };
+use http::header;
 use http::{header::RETRY_AFTER, HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
@@ -21,8 +23,14 @@ use strum::IntoStaticStr;
 use crate::{
     jwt::errors::JwtError,
     pipeline::{
-        authorization::AuthorizationError, body_read::ReadBodyStreamError, header::ResponseMode,
+        authorization::AuthorizationError,
+        body_read::ReadBodyStreamError,
+        header::{ResponseMode, StreamContentType},
+        multipart_subscribe::{
+            self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
+        },
         progressive_override::LabelEvaluationError,
+        sse,
     },
     RouterSharedState,
 };
@@ -241,27 +249,26 @@ pub fn handle_pipeline_error(
     shared_state: &RouterSharedState,
     response_mode: &ResponseMode,
 ) -> web::HttpResponse {
-    let single_content_type = response_mode.single_content_type();
-
-    let prefer_ok = response_mode.prefer_status_ok_for_errors();
-
-    let status = err.default_status_code(prefer_ok);
+    let status = if matches!(response_mode, ResponseMode::StreamOnly(_)) {
+        // alwats status OK for streaming response modes, because we accept
+        // the stream and then stream the error from within the stream by default
+        StatusCode::OK
+    } else {
+        let prefer_ok = response_mode.prefer_status_ok_for_errors();
+        err.default_status_code(prefer_ok)
+    };
 
     let mut res = ResponseBuilder::new(status);
-
-    if let Some(single_content_type) = single_content_type {
-        res.content_type(single_content_type.as_ref());
-    }
 
     if matches!(err, PipelineError::NoSupergraphAvailable) {
         res.header(RETRY_AFTER, "10");
     }
 
     let mut errors = match err {
-        PipelineError::ValidationErrors(validation_errors) => {
+        PipelineError::ValidationErrors(ref validation_errors) => {
             validation_errors.iter().map(|error| error.into()).collect()
         }
-        PipelineError::AuthorizationFailed(authorization_errors) => authorization_errors
+        PipelineError::AuthorizationFailed(ref authorization_errors) => authorization_errors
             .iter()
             .map(|error| error.into())
             .collect(),
@@ -291,5 +298,52 @@ pub fn handle_pipeline_error(
             .record_errors(|| errors.iter().map(|error| error.extensions.code.as_deref()));
     }
 
-    res.json(&FailedExecutionResult { errors })
+    let data = sonic_rs::to_vec(&FailedExecutionResult { errors }).unwrap_or_else(|_| {
+        // should never happen. result should always serialize - but hey, no unwraps
+        tracing::error!("Failed to serialize pipeline error to response: {}", err);
+        sonic_rs::to_vec(&FailedExecutionResult {
+            errors: vec![GraphQLError::from_message_and_code(
+                "Failed to serialize error response",
+                "INTERNAL_SERVER_ERROR",
+            )],
+        })
+        .unwrap()
+    });
+
+    match response_mode {
+        ResponseMode::SingleOnly(_) | ResponseMode::Dual(_, _) => res
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(data),
+        ResponseMode::StreamOnly(StreamContentType::IncrementalDelivery) => res
+            .header(
+                header::CONTENT_TYPE,
+                http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE),
+            )
+            .streaming(multipart_subscribe::create_incremental_delivery_stream(
+                Box::pin(stream::once(async move { data })),
+            )),
+        ResponseMode::StreamOnly(StreamContentType::SSE) => res
+            .header(
+                header::CONTENT_TYPE,
+                http::HeaderValue::from_static("text/event-stream"),
+            )
+            .streaming(sse::create_stream(
+                Box::pin(stream::once(async move { data })),
+                std::time::Duration::from_secs(10),
+            )),
+        ResponseMode::StreamOnly(StreamContentType::ApolloMultipartHTTP) => res
+            .header(
+                header::CONTENT_TYPE,
+                http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE),
+            )
+            .streaming(multipart_subscribe::create_apollo_multipart_http_stream(
+                Box::pin(stream::once(async move { data })),
+                std::time::Duration::from_secs(10),
+            )),
+        ResponseMode::GraphiQL => {
+            unreachable!(
+                "GraphiQL can not be a response mode because GraphiQL requests can not execute operations"
+            )
+        }
+    }
 }
