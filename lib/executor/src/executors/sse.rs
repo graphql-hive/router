@@ -98,9 +98,17 @@ struct SubgraphSseEvent {
     pub data: String,
 }
 
-/// find the boundary of a complete event in the stream, the '\n\n'
+/// find the boundary of a complete event in the stream, the '\n\n' or '\r\n\r\n'
 fn find_sse_event_boundary(buffer: &[u8]) -> Option<usize> {
     for i in 0..buffer.len().saturating_sub(1) {
+        if buffer[i] == b'\r'
+            && i + 3 < buffer.len()
+            && buffer[i + 1] == b'\n'
+            && buffer[i + 2] == b'\r'
+            && buffer[i + 3] == b'\n'
+        {
+            return Some(i + 4);
+        }
         if buffer[i] == b'\n' && buffer[i + 1] == b'\n' {
             return Some(i + 2);
         }
@@ -272,6 +280,73 @@ event: complete
         let event = parse(sse_data).expect("Should handle empty input");
 
         assert!(event.is_none());
+    }
+
+    #[test]
+    fn test_find_sse_event_boundary_crlf() {
+        let buffer = b"event: next\r\ndata: hello\r\n\r\n";
+        let boundary = find_sse_event_boundary(buffer);
+        assert_eq!(boundary, Some(buffer.len()));
+    }
+
+    #[test]
+    fn test_find_sse_event_boundary_lf() {
+        let buffer = b"event: next\ndata: hello\n\n";
+        let boundary = find_sse_event_boundary(buffer);
+        assert_eq!(boundary, Some(buffer.len()));
+    }
+
+    #[test]
+    fn test_parse_single_event_crlf() {
+        let sse_data = b"event: next\r\ndata: some data\r\n\r\n";
+
+        let event = parse(sse_data).expect("Should parse valid SSE with CRLF");
+
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event, Some("next".to_string()));
+        assert_eq!(event.data, "some data");
+    }
+
+    #[test]
+    fn test_parse_just_event_crlf() {
+        let sse_data = b"event: complete\r\n\r\n";
+
+        let event = parse(sse_data).expect("Should parse valid SSE with CRLF");
+
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event, Some("complete".to_string()));
+        assert_eq!(event.data, "");
+    }
+
+    #[tokio::test]
+    async fn test_parse_to_stream_chunked_events_crlf() {
+        use bytes::Bytes;
+        use futures::StreamExt;
+        use http_body_util::StreamBody;
+        use hyper::body::Frame;
+
+        let chunks: Vec<Result<Frame<Bytes>, std::convert::Infallible>> = vec![
+            Ok(Frame::data(Bytes::from(
+                "event: next\r\ndata: {\"data\":{\"hello\":\"wor",
+            ))),
+            Ok(Frame::data(Bytes::from("ld\"}}\r\n\r\neve"))),
+            Ok(Frame::data(Bytes::from("nt: complete\r\n\r\n"))),
+        ];
+
+        let body = StreamBody::new(futures::stream::iter(chunks));
+        let mut stream = parse_to_stream(body);
+
+        let first = stream.next().await;
+        assert!(first.is_some());
+        let first_result = first.unwrap();
+        assert!(first_result.is_ok());
+        let response = first_result.unwrap();
+        assert!(!response.data.is_null());
+
+        let second = stream.next().await;
+        assert!(second.is_none());
     }
 
     #[tokio::test]
