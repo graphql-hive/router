@@ -31,7 +31,7 @@ use crate::{
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, SubgraphHttpResponse},
         http_callback::{ActiveSubscriptionsMap, HttpCallbackSubgraphExecutor},
-        ws::WsSubgraphExecutor,
+        websocket::WsSubgraphExecutor,
     },
     hooks::on_subgraph_execute::{
         OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
