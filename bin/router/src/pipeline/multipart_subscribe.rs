@@ -1,8 +1,8 @@
 // TODO: test thoroughly
 
 use const_str::concat;
-use futures_timer::Delay;
-use futures_util::{FutureExt, Stream, StreamExt};
+
+use futures_util::{Stream, StreamExt};
 use ntex::util::Bytes;
 use std::time::Duration;
 use tokio_util::bytes::BufMut;
@@ -43,7 +43,7 @@ pub const INCREMENTAL_DELIVERY_CONTENT_TYPE: &str =
 pub fn create_incremental_delivery_stream(
     input: impl Stream<Item = Vec<u8>> + Send + Unpin + 'static,
 ) -> impl Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Unpin {
-    let mut input = input.fuse();
+    let mut input = input;
     let (start_boundary, end_boundary) = make_boundaries!(INCREMENTAL_DELIVERY_BOUNDARY);
     async_stream::stream! {
         loop {
@@ -85,13 +85,12 @@ pub fn create_apollo_multipart_http_stream(
     input: impl Stream<Item = Vec<u8>> + Send + Unpin + 'static,
     heartbeat_interval: Duration,
 ) -> impl Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Unpin {
-    let mut input = input.fuse();
-    let mut heartbeat_timer = Delay::new(heartbeat_interval).fuse();
+    let mut input = input;
     let (start_boundary, end_boundary) = make_boundaries!(APOLLO_MULTIPART_HTTP_BOUNDARY);
     let ping = "{}\r\n";
     async_stream::stream! {
         loop {
-            futures_util::select! {
+            tokio::select! {
                 item = input.next() => {
                     match item {
                         Some(resp) => {
@@ -120,8 +119,7 @@ pub fn create_apollo_multipart_http_stream(
                         },
                     }
                 }
-                _ = heartbeat_timer => {
-                    heartbeat_timer = Delay::new(heartbeat_interval).fuse();
+                _ = tokio::time::sleep(heartbeat_interval) => {
                     yield Ok(Bytes::from(start_boundary));
                     yield Ok(Bytes::from(ping));
                 }

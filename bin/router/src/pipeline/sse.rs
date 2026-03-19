@@ -1,7 +1,6 @@
 // TODO: test thoroughly
 
-use futures_timer::Delay;
-use futures_util::{FutureExt, Stream, StreamExt};
+use futures_util::{Stream, StreamExt};
 use ntex::util::Bytes;
 use std::time::Duration;
 use tokio_util::bytes::BufMut;
@@ -12,11 +11,10 @@ pub fn create_stream(
     input: impl Stream<Item = Vec<u8>> + Send + Unpin + 'static,
     heartbeat_interval: Duration,
 ) -> impl Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Unpin {
-    let mut input = input.fuse();
-    let mut heartbeat_timer = Delay::new(heartbeat_interval).fuse();
+    let mut input = input;
     async_stream::stream! {
         loop {
-            futures_util::select! {
+            tokio::select! {
                 item = input.next() => {
                     match item {
                         Some(resp) => {
@@ -40,8 +38,7 @@ pub fn create_stream(
                         },
                     }
                 }
-                _ = heartbeat_timer => {
-                    heartbeat_timer = Delay::new(heartbeat_interval).fuse();
+                _ = tokio::time::sleep(heartbeat_interval) => {
                     yield Ok(Bytes::from(":\n\n"));
                 }
             }
