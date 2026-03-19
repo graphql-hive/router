@@ -283,7 +283,7 @@ pub async fn execute_query_plan<'exec>(
                 //         .record_errors(|| errors.iter().map(|e| e.into()).collect());
                 // }
 
-                yield match project_by_operation(
+                match project_by_operation(
                     &data,
                     errors,
                     &extensions,
@@ -297,8 +297,17 @@ pub async fn execute_query_plan<'exec>(
                     subgraph_name: || None,
                     affected_path: || None,
                 }) {
-                    Ok(body) => body,
-                    Err(_) => todo!(),
+                    Ok(body) => yield body,
+                    Err(err) => {
+                        // fatal error, stream it and stop
+                        yield sonic_rs::to_vec(&sonic_rs::json!({
+                            "errors": [GraphQLError::from(err)]
+                        }))
+                        .unwrap_or_else(|_| {
+                            br#"{"errors":[{"message":"Failed to serialize projection error"}]}"#.to_vec()
+                        });
+                        return;
+                    }
                 }
             }
         });
