@@ -2012,7 +2012,7 @@ When specified, all subgraphs (not claimed by `callback`) will use the WebSocket
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>||
+|**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>Pattern: `^/`<br/>||
 
 **Additional Properties:** not allowed  
 <a name="subscriptionswebsocketsubgraphs"></a>
@@ -2037,7 +2037,7 @@ WebSocket configuration for a specific subgraph or the default for all subgraphs
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>||
+|**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>Pattern: `^/`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -3132,7 +3132,7 @@ Configuration of router's WebSocket server.
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Enables/disables WebSocket connections.<br/><br/>By default, WebSockets are disabled.<br/><br/>You can override this setting by setting the `WEBSOCKET_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
 |[**headers**](#websocketheaders)|`object`|Configuration for handling headers for WebSocket connections.<br/>Default: `{"persist":false,"source":"connection"}`<br/>|yes|
-|**path**|`string`, `null`|The path to use for the WebSocket endpoint on the router.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>By default, the WebSocket endpoint will be available at the `http.graphql_endpoint` (defaults to `/graphql`)<br/>if no path is specified and the clients will connect using `ws://<router-url>/<graphql_endpoint>`.<br/>||
+|**path**|`string`, `null`|The path to use for the WebSocket endpoint on the router.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>By default, the WebSocket endpoint will be available at the `http.graphql_endpoint` (defaults to `/graphql`)<br/>if no path is specified and the clients will connect using `ws://<router-url>/<graphql_endpoint>`.<br/>Pattern: `^/`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
