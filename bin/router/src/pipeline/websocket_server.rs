@@ -266,7 +266,7 @@ async fn handle_text_frame(
                     extensions: payload.extensions,
                 };
 
-                // TODO: ok we need this!
+                // TODO: we'll need this when plugins come through
                 let plugin_req_state = None;
 
                 let client_name = headers

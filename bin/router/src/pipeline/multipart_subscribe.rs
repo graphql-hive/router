@@ -107,7 +107,7 @@ pub fn create_apollo_multipart_http_stream(
                                     yield Ok(Bytes::from("\r\n"));
                                 }
                                 Err(e) => {
-                                    // TODO: transport level errors as per spec
+                                    // TODO: use transport level errors as per spec
                                     yield Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
                                     break;
                                 }
