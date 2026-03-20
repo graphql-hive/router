@@ -16,6 +16,7 @@
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
+|[**persisted\_documents**](#persisted_documents)|`object`|Configuration for persisted documents extraction and resolution.<br/>Default: `{"enabled":false,"log_missing_id":false,"require_id":false,"selectors":null,"storage":null}`<br/>||
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
@@ -117,6 +118,12 @@ override_subgraph_urls:
                   .default
                 }
             
+persisted_documents:
+  enabled: false
+  log_missing_id: false
+  require_id: false
+  selectors: null
+  storage: null
 plugins: {}
 query_planner:
   allow_expose: false
@@ -598,7 +605,6 @@ propagate: {}
 ```
 
 
-   
 **Option 2 (alternative):** 
 Remove headers before sending the request to a subgraph.
 
@@ -621,7 +627,6 @@ remove: {}
 ```
 
 
-   
 **Option 3 (alternative):** 
 Add or overwrite a header with a static value.
 
@@ -754,7 +759,6 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
-   
 **Option 2 (optional):** 
 A dynamic value computed by a VRL expression.
 
@@ -821,7 +825,6 @@ propagate: {}
 ```
 
 
-   
 **Option 2 (alternative):** 
 Remove headers before sending the response to the client.
 
@@ -841,7 +844,6 @@ remove: {}
 ```
 
 
-   
 **Option 3 (alternative):** 
 Add or overwrite a header in the response to the client.
 
@@ -976,7 +978,6 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
-   
 **Option 2 (optional):** 
 A dynamic value computed by a VRL expression.
 
@@ -1073,7 +1074,6 @@ propagate: {}
 ```
 
 
-   
 **Option 2 (alternative):** 
 Remove headers before sending the request to a subgraph.
 
@@ -1096,7 +1096,6 @@ remove: {}
 ```
 
 
-   
 **Option 3 (alternative):** 
 Add or overwrite a header with a static value.
 
@@ -1229,7 +1228,6 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
-   
 **Option 2 (optional):** 
 A dynamic value computed by a VRL expression.
 
@@ -1296,7 +1294,6 @@ propagate: {}
 ```
 
 
-   
 **Option 2 (alternative):** 
 Remove headers before sending the response to the client.
 
@@ -1316,7 +1313,6 @@ remove: {}
 ```
 
 
-   
 **Option 3 (alternative):** 
 Add or overwrite a header in the response to the client.
 
@@ -1451,7 +1447,6 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
-   
 **Option 2 (optional):** 
 A dynamic value computed by a VRL expression.
 
@@ -1641,7 +1636,6 @@ A local file on the file-system. This file will be read once on startup and cach
 |**source**|`string`|Constant Value: `"file"`<br/>|yes|
 
 
-   
 **Option 2 (alternative):** 
 A remote JWKS provider. The JWKS will be fetched via HTTP/HTTPS and cached.
 
@@ -1683,7 +1677,6 @@ The first one that is found will be used.
 |**source**|`string`|Constant Value: `"header"`<br/>|yes|
 
 
-   
 **Option 2 (alternative):** 
 **Properties**
 
@@ -1886,6 +1879,73 @@ products:
 |----|----|-----------|--------|
 |**url**||Overrides for the URL of the subgraph.<br/><br/>For convenience, a plain string in your configuration will be treated as a static URL.<br/><br/>### Static URL Example<br/>```yaml<br/>url: "https://api.example.com/graphql"<br/>```<br/><br/>### Dynamic Expression Example<br/><br/>The expression has access to the following variables:<br/>- `request`: The incoming HTTP request, including headers and other metadata.<br/>- `default`: The original URL of the subgraph (from supergraph sdl).<br/><br/>```yaml<br/>url:<br/>  expression: \|<br/>    if .request.headers."x-region" == "us-east" {<br/>      "https://products-us-east.example.com/graphql"<br/>    } else if .request.headers."x-region" == "eu-west" {<br/>      "https://products-eu-west.example.com/graphql"<br/>    } else {<br/>      .default<br/>    }<br/>|yes|
 
+<a name="persisted_documents"></a>
+## persisted\_documents: object
+
+Configuration for persisted documents extraction and resolution.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Default: `false`<br/>||
+|**log\_missing\_id**|`boolean`|Default: `false`<br/>||
+|**require\_id**|`boolean`|Default: `false`<br/>||
+|[**selectors**](#persisted_documentsselectors)|`array`|||
+|**storage**||||
+
+**Example**
+
+```yaml
+enabled: false
+log_missing_id: false
+require_id: false
+selectors: null
+storage: null
+
+```
+
+<a name="persisted_documentsselectors"></a>
+### persisted\_documents\.selectors\[\]: array,null
+
+**Items**
+
+   
+**Option 1 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**path**|`string`||yes|
+|**type**|`string`|Constant Value: `"json_path"`<br/>|yes|
+
+
+**Option 2 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**template**|`string`||yes|
+|**type**|`string`|Constant Value: `"url_path_param"`<br/>|yes|
+
+
+**Option 3 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**name**|`string`||yes|
+|**type**|`string`|Constant Value: `"url_query_param"`<br/>|yes|
+
+
+**Example**
+
+```yaml
+{}
+
+```
+
 <a name="plugins"></a>
 ## plugins: object
 
@@ -2061,7 +2121,6 @@ Configuration for the Federation supergraph source. By default, the router will 
 Each source has a different set of configuration, depending on the source type.
 
 
-   
 **Option 1 (alternative):** 
 Loads a supergraph from the filesystem.
 The path can be either absolute or relative to the router's working directory.
@@ -2084,7 +2143,6 @@ poll_interval: null
 ```
 
 
-   
 **Option 2 (alternative):** 
 Loads a supergraph from Hive Console CDN.
 
@@ -2467,7 +2525,6 @@ temporality: cumulative
 ```
 
 
-   
 **Option 2 (alternative):** 
 **Properties**
 
@@ -2821,7 +2878,6 @@ http: null
 ```
 
 
-   
 **Option 2 (alternative):** 
 **Properties**
 
@@ -3203,5 +3259,4 @@ persist: false
 source: connection
 
 ```
-
 
