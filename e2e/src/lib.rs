@@ -37,6 +37,8 @@ mod max_tokens;
 #[cfg(test)]
 mod override_subgraph_urls;
 #[cfg(test)]
+mod persisted_documents;
+#[cfg(test)]
 mod probes;
 #[cfg(test)]
 mod router_timeout;

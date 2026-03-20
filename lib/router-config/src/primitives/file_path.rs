@@ -61,13 +61,24 @@ impl<'de> Visitor<'de> for FilePathVisitor {
     type Value = FilePath;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a string representing a relative file path")
+        formatter.write_str("a string representing a file path")
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
+        let path = Path::new(v);
+        if path.is_absolute() {
+            let canonical_path = fs::canonicalize(path)
+                .map_err(|err| E::custom(format!("Failed to canonicalize path: {}", err)))?;
+
+            return Ok(FilePath {
+                relative: v.to_string(),
+                absolute: canonical_path.to_string_lossy().to_string(),
+            });
+        }
+
         CONTEXT_START_PATH.with(|ctx| {
             if let Some(start_path) = ctx.borrow().as_ref() {
                 match FilePath::resolve_relative(start_path, v, true) {
