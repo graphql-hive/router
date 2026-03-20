@@ -41,10 +41,10 @@ debug = 2
 inherits = "release"
 debug = true
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
+# [profile.release]
+# opt-level = 3
+# lto = true
+# codegen-units = 1
 
 [workspace.dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
@@ -86,6 +86,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 mockito = "1.7.0"
 futures-util = "0.3.31"
 axum = "0.8.4"
+notify = "8.2.0"
 
 # Telemetry
 opentelemetry = "0.31.0"

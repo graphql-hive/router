@@ -11,6 +11,7 @@ pub mod limits;
 pub mod log;
 pub mod override_labels;
 pub mod override_subgraph_urls;
+pub mod persisted_documents;
 pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
@@ -33,6 +34,7 @@ use crate::{
     laboratory::LaboratoryConfig,
     log::LoggingConfig,
     override_labels::OverrideLabelsConfig,
+    persisted_documents::PersistedDocumentsConfig,
     primitives::file_path::with_start_path,
     query_planner::QueryPlannerConfig,
     supergraph::SupergraphSource,
@@ -117,6 +119,10 @@ pub struct HiveRouterConfig {
     /// Configuration for custom plugins
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub plugins: HashMap<String, PluginConfig>,
+
+    /// Configuration for persisted documents extraction and resolution.
+    #[serde(default)]
+    pub persisted_documents: PersistedDocumentsConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
