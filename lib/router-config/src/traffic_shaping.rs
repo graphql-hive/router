@@ -3,6 +3,8 @@ use std::{collections::HashMap, time::Duration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::primitives::{file_path::FilePath, single_or_multiple::SingleOrMultiple};
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingConfig {
@@ -82,6 +84,9 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     ///      }
     /// ```
     pub request_timeout: Option<DurationOrExpression>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls: Option<ClientTLSConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -123,6 +128,9 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// ```
     #[serde(default = "default_request_timeout")]
     pub request_timeout: DurationOrExpression,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls: Option<ClientTLSConfig>,
 }
 
 fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
@@ -153,6 +161,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             pool_idle_timeout: default_pool_idle_timeout(),
             dedupe_enabled: default_dedupe_enabled(),
             request_timeout: default_request_timeout(),
+            tls: None,
         }
     }
 }
@@ -171,6 +180,9 @@ pub struct TrafficShapingRouterConfig {
     )]
     #[schemars(with = "String")]
     pub request_timeout: Duration,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls: Option<ServerTLSConfig>,
 }
 
 fn default_router_request_timeout() -> Duration {
@@ -181,6 +193,35 @@ impl Default for TrafficShapingRouterConfig {
     fn default() -> Self {
         Self {
             request_timeout: default_router_request_timeout(),
+            tls: None,
         }
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ServerTLSConfig {
+    pub cert_file: SingleOrMultiple<FilePath>,
+    pub key_file: FilePath,
+    pub client_auth: Option<ServerClientAuthConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ServerClientAuthConfig {
+    pub cert_file: SingleOrMultiple<FilePath>,
+}
+
+#[derive(Default, Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ClientTLSConfig {
+    pub cert_file: Option<SingleOrMultiple<FilePath>>,
+    pub client_auth: Option<ClientAuthConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ClientAuthConfig {
+    pub cert_file: SingleOrMultiple<FilePath>,
+    pub key_file: FilePath,
 }
