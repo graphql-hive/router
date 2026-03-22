@@ -116,6 +116,186 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.42 (2026-03-16)
+
+### Features
+
+#### Introduce BatchFetch for compatible entity fetches to improve query performance
+
+When multiple `Flatten(Fetch)` steps target the same subgraph and have compatible shape, the planner can group them into one batched fetch operation with aliases.
+
+Batching keeps execution depth the same, but **reduces request fanout**.
+In our benchmark query, **downstream requests drop from `13` to `7`** while the number of execution waves stays unchanged.
+This should also reduce pressure on subgraphs, because entities are resolved in one batched subgraph call instead of being resolved across multiple incoming GraphQL requests, where the lack of DataLoader or another caching layer could otherwise cause duplicate resolution work.
+
+Before: 
+
+```graphql
+Parallel {
+  Flatten(path: "products.@") {
+    Fetch(service: "inventory") {
+      {
+        ... on Product {
+          upc
+        }
+      } =>
+      {
+        ... on Product {
+          shippingEstimate
+        }
+      }
+    }
+  }
+  Flatten(path: "topProducts.@") {
+    Fetch(service: "inventory") {
+      {
+        ... on Product {
+          upc
+        }
+      } =>
+      {
+        ... on Product {
+          shippingEstimate
+        }
+      }
+    }
+  }
+}
+```
+
+After:
+
+```graphql
+BatchFetch(service: "inventory") {
+  {
+    _e0 {
+      paths: [
+        "products.@"
+        "topProducts.@"
+      ]
+      {
+        ... on Product {
+          upc
+        }
+      }
+    }
+  }
+  {
+    _e0: _entities(representations: $__batch_reps_0) {
+      ... on Product {
+        shippingEstimate
+      }
+    }
+  }
+}
+```
+
+When two entity fetches go to the same subgraph but request different output fields, they are batched into one `BatchFetch` node with two aliases, but share the same variables, to reduce the payload size.
+
+```
+BatchFetch(service: "inventory") {
+  {
+    _e0 {
+      paths: [
+        "products.@"
+      ]
+      {
+        ... on Product {
+          upc
+        }
+      }
+    }
+    _e1 {
+      paths: [
+        "products.@"
+      ]
+      {
+        ... on Product {
+          upc
+        }
+      }
+    }
+  }
+  {
+    _e0: _entities(representations: $__batch_reps_0) {
+      ... on Product {
+        shippingEstimate
+      }
+    }
+    _e1: _entities(representations: $__batch_reps_0) {
+      ... on Product {
+        inStock
+      }
+    }
+  }
+}
+```
+
+### Fixes
+
+- Update `regress` to `0.11.0`
+- Implements `AsRef` trait for `graphql_tools::parser::query::ast::TypeCondition`
+
+## 0.0.41 (2026-03-12)
+
+### Features
+
+- metrics  (#770)
+- support multiple endpoints in `HIVE_CDN_ENDPOINT` environment variable (#834)
+
+#### Metrics with OpenTelemetry and Prometheus
+
+This release adds support for OpenTelemetry metrics. In addition to existing tracing support, the router can now collect detailed metrics about HTTP and GraphQL activity and export them to a Prometheus endpoint or to an OTLP collector.
+
+- Telemetry configuration now has a `metrics` section. Users can enable metrics exporters and tune histogram buckets under `telemetry.metrics` in `router.config.yaml`. By default metrics are disabled, so existing configurations continue to work unchanged.
+- **Prometheus exporter** exposes a `/metrics` endpoint that follows the standard Prometheus text format. It can be attached to Router's http server or run on its own port. 
+- **OTLP exporter** is available for sending metrics to an OpenTelemetry collector via gRPC or HTTP.
+- **Instrumentation for every stage of the pipeline** - parsing, normalization, validation, planning and execution.
+- **HTTP client/server metrics** - Router records metrics for incoming HTTP requests (latencies, sizes and status codes) and for outbound subgraph requests. These instruments follow the OpenTelemetry HTTP semantic conventions, making them usable out‑of‑the‑box with observability backends.
+- **Supergraph reload metrics** - polling and reloading the supergraph is measured with poll counts, durations and errors, giving visibility into slow or failed schema reloads.
+
+**Example configuration**
+
+```yaml
+telemetry:
+  metrics:
+    exporters:
+      - prometheus:
+          enabled: true
+          # optional custom path (default `/metrics`)
+          path: /metrics
+          # serve on this port
+          port: 9090
+      - otlp:
+          enabled: true
+          # An absolute path to the OpenTelemetry collector
+          endpoint: "http://otel-collector:4317"
+          # protocol can be `grpc` or `http`
+          protocol: http
+    instrumentation:
+      instruments:
+        # Disable HTTP server request duration metric
+        http.server.request.duration: false
+        http.client.request.duration:
+          attributes:
+            # Disable the label
+            graphql.operation.name: false
+```
+
+Visit ["OpenTelemetry Metrics" documentation](https://the-guild.dev/graphql/hive/docs/router/observability/metrics) for more details on configuring metrics and exporters.
+
+### Fixes
+
+#### Support multiple endpoints for Hive Console CDN source for Supergraph.
+
+So you can pass endpoints separated by comma in the env var `HIVE_CDN_ENDPOINT`, so that if one CDN endpoint is not available, the router can fallback to the next one in the list.
+
+```
+HIVE_CDN_ENDPOINT=https://cdn.graphql-hive.com/***,https://cdn-mirror.graphql-hive.com/***
+```
+
+[Learn more about CDN mirrors](https://the-guild.dev/graphql/hive/docs/schema-registry/high-availability-cdn#cdn-mirrors)
+
 ## 0.0.40 (2026-03-05)
 
 ### Features

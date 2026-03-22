@@ -10,3 +10,8 @@ telemetry:
       - kind: otlp
         protocol: http
         endpoint: http://localhost:404
+  metrics:
+    exporters:
+      - kind: otlp
+        protocol: http
+        endpoint: http://localhost:404

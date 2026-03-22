@@ -1,3 +1,4 @@
+mod cache_state;
 mod consts;
 pub mod error;
 mod http_utils;
@@ -24,6 +25,10 @@ use crate::{
         error::handle_pipeline_error,
         graphql_request_handler,
         header::ResponseMode,
+        request_extensions::{
+            read_graphql_operation_metric_identity, read_graphql_response_metric_status,
+            read_request_body_size, write_graphql_response_metric_status,
+        },
         timeout::handle_timeout,
         usage_reporting::init_hive_usage_agent,
         validation::{
@@ -32,9 +37,10 @@ use crate::{
         },
     },
     plugins::plugins_service::PluginService,
-    telemetry::HeaderExtractor,
+    telemetry::{HeaderExtractor, PrometheusAttached},
 };
 
+use crate::cache_state::{register_cache_size_observers, CacheState};
 pub use crate::plugins::registry::PluginRegistry;
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 pub use arc_swap::ArcSwap;
@@ -45,6 +51,7 @@ use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use hive_router_config::humantime_serde;
 use hive_router_config::{load_config, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
+use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::{
     otel::tracing_opentelemetry::OpenTelemetrySpanExt,
     traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
@@ -72,10 +79,46 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
+    let http_request_capture = app_state
+        .telemetry_context
+        .metrics
+        .http_server
+        .capture_request(&request);
+
+    let response =
+        graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone()).await;
+
+    let graphql_operation = read_graphql_operation_metric_identity(&request);
+    let graphql_operation_name = graphql_operation
+        .as_ref()
+        .and_then(|operation| operation.operation_name.as_deref());
+    let graphql_operation_type = graphql_operation
+        .as_ref()
+        .and_then(|operation| operation.operation_type);
+    let graphql_response_status =
+        read_graphql_response_metric_status(&request).unwrap_or(GraphQLResponseStatus::Ok);
+
+    http_request_capture.finish(
+        &response,
+        read_request_body_size(&request),
+        graphql_operation_name,
+        graphql_operation_type,
+        graphql_response_status,
+    );
+
+    response
+}
+
+async fn graphql_endpoint_dispatch(
+    request: &HttpRequest,
+    body_stream: web::types::Payload,
+    schema_state: web::types::State<Arc<SchemaState>>,
+    app_state: web::types::State<Arc<RouterSharedState>>,
+) -> web::HttpResponse {
     let parent_ctx = app_state
         .telemetry_context
         .extract_context(&HeaderExtractor(request.headers()));
-    let root_http_request_span = HttpServerRequestSpan::from_request(&request);
+    let root_http_request_span = HttpServerRequestSpan::from_request(request);
     let _ = root_http_request_span.set_parent(parent_ctx);
 
     async {
@@ -86,7 +129,7 @@ async fn graphql_endpoint_handler(
         let mut response_mode = ResponseMode::default();
 
         let req_handler_fut = graphql_request_handler(
-            &request,
+            request,
             body_stream,
             app_state.get_ref(),
             schema_state.get_ref(),
@@ -96,20 +139,23 @@ async fn graphql_endpoint_handler(
 
         // Handle the request with a timeout. If the timeout is reached, a timeout error response will be generated.
         let result = handle_timeout(req_handler_fut, &app_state).await;
-        let mut res = match result {
+        let mut response = match result {
             Ok(response) => response,
             // If the request handler returns an error, convert it to an HTTP response.
-            Err(error) => handle_pipeline_error(error, &app_state, &response_mode),
+            Err(err) => {
+                write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
+                handle_pipeline_error(err, &app_state, &response_mode)
+            }
         };
 
         // Apply CORS headers to the final response if CORS is configured.
         if let Some(cors) = app_state.cors_runtime.as_ref() {
-            cors.set_headers(&request, res.headers_mut());
+            cors.set_headers(request, response.headers_mut());
         }
 
-        root_http_request_span.record_response(&res);
+        root_http_request_span.record_response(&response);
 
-        res
+        response
     }
     .instrument(root_http_request_span.clone())
     .await
@@ -119,6 +165,10 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     let telemetry = telemetry::Telemetry::init_global(&router_config)?;
+    let prometheus = telemetry
+        .prometheus
+        .as_ref()
+        .and_then(|prom| prom.to_attached());
     info!("hive-router@{} starting...", ROUTER_VERSION);
     let http_config = router_config.http.clone();
     let addr = router_config.http.address();
@@ -132,15 +182,23 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     .await?;
 
     let shared_state_clone = shared_state.clone();
+    let graphql_path = http_config.graphql_endpoint();
 
+    let paths = RouterPaths::new(graphql_path.to_string());
+    paths.detect_conflicts(&prometheus)?;
+
+    let graphql_path = graphql_path.to_string();
     let maybe_error = web::HttpServer::new(async move || {
-        let lp_gql_path = http_config.graphql_endpoint().to_string();
+        let landing_page_path = graphql_path.clone();
+        let prometheus = prometheus.clone();
         web::App::new()
             .middleware(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(|m| configure_ntex_app(m, http_config.graphql_endpoint()))
-            .default_service(web::to(move || landing_page_handler(lp_gql_path.clone())))
+            .configure(|m| configure_ntex_app(m, &paths, prometheus))
+            .default_service(web::to(move || {
+                landing_page_handler(landing_page_path.clone())
+            }))
     })
     .bind(&addr)
     .map_err(|err| RouterInitError::HttpServerBindError(addr, err))?
@@ -187,11 +245,18 @@ pub async fn configure_app_from_config(
 
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
+    let cache_state = Arc::new(CacheState::new());
+
+    if router_config_arc.telemetry.metrics.is_enabled() {
+        register_cache_size_observers(telemetry_context_arc.clone(), cache_state.clone());
+    }
+
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,
         telemetry_context_arc.clone(),
         router_config_arc.clone(),
         plugins_arc.clone(),
+        cache_state.clone(),
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
@@ -218,15 +283,80 @@ pub async fn configure_app_from_config(
         validation_plan,
         telemetry_context_arc,
         plugins_arc,
+        cache_state,
     )?);
 
     Ok((shared_state, schema_state_arc))
 }
 
-pub fn configure_ntex_app(cfg: &mut web::ServiceConfig, graphql_path: &str) {
-    cfg.route(graphql_path, web::to(graphql_endpoint_handler))
-        .route("/health", web::to(health_check_handler))
-        .route("/readiness", web::to(readiness_check_handler));
+#[derive(Clone)]
+pub struct RouterPaths {
+    graphql: String,
+    health: String,
+    readiness: String,
+}
+
+impl RouterPaths {
+    pub fn new(graphql: String) -> Self {
+        RouterPaths {
+            graphql,
+            health: "/health".to_string(),
+            readiness: "/readiness".to_string(),
+        }
+    }
+
+    pub fn detect_conflicts(
+        &self,
+        prometheus: &Option<PrometheusAttached>,
+    ) -> Result<(), RouterInitError> {
+        // A pair of context and actual path
+        let mut paths = vec![
+            ("graphql", self.graphql.as_str()),
+            ("health", self.health.as_str()),
+            ("readiness", self.readiness.as_str()),
+        ];
+
+        if let Some(prom) = prometheus {
+            paths.push(("prometheus", prom.endpoint.as_str()));
+        }
+
+        for (name_a, path_a) in &paths {
+            let conflict = paths
+                .iter()
+                .find(|(name_b, path_b)| name_a != name_b && path_a == path_b);
+
+            if let Some((name_b, _)) = conflict {
+                return Err(RouterInitError::EndpointConflict {
+                    endpoint_name_one: (*name_a).to_string(),
+                    endpoint_name_two: (*name_b).to_string(),
+                    endpoint: (*path_a).to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+pub fn configure_ntex_app(
+    cfg: &mut web::ServiceConfig,
+    paths: &RouterPaths,
+    prometheus: Option<PrometheusAttached>,
+) {
+    cfg.route(paths.graphql.as_str(), web::to(graphql_endpoint_handler))
+        .route(paths.health.as_str(), web::to(health_check_handler))
+        .route(paths.readiness.as_str(), web::to(readiness_check_handler));
+
+    if let Some(prom) = prometheus {
+        let registry = prom.registry;
+        cfg.route(
+            prom.endpoint.as_str(),
+            web::get().to(move || {
+                let registry = registry.clone();
+                async move { telemetry::build_metrics_response(&registry) }
+            }),
+        );
+    }
 }
 
 /// Initializes the rustls cryptographic provider for the entire process.

@@ -74,6 +74,7 @@ async fn test_deprecated_span_attributes() {
         http.request_content_length: 45
         http.response_content_length: 86
         http.route: /graphql
+        http.scheme: http
         http.status_code: 200
         http.target: /graphql
         http.url: /graphql
@@ -207,6 +208,7 @@ async fn test_spec_and_deprecated_span_attributes() {
         http.response.status_code: 200
         http.response_content_length: 86
         http.route: /graphql
+        http.scheme: http
         http.status_code: 200
         http.target: /graphql
         http.url: /graphql
@@ -216,6 +218,7 @@ async fn test_spec_and_deprecated_span_attributes() {
         target: hive-router
         url.full: /graphql
         url.path: /graphql
+        url.scheme: http
     "
     );
 
@@ -293,7 +296,7 @@ async fn test_default_client_identification() {
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = TestSubgraphs::builder().build().start().await;
 
@@ -370,7 +373,7 @@ async fn test_custom_client_identification() {
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = TestSubgraphs::builder().build().start().await;
 
@@ -449,7 +452,7 @@ async fn test_default_resource_attributes() {
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = TestSubgraphs::builder().build().start().await;
 
@@ -517,7 +520,7 @@ async fn test_custom_resource_attributes() {
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = TestSubgraphs::builder().build().start().await;
 

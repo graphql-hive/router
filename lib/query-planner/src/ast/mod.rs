@@ -1,5 +1,6 @@
 pub mod document;
 pub mod fragment;
+pub mod fragment_expansion;
 pub mod hash;
 pub mod minification;
 pub mod normalization;
