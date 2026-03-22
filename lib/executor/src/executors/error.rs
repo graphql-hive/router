@@ -1,4 +1,5 @@
 use http::uri::InvalidUri;
+use rustls::server::VerifierBuilderError;
 use strum::IntoStaticStr;
 
 #[derive(thiserror::Error, Debug, IntoStaticStr)]
@@ -50,13 +51,27 @@ pub enum SubgraphExecutorError {
     #[error("Failed to deserialize subgraph response: {0}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE")]
     ResponseDeserializationFailure(sonic_rs::Error),
-    #[error("Failed to initialize or load native TLS root certificates: {0}")]
+    #[error(transparent)]
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
-    NativeTlsCertificatesError(std::io::Error),
+    TlsCertificatesError(#[from] TlsCertificatesError),
 }
 
 impl SubgraphExecutorError {
     pub fn error_code(&self) -> &'static str {
         self.into()
     }
+}
+
+#[derive(thiserror::Error, Debug, IntoStaticStr)]
+pub enum TlsCertificatesError {
+    #[error("Failed to initialize or load native TLS root certificates: {0}")]
+    NativeTlsCertificatesError(std::io::Error),
+    #[error("Failed to load custom TLS certificate {0}: {1}")]
+    CustomTlsCertificatesError(&'static str, rustls::pki_types::pem::Error),
+    #[error("Unexpected invalid certificates: {0}")]
+    InvalidTlsCertificates(String),
+    #[error("Failed to build TLS client configuration: {0}")]
+    TlsConfigFailure(#[from] rustls::Error),
+    #[error("Failed to build TLS verifier: {0}")]
+    TlsVerifierFailure(#[from] VerifierBuilderError),
 }

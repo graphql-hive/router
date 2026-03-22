@@ -2944,6 +2944,7 @@ The default configuration that will be applied to all subgraphs, unless overridd
 |**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
 |**pool\_idle\_timeout**|`string`|Timeout for idle sockets being kept-alive.<br/>Default: `"50s"`<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>Default: `"30s"`<br/>||
+|[**tls**](#traffic_shapingalltls)|`object`, `null`|||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2955,6 +2956,28 @@ request_timeout: 30s
 
 ```
 
+<a name="traffic_shapingalltls"></a>
+#### traffic\_shaping\.all\.tls: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**cert\_file**||||
+|[**client\_auth**](#traffic_shapingalltlsclient_auth)|`object`, `null`||yes|
+
+**Additional Properties:** not allowed  
+<a name="traffic_shapingalltlsclient_auth"></a>
+##### traffic\_shaping\.all\.tls\.client\_auth: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**cert\_file**|||yes|
+|**key\_file**|`string`|Format: `"path"`<br/>|yes|
+
+**Additional Properties:** not allowed  
 <a name="traffic_shapingrouter"></a>
 ### traffic\_shaping\.router: object
 
@@ -2966,6 +2989,7 @@ Configuration for the router itself, e.g., for handling incoming requests, or ot
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**request\_timeout**|`string`|Optional timeout configuration for incoming requests to the router.<br/>It starts from the moment the request is received by the router,<br/>and includes the entire processing of the request (validation, execution, etc.) until a response is sent back to the client.<br/>If a request takes longer than the specified duration, it will be aborted and a timeout error will be returned to the client.<br/>Default: `"1m"`<br/>||
+|[**tls**](#traffic_shapingroutertls)|`object`, `null`||yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2975,6 +2999,28 @@ request_timeout: 1m
 
 ```
 
+<a name="traffic_shapingroutertls"></a>
+#### traffic\_shaping\.router\.tls: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**cert\_file**|||yes|
+|[**client\_auth**](#traffic_shapingroutertlsclient_auth)|`object`, `null`||yes|
+|**key\_file**|`string`|Format: `"path"`<br/>|yes|
+
+**Additional Properties:** not allowed  
+<a name="traffic_shapingroutertlsclient_auth"></a>
+##### traffic\_shaping\.router\.tls\.client\_auth: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**cert\_file**|||yes|
+
+**Additional Properties:** not allowed  
 <a name="traffic_shapingsubgraphs"></a>
 ### traffic\_shaping\.subgraphs: object
 
@@ -2997,6 +3043,29 @@ Optional per-subgraph configurations that will override the default configuratio
 |**dedupe\_enabled**|`boolean`, `null`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>||
 |**pool\_idle\_timeout**|`string`, `null`|Timeout for idle sockets being kept-alive.<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
+|[**tls**](#traffic_shapingsubgraphsadditionalpropertiestls)|`object`, `null`|||
+
+**Additional Properties:** not allowed  
+<a name="traffic_shapingsubgraphsadditionalpropertiestls"></a>
+##### traffic\_shaping\.subgraphs\.additionalProperties\.tls: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**cert\_file**||||
+|[**client\_auth**](#traffic_shapingsubgraphsadditionalpropertiestlsclient_auth)|`object`, `null`||yes|
+
+**Additional Properties:** not allowed  
+<a name="traffic_shapingsubgraphsadditionalpropertiestlsclient_auth"></a>
+###### traffic\_shaping\.subgraphs\.additionalProperties\.tls\.client\_auth: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**cert\_file**|||yes|
+|**key\_file**|`string`|Format: `"path"`<br/>|yes|
 
 **Additional Properties:** not allowed  
 
