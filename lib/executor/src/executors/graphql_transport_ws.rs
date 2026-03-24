@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use strum::AsRefStr;
 use tracing::error;
 
-use crate::response::graphql_error::GraphQLError;
+use crate::{executors::common::SubgraphExecutionRequest, response::graphql_error::GraphQLError};
 
 pub const WS_SUBPROTOCOL: &str = "graphql-transport-ws";
 
@@ -73,7 +73,7 @@ impl From<CloseCode> for ws::Message {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscribePayload {
     pub query: String,
@@ -82,20 +82,36 @@ pub struct SubscribePayload {
     pub extensions: Option<HashMap<String, Value>>,
 }
 
-impl SubscribePayload {
-    pub fn new(
-        query: String,
-        operation_name: Option<String>,
-        variables: Option<HashMap<String, Value>>,
-        extensions: Option<HashMap<String, Value>>,
-    ) -> Self {
-        Self {
-            query,
-            operation_name,
-            variables,
-            extensions,
+pub fn build_subscribe_payload(
+    execution_request: SubgraphExecutionRequest<'_>,
+) -> (SubscribePayload, Option<ConnectionInitPayload>) {
+    let variables: Option<HashMap<String, Value>> = match &execution_request.variables {
+        Some(variables) => {
+            if variables.is_empty() {
+                None
+            } else {
+                Some(
+                    variables
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), (*v).clone()))
+                        .collect(),
+                )
+            }
         }
-    }
+        None => None,
+    };
+    let subscribe_payload = SubscribePayload {
+        query: execution_request.query.to_string(),
+        operation_name: execution_request.operation_name.map(|s| s.to_string()),
+        variables,
+        extensions: execution_request.extensions,
+    };
+    let init_payload = if execution_request.headers.is_empty() {
+        None
+    } else {
+        Some(execution_request.headers.into())
+    };
+    (subscribe_payload, init_payload)
 }
 
 #[derive(

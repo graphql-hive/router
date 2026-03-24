@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use dashmap::DashMap;
 use futures::stream::BoxStream;
 use http::{HeaderMap, HeaderValue};
@@ -20,7 +19,6 @@ use crate::executors::http::{build_request_body, HttpClient};
 use crate::plugin_context::PluginRequestState;
 use crate::response::graphql_error::GraphQLError;
 use crate::response::subgraph_response::SubgraphResponse;
-use crate::utils::consts::{CLOSE_BRACE, COMMA};
 
 pub const CALLBACK_PROTOCOL_VERSION: &str = "callback/1.0";
 pub const SUBSCRIPTION_PROTOCOL_HEADER: &str = "subscription-protocol";
@@ -106,22 +104,16 @@ impl HttpCallbackSubgraphExecutor {
 
     fn build_request_body(
         &self,
-        execution_request: &SubgraphExecutionRequest<'_>,
+        execution_request: &mut SubgraphExecutionRequest<'_>,
         subscription_id: &str,
         verifier: &str,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
-        // build the base body (query + variables)
-        let mut body = build_request_body(execution_request)?;
-        // but strip the closing `}` so we can append extensions
-        body.truncate(body.len() - 1);
-
         let callback_url = format!(
             "{}/{}",
             self.callback_base_url.trim_end_matches('/'),
             subscription_id
         );
-        let mut extensions: HashMap<String, sonic_rs::Value> =
-            execution_request.extensions.clone().unwrap_or_default();
+        let extensions = execution_request.extensions.get_or_insert_default();
 
         let subscription_ext = sonic_rs::json!({
             "callbackUrl": callback_url,
@@ -131,17 +123,7 @@ impl HttpCallbackSubgraphExecutor {
         });
         extensions.insert("subscription".to_string(), subscription_ext);
 
-        let extensions_str = sonic_rs::to_string(&extensions).map_err(|err| {
-            SubgraphExecutorError::VariablesSerializationFailure("extensions".to_string(), err)
-        })?;
-
-        body.put(COMMA);
-        body.put("\"extensions\":".as_bytes());
-        body.extend_from_slice(extensions_str.as_bytes());
-
-        body.put(CLOSE_BRACE);
-
-        Ok(body)
+        build_request_body(execution_request)
     }
 }
 
@@ -156,7 +138,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         &self,
         _execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
-        _plugin_req_state: &'a Option<PluginRequestState<'a>>,
+        _plugin_req_state: Option<&'a PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
         Err(SubgraphExecutorError::HttpCallbackNoSingle)
     }
@@ -164,7 +146,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
     #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn subscribe<'a>(
         &self,
-        execution_request: SubgraphExecutionRequest<'a>,
+        mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
     ) -> Result<
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
@@ -173,7 +155,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         let subscription_id = Uuid::new_v4().to_string();
         let verifier = Uuid::new_v4().to_string();
 
-        let body = self.build_request_body(&execution_request, &subscription_id, &verifier)?;
+        let body = self.build_request_body(&mut execution_request, &subscription_id, &verifier)?;
 
         let (tx, mut rx) = mpsc::unbounded_channel::<CallbackMessage>();
         self.active_subscriptions.insert(

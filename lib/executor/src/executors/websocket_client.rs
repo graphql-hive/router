@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use hyper_rustls::ConfigBuilderExt;
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use futures::{stream::LocalBoxStream, StreamExt};
 use ntex::{
@@ -10,7 +10,6 @@ use ntex::{
     ws::{self, error::WsError, WsClient as NtexWsClient, WsConnection, WsSink},
     SharedCfg,
 };
-use sonic_rs::Value;
 use tracing::{debug, error, trace};
 
 use crate::{
@@ -266,10 +265,7 @@ impl WsClient {
     /// Multiple subscriptions can be active simultaneously on the same connection.
     pub async fn subscribe(
         &mut self,
-        query: String,
-        operation_name: Option<String>,
-        variables: Option<HashMap<String, Value>>,
-        extensions: Option<HashMap<String, Value>>,
+        subscribe_payload: SubscribePayload,
     ) -> LocalBoxStream<'static, SubgraphResponse<'static>> {
         let subscribe_id = self.next_subscription_id();
 
@@ -277,7 +273,7 @@ impl WsClient {
             .sink
             .send(ClientMessage::subscribe(
                 subscribe_id.clone(),
-                SubscribePayload::new(query, operation_name, variables, extensions),
+                subscribe_payload,
             ))
             .await;
 

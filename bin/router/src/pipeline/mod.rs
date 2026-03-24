@@ -106,6 +106,7 @@ pub async fn graphql_request_handler(
 
     let started_at = Instant::now();
     let operation_span = GraphQLOperationSpan::new();
+    let span_clone = operation_span.clone();
 
     async {
         perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
@@ -204,7 +205,7 @@ pub async fn graphql_request_handler(
             return Ok(response);
         }
 
-        let normalize_payload = normalize_request_with_cache(
+        let normalized_payload = normalize_request_with_cache(
             supergraph,
             schema_state,
             &graphql_params,
@@ -214,13 +215,13 @@ pub async fn graphql_request_handler(
 
         write_graphql_operation_metric_identity(
                     req,
-                    normalize_payload.operation_indentity.name.clone(),
-                    Some(normalize_payload.operation_indentity.operation_type),
+                    normalized_payload.operation_indentity.name.clone(),
+                    Some(normalized_payload.operation_indentity.operation_type),
                 );
 
         if req.method() == Method::GET {
             if let Some(OperationKind::Mutation) =
-                normalize_payload.operation_for_plan.operation_kind
+                normalized_payload.operation_for_plan.operation_kind
             {
                 error!("Mutation is not allowed over GET, stopping");
                 return Err(PipelineError::MutationNotAllowedOverHttpGet);
@@ -228,7 +229,7 @@ pub async fn graphql_request_handler(
         }
 
         let is_subscription = matches!(
-            normalize_payload.operation_for_plan.operation_kind,
+            normalized_payload.operation_for_plan.operation_kind,
             Some(OperationKind::Subscription)
         );
 
@@ -258,7 +259,7 @@ pub async fn graphql_request_handler(
         let variable_payload = coerce_request_variables(
             supergraph,
             &mut graphql_params.variables,
-            &normalize_payload,
+            &normalized_payload,
         )?;
 
         let client_request_details = ClientRequestDetails {
@@ -266,8 +267,8 @@ pub async fn graphql_request_handler(
             url: req.uri(),
             headers: req.headers(),
             operation: OperationDetails {
-                name: normalize_payload.operation_for_plan.name.as_deref(),
-                kind: match normalize_payload.operation_for_plan.operation_kind {
+                name: normalized_payload.operation_for_plan.name.as_deref(),
+                kind: match normalized_payload.operation_for_plan.operation_kind {
                     Some(OperationKind::Query) => "query",
                     Some(OperationKind::Mutation) => "mutation",
                     Some(OperationKind::Subscription) => "subscription",
@@ -276,17 +277,17 @@ pub async fn graphql_request_handler(
                 query: graphql_params.get_query()?,
             },
             jwt: jwt_request_details,
-        };
+        }.into();
 
         match execute_pipeline(
             &client_request_details,
-            &normalize_payload,
-            &variable_payload,
+            &normalized_payload,
+            variable_payload,
             supergraph,
             shared_state,
             schema_state,
-            &operation_span,
-            &plugin_req_state,
+            operation_span,
+            plugin_req_state,
         )
         .await?
         {
@@ -353,7 +354,7 @@ pub async fn graphql_request_handler(
                         started_at.elapsed(),
                         client_name,
                         client_version,
-                        &client_request_details,
+                        &client_request_details.operation,
                         hive_usage_agent,
                         shared_state
                             .router_config
@@ -385,7 +386,7 @@ pub async fn graphql_request_handler(
             }
         }
     }
-    .instrument(operation_span.clone())
+    .instrument(span_clone)
     .await
     .inspect_err(|_| {
       write_graphql_response_metric_status(req, GraphQLResponseStatus::Error);
@@ -395,16 +396,16 @@ pub async fn graphql_request_handler(
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_pipeline<'exec>(
-    client_request_details: &ClientRequestDetails<'exec>,
-    normalize_payload: &Arc<GraphQLNormalizationPayload>,
-    variable_payload: &CoerceVariablesPayload,
+    client_request_details: &Arc<ClientRequestDetails<'exec>>,
+    normalized_payload: &Arc<GraphQLNormalizationPayload>,
+    variable_payload: CoerceVariablesPayload,
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
-    operation_span: &GraphQLOperationSpan,
-    plugin_req_state: &Option<PluginRequestState<'exec>>,
+    operation_span: GraphQLOperationSpan,
+    plugin_req_state: Option<PluginRequestState<'exec>>,
 ) -> Result<QueryPlanExecutionResult, PipelineError> {
-    if normalize_payload.operation_for_introspection.is_some() {
+    if normalized_payload.operation_for_introspection.is_some() {
         handle_introspection_policy(&shared_state.introspection_policy, client_request_details)?;
     }
 
@@ -416,22 +417,22 @@ pub async fn execute_pipeline<'exec>(
         client_request_details,
     )?;
 
-    let (normalize_payload, authorization_errors) = enforce_operation_authorization(
+    let (normalized_payload, authorization_errors) = enforce_operation_authorization(
         &shared_state.router_config,
-        normalize_payload,
+        normalized_payload,
         &supergraph.authorization,
         &supergraph.metadata,
-        variable_payload,
+        &variable_payload,
         &client_request_details.jwt,
     )?;
 
     let query_plan_result = plan_operation_with_cache(
         supergraph,
         schema_state,
-        &normalize_payload,
+        &normalized_payload,
         &progressive_override_ctx,
         &cancellation_token,
-        plugin_req_state,
+        &plugin_req_state,
     )
     .await?;
 
@@ -443,10 +444,10 @@ pub async fn execute_pipeline<'exec>(
     };
 
     let planned_request = PlannedRequest {
-        normalized_payload: &normalize_payload,
+        normalized_payload,
         query_plan_payload: &query_plan_payload,
         variable_payload,
-        client_request_details,
+        client_request_details: client_request_details.clone(),
         authorization_errors,
         plugin_req_state,
     };

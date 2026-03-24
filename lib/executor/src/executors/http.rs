@@ -303,7 +303,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         &self,
         mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-        plugin_req_state: &'a Option<PluginRequestState<'a>>,
+        plugin_req_state: Option<&'a PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
         let mut body = build_request_body(&execution_request)?;
 

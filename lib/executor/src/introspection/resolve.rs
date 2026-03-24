@@ -18,9 +18,9 @@ use hive_router_query_planner::state::supergraph_state::OperationKind;
 use crate::introspection::schema::SchemaMetadata;
 use crate::response::value::Value;
 
-pub struct IntrospectionContext<'exec> {
-    pub query: Option<&'exec OperationDefinition>,
-    pub schema: &'exec Document,
+pub struct IntrospectionContext {
+    pub query: Option<Arc<OperationDefinition>>,
+    pub schema: Arc<Document>,
     pub metadata: Arc<SchemaMetadata>,
 }
 
@@ -83,7 +83,7 @@ fn kind_to_str<'exec>(type_def: &'exec TypeDefinition) -> Cow<'exec, str> {
 fn resolve_input_value<'exec>(
     iv: &'exec InputValue,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
     let mut iv_data = resolve_input_value_selections(iv, &selections.items, ctx);
     iv_data.sort_by_key(|(k, _)| *k);
@@ -93,7 +93,7 @@ fn resolve_input_value<'exec>(
 fn resolve_input_value_selections<'exec>(
     iv: &'exec InputValue,
     selection_items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut iv_data: Vec<(&str, Value<'_>)> = Vec::with_capacity(selection_items.len());
     for item in selection_items {
@@ -130,7 +130,7 @@ fn resolve_input_value_selections<'exec>(
 fn resolve_field<'exec>(
     f: &'exec Field,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
     let mut field_data = resolve_field_selections(f, &selections.items, ctx);
     field_data.sort_by_key(|(k, _)| *k);
@@ -140,7 +140,7 @@ fn resolve_field<'exec>(
 fn resolve_field_selections<'exec>(
     f: &'exec Field,
     selection_items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut field_data = Vec::with_capacity(selection_items.len());
     for item in selection_items {
@@ -221,7 +221,7 @@ fn resolve_enum_value_selections<'exec>(
 fn resolve_type_definition<'exec>(
     type_def: &'exec TypeDefinition,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
     let mut type_data = resolve_type_definition_selections(type_def, &selections.items, ctx);
     type_data.sort_by_key(|(k, _)| *k);
@@ -231,7 +231,7 @@ fn resolve_type_definition<'exec>(
 fn resolve_type_definition_selections<'exec>(
     type_def: &'exec TypeDefinition,
     selection_items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut type_data = Vec::with_capacity(selection_items.len());
 
@@ -391,7 +391,7 @@ fn resolve_wrapper_type<'exec>(
     kind: &'exec str,
     inner_type: &'exec Type,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
     let mut type_data = resolve_wrapper_type_selections(kind, inner_type, &selections.items, ctx);
     type_data.sort_by_key(|(k, _)| *k);
@@ -402,7 +402,7 @@ fn resolve_wrapper_type_selections<'exec>(
     kind: &'exec str,
     inner_type: &'exec Type,
     selection_items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut type_data = Vec::with_capacity(selection_items.len());
     for item in selection_items {
@@ -430,7 +430,7 @@ fn resolve_wrapper_type_selections<'exec>(
 fn resolve_type<'exec>(
     t: &'exec Type,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
     match t {
         Type::NamedType(name) => {
@@ -450,7 +450,7 @@ fn resolve_type<'exec>(
 fn resolve_directive<'exec>(
     d: &'exec DirectiveDefinition,
     selections: &'exec SelectionSet,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
     let mut directive_data = resolve_directive_selections(d, &selections.items, ctx);
     directive_data.sort_by_key(|(k, _)| *k);
@@ -460,7 +460,7 @@ fn resolve_directive<'exec>(
 fn resolve_directive_selections<'exec>(
     d: &'exec DirectiveDefinition,
     selection_items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut directive_data = Vec::with_capacity(selection_items.len());
     for item in selection_items {
@@ -505,7 +505,7 @@ fn resolve_directive_selections<'exec>(
 
 fn resolve_schema_field<'exec>(
     field: &'exec FieldSelection,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
     let mut schema_data = resolve_schema_selections(&field.selections.items, ctx);
 
@@ -515,7 +515,7 @@ fn resolve_schema_field<'exec>(
 
 fn resolve_schema_selections<'exec>(
     items: &'exec Vec<SelectionItem>,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Vec<(&'exec str, Value<'exec>)> {
     let mut schema_data = Vec::with_capacity(items.len());
 
@@ -583,7 +583,7 @@ fn resolve_schema_selections<'exec>(
 
 pub fn resolve_introspection<'exec>(
     operation_definition: &'exec OperationDefinition,
-    ctx: &'exec IntrospectionContext<'exec>,
+    ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
     let root_selection_set = &operation_definition.selection_set;
 

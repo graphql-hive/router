@@ -167,7 +167,7 @@ impl SubgraphExecutorMap {
         subgraph_name: &'exec str,
         mut execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec>,
-        plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
+        plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
     ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
         let mut executor = self.get_or_create_http_executor(subgraph_name, client_request)?;
 

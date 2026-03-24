@@ -1,3 +1,5 @@
+use std::str::Utf8Error;
+
 use bytes::{Buf, Bytes};
 use futures::stream::BoxStream;
 use http_body_util::BodyExt;
@@ -14,7 +16,7 @@ const MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024; // 10MB
 #[derive(thiserror::Error, Debug)]
 pub enum ParseError {
     #[error("Invalid UTF-8 sequence: {0}")]
-    InvalidUtf8(String),
+    InvalidUtf8(#[from] Utf8Error),
     #[error("Stream read error: {0}")]
     StreamReadError(String),
     #[error("Invalid subgraph response: {0}")]
@@ -184,7 +186,7 @@ fn find_next_part(
 }
 
 fn parse_part(raw: &[u8]) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
-    let text = std::str::from_utf8(raw).map_err(|e| ParseError::InvalidUtf8(e.to_string()))?;
+    let text = std::str::from_utf8(raw)?;
     let body = extract_body_after_headers(text);
 
     if body.is_empty() {

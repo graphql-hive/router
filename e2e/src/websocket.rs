@@ -6,7 +6,8 @@ mod websocket_e2e_tests {
 
     use crate::testkit::{TestRouter, TestSubgraphs};
     use hive_router_plan_executor::executors::{
-        graphql_transport_ws::ConnectionInitPayload, websocket_client::WsClient,
+        graphql_transport_ws::{ConnectionInitPayload, SubscribePayload},
+        websocket_client::WsClient,
     };
 
     #[ntex::test]
@@ -33,9 +34,8 @@ mod websocket_e2e_tests {
             .await
             .expect("Failed to init WsClient");
 
-        let mut stream = client
-            .subscribe(
-                r#"
+        let execution_request = SubscribePayload {
+            query: r#"
                 query {
                     topProducts {
                         name
@@ -43,12 +43,11 @@ mod websocket_e2e_tests {
                     }
                 }
                 "#
-                .to_string(),
-                None,
-                None,
-                None,
-            )
-            .await;
+            .into(),
+            ..Default::default()
+        };
+
+        let mut stream = client.subscribe(execution_request).await;
 
         let response = stream.next().await.expect("Expected a response");
 
@@ -85,9 +84,8 @@ mod websocket_e2e_tests {
             .await
             .expect("Failed to init WsClient");
 
-        let mut stream = client
-            .subscribe(
-                r#"
+        let subscribe_payload = SubscribePayload {
+            query: r#"
                 subscription {
                     reviewAdded(step: 1, intervalInMs: 0) {
                         id
@@ -95,12 +93,11 @@ mod websocket_e2e_tests {
                     }
                 }
                 "#
-                .to_string(),
-                None,
-                None,
-                None,
-            )
-            .await;
+            .into(),
+            ..Default::default()
+        };
+
+        let mut stream = client.subscribe(subscribe_payload).await;
 
         let mut received_count = 0;
         while let Some(response) = stream.next().await {
@@ -141,37 +138,33 @@ mod websocket_e2e_tests {
             .await
             .expect("Failed to init WsClient");
 
-        let mut stream1 = client
-            .subscribe(
-                r#"
+        let subscribe_payload1 = SubscribePayload {
+            query: r#"
                 subscription {
                     reviewAdded(step: 1, intervalInMs: 0) {
                         id
                     }
                 }
                 "#
-                .to_string(),
-                None,
-                None,
-                None,
-            )
-            .await;
+            .into(),
+            ..Default::default()
+        };
 
-        let mut stream2 = client
-            .subscribe(
-                r#"
+        let mut stream1 = client.subscribe(subscribe_payload1).await;
+
+        let subscribe_payload = SubscribePayload {
+            query: r#"
                 subscription {
                     reviewAdded(step: 2, intervalInMs: 0) {
                         id
                     }
                 }
                 "#
-                .to_string(),
-                None,
-                None,
-                None,
-            )
-            .await;
+            .into(),
+            ..Default::default()
+        };
+
+        let mut stream2 = client.subscribe(subscribe_payload).await;
 
         let mut count1 = 0;
         let mut count2 = 0;
@@ -257,9 +250,8 @@ mod websocket_e2e_tests {
         .await
         .expect("Failed to init WsClient");
 
-        let mut stream = client
-            .subscribe(
-                r#"
+        let subscribe_payload = SubscribePayload {
+            query: r#"
                 query {
                     topProducts {
                         name
@@ -267,12 +259,11 @@ mod websocket_e2e_tests {
                     }
                 }
                 "#
-                .to_string(),
-                None,
-                None,
-                None,
-            )
-            .await;
+            .into(),
+            ..Default::default()
+        };
+
+        let mut stream = client.subscribe(subscribe_payload).await;
 
         stream.next().await.expect("Expected a response");
 
@@ -322,9 +313,8 @@ mod websocket_e2e_tests {
             .await
             .expect("Failed to init WsClient");
 
-        let mut stream = client
-            .subscribe(
-                r#"
+        let subscribe_payload = SubscribePayload {
+            query: r#"
                 query {
                     topProducts {
                         name
@@ -332,15 +322,15 @@ mod websocket_e2e_tests {
                     }
                 }
                 "#
-                .to_string(),
-                None,
-                None,
-                Some(HashMap::from([(
-                    "headers".to_string(),
-                    json!({"x-context": "my-extensions-value"}),
-                )])),
-            )
-            .await;
+            .into(),
+            extensions: Some(HashMap::from([(
+                "headers".to_string(),
+                json!({"x-context": "my-extensions-value"}),
+            )])),
+            ..Default::default()
+        };
+
+        let mut stream = client.subscribe(subscribe_payload).await;
 
         stream.next().await.expect("Expected a response");
 
@@ -398,45 +388,42 @@ mod websocket_e2e_tests {
         .await
         .expect("Failed to init WsClient");
 
-        // merging headers
-        let mut stream = client
-            .subscribe(
-                r#"
+        let subscribe_payload = SubscribePayload {
+            query: r#"
                 query {
                     topProducts {
                         name
                         upc
                     }
                 }
-                "#
-                .to_string(),
-                None,
-                None,
-                Some(HashMap::from([(
-                    "headers".to_string(),
-                    json!({"x-context": "my-extensions-value"}),
-                )])),
-            )
-            .await;
+            "#
+            .into(),
+            extensions: Some(HashMap::from([(
+                "headers".to_string(),
+                json!({"x-context": "my-extensions-value"}),
+            )])),
+            ..Default::default()
+        };
+
+        // merging headers
+        let mut stream = client.subscribe(subscribe_payload).await;
         stream.next().await.expect("Expected a response");
 
-        // missing headers in extensions, should've been merged
-        let mut stream = client
-            .subscribe(
-                r#"
+        let subscribe_payload = SubscribePayload {
+            query: r#"
                 query {
                     topProducts {
                         name
                         upc
                     }
                 }
-                "#
-                .to_string(),
-                None,
-                None,
-                None,
-            )
-            .await;
+            "#
+            .into(),
+            ..Default::default()
+        };
+
+        // missing headers in extensions, should've been merged
+        let mut stream = client.subscribe(subscribe_payload).await;
         stream.next().await.expect("Expected a response");
 
         let products_requests = subgraphs
