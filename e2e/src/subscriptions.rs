@@ -1291,8 +1291,7 @@ mod subscriptions_e2e_tests {
         data: {"data":{"reviewAdded":{"id":"3"}}}
 
         event: next
-        data: {"errors":[{"message":"Failed to execute request to subgraph","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_SSE_STREAM_ERROR","serviceName":"reviews"}}]}
-
+        data: {"errors":[{"message":"Error reading SSE subscription stream: Stream read error: error reading a body from connection","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_SSE_STREAM_ERROR","serviceName":"reviews"}}]}
         event: complete
         "#);
     }

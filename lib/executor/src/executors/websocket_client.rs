@@ -263,7 +263,7 @@ impl WsClient {
     /// a Complete message, or can be cancelled by dropping the stream.
     ///
     /// Multiple subscriptions can be active simultaneously on the same connection.
-    pub async fn subscribe<'exec>(
+    pub async fn subscribe(
         &mut self,
         subscribe_payload: SubscribePayload,
     ) -> LocalBoxStream<'static, SubgraphResponse<'static>> {
