@@ -10,3 +10,6 @@ test_qpe = "test --package hive-router-plan-executor"
 test_plugin_examples = "test --package *-plugin-example -- --test-threads=5"
 "clippy:fix" = "clippy --all --fix --allow-dirty --allow-staged"
 "router-config" = "run --release -p hive-router-config router-config.schema.json"
+
+[build]
+rustflags = ["--cfg", "tracing_unstable"]

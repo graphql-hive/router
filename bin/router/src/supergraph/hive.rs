@@ -3,7 +3,7 @@ use hive_console_sdk::supergraph_fetcher::{
     async_fetcher::SupergraphFetcherAsyncState, SupergraphFetcher, SupergraphFetcherError,
 };
 use std::time::Duration;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{
     consts::ROUTER_VERSION,
@@ -59,13 +59,20 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
         match fetcher_result {
             // If there was an error fetching the supergraph, propagate it
             Err(err) => {
-                error!("Error fetching supergraph from Hive Console: {}", err);
+                error!(error = %err, "Error fetching supergraph from Hive Console");
                 Err(LoadSupergraphError::from(err))
             }
             // If the supergraph has not changed, return Unchanged
-            Ok(None) => Ok(ReloadSupergraphResult::Unchanged),
+            Ok(None) => {
+                debug!("Supergraph from Hive Console loaded but was not changed");
+                Ok(ReloadSupergraphResult::Unchanged)
+            }
             // If there is a new supergraph SDL, return it
-            Ok(Some(sdl)) => Ok(ReloadSupergraphResult::Changed { new_sdl: sdl }),
+            Ok(Some(sdl)) => {
+                info!("Supergraph from Hive Console loaded and changed");
+                debug!(sdl, "New supergraph SDL");
+                Ok(ReloadSupergraphResult::Changed { new_sdl: sdl })
+            }
         }
     }
 
@@ -85,11 +92,12 @@ impl SupergraphHiveConsoleLoader {
         retry_count: u32,
     ) -> Result<Box<Self>, LoadSupergraphError> {
         debug!(
-            "Creating supergraph source from Hive Console CDN: '{:#?}' (poll interval: {}ms, request_timeout: {}ms)",
-            endpoints,
-            poll_interval.as_millis(),
-            request_timeout.as_millis()
+          endpoints = ?endpoints,
+          poll_interval_ms = poll_interval.as_millis(),
+          request_timeout_ms = request_timeout.as_millis(),
+          "Creating supergraph source from Hive Console",
         );
+
         let mut fetcher_builder = SupergraphFetcher::builder()
             .user_agent(format!("hive-router/{}", ROUTER_VERSION))
             .key(key.to_string())

@@ -1,8 +1,11 @@
 use std::{sync::Arc, time::Instant};
-use tracing::{error, Instrument};
+use tracing::{debug, error, Instrument};
 
-use hive_router_internal::telemetry::traces::spans::{
-    graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+use hive_router_internal::{
+    logging::context::LoggerContext,
+    telemetry::traces::spans::{
+        graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+    },
 };
 use hive_router_plan_executor::{
     execution::{
@@ -73,6 +76,7 @@ pub async fn graphql_request_handler(
     schema_state: &Arc<SchemaState>,
     http_server_request_span: &HttpServerRequestSpan,
     response_mode: &mut ResponseMode,
+    logger_context: Arc<LoggerContext>,
 ) -> Result<web::HttpResponse, PipelineError> {
     // If an early CORS response is needed, return it immediately.
     if let Some(early_response) = shared_state
@@ -85,13 +89,16 @@ pub async fn graphql_request_handler(
 
     // agree on the response content type
     *response_mode = req.negotiate()?;
+    debug!(%response_mode, "response mode negotiated");
 
     if *response_mode == ResponseMode::GraphiQL {
         if shared_state.router_config.graphiql.enabled {
+            debug!("responding with graphiql");
             return Ok(web::HttpResponse::Ok()
                 .header(CONTENT_TYPE, TEXT_HTML_MIME)
                 .body(GRAPHIQL_HTML));
         } else {
+            debug!("responding with not found, graphiql disabled");
             return Ok(web::HttpResponse::NotFound().into());
         }
     }
@@ -113,8 +120,9 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
-        write_request_body_size(req, body_bytes.len() as u64);
-        http_server_request_span.record_body_size(body_bytes.len());
+        let req_body_size = body_bytes.len();
+        write_request_body_size(req, req_body_size as u64);
+        http_server_request_span.record_body_size(req_body_size);
 
         let mut plugin_req_state = None;
 
@@ -161,6 +169,18 @@ pub async fn graphql_request_handler(
                     .version_header,
             )
             .and_then(|v| v.to_str().ok());
+
+        logger_context.graphql_request_start(
+            req_body_size,
+            client_name,
+            client_version,
+            // TODO: In the future, once we merge crates, we can pass `graphql_params` as-is.
+            // At the moment, we can't since it's defined in router, and moving it will cause a major refactoring due to other dependencies.
+            graphql_params.query.as_deref(),
+            graphql_params.operation_name.as_deref(),
+            &graphql_params.variables,
+            graphql_params.extensions.as_ref(),
+          );
 
         let parser_result =
             parse_operation_with_cache(shared_state, &graphql_params, &plugin_req_state).await?;
@@ -275,7 +295,7 @@ pub async fn graphql_request_handler(
             jwt: jwt_request_details,
         };
 
-        let pipeline_result  = execute_pipeline(
+        let pipeline_result = execute_pipeline(
             &client_request_details,
             &normalize_payload,
             &variable_payload,
@@ -286,6 +306,8 @@ pub async fn graphql_request_handler(
             &plugin_req_state,
         )
         .await?;
+
+        logger_context.graphql_request_end(pipeline_result.error_count);
 
         write_graphql_response_metric_status(req, if pipeline_result.error_count > 0 {
                     GraphQLResponseStatus::Error

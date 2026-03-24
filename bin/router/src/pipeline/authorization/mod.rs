@@ -172,7 +172,7 @@ pub fn apply_authorization_to_operation(
     }
 
     if reject_mode {
-        tracing::debug!("Request rejected due to unauthorized fields and reject mode being set");
+        tracing::warn!("Request rejected due to unauthorized fields and reject mode being set");
         return AuthorizationDecision::Reject {
             errors: collection_result.errors,
         };
