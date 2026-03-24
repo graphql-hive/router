@@ -46,4 +46,3 @@ The router dedupe fingerprint includes:
 - schema checksum
 - GraphQL extensions
 
-Schema checksum is derived from the loaded `SupergraphData` snapshot used for execution, preventing cross-schema sharing during schema reload transitions.
