@@ -302,7 +302,7 @@ pub async fn execute_query_plan<'exec>(
                     plugin_req_state: None,
                     graphql_error_recorder: None,
                 };
-                match execute_query_plan_inner(response.data, opts).await {
+                match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
                     Err(err) => {
                         // fatal error, stream it and stop
@@ -333,12 +333,12 @@ pub async fn execute_query_plan<'exec>(
         Value::Object(Vec::new())
     };
 
-    let output = execute_query_plan_inner(data, opts).await?;
+    let output = execute_query_plan_with_data(data, opts).await?;
 
     Ok(QueryPlanExecutionResult::Single(output))
 }
 
-async fn execute_query_plan_inner<'exec>(
+async fn execute_query_plan_with_data<'exec>(
     mut data: Value<'exec>,
     opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
