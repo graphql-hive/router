@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock};
 
+use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
@@ -43,12 +44,12 @@ pub async fn plan_operation_with_cache(
 
     async {
         let mut on_end_callbacks = vec![];
-        let filtered_operation_for_plan = &normalized_operation.operation_for_plan;
+        let mut filtered_operation_for_plan = normalized_operation.operation_for_plan.as_ref();
         if let Some(plugin_req_state) = plugin_req_state {
             let mut start_payload = OnQueryPlanStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
-                filtered_operation_for_plan: &normalized_operation.operation_for_plan,
+                filtered_operation_for_plan,
                 cancellation_token,
                 planner: &supergraph.planner,
             };
@@ -68,12 +69,24 @@ pub async fn plan_operation_with_cache(
                     }
                 }
             }
+
+            filtered_operation_for_plan = start_payload.filtered_operation_for_plan;
         };
+
+        let metrics = &schema_state.telemetry_context.metrics;
+        let plan_cache_capture = metrics.cache.plan.capture_request();
 
         let stable_override_context =
             StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
-        let plan_cache_key =
-            calculate_cache_key(filtered_operation_for_plan.hash(), &stable_override_context);
+        let operation_for_plan_hash = if std::ptr::eq(
+            filtered_operation_for_plan,
+            normalized_operation.operation_for_plan.as_ref(),
+        ) {
+            normalized_operation.operation_for_plan_hash
+        } else {
+            filtered_operation_for_plan.hash()
+        };
+        let plan_cache_key = calculate_cache_key(operation_for_plan_hash, &stable_override_context);
         let is_plan_operation_empty = filtered_operation_for_plan.selection_set.is_empty();
         let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
         let contains_introspection = normalized_operation.operation_for_introspection.is_some();
@@ -83,9 +96,8 @@ pub async fn plan_operation_with_cache(
         plan_span.record_cache_hit(true);
         let mut plan = schema_state
             .plan_cache
-            .try_get_with(plan_cache_key, async {
-                cache_hint = CacheHint::Miss;
-                plan_span.record_cache_hit(false);
+            .entry(plan_cache_key)
+            .or_try_insert_with(async {
                 if is_pure_introspection {
                     return Ok(EMPTY_QUERY_PLAN.clone());
                 }
@@ -115,7 +127,20 @@ pub async fn plan_operation_with_cache(
                     )
                     .map(Arc::new)
             })
-            .await?;
+            .await
+            .map_err(PipelineError::from)
+            .into_result_with_hit_miss(|hit_miss| match hit_miss {
+                CacheHitMiss::Hit => {
+                    cache_hint = CacheHint::Hit;
+                    plan_span.record_cache_hit(true);
+                    plan_cache_capture.finish_hit();
+                }
+                CacheHitMiss::Miss | CacheHitMiss::Error => {
+                    cache_hint = CacheHint::Miss;
+                    plan_span.record_cache_hit(false);
+                    plan_cache_capture.finish_miss();
+                }
+            })?;
 
         if !on_end_callbacks.is_empty() {
             let mut end_payload = OnQueryPlanEndHookPayload {

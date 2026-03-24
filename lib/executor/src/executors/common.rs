@@ -40,7 +40,7 @@ pub struct SubgraphExecutionRequest<'a> {
     // TODO: variables could be stringified before even executing the request
     pub variables: Option<HashMap<&'a str, &'a sonic_rs::Value>>,
     pub headers: HeaderMap,
-    pub representations: Option<Vec<u8>>,
+    pub raw_variable_values: Option<Vec<(&'a str, Vec<u8>)>>,
     pub extensions: Option<SubgraphRequestExtensions>,
 }
 

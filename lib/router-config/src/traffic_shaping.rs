@@ -3,6 +3,8 @@ use std::{collections::HashMap, time::Duration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::primitives::http_header::HttpHeaderName;
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingConfig {
@@ -42,6 +44,10 @@ fn default_pool_idle_timeout() -> Duration {
 
 fn default_dedupe_enabled() -> bool {
     true
+}
+
+fn default_router_dedupe_enabled() -> bool {
+    false
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -160,6 +166,9 @@ impl Default for TrafficShapingExecutorGlobalConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingRouterConfig {
+    #[serde(default)]
+    pub dedupe: TrafficShapingRouterDedupeConfig,
+
     /// Optional timeout configuration for incoming requests to the router.
     /// It starts from the moment the request is received by the router,
     /// and includes the entire processing of the request (validation, execution, etc.) until a response is sent back to the client.
@@ -173,6 +182,58 @@ pub struct TrafficShapingRouterConfig {
     pub request_timeout: Duration,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingRouterDedupeConfig {
+    /// Enables/disables in-flight request deduplication at the router endpoint level.
+    ///
+    /// When enabled, identical incoming GraphQL query requests that are processed at the same time
+    /// share the same in-flight execution result.
+    #[serde(default = "default_router_dedupe_enabled")]
+    pub enabled: bool,
+
+    /// Header configuration participating in the dedupe key.
+    ///
+    /// Accepted forms:
+    /// - `all`
+    /// - `none`
+    /// - `{ include: ["authorization", "cookie"] }`
+    ///
+    /// Header names are case-insensitive and validated as standard HTTP header names.
+    #[serde(default)]
+    pub headers: TrafficShapingRouterDedupeHeadersConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TrafficShapingRouterDedupeHeadersKeyword {
+    #[default]
+    All,
+    None,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub enum TrafficShapingRouterDedupeHeadersConfig {
+    Keyword(TrafficShapingRouterDedupeHeadersKeyword),
+    Include { include: Vec<HttpHeaderName> },
+}
+
+impl Default for TrafficShapingRouterDedupeHeadersConfig {
+    fn default() -> Self {
+        Self::Keyword(TrafficShapingRouterDedupeHeadersKeyword::All)
+    }
+}
+
+impl Default for TrafficShapingRouterDedupeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_router_dedupe_enabled(),
+            headers: Default::default(),
+        }
+    }
+}
+
 fn default_router_request_timeout() -> Duration {
     Duration::from_secs(60)
 }
@@ -180,6 +241,7 @@ fn default_router_request_timeout() -> Duration {
 impl Default for TrafficShapingRouterConfig {
     fn default() -> Self {
         Self {
+            dedupe: Default::default(),
             request_timeout: default_router_request_timeout(),
         }
     }

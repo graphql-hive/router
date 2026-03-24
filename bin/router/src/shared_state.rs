@@ -1,18 +1,26 @@
 use graphql_tools::validation::validate::ValidationPlan;
 use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
+use hive_router_config::traffic_shaping::{
+    TrafficShapingRouterDedupeHeadersConfig, TrafficShapingRouterDedupeHeadersKeyword,
+};
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
+use hive_router_internal::inflight::InFlightMap;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
 use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
+use http::StatusCode;
 use moka::future::Cache;
 use moka::Expiry;
-use std::sync::Arc;
+use ntex::web;
+use ntex::{http::HeaderMap, util::Bytes};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{collections::HashSet, sync::Arc};
 
+use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
@@ -21,6 +29,71 @@ use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
+pub type RouterInflightRequestsMap = InFlightMap<u64, SharedRouterResponse>;
+
+#[derive(Clone)]
+pub enum RouterRequestDedupeHeaderPolicy {
+    All,
+    None,
+    Include(HashSet<String>),
+}
+
+impl RouterRequestDedupeHeaderPolicy {
+    #[inline]
+    pub fn should_include(&self, header_name: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::None => false,
+            Self::Include(allowed_headers) => allowed_headers.contains(header_name),
+        }
+    }
+}
+
+impl From<&TrafficShapingRouterDedupeHeadersConfig> for RouterRequestDedupeHeaderPolicy {
+    fn from(headers: &TrafficShapingRouterDedupeHeadersConfig) -> Self {
+        match headers {
+            TrafficShapingRouterDedupeHeadersConfig::Keyword(
+                TrafficShapingRouterDedupeHeadersKeyword::All,
+            ) => Self::All,
+            TrafficShapingRouterDedupeHeadersConfig::Keyword(
+                TrafficShapingRouterDedupeHeadersKeyword::None,
+            ) => Self::None,
+            TrafficShapingRouterDedupeHeadersConfig::Include { include } => {
+                if include.is_empty() {
+                    return Self::None;
+                }
+
+                let mut dedupe_headers = HashSet::with_capacity(include.len());
+                for header in include {
+                    dedupe_headers.insert(header.get_header_ref().as_str().to_owned());
+                }
+
+                Self::Include(dedupe_headers)
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SharedRouterResponse {
+    pub body: Bytes,
+    pub headers: Arc<HeaderMap>,
+    pub status: StatusCode,
+    pub error_count: usize,
+}
+
+impl From<SharedRouterResponse> for web::HttpResponse {
+    fn from(shared_response: SharedRouterResponse) -> Self {
+        let mut response = web::HttpResponse::Ok();
+        response.status(shared_response.status);
+
+        for (header_name, header_value) in shared_response.headers.iter() {
+            response.set_header(header_name, header_value);
+        }
+
+        response.body(shared_response.body)
+    }
+}
 
 /// Default TTL for JWT claims cache entries (5 seconds)
 const DEFAULT_JWT_CACHE_TTL_SECS: u64 = 5;
@@ -78,6 +151,8 @@ pub struct RouterSharedState {
     pub introspection_policy: BooleanOrProgram,
     pub telemetry_context: Arc<TelemetryContext>,
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
+    pub in_flight_requests: RouterInflightRequestsMap,
+    pub in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy,
 }
 
 impl RouterSharedState {
@@ -88,11 +163,13 @@ impl RouterSharedState {
         validation_plan: ValidationPlan,
         telemetry_context: Arc<TelemetryContext>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
+        cache_state: Arc<CacheState>,
     ) -> Result<Self, SharedStateError> {
+        let parse_cache = cache_state.parse_cache.clone();
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
             headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
-            parse_cache: moka::future::Cache::new(1000),
+            parse_cache,
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             jwt_claims_cache: Cache::builder()
                 // High capacity due to potentially high token diversity.
@@ -111,6 +188,13 @@ impl RouterSharedState {
                 .map_err(Box::new)?,
             telemetry_context,
             plugins,
+            in_flight_requests: InFlightMap::default(),
+            in_flight_requests_header_policy: (&router_config
+                .traffic_shaping
+                .router
+                .dedupe
+                .headers)
+                .into(),
         })
     }
 }
@@ -127,4 +211,41 @@ pub enum SharedStateError {
     UsageAgent(#[from] Box<AgentError>),
     #[error("invalid introspection config: {0}")]
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RouterRequestDedupeHeaderPolicy;
+    use hive_router_config::traffic_shaping::{
+        TrafficShapingRouterDedupeHeadersConfig, TrafficShapingRouterDedupeHeadersKeyword,
+    };
+
+    #[test]
+    fn should_map_header_variants_to_policy() {
+        let all = TrafficShapingRouterDedupeHeadersConfig::Keyword(
+            TrafficShapingRouterDedupeHeadersKeyword::All,
+        );
+        assert!(matches!(
+            RouterRequestDedupeHeaderPolicy::from(&all),
+            RouterRequestDedupeHeaderPolicy::All
+        ));
+
+        let none = TrafficShapingRouterDedupeHeadersConfig::Keyword(
+            TrafficShapingRouterDedupeHeadersKeyword::None,
+        );
+        assert!(matches!(
+            RouterRequestDedupeHeaderPolicy::from(&none),
+            RouterRequestDedupeHeaderPolicy::None
+        ));
+
+        let include = TrafficShapingRouterDedupeHeadersConfig::Include {
+            include: vec!["Authorization".into()],
+        };
+        let include_policy = RouterRequestDedupeHeaderPolicy::from(&include);
+        assert!(matches!(
+            include_policy,
+            RouterRequestDedupeHeaderPolicy::Include(_)
+        ));
+        assert!(include_policy.should_include("authorization"));
+    }
 }

@@ -5,7 +5,6 @@ use crate::{
 use graphql_tools::parser::query as query_ast;
 
 use super::selection_set::{FieldSelection, InlineFragmentSelection};
-use core::panic;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -225,8 +224,8 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::Selection<'a, T>> for Selection
             query_ast::Selection::InlineFragment(fragment) => {
                 SelectionItem::InlineFragment(fragment.into())
             }
-            query_ast::Selection::FragmentSpread(_) => {
-                panic!("Received a fragment spread, but it should be inlined after normalization");
+            query_ast::Selection::FragmentSpread(fragment) => {
+                SelectionItem::FragmentSpread(fragment.fragment_name.as_ref().into())
             }
         }
     }

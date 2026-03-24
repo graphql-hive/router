@@ -5,16 +5,17 @@
   "workspaces": [
     "audits",
     "lib/node-addon",
-    "docs/generator"
+    "docs/generator",
+    "bench"
   ],
-  "packageManager": "npm@11.11.0",
+  "packageManager": "npm@11.11.1",
   "devDependencies": {
     "@graphql-hive/laboratory": "0.1.2",
-    "cross-spawn": "7.0.6",
-    "qs": "6.15.0"
+    "cross-spawn": "^7.0.6",
+    "qs": "^6.15.0"
   },
   "overrides": {
-    "cross-spawn": "7.0.6",
-    "qs": "6.15.0"
+    "cross-spawn": "^7.0.6",
+    "qs": "^6.15.0"
   }
 }

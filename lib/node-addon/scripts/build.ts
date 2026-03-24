@@ -23,12 +23,13 @@ const crossCompile = process.env["CROSS_COMPILE"] === "true";
     // so we disable js binding generation to not have to complicate knope unnecessarily
     // with workflow steps that update those versions in the binding.
     noJsBinding: true,
+    outputDir: 'dist'
   });
   await task;
 
   console.log("Adding QueryPlan definitions...");
   const queryPlanTypeDefs = await fs.readFile("src/query-plan.d.ts", "utf8");
-  await fs.appendFile("index.d.ts", `\n${queryPlanTypeDefs}`);
+  await fs.appendFile("dist/index.d.ts", `\n${queryPlanTypeDefs}`);
 
   console.log("Ok");
 })();

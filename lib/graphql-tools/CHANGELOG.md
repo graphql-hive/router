@@ -1,3 +1,9 @@
+## 0.5.3 (2026-03-16)
+
+### Features
+
+- Implements `AsRef` trait for `graphql_tools::parser::query::ast::TypeCondition`
+
 ## 0.5.2 (2026-03-05)
 
 ### Features

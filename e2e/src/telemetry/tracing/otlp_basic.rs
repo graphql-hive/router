@@ -16,7 +16,7 @@ async fn test_otlp_http_export_with_graphql_request() {
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = TestSubgraphs::builder().build().start().await;
 
@@ -84,6 +84,7 @@ async fn test_otlp_http_export_with_graphql_request() {
         target: hive-router
         url.full: /graphql
         url.path: /graphql
+        url.scheme: http
     "
     );
 
@@ -340,6 +341,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         target: hive-router
         url.full: /graphql
         url.path: /graphql
+        url.scheme: http
     "
     );
 
@@ -509,7 +511,7 @@ async fn test_otlp_disabled() {
         .await
         .expect("Failed to start OTLP collector");
     let otlp_grpc_endpoint = otlp_collector.grpc_endpoint();
-    let otlp_http_endpoint = otlp_collector.http_endpoint();
+    let otlp_http_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = TestSubgraphs::builder().build().start().await;
 
@@ -570,7 +572,7 @@ async fn test_otlp_http_headers() {
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = TestSubgraphs::builder().build().start().await;
 
@@ -699,7 +701,7 @@ async fn test_otlp_cache_hits() {
         .await
         .expect("Failed to start OTLP collector");
     let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = TestSubgraphs::builder().build().start().await;
 
@@ -794,7 +796,7 @@ async fn test_otlp_no_trace_id_collision() {
     let otlp_collector = OtlpCollector::start()
         .await
         .expect("Failed to start OTLP collector");
-    let otlp_endpoint = otlp_collector.http_endpoint();
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
 
     let subgraphs = TestSubgraphs::builder().build().start().await;
 

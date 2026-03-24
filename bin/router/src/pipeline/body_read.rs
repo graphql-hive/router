@@ -7,6 +7,8 @@ use ntex::{
 };
 use strum::IntoStaticStr;
 
+use crate::pipeline::request_extensions::write_request_body_size;
+
 #[derive(Debug, thiserror::Error, IntoStaticStr)]
 pub enum ReadBodyStreamError {
     #[error("Failed to read request body: {0}")]
@@ -59,6 +61,7 @@ pub async fn read_body_stream(
                 .parse()
                 .map_err(|_| ReadBodyStreamError::InvalidContentLengthHeader)?;
             if content_length > max_size {
+                write_request_body_size(req, content_length as u64);
                 return Err(ReadBodyStreamError::PayloadTooLargeContentLength(max_size));
             }
             Some(content_length)
@@ -76,6 +79,7 @@ pub async fn read_body_stream(
     while let Some(chunk) = body_stream.try_next().await? {
         // limit max size of in-memory payload
         if chunk.len() > max_size.saturating_sub(body.len()) {
+            write_request_body_size(req, (body.len() + chunk.len()) as u64);
             return Err(ReadBodyStreamError::PayloadTooLargeBodyStream);
         }
         body.extend_from_slice(&chunk);

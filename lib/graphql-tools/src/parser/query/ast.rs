@@ -7,6 +7,7 @@
 //!
 pub use crate::parser::common::{Directive, Number, Text, Type, Value};
 use crate::parser::position::Pos;
+use std::convert::AsRef;
 
 /// Root of query data
 #[derive(Debug, Clone, PartialEq)]
@@ -124,6 +125,14 @@ pub struct FragmentSpread<'a, T: Text<'a>> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeCondition<'a, T: Text<'a>> {
     On(T::Value),
+}
+
+impl<'a, T: Text<'a>> AsRef<T::Value> for TypeCondition<'a, T> {
+    fn as_ref(&self) -> &T::Value {
+        match self {
+            Self::On(type_condition) => type_condition,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
