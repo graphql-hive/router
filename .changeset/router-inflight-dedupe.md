@@ -13,7 +13,7 @@ The router now supports deduplicating identical incoming GraphQL query requests 
 
 A new router traffic-shaping section is available:
 
-- `traffic_shaping.router.dedupe.enabled` (default: `true`)
+- `traffic_shaping.router.dedupe.enabled` (default: `false`)
 - `traffic_shaping.router.dedupe.headers` as `all`, `none`, or `{ include: [...] }` (default: `all`)
 
 Supported header config shapes:
