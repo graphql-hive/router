@@ -3,7 +3,9 @@ use std::{sync::Arc, vec};
 use futures_util::stream;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
-    execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
+    execution::{
+        error::PlanExecutionError, jwt_forward::JwtForwardingError, plan::FailedExecutionResult,
+    },
     headers::errors::HeaderRuleRuntimeError,
     hooks::on_graphql_error::handle_graphql_errors_with_plugins,
     response::graphql_error::GraphQLError,
@@ -17,7 +19,6 @@ use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError},
 };
-use serde::Serialize;
 use strum::IntoStaticStr;
 
 use crate::{
@@ -238,11 +239,6 @@ impl PipelineError {
     }
 }
 
-#[derive(Serialize)]
-struct FailedExecutionResult {
-    errors: Vec<GraphQLError>,
-}
-
 #[inline]
 pub fn handle_pipeline_error(
     err: PipelineError,
@@ -298,17 +294,7 @@ pub fn handle_pipeline_error(
             .record_errors(|| errors.iter().map(|error| error.extensions.code.as_deref()));
     }
 
-    let data = sonic_rs::to_vec(&FailedExecutionResult { errors }).unwrap_or_else(|_| {
-        // should never happen. result should always serialize - but hey, no unwraps
-        tracing::error!("Failed to serialize pipeline error to response: {}", err);
-        sonic_rs::to_vec(&FailedExecutionResult {
-            errors: vec![GraphQLError::from_message_and_code(
-                "Failed to serialize error response",
-                "INTERNAL_SERVER_ERROR",
-            )],
-        })
-        .unwrap()
-    });
+    let data = FailedExecutionResult { errors }.serialize();
 
     match response_mode {
         ResponseMode::SingleOnly(_) | ResponseMode::Dual(_, _) => res

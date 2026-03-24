@@ -18,7 +18,7 @@ pub trait SubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-        plugin_req_state: &'a Option<PluginRequestState<'a>>,
+        plugin_req_state: Option<&'a PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError>;
 
     async fn subscribe<'a>(

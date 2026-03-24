@@ -185,6 +185,10 @@ impl Drop for SubscriptionGuard {
     }
 }
 
+lazy_static::lazy_static! {
+    static ref WS_URI_PATH: http::Uri = http::Uri::from_static("/graphql");
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn handle_text_frame(
     text: String,
@@ -240,6 +244,7 @@ async fn handle_text_frame(
 
             let started_at = Instant::now();
             let operation_span = GraphQLOperationSpan::new();
+            let span_clone = operation_span.clone();
 
             let result = async {
                 let maybe_supergraph = schema_state.current_supergraph();
@@ -457,7 +462,7 @@ async fn handle_text_frame(
                 // synthetic client request details for plan executor
                 let client_request_details = ClientRequestDetails {
                     method: &Method::POST,
-                    url: &http::Uri::from_static("/graphql"),
+                    url: &WS_URI_PATH,
                     headers: &headers,
                     operation: OperationDetails {
                         name: normalize_payload.operation_for_plan.name.as_deref(),
@@ -473,17 +478,17 @@ async fn handle_text_frame(
                         },
                     },
                     jwt: jwt_request_details,
-                };
+                }.into();
 
                 match execute_pipeline(
                     &client_request_details,
                     &normalize_payload,
-                    &variable_payload,
+                    variable_payload,
                     supergraph,
                     shared_state,
                     schema_state,
-                    &operation_span,
-                    &plugin_req_state,
+                    operation_span,
+                    plugin_req_state,
                 )
                 .await
                 {
@@ -494,7 +499,7 @@ async fn handle_text_frame(
                                 started_at.elapsed(),
                                 client_name,
                                 client_version,
-                                &client_request_details,
+                                &client_request_details.operation,
                                 hive_usage_agent,
                                 shared_state
                                     .router_config
@@ -573,7 +578,7 @@ async fn handle_text_frame(
                     Err(err) => Some(err.into_server_message(&id)),
                 }
             }
-            .instrument(operation_span.clone())
+            .instrument(span_clone)
             .await;
 
             result
