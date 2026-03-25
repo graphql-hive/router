@@ -18,6 +18,14 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "GRAPHIQL_ENABLED")]
     pub graphiql_enabled: Option<bool>,
 
+    // WebSocket overrides
+    #[envconfig(from = "WEBSOCKET_ENABLED")]
+    pub websocket_enabled: Option<bool>,
+
+    // Subscriptions overrides
+    #[envconfig(from = "SUBSCRIPTIONS_ENABLED")]
+    pub subscriptions_enabled: Option<bool>,
+
     // HTTP overrides
     #[envconfig(from = "PORT")]
     pub http_port: Option<u64>,
@@ -135,6 +143,14 @@ impl EnvVarOverrides {
         // GraphiQL overrides
         if let Some(graphiql_enabled) = self.graphiql_enabled.take() {
             config = config.set_override("graphiql.enabled", graphiql_enabled)?;
+        }
+
+        if let Some(websocket_enabled) = self.websocket_enabled.take() {
+            config = config.set_override("websocket.enabled", websocket_enabled)?;
+        }
+
+        if let Some(subscriptions_enabled) = self.subscriptions_enabled.take() {
+            config = config.set_override("subscriptions.enabled", subscriptions_enabled)?;
         }
 
         Ok(config)
