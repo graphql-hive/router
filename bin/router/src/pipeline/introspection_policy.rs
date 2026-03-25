@@ -5,6 +5,7 @@ use hive_router_internal::expressions::{
     values::boolean::BooleanOrProgram, CompileExpression, ExpressionCompileError,
 };
 use hive_router_plan_executor::execution::client_request_details;
+use tracing::debug;
 use vrl::core::Value as VrlValue;
 
 use crate::pipeline::error::PipelineError;
