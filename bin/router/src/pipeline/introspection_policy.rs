@@ -5,6 +5,7 @@ use hive_router_internal::expressions::{
     values::boolean::BooleanOrProgram, CompileExpression, ExpressionCompileError,
 };
 use hive_router_plan_executor::execution::client_request_details;
+use tracing::debug;
 use vrl::core::Value as VrlValue;
 
 use crate::pipeline::error::PipelineError;
@@ -35,6 +36,7 @@ pub fn handle_introspection_policy(
         .map_err(|e| PipelineError::IntrospectionPermissionEvaluationError(e.to_string()))?;
 
     if !is_enabled {
+        debug!("graphql request rejected because introspection is disabled");
         Err(PipelineError::IntrospectionDisabled)
     } else {
         Ok(())
