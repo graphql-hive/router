@@ -4,3 +4,7 @@ supergraph:
   path: ../supergraph.graphql
 log:
   level: info
+traffic_shaping:
+  router:
+    dedupe:
+      enabled: true
