@@ -158,7 +158,7 @@ jobs:
             package: "hive-router"
             binary: "hive_router"
             config: "bench/configs/dedupe-inbound.config.yaml"
-            compare_with_default: true
+            compare_with_default: false
           - name: "no-dedupe"
             args: ""
             package: "hive-router"
