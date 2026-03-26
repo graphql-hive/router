@@ -1,0 +1,11 @@
+{
+  "tool": "wrk",
+  "rate_rps": 17518.16,
+  "duration": "30s",
+  "concurrency": 50,
+  "endpoint": "http://0.0.0.0:4000/graphql",
+  "generated_at": "2026-03-26T10:19:33Z",
+  "status_failures": 0,
+  "graphql_error_responses": 0,
+  "validation_total_failures": 0
+}
