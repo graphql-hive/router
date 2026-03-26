@@ -66,6 +66,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.26 (2026-03-26)
+
+### Features
+
+#### Add router-level in-flight request deduplication for GraphQL queries
+
+The router now supports deduplicating identical incoming GraphQL query requests while they are in flight, so concurrent duplicates can share one execution result.
+
+### Configuration
+
+A new router traffic-shaping section is available:
+
+- `traffic_shaping.router.dedupe.enabled` (default: `false`)
+- `traffic_shaping.router.dedupe.headers` as `all`, `none`, or `{ include: [...] }` (default: `all`)
+
+Supported header config shapes:
+
+```yaml
+headers: all
+```
+
+```yaml
+headers: none
+```
+
+```yaml
+headers:
+  include:
+    - authorization
+    - cookie
+```
+
+Header names are validated and normalized as standard HTTP header names.
+
+### Deduplication key behavior
+
+The router dedupe fingerprint includes:
+
+- request method and path
+- selected request headers (based on dedupe header policy)
+- normalized operation hash
+- GraphQL variables hash
+- schema checksum
+- GraphQL extensions
+
 ## 0.0.25 (2026-03-12)
 
 ### Features
