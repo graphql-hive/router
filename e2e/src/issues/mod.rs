@@ -201,7 +201,5 @@ mod issues_e2e_tests {
           }
         }
         "#);
-
-        println!("RESPONSE HERE: {}", res.string_body().await);
     }
 }
