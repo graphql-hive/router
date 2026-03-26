@@ -1,0 +1,99 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+type Ad @join__type(graph: PRODUCTS, key: "id") {
+  id: ID!
+  branch: Branch
+  contactOptions: ContactOptions
+    @join__field(
+      graph: PRODUCTS
+      requires: "branch { contactOptions { email user { id name } } }"
+    )
+}
+
+type Branch
+  @join__type(graph: ACCOUNTS, key: "id")
+  @join__type(graph: PRODUCTS, key: "id", extension: true, resolvable: false) {
+  id: ID!
+  contactOptions: ContactOptions
+    @join__field(graph: ACCOUNTS)
+    @join__field(graph: PRODUCTS, external: true)
+}
+
+type BranchUser @join__type(graph: ACCOUNTS) @join__type(graph: PRODUCTS) {
+  id: ID!
+  name: String
+}
+
+type ContactOptions @join__type(graph: ACCOUNTS) @join__type(graph: PRODUCTS) {
+  email: String
+  user: BranchUser
+}
+
+scalar join__FieldSet
+
+enum join__Graph {
+  ACCOUNTS @join__graph(name: "accounts", url: "http://0.0.0.0:4200/accounts")
+  PRODUCTS @join__graph(name: "products", url: "http://0.0.0.0:4200/products")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+type Query @join__type(graph: ACCOUNTS) @join__type(graph: PRODUCTS) {
+  branch(id: ID!): Branch @join__field(graph: ACCOUNTS)
+  ad(id: ID!): Ad @join__field(graph: PRODUCTS)
+}
