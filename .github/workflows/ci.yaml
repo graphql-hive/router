@@ -153,6 +153,12 @@ jobs:
             binary: "hive_router"
             config: "bench/configs/default.config.yaml"
             compare_with_default: true
+          - name: "dedupe-inbound"
+            args: ""
+            package: "hive-router"
+            binary: "hive_router"
+            config: "bench/configs/dedupe-inbound.config.yaml"
+            compare_with_default: true
           - name: "no-dedupe"
             args: ""
             package: "hive-router"
