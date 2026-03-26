@@ -1,9 +1,5 @@
 #[cfg(test)]
 mod issues_e2e_tests {
-    use std::str::FromStr;
-
-    use sonic_rs::JsonValueTrait;
-
     use crate::testkit::{ClientResponseExt, TestRouter};
 
     #[ntex::test]
