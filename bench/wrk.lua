@@ -29,6 +29,28 @@ local function escape_json(value)
   return value
 end
 
+local cjson_safe = nil
+local cjson = nil
+
+local function build_graphql_request_body(query)
+  if cjson_safe ~= nil and cjson_safe.encode ~= nil then
+    local encoded = cjson_safe.encode({ query = query })
+    if encoded ~= nil then
+      return encoded
+    end
+  end
+
+  if cjson ~= nil and cjson.encode ~= nil then
+    local ok_encode, encoded = pcall(cjson.encode, { query = query })
+    if ok_encode and encoded ~= nil then
+      return encoded
+    end
+  end
+
+  local escaped_query = escape_json(query)
+  return "{\"query\":\"" .. escaped_query .. "\"}"
+end
+
 local function is_array(value)
   return type(value) == "table" and value[1] ~= nil
 end
@@ -63,13 +85,11 @@ local function check_recursive(obj, structure)
   return true
 end
 
-local cjson_safe = nil
 local ok_safe, cjson_safe_module = pcall(require, "cjson.safe")
 if ok_safe then
   cjson_safe = cjson_safe_module
 end
 
-local cjson = nil
 local ok_cjson, cjson_module = pcall(require, "cjson")
 if ok_cjson then
   cjson = cjson_module
@@ -93,8 +113,8 @@ local expected_structure = {
         name = "Uri Goldshtein",
         reviews = {
           {
-            id = "1",
-            body = "body",
+            id = "",
+            body = "",
             product = {
               inStock = true,
               name = "Table",
@@ -104,16 +124,16 @@ local expected_structure = {
               weight = 100,
               reviews = {
                 {
-                  id = "1",
-                  body = "body",
+                  id = "",
+                  body = "",
                   author = {
                     id = "1",
                     username = "urigo",
                     name = "Uri Goldshtein",
                     reviews = {
                       {
-                        id = "1",
-                        body = "body",
+                        id = "",
+                        body = "",
                         product = {
                           inStock = true,
                           name = "Table",
@@ -142,16 +162,16 @@ local expected_structure = {
         weight = 100,
         reviews = {
           {
-            id = "1",
-            body = "body",
+            id = "",
+            body = "",
             author = {
               id = "1",
               username = "urigo",
               name = "Uri Goldshtein",
               reviews = {
                 {
-                  id = "1",
-                  body = "body",
+                  id = "",
+                  body = "",
                   product = {
                     inStock = true,
                     name = "Table",
@@ -203,11 +223,9 @@ else
   query = read_file_if_exists("operation.graphql") or read_file("bench/operation.graphql")
 end
 
-local escaped_query = escape_json(query)
-
 wrk.method = "POST"
 wrk.headers["Content-Type"] = "application/json"
-wrk.body = "{\"query\":\"" .. escaped_query .. "\"}"
+wrk.body = build_graphql_request_body(query)
 
 response = function(status, headers, body)
   if status ~= 200 then
