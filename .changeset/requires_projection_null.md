@@ -3,6 +3,6 @@ hive-router-plan-executor: patch
 hive-router: patch
 ---
 
-# Fix malformed `_entities` request when `@requires` data is null
+# Fix null field handling in entity request projection
 
-Fixed a bug where request projection could produce malformed JSON when a nested field was null [#880](https://github.com/graphql-hive/router/issues/880).
+Fixed a bug in entity request projection where present `null` fields could be mishandled, which in some nested projection paths could also lead to malformed JSON output. [#880](https://github.com/graphql-hive/router/issues/880).
