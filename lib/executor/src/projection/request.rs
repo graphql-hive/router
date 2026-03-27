@@ -231,3 +231,161 @@ fn project_requires_map_mut(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::project_requires;
+    use crate::{introspection::schema::PossibleTypes, response::value::Value};
+    use graphql_tools::parser::query;
+    use hive_router_query_planner::ast::{
+        selection_item::SelectionItem, selection_set::SelectionSet,
+    };
+    use hive_router_query_planner::utils::parsing::parse_operation;
+    use sonic_rs::json;
+
+    fn requires_from_str(requires: &str) -> Vec<SelectionItem> {
+        let operation = parse_operation(&format!("query {{ {requires} }}"));
+
+        let selection_set = operation
+            .definitions
+            .into_iter()
+            .find_map(|def| {
+                let query::Definition::Operation(op) = def else {
+                    return None;
+                };
+
+                match op {
+                    query::OperationDefinition::SelectionSet(sel) => Some(sel),
+                    query::OperationDefinition::Query(q) => Some(q.selection_set),
+                    query::OperationDefinition::Mutation(m) => Some(m.selection_set),
+                    query::OperationDefinition::Subscription(s) => Some(s.selection_set),
+                }
+            })
+            .expect("operation must contain a selection set");
+
+        let selection_set: SelectionSet = selection_set.into();
+        selection_set.items
+    }
+
+    fn project_requires_pretty(requires: &str, entity_json: sonic_rs::Value) -> Option<String> {
+        let requires = requires_from_str(requires);
+        let entity = Value::from(entity_json.as_ref());
+
+        let mut buffer = Vec::new();
+        let projected = project_requires(
+            &PossibleTypes::default(),
+            &requires,
+            &entity,
+            &mut buffer,
+            true,
+            None,
+        );
+
+        if !projected {
+            return None;
+        }
+
+        let json: Value = sonic_rs::from_slice(&buffer).unwrap();
+        Some(sonic_rs::to_string_pretty(&json).unwrap())
+    }
+
+    #[test]
+    fn project_requires_variants() {
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+            "contactOptions id",
+            json!({
+                "__typename": "Ad",
+                "contactOptions": null,
+                "id": "1"
+            }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "contactOptions": null,
+            "id": "1"
+          }
+        "#);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+            "id contactOptions",
+            json!({
+                "__typename": "Ad",
+                "contactOptions": null,
+                "id": "1"
+            }),
+          ).expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "contactOptions": null,
+            "id": "1"
+          }
+        "#);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "contactOptions id",
+              json!({
+                  "__typename": "Ad",
+                  "id": "1"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "id": "1"
+          }
+        "#);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "branch { contactOptions { email } } id",
+              json!({
+                  "__typename": "Ad",
+                  "branch": {
+                      "contactOptions": {}
+                  },
+                  "id": "1"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "id": "1"
+          }
+        "#);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "branch { contactOptions { email user { id name } } } id",
+              json!({
+                  "__typename": "Ad",
+                  "branch": {
+                      "__typename": "Branch",
+                      "contactOptions": null
+                  },
+                  "id": "1"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "branch": {
+              "__typename": "Branch",
+              "contactOptions": null
+            },
+            "id": "1"
+          }
+        "#);
+
+        let pretty = project_requires_pretty("contactOptions", json!({}));
+        assert_eq!(pretty, None);
+    }
+}
