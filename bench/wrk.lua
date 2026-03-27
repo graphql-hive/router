@@ -55,34 +55,107 @@ local function is_array(value)
   return type(value) == "table" and value[1] ~= nil
 end
 
-local function check_recursive(obj, structure)
-  if type(structure) ~= "table" then
-    return type(obj) == type(structure)
+local function sorted_keys(value)
+  local keys = {}
+  for key, _ in pairs(value) do
+    keys[#keys + 1] = key
   end
+  table.sort(keys)
+  return keys
+end
 
-  if type(obj) ~= "table" then
-    return false
-  end
+local function canonical_json_encode(value)
+  local value_type = type(value)
 
-  if is_array(structure) then
-    if obj[1] == nil then
-      return false
+  if value_type == "table" then
+    local parts = {}
+
+    if is_array(value) then
+      for i = 1, #value do
+        parts[#parts + 1] = canonical_json_encode(value[i])
+      end
+      return "[" .. table.concat(parts, ",") .. "]"
     end
 
-    return check_recursive(obj[1], structure[1])
+    local keys = sorted_keys(value)
+    for _, key in ipairs(keys) do
+      local encoded_key = cjson and cjson.encode and cjson.encode(key) or ('"' .. escape_json(key) .. '"')
+      parts[#parts + 1] = encoded_key .. ":" .. canonical_json_encode(value[key])
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
   end
 
-  for key, expected in pairs(structure) do
-    if obj[key] == nil then
-      return false
-    end
-
-    if not check_recursive(obj[key], expected) then
-      return false
-    end
+  if cjson and cjson.encode then
+    return cjson.encode(value)
   end
 
-  return true
+  if value_type == "string" then
+    return '"' .. escape_json(value) .. '"'
+  end
+
+  if value_type == "number" then
+    return tostring(value)
+  end
+
+  if value_type == "boolean" then
+    return value and "true" or "false"
+  end
+
+  return "null"
+end
+
+local function hash_string(value)
+  local hash = 5381
+  local max_u32 = 4294967296
+
+  for i = 1, #value do
+    hash = ((hash * 33) + value:byte(i)) % max_u32
+  end
+
+  return string.format("%08x", hash)
+end
+
+local function normalize_with_template(value, template)
+  if type(template) ~= "table" then
+    if type(value) ~= type(template) then
+      return nil
+    end
+
+    return type(template)
+  end
+
+  if type(value) ~= "table" then
+    return nil
+  end
+
+  if is_array(template) then
+    if value[1] == nil then
+      return nil
+    end
+
+    local first = normalize_with_template(value[1], template[1])
+    if first == nil then
+      return nil
+    end
+
+    return { first }
+  end
+
+  local normalized = {}
+  for key, expected in pairs(template) do
+    if value[key] == nil then
+      return nil
+    end
+
+    local normalized_child = normalize_with_template(value[key], expected)
+    if normalized_child == nil then
+      return nil
+    end
+
+    normalized[key] = normalized_child
+  end
+
+  return normalized
 end
 
 local ok_safe, cjson_safe_module = pcall(require, "cjson.safe")
@@ -190,6 +263,10 @@ local expected_structure = {
   },
 }
 
+local expected_structure_hash = hash_string(
+  canonical_json_encode(normalize_with_template(expected_structure, expected_structure))
+)
+
 local function check_response_structure(body)
   local decoded = nil
   if cjson_safe ~= nil then
@@ -201,17 +278,17 @@ local function check_response_structure(body)
     end
   end
 
-  if decoded ~= nil then
-    return check_recursive(decoded, expected_structure)
+  if decoded == nil then
+    return false
   end
 
-  return body ~= nil
-    and find(body, '"data"', 1, true) ~= nil
-    and find(body, '"users"', 1, true) ~= nil
-    and find(body, '"topProducts"', 1, true) ~= nil
-    and find(body, '"reviews"', 1, true) ~= nil
-    and find(body, '"product"', 1, true) ~= nil
-    and find(body, '"author"', 1, true) ~= nil
+  local normalized_response = normalize_with_template(decoded, expected_structure)
+  if normalized_response == nil then
+    return false
+  end
+
+  local response_hash = hash_string(canonical_json_encode(normalized_response))
+  return response_hash == expected_structure_hash
 end
 
 local operation_file = os.getenv("BENCH_OPERATION_FILE")
