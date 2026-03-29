@@ -23,6 +23,8 @@ mod http;
 #[cfg(test)]
 mod introspection;
 #[cfg(test)]
+mod issues;
+#[cfg(test)]
 mod jwt;
 #[cfg(test)]
 mod max_aliases;
