@@ -116,6 +116,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.44 (2026-03-29)
+
+### Fixes
+
+- fix null field handling in entity request projection and prevent malformed JSON (#881)
+
+#### Fix null field handling in entity request projection
+
+Fixed a bug in entity request projection where present `null` fields could be mishandled, which in some nested projection paths could also lead to malformed JSON output. [#880](https://github.com/graphql-hive/router/issues/880).
+
 ## 0.0.43 (2026-03-26)
 
 ### Features
