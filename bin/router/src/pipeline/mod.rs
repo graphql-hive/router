@@ -250,7 +250,7 @@ pub async fn graphql_request_handler(
         let request_dedupe_enabled =
             shared_state.router_config.traffic_shaping.router.dedupe.enabled;
 
-        let shared_response = if request_dedupe_enabled
+        let planned_response = if request_dedupe_enabled
             && matches!(
                 normalize_payload.operation_for_plan.operation_kind,
                 Some(OperationKind::Query) | None
@@ -274,7 +274,7 @@ pub async fn graphql_request_handler(
                 .in_flight_requests
                 .claim(fingerprint)
                 .get_or_try_init(|| async {
-                    execute_planned_request(
+                    match execute_planned_request(
                         req,
                         graphql_params,
                         &normalize_payload,
@@ -285,11 +285,16 @@ pub async fn graphql_request_handler(
                         plugin_req_state,
                         response_mode,
                     )
-                    .await
+                    .await?
+                    {
+                        PlannedResponse::Shared(r) => Ok::<SharedRouterResponse, PipelineError>(r),
+                        // subscriptions are excluded from the dedup branch above, so this is unreachable
+                        PlannedResponse::Direct { .. } => unreachable!("stream responses never enter the dedup path"),
+                    }
                 })
                 .await?;
 
-            Arc::unwrap_or_clone(shared_response)
+            PlannedResponse::Shared(Arc::unwrap_or_clone(shared_response))
         } else {
             execute_planned_request(
                 req,
@@ -303,6 +308,14 @@ pub async fn graphql_request_handler(
                 response_mode,
             )
             .await?
+        };
+
+        let (response, error_count) = match planned_response {
+            PlannedResponse::Shared(shared_response) => {
+                let error_count = shared_response.error_count;
+                (shared_response.into(), error_count)
+            }
+            PlannedResponse::Direct { response, .. } => (response, 0),
         };
 
         if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
@@ -326,17 +339,14 @@ pub async fn graphql_request_handler(
                         // Thus, this expect should never panic.
                         "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
                     ),
-                shared_response.error_count,
+                error_count,
             )
             .await;
         }
 
-        let pipeline_error_count = shared_response.error_count;
-        let response = shared_response.into();
-
         write_graphql_response_metric_status(
             req,
-            if pipeline_error_count > 0 {
+            if error_count > 0 {
                 GraphQLResponseStatus::Error
             } else {
                 GraphQLResponseStatus::Ok
@@ -352,6 +362,11 @@ pub async fn graphql_request_handler(
     })
 }
 
+enum PlannedResponse {
+    Shared(SharedRouterResponse),
+    Direct { response: web::HttpResponse },
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn execute_planned_request<'exec>(
     req: &'exec HttpRequest,
@@ -363,7 +378,7 @@ async fn execute_planned_request<'exec>(
     operation_span: GraphQLOperationSpan,
     plugin_req_state: Option<PluginRequestState<'exec>>,
     response_mode: &'exec ResponseMode,
-) -> Result<SharedRouterResponse, PipelineError> {
+) -> Result<PlannedResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
             .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
@@ -459,7 +474,7 @@ async fn execute_planned_request<'exec>(
                 .header(http::header::CONTENT_TYPE, content_type_header)
                 .streaming(body);
 
-            todo!()
+            Ok(PlannedResponse::Direct { response })
         }
         QueryPlanExecutionResult::Single(result) => {
             let single_content_type = response_mode.
@@ -482,12 +497,12 @@ async fn execute_planned_request<'exec>(
                 .status(result.status_code)
                 .body(body.clone());
 
-            Ok(SharedRouterResponse {
+            Ok(PlannedResponse::Shared(SharedRouterResponse {
                 body,
                 headers: Arc::new(response.headers().clone()),
                 status: response.status(),
                 error_count,
-            })
+            }))
         }
     }
 }
