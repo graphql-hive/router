@@ -13,7 +13,8 @@ use hive_router_config::{
 use hive_router_internal::expressions::vrl::core::Value as VrlValue;
 use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
 use hive_router_internal::{
-    expressions::vrl::compiler::Program as VrlProgram, telemetry::TelemetryContext,
+    expressions::vrl::compiler::Program as VrlProgram, inflight::InFlightMap,
+    telemetry::TelemetryContext,
 };
 use http::Uri;
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
@@ -21,13 +22,12 @@ use hyper_util::{
     client::legacy::{connect::HttpConnector, Client},
     rt::{TokioExecutor, TokioTimer},
 };
-use tokio::sync::{OnceCell, Semaphore};
+use tokio::sync::Semaphore;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
     executors::{
         common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
-        dedupe::ABuildHasher,
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, SubgraphHttpResponse},
         http_callback::{ActiveSubscriptionsMap, HttpCallbackSubgraphExecutor},
@@ -55,8 +55,7 @@ struct ResolvedSubgraphConfig<'a> {
     dedupe_enabled: bool,
 }
 
-pub type InflightRequestsMap =
-    Arc<DashMap<u64, Arc<OnceCell<(SubgraphHttpResponse, u64)>>, ABuildHasher>>;
+pub type InflightRequestsMap = InFlightMap<u64, (SubgraphHttpResponse, u64)>;
 
 pub struct SubgraphExecutorMap {
     http_executors_by_subgraph: ExecutorsBySubgraphMap,
@@ -109,7 +108,7 @@ impl SubgraphExecutorMap {
             client: Arc::new(client),
             semaphores_by_origin: Default::default(),
             max_connections_per_host,
-            in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
+            in_flight_requests: InFlightMap::default(),
             timeouts_by_subgraph: Default::default(),
             global_timeout,
             telemetry_context,

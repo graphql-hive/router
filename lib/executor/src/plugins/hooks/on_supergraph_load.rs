@@ -25,6 +25,13 @@ pub struct SupergraphData {
     pub supergraph_schema: Arc<Document>,
 }
 
+impl SupergraphData {
+    #[inline]
+    pub fn schema_checksum(&self) -> u64 {
+        self.planner.consumer_schema.hash
+    }
+}
+
 pub type OnSupergraphLoadResult = Result<SupergraphData, GraphQLError>;
 
 pub struct OnSupergraphLoadStartHookPayload {

@@ -2304,7 +2304,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.42"
+version = "0.0.44"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2365,7 +2365,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-config"
-version = "0.0.25"
+version = "0.0.26"
 dependencies = [
  "config",
  "envconfig",
@@ -2388,12 +2388,13 @@ dependencies = [
 
 [[package]]
 name = "hive-router-internal"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "ahash",
  "async-trait",
  "bytes",
  "criterion",
+ "dashmap",
  "futures",
  "hive-router-config",
  "http",
@@ -2427,7 +2428,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "6.8.0"
+version = "6.9.1"
 dependencies = [
  "ahash",
  "async-stream",
@@ -5503,9 +5504,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.9"
+version = "0.103.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7df23109aa6c1567d1c575b9952556388da57401e4ace1d15f79eedad0d8f53"
+checksum = "df33b2b81ac578cabaf06b89b0631153a3f416b0a886e8a7a1707fb51abbd1ef"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -6048,7 +6049,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.116",

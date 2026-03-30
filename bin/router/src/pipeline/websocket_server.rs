@@ -499,7 +499,8 @@ async fn handle_text_frame(
                                 started_at.elapsed(),
                                 client_name,
                                 client_version,
-                                &client_request_details.operation,
+                                normalize_payload.operation_for_plan.name.as_deref(),
+                                &parser_payload.minified_document,
                                 hive_usage_agent,
                                 shared_state
                                     .router_config

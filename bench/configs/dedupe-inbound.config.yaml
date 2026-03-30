@@ -5,8 +5,6 @@ supergraph:
 log:
   level: info
 traffic_shaping:
-  all:
-    dedupe_enabled: false
   router:
     dedupe:
-      enabled: false
+      enabled: true

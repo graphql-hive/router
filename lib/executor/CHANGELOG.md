@@ -94,6 +94,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.9.1 (2026-03-29)
+
+### Fixes
+
+#### Fix null field handling in entity request projection
+
+Fixed a bug in entity request projection where present `null` fields could be mishandled, which in some nested projection paths could also lead to malformed JSON output. [#880](https://github.com/graphql-hive/router/issues/880).
+
+## 6.9.0 (2026-03-26)
+
+### Features
+
+#### Add router-level in-flight request deduplication for GraphQL queries
+
+The router now supports deduplicating identical incoming GraphQL query requests while they are in flight, so concurrent duplicates can share one execution result.
+
+### Configuration
+
+A new router traffic-shaping section is available:
+
+- `traffic_shaping.router.dedupe.enabled` (default: `false`)
+- `traffic_shaping.router.dedupe.headers` as `all`, `none`, or `{ include: [...] }` (default: `all`)
+
+Supported header config shapes:
+
+```yaml
+headers: all
+```
+
+```yaml
+headers: none
+```
+
+```yaml
+headers:
+  include:
+    - authorization
+    - cookie
+```
+
+Header names are validated and normalized as standard HTTP header names.
+
+### Deduplication key behavior
+
+The router dedupe fingerprint includes:
+
+- request method and path
+- selected request headers (based on dedupe header policy)
+- normalized operation hash
+- GraphQL variables hash
+- schema checksum
+- GraphQL extensions
+
+### Fixes
+
+#### Introspection Bug Fix
+
+Fixed an issue where, when introspection is disabled, querying root `__typename` was incorrectly rejected (https://github.com/graphql-hive/router/issues/871).
+
 ## 6.8.0 (2026-03-16)
 
 ### Features

@@ -13,6 +13,7 @@ use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::response::subgraph_response::SubgraphResponse;
 use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
+use hive_router_internal::inflight::InFlightRole;
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
 use hive_router_internal::telemetry::TelemetryContext;
@@ -388,30 +389,17 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     );
 
                     let result: Result<_, SubgraphExecutorError> = async {
-                        // Clone the cell from the map, dropping the lock from the DashMap immediately.
-                        // Prevents any deadlocks.
-                        let cell = self
-                            .in_flight_requests
-                            .entry(fingerprint)
-                            .or_default()
-                            .clone();
-                        // Mark it as a joiner span by default.
-                        let mut is_leader = false;
+                        let claim = self.in_flight_requests.claim(fingerprint);
                         let mut leader_http_request_capture = None;
-                        let (shared_response, leader_id) = cell
+                        let (shared_response, role) = claim
                             .get_or_try_init(|| async {
-                                // Override the span to be a leader span for this request.
-                                is_leader = true;
                                 let res = {
                                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                                     let _permit = self.semaphore.acquire().await.unwrap();
                                     send_request(send_request_opts).await
                                 };
-                                // It's important to remove the entry from the map before returning the result.
-                                // This ensures that once the OnceCell is set, no future requests can join it.
-                                // The cache is for the lifetime of the in-flight request only.
-                                self.in_flight_requests.remove(&fingerprint);
+
                                 res.map(|fetched_response| {
                                     leader_http_request_capture =
                                         Some(HttpRequestTelemetryCapture {
@@ -425,10 +413,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                             })
                             .await?;
 
-                        if is_leader {
-                            inflight_span.record_as_leader(leader_id);
+                        let (shared_response, leader_id) = shared_response.as_ref();
+                        let shared_response = shared_response.clone();
+                        let leader_id = *leader_id;
+
+                        if role == InFlightRole::Leader {
+                            inflight_span.record_as_leader(&leader_id);
                         } else {
-                            inflight_span.record_as_joiner(leader_id);
+                            inflight_span.record_as_joiner(&leader_id);
                         }
 
                         inflight_span
@@ -436,11 +428,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
                         deduplication_hint = DeduplicationHint::Deduped {
                             fingerprint,
-                            leader_id: *leader_id,
-                            is_leader,
+                            leader_id,
+                            is_leader: role == InFlightRole::Leader,
                         };
 
-                        Ok((shared_response.clone(), leader_http_request_capture))
+                        Ok((shared_response, leader_http_request_capture))
                     }
                     .instrument(inflight_span.clone())
                     .await;

@@ -13,7 +13,6 @@ use hive_router_config::{
 };
 use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
-use hive_router_plan_executor::execution::client_request_details::OperationDetails;
 use rand::prelude::*;
 use tokio_util::sync::CancellationToken;
 
@@ -86,7 +85,8 @@ pub async fn collect_usage_report<'a>(
     duration: Duration,
     client_name: Option<&str>,
     client_version: Option<&str>,
-    operation_details: &OperationDetails<'a>,
+    operation_name: Option<&'a str>,
+    operation_body: &'a str,
     hive_usage_agent: &UsageAgent,
     usage_config: &UsageReportingConfig,
     error_count: usize,
@@ -95,10 +95,7 @@ pub async fn collect_usage_report<'a>(
     if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
         return;
     }
-    if operation_details
-        .name
-        .is_some_and(|op_name| usage_config.exclude.iter().any(|s| s == op_name))
-    {
+    if operation_name.is_some_and(|op_name| usage_config.exclude.iter().any(|s| s == op_name)) {
         return;
     }
     let timestamp = SystemTime::now()
@@ -113,8 +110,8 @@ pub async fn collect_usage_report<'a>(
         duration,
         ok: error_count == 0,
         errors: error_count,
-        operation_body: operation_details.query.to_owned(),
-        operation_name: operation_details.name.map(|op_name| op_name.to_owned()),
+        operation_body: operation_body.to_owned(),
+        operation_name: operation_name.map(|s| s.to_owned()),
         persisted_document_hash: None,
     };
 
