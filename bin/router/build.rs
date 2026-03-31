@@ -1,18 +1,16 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("missing manifest dir"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("missing OUT_DIR"));
     let output_file = out_dir.join("laboratory.html");
-
-    let fallback_html = manifest_dir.join("static/laboratory.html");
     let product_logo = manifest_dir.join("static/product_logo.svg");
     let node_modules_dist = manifest_dir.join("../../node_modules/@graphql-hive/laboratory/dist");
 
-    println!("cargo:rerun-if-changed={}", fallback_html.display());
     println!("cargo:rerun-if-changed={}", product_logo.display());
     println!(
         "cargo:rerun-if-changed={}",
@@ -23,43 +21,48 @@ fn main() {
         manifest_dir.join("../../package-lock.json").display()
     );
 
-    let html = if node_modules_dist.exists() {
-        println!(
-            "cargo:rerun-if-changed={}",
-            node_modules_dist.join("hive-laboratory.umd.js").display()
-        );
-        println!(
-            "cargo:rerun-if-changed={}",
-            node_modules_dist
-                .join("monacoeditorwork/editor.worker.bundle.js")
-                .display()
-        );
-        println!(
-            "cargo:rerun-if-changed={}",
-            node_modules_dist
-                .join("monacoeditorwork/graphql.worker.bundle.js")
-                .display()
-        );
-        println!(
-            "cargo:rerun-if-changed={}",
-            node_modules_dist
-                .join("monacoeditorwork/json.worker.bundle.js")
-                .display()
-        );
-        println!(
-            "cargo:rerun-if-changed={}",
-            node_modules_dist
-                .join("monacoeditorwork/ts.worker.bundle.js")
-                .display()
-        );
+    if !node_modules_dist.exists() {
+        let status = Command::new("npm")
+            .args(["install"])
+            .current_dir(manifest_dir.join("../../"))
+            .status()
+            .expect("Failed to execute npm install");
 
-        build_inline_laboratory_html(&node_modules_dist, &product_logo)
-    } else {
-        println!(
-            "cargo:warning=@graphql-hive/laboratory is not installed. Falling back to bin/router/static/laboratory.html. Run `npm install` at the repo root to build the inline Laboratory asset."
-        );
-        fs::read_to_string(&fallback_html).expect("failed to read fallback laboratory.html")
-    };
+        if !status.success() {
+            panic!("npm install failed");
+        }
+    }
+
+    println!(
+        "cargo:rerun-if-changed={}",
+        node_modules_dist.join("hive-laboratory.umd.js").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        node_modules_dist
+            .join("monacoeditorwork/editor.worker.bundle.js")
+            .display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        node_modules_dist
+            .join("monacoeditorwork/graphql.worker.bundle.js")
+            .display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        node_modules_dist
+            .join("monacoeditorwork/json.worker.bundle.js")
+            .display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        node_modules_dist
+            .join("monacoeditorwork/ts.worker.bundle.js")
+            .display()
+    );
+
+    let html = build_inline_laboratory_html(&node_modules_dist, &product_logo);
 
     fs::write(output_file, html).expect("failed to write generated laboratory.html");
 }
