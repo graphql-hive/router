@@ -1,0 +1,6 @@
+cors:
+  enabled: true
+  policies:
+    - origins: ["https://app.buzzcheck.dev"]
+query_planner:
+  allow_expose: true

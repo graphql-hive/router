@@ -91,7 +91,7 @@ fn build_inline_laboratory_html(dist_dir: &Path, product_logo: &Path) -> String 
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Hive Router GraphiQL</title>
+    <title>Hive Router Laboratory</title>
     <link rel="icon" type="image/svg+xml" href="{product_logo_data_url}" />
     <style>
       html,
