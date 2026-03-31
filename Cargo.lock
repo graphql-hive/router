@@ -2104,12 +2104,12 @@ dependencies = [
  "itoa",
  "lazy_static",
  "pretty_assertions",
- "ryu",
  "serde",
  "serde_json",
  "serde_with",
  "thiserror 2.0.18",
  "xxhash-rust",
+ "zmij",
 ]
 
 [[package]]
@@ -2441,7 +2441,6 @@ dependencies = [
  "ntex",
  "regex-automata",
  "rustls",
- "ryu",
  "serde",
  "serde_json",
  "sonic-rs",
@@ -2452,6 +2451,7 @@ dependencies = [
  "tokio",
  "tracing",
  "xxhash-rust",
+ "zmij",
 ]
 
 [[package]]

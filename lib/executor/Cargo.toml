@@ -49,7 +49,7 @@ hyper-util = { version = "0.1.16", features = [
   "tokio",
 ] }
 itoa = "1.0.15"
-ryu = "1.0.20"
+zmij = "1.0.21"
 indexmap = "2.10.0"
 bumpalo = "3.19.0"
 sonic-simd = "0.1.2"
