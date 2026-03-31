@@ -96,7 +96,7 @@ fn handle_selection_set<'field, 'schema>(
                     }
 
                     let next_path = path.push(Segment::Field(
-                        field.name.clone(),
+                        field.selection_identifier().to_string(),
                         field.arguments_hash(),
                         field.into(),
                     ));
@@ -165,6 +165,7 @@ fn handle_field<'field, 'schema>(
 ) -> Option<&'schema str> {
     let parent_def_fields = parent_def.fields().unwrap();
     let field_name = field.name.as_str();
+    let field_identifier = field.selection_identifier();
     let field_type = parent_def_fields
         .iter()
         .find_map(|f| {
@@ -181,7 +182,7 @@ fn handle_field<'field, 'schema>(
         })
         .unwrap();
 
-    if let Some(maybe_conflicting_type) = encountered_field_to_type.get(field_name) {
+    if let Some(maybe_conflicting_type) = encountered_field_to_type.get(field_identifier) {
         if !maybe_conflicting_type.can_be_merged_with(field_type) {
             let left_is_composite = state
                 .definitions
@@ -195,7 +196,7 @@ fn handle_field<'field, 'schema>(
             if !left_is_composite || !right_is_composite {
                 trace!(
                   "found a conflicting type for a selection field '{}', conflict is: '{}' <-> '{}', path: {}",
-                  field_name,
+                  field_identifier,
                   maybe_conflicting_type,
                   field_type,
                   field_path,
@@ -205,7 +206,7 @@ fn handle_field<'field, 'schema>(
             }
         }
     } else {
-        encountered_field_to_type.insert(field_name, field_type);
+        encountered_field_to_type.insert(field_identifier, field_type);
     }
 
     if field.is_leaf() {
