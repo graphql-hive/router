@@ -511,7 +511,7 @@ Configuration for the GraphiQL interface.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**enabled**|`boolean`|Enables/disables the GraphiQL interface. By default, the GraphiQL interface is enabled.<br/><br/>You can override this setting by setting the `GRAPHIQL_ENABLED` environment variable to `true` or `false`.<br/>Default: `true`<br/>||
+|**enabled**|`boolean`|Enables/disables the GraphiQL interface. By default, the GraphiQL interface is enabled.<br/><br/>You can override this setting by setting the `LABORATORY_ENABLED` environment variable to `true` or `false`.<br/>Default: `true`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
