@@ -68,6 +68,10 @@ fn main() {
 }
 
 fn build_inline_laboratory_html(dist_dir: &Path, product_logo: &Path) -> String {
+    println!(
+        "Building inline laboratory HTML from dist directory: {}",
+        dist_dir.display()
+    );
     let js_contents = fs::read_to_string(dist_dir.join("hive-laboratory.umd.js"))
         .expect("failed to read hive-laboratory.umd.js");
     let editor_worker =
