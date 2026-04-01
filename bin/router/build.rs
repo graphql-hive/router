@@ -23,7 +23,7 @@ fn main() {
 
     if !node_modules_dist.exists() {
         let status = Command::new("npm")
-            .args(["install"])
+            .args(["install", "--include=dev"]) // NODE_ENV=production will skip dev deps - make sure they're in
             .current_dir(manifest_dir.join("../../"))
             .status()
             .expect("Failed to execute npm install");
