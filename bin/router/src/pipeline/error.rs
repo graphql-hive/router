@@ -1,6 +1,6 @@
 use std::{sync::Arc, vec};
 
-use graphql_tools::validation::utils::ValidationError;
+use graphql_tools::{parser::query::MinifyError, validation::utils::ValidationError};
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
     headers::errors::HeaderRuleRuntimeError,
@@ -69,13 +69,13 @@ pub enum PipelineError {
     FailedToParseExtensions(sonic_rs::Error),
     #[error("Failed to parse GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_FAILED")]
-    FailedToParseOperation(#[from] Arc<graphql_tools::parser::query::ParseError>),
+    FailedToParseOperation(#[from] graphql_tools::parser::query::ParseError),
     #[error("Failed to minify parsed GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
-    FailedToMinifyParsedOperation(String),
+    FailedToMinifyParsedOperation(#[from] MinifyError),
     #[error("Failed to normalize GraphQL operation")]
     #[strum(serialize = "OPERATION_RESOLUTION_FAILURE")]
-    NormalizationError(#[from] Arc<NormalizationError>),
+    NormalizationError(#[from] NormalizationError),
     #[error("Failed to collect GraphQL variables: {0}")]
     #[strum(serialize = "BAD_USER_INPUT")]
     VariablesCoercionError(String),
@@ -90,7 +90,7 @@ pub enum PipelineError {
     PlanExecutionError(#[from] PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
     #[strum(serialize = "QUERY_PLAN_BUILD_FAILED")]
-    PlannerError(#[from] Arc<PlannerError>),
+    PlannerError(#[from] PlannerError),
     #[error(transparent)]
     #[strum(serialize = "OVERRIDE_LABEL_EVALUATION_FAILED")]
     LabelEvaluationError(#[from] LabelEvaluationError),
@@ -143,30 +143,9 @@ pub enum PipelineError {
     #[error("No supergraph available yet, unable to process request")]
     #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
     NoSupergraphAvailable,
-}
 
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum ParserCacheError {
-    #[error("Failed to parse GraphQL operation: {0}")]
-    ParseError(Arc<graphql_tools::parser::query::ParseError>),
-    #[error("Failed to minify parsed GraphQL operation: {0}")]
-    MinifyError(String),
-    #[error("Validation errors")]
-    ValidationErrors(Arc<Vec<ValidationError>>),
-}
-
-impl From<Arc<ParserCacheError>> for PipelineError {
-    fn from(value: Arc<ParserCacheError>) -> Self {
-        match value.as_ref() {
-            ParserCacheError::ParseError(err) => PipelineError::FailedToParseOperation(err.clone()),
-            ParserCacheError::MinifyError(err) => {
-                PipelineError::FailedToMinifyParsedOperation(err.clone())
-            }
-            ParserCacheError::ValidationErrors(errs) => {
-                PipelineError::ValidationErrors(errs.clone())
-            }
-        }
-    }
+    #[error(transparent)]
+    PipelineErrorArc(#[from] Arc<PipelineError>),
 }
 
 impl PipelineError {
@@ -175,6 +154,7 @@ impl PipelineError {
             Self::JwtError(err) => err.error_code(),
             Self::PlanExecutionError(err) => err.error_code(),
             Self::ReadBodyStreamError(err) => err.error_code(),
+            Self::PipelineErrorArc(err) => err.graphql_error_code(),
             _ => self.into(),
         }
     }
@@ -182,6 +162,7 @@ impl PipelineError {
     pub fn graphql_error_message(&self) -> String {
         match self {
             Self::PlannerError(_) => "Unexpected error".to_string(),
+            Self::PipelineErrorArc(err) => err.graphql_error_message(),
             _ => self.to_string(),
         }
     }
@@ -226,6 +207,7 @@ impl PipelineError {
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
+            (Self::PipelineErrorArc(err), _) => err.default_status_code(prefer_ok),
         }
     }
 }
@@ -237,10 +219,13 @@ struct FailedExecutionResult {
 
 #[inline]
 pub fn handle_pipeline_error(
-    err: PipelineError,
+    err: &PipelineError,
     shared_state: &RouterSharedState,
     response_mode: &ResponseMode,
 ) -> web::HttpResponse {
+    if let PipelineError::PipelineErrorArc(inner) = &err {
+        return handle_pipeline_error(inner, shared_state, response_mode);
+    }
     let single_content_type = response_mode.single_content_type();
 
     let prefer_ok = response_mode.prefer_status_ok_for_errors();
