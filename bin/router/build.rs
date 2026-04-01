@@ -22,6 +22,10 @@ fn main() {
         manifest_dir.join("../../package-lock.json").display()
     );
 
+    let pkgjson_contents = fs::read_to_string(manifest_dir.join("../../package.json"))
+        .expect("failed to read package.json");
+    println!("{}", pkgjson_contents);
+
     if !node_modules_dist.exists() {
         let status = Command::new("npm")
             .args(["install"])
