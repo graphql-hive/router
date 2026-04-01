@@ -9,7 +9,10 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("missing OUT_DIR"));
     let output_file = out_dir.join("laboratory.html");
     let product_logo = manifest_dir.join("static/product_logo.svg");
-    let node_modules_dist = manifest_dir.join("../../node_modules/@graphql-hive/laboratory/dist");
+    let node_modules_dist = manifest_dir
+        .join("../../node_modules/@graphql-hive/laboratory/dist")
+        .canonicalize()
+        .expect("failed to resolve node_modules dist path");
 
     println!("cargo:rerun-if-changed={}", product_logo.display());
     println!(
