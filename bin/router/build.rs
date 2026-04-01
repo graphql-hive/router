@@ -9,8 +9,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("missing OUT_DIR"));
     let output_file = out_dir.join("laboratory.html");
     let product_logo = manifest_dir.join("static/product_logo.svg");
-    let node_modules = manifest_dir.join("../../node_modules");
-    let node_modules_dist = node_modules.join("@graphql-hive/laboratory/dist");
+    let node_modules_dist = manifest_dir.join("../../node_modules/@graphql-hive/laboratory/dist");
 
     println!("cargo:rerun-if-changed={}", product_logo.display());
     println!(
@@ -22,10 +21,6 @@ fn main() {
         manifest_dir.join("../../package-lock.json").display()
     );
 
-    let pkgjson_contents = fs::read_to_string(manifest_dir.join("../../package.json"))
-        .expect("failed to read package.json");
-    println!("{}", pkgjson_contents);
-
     if !node_modules_dist.exists() {
         let status = Command::new("npm")
             .args(["install"])
@@ -35,13 +30,6 @@ fn main() {
 
         if !status.success() {
             panic!("npm install failed");
-        }
-
-        if !node_modules.exists() {
-            panic!(
-                "npm install did not produce node_modules in {}",
-                node_modules.display()
-            );
         }
     }
 
@@ -80,10 +68,6 @@ fn main() {
 }
 
 fn build_inline_laboratory_html(dist_dir: &Path, product_logo: &Path) -> String {
-    println!(
-        "Building inline laboratory HTML from dist directory: {}",
-        dist_dir.display()
-    );
     let js_contents = fs::read_to_string(dist_dir.join("hive-laboratory.umd.js"))
         .expect("failed to read hive-laboratory.umd.js");
     let editor_worker =

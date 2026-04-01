@@ -197,16 +197,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
-      - name: setup node
-        uses: the-guild-org/shared-config/setup@v1
-        with:
-          node-version-file: .node-version
-      - run: cat package.json
-      - working-directory: bin/router
-        run: cat ../../package.json
-      # TODO: put back
-      - name: Build router
-        run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
       - name: Setup K6
         run: |
           wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
@@ -216,6 +206,8 @@ jobs:
         run: cargo build --release -p subgraphs
       - name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
+      - name: Build router
+        run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
       - name: Run router
         run: |
           ./target/release/${{ matrix.binary }} &
