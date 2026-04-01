@@ -7,11 +7,11 @@
 |[**authorization**](#authorization)|`object`|Default: `{"directives":{"enabled":true,"unauthorized":{"mode":"filter"}}}`<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
-|[**graphiql**](#graphiql)|`object`|Configuration for the GraphiQL interface.<br/>Default: `{"enabled":true}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
+|[**laboratory**](#laboratory)|`object`|Configuration for the Hive Laboratory interface.<br/>Default: `{"enabled":true}`<br/>||
 |[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_request_body_size":"2 MB"}`<br/>||
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
@@ -48,8 +48,6 @@ csrf:
   enabled: true
   required_headers:
     - x-csrf-token
-graphiql:
-  enabled: true
 headers:
   all:
     request:
@@ -93,6 +91,8 @@ jwt:
     - name: authorization
       prefix: Bearer
       source: header
+laboratory:
+  enabled: true
 limits:
   max_request_body_size: 2 MB
 log:
@@ -501,26 +501,6 @@ A valid HTTP header name, according to RFC 7230.
 
 **Item Type:** `string`  
 **Item Pattern:** `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`  
-<a name="graphiql"></a>
-## graphiql: object
-
-Configuration for the GraphiQL interface.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**enabled**|`boolean`|Enables/disables the GraphiQL interface. By default, the GraphiQL interface is enabled.<br/><br/>You can override this setting by setting the `LABORATORY_ENABLED` environment variable to `true` or `false`.<br/>Default: `true`<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-enabled: true
-
-```
-
 <a name="headers"></a>
 ## headers: object
 
@@ -1707,6 +1687,26 @@ The first one that is found will be used.
 - name: authorization
   prefix: Bearer
   source: header
+
+```
+
+<a name="laboratory"></a>
+## laboratory: object
+
+Configuration for the Hive Laboratory interface.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Enables/disables the Hive Laboratory interface. By default, the Hive Laboratory interface is enabled.<br/><br/>You can override this setting by setting the `LABORATORY_ENABLED` environment variable to `true` or `false`.<br/>Default: `true`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+enabled: true
 
 ```
 
