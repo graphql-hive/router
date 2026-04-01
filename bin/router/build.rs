@@ -25,7 +25,7 @@ fn main() {
     if !node_modules_dist.exists() {
         let status = Command::new("npm")
             .args(["install"])
-            .current_dir(manifest_dir.join("../../"))
+            // .current_dir(manifest_dir.join("../../"))
             .status()
             .expect("Failed to execute npm install");
 
@@ -40,6 +40,8 @@ fn main() {
             );
         }
     }
+
+    todo!();
 
     println!(
         "cargo:rerun-if-changed={}",
