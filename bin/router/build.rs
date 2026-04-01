@@ -9,7 +9,8 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("missing OUT_DIR"));
     let output_file = out_dir.join("laboratory.html");
     let product_logo = manifest_dir.join("static/product_logo.svg");
-    let node_modules_dist = manifest_dir.join("../../node_modules/@graphql-hive/laboratory/dist");
+    let node_modules = manifest_dir.join("../../node_modules");
+    let node_modules_dist = node_modules.join("@graphql-hive/laboratory/dist");
 
     println!("cargo:rerun-if-changed={}", product_logo.display());
     println!(
@@ -32,10 +33,10 @@ fn main() {
             panic!("npm install failed");
         }
 
-        if !node_modules_dist.exists() {
+        if !node_modules.exists() {
             panic!(
                 "npm install did not produce node_modules in {}",
-                node_modules_dist.display()
+                node_modules.display()
             );
         }
     }
