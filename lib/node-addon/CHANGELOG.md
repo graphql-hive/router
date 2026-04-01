@@ -1,4 +1,10 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.18 (2026-04-01)
+
+### Features
+
+- replace graphiql with laboratory (#791)
+
 ## 0.0.17 (2026-04-01)
 
 ### Fixes

@@ -94,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.10.0 (2026-04-01)
+
+### Features
+
+- replace graphiql with laboratory (#791)
+
 ## 6.9.2 (2026-03-31)
 
 ### Fixes

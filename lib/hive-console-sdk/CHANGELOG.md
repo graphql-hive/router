@@ -1,3 +1,9 @@
+## 0.3.9 (2026-04-01)
+
+### Features
+
+- replace graphiql with laboratory (#791)
+
 ## 0.3.8 (2026-03-16)
 
 ### Fixes
