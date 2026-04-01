@@ -7,8 +7,8 @@ use crate::{
     projection::response::serialize_value_to_buffer,
     response::value::Value,
     utils::consts::{
-        CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, OPEN_BRACE, OPEN_BRACKET, QUOTE, TRUE,
-        TYPENAME, TYPENAME_FIELD_NAME,
+        CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET, QUOTE,
+        TRUE, TYPENAME, TYPENAME_FIELD_NAME,
     },
 };
 
@@ -143,14 +143,18 @@ fn project_requires_map_mut(
                                 .ok()
                                 .map(|idx| &entity_obj[idx].1)
                         }
-                    })
-                    .unwrap_or(&Value::Null);
+                    });
 
-                if original.is_null() {
+                let Some(original) = original else {
                     continue;
-                }
+                };
+
+                // In most requests, required fields are present and projection succeeds.
+                // If projection ends up writing nothing, we rewind to this offset.
+                let mut object_start_offset = None;
 
                 if *first {
+                    object_start_offset = Some(buffer.len());
                     write_response_key(parent_first, parent_response_key, buffer);
                     buffer.put(OPEN_BRACE);
                     // Write __typename only if the object has other fields
@@ -164,9 +168,16 @@ fn project_requires_map_mut(
                         buffer.put(QUOTE);
                         buffer.put(COLON);
                         write_and_escape_string(buffer, type_name);
-                        // We wrote the first field
                         *first = false;
                     }
+                }
+
+                if original.is_null() {
+                    // The field exists and is null, so keep it in the representation.
+                    write_response_key(*first, Some(response_key), buffer);
+                    buffer.put(NULL);
+                    *first = false;
+                    continue;
                 }
 
                 let projected = project_requires(
@@ -177,8 +188,15 @@ fn project_requires_map_mut(
                     *first,
                     Some(response_key),
                 );
+
                 if projected {
                     *first = false;
+                } else if *first {
+                    // We opened '{' but produced no field output.
+                    // Roll back to keep valid JSON and avoid malformed '{...'.
+                    if let Some(offset) = object_start_offset {
+                        buffer.truncate(offset);
+                    }
                 }
             }
             SelectionItem::InlineFragment(requires_selection) => {
@@ -211,5 +229,163 @@ fn project_requires_map_mut(
                 // We only minify the queries to subgraphs, so we never have fragment spreads here.
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::project_requires;
+    use crate::{introspection::schema::PossibleTypes, response::value::Value};
+    use graphql_tools::parser::query;
+    use hive_router_query_planner::ast::{
+        selection_item::SelectionItem, selection_set::SelectionSet,
+    };
+    use hive_router_query_planner::utils::parsing::parse_operation;
+    use sonic_rs::json;
+
+    fn requires_from_str(requires: &str) -> Vec<SelectionItem> {
+        let operation = parse_operation(&format!("query {{ {requires} }}"));
+
+        let selection_set = operation
+            .definitions
+            .into_iter()
+            .find_map(|def| {
+                let query::Definition::Operation(op) = def else {
+                    return None;
+                };
+
+                match op {
+                    query::OperationDefinition::SelectionSet(sel) => Some(sel),
+                    query::OperationDefinition::Query(q) => Some(q.selection_set),
+                    query::OperationDefinition::Mutation(m) => Some(m.selection_set),
+                    query::OperationDefinition::Subscription(s) => Some(s.selection_set),
+                }
+            })
+            .expect("operation must contain a selection set");
+
+        let selection_set: SelectionSet = selection_set.into();
+        selection_set.items
+    }
+
+    fn project_requires_pretty(requires: &str, entity_json: sonic_rs::Value) -> Option<String> {
+        let requires = requires_from_str(requires);
+        let entity = Value::from(entity_json.as_ref());
+
+        let mut buffer = Vec::new();
+        let projected = project_requires(
+            &PossibleTypes::default(),
+            &requires,
+            &entity,
+            &mut buffer,
+            true,
+            None,
+        );
+
+        if !projected {
+            return None;
+        }
+
+        let json: Value = sonic_rs::from_slice(&buffer).unwrap();
+        Some(sonic_rs::to_string_pretty(&json).unwrap())
+    }
+
+    #[test]
+    fn project_requires_variants() {
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+            "contactOptions id",
+            json!({
+                "__typename": "Ad",
+                "contactOptions": null,
+                "id": "1"
+            }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "contactOptions": null,
+            "id": "1"
+          }
+        "#);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+            "id contactOptions",
+            json!({
+                "__typename": "Ad",
+                "contactOptions": null,
+                "id": "1"
+            }),
+          ).expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "contactOptions": null,
+            "id": "1"
+          }
+        "#);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "contactOptions id",
+              json!({
+                  "__typename": "Ad",
+                  "id": "1"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "id": "1"
+          }
+        "#);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "branch { contactOptions { email } } id",
+              json!({
+                  "__typename": "Ad",
+                  "branch": {
+                      "contactOptions": {}
+                  },
+                  "id": "1"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "id": "1"
+          }
+        "#);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "branch { contactOptions { email user { id name } } } id",
+              json!({
+                  "__typename": "Ad",
+                  "branch": {
+                      "__typename": "Branch",
+                      "contactOptions": null
+                  },
+                  "id": "1"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "branch": {
+              "__typename": "Branch",
+              "contactOptions": null
+            },
+            "id": "1"
+          }
+        "#);
+
+        let pretty = project_requires_pretty("contactOptions", json!({}));
+        assert_eq!(pretty, None);
     }
 }

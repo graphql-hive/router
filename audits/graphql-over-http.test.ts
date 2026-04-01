@@ -8,7 +8,7 @@ describe("GraphQL over HTTP", () => {
     })) {
       it(audit.name, async () => {
         const result = await audit.fn();
-        assert.equal(result.status, "ok", (result as AuditFail).reason);
+        assert.equal(result.status, "ok", `${audit.name} failed: ${(result as AuditFail).reason}`);
       });
     }
     it('preserve the order of the selection set', async () => {
