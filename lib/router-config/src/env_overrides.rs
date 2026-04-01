@@ -14,9 +14,9 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "LOG_FILTER")]
     pub log_filter: Option<String>,
 
-    // GraphiQL overrides
-    #[envconfig(from = "GRAPHIQL_ENABLED")]
-    pub graphiql_enabled: Option<bool>,
+    // Laboratory overrides
+    #[envconfig(from = "LABORATORY_ENABLED")]
+    pub laboratory_enabled: Option<bool>,
 
     // HTTP overrides
     #[envconfig(from = "PORT")]
@@ -132,9 +132,9 @@ impl EnvVarOverrides {
             config = config.set_override("telemetry.hive.target", hive_target)?;
         }
 
-        // GraphiQL overrides
-        if let Some(graphiql_enabled) = self.graphiql_enabled.take() {
-            config = config.set_override("graphiql.enabled", graphiql_enabled)?;
+        // Laboratory overrides
+        if let Some(laboratory_enabled) = self.laboratory_enabled.take() {
+            config = config.set_override("laboratory.enabled", laboratory_enabled)?;
         }
 
         Ok(config)

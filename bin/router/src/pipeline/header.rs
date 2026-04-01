@@ -12,7 +12,7 @@ use tracing::error;
 
 use crate::pipeline::error::PipelineError;
 
-/// Non-GraphQL content type, used to detect if the client can accept GraphiQL responses.
+/// Non-GraphQL content type, used to detect if the client can accept Laboratory responses.
 pub const TEXT_HTML_MIME: &str = "text/html";
 
 // IMPORTANT: make sure that the serialized string representations are valid because
@@ -175,9 +175,9 @@ pub enum ResponseMode {
     StreamOnly(StreamContentType),
     /// Will always respond, queries are single responses, subscriptions are streams. errors are single responses.
     Dual(SingleContentType, StreamContentType),
-    /// Render the GraphiQL IDE for the client. Used when the client prefers accepting HTML responses.
+    /// Render the Laboratory IDE for the client. Used when the client prefers accepting HTML responses.
     /// It is different from the other modes because it does not represent a GraphQL response mode.
-    GraphiQL,
+    Laboratory,
 }
 
 // `#[default]` attribute may only be used on unit enum variants, so we have to implement it
@@ -251,14 +251,14 @@ impl RequestAccepts for HttpRequest {
 
         if self.method() == Method::GET {
             // if the client GETs we negotiate with the all supported media type, including HTML
-            // to see if the client wants GraphiQL. we negotiate with everything because browsers
+            // to see if the client wants Laboratory. we negotiate with everything because browsers
             // tend to send very broad accept headers that include text/html with highest q-weight,
             // but would also accept */* which we would interpret as "I want normal GraphQL responses"
-            let has_agreed_graphiql = accept
+            let has_agreed_laboratory = accept
                 .negotiate(ALL_RESPONSE_MODES_CONTENT_TYPE_MEDIA_TYPES.iter())
                 .is_some_and(|t| *t == HTML_MEDIA_TYPE);
-            if has_agreed_graphiql {
-                return Ok(ResponseMode::GraphiQL);
+            if has_agreed_laboratory {
+                return Ok(ResponseMode::Laboratory);
             }
         }
 
@@ -342,7 +342,7 @@ mod tests {
                 // actual browser request loading a page
                 Method::GET,
                 r#"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"#,
-                ResponseMode::GraphiQL,
+                ResponseMode::Laboratory,
             ),
             (
                 // browser accept header snippet but for a POST request

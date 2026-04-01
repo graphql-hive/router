@@ -6,7 +6,7 @@ static PRODUCT_LOGO_SVG: &str = include_str!("../../static/product_logo.svg");
 
 pub async fn landing_page_handler(graphql_endpoint: String) -> impl Responder {
     let rendered_html = LANDING_PAGE_HTML
-        .replace("__GRAPHIQL_LINK__", &graphql_endpoint)
+        .replace("__LABORATORY_LINK__", &graphql_endpoint)
         .replace("__PRODUCT_NAME__", "Hive Router")
         .replace(
             "__PRODUCT_DESCRIPTION__",

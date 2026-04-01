@@ -2,11 +2,11 @@ pub mod authorization;
 pub mod cors;
 pub mod csrf;
 mod env_overrides;
-pub mod graphiql;
 pub mod headers;
 pub mod http_server;
 pub mod introspection_policy;
 pub mod jwt_auth;
+pub mod laboratory;
 pub mod limits;
 pub mod log;
 pub mod override_labels;
@@ -28,9 +28,9 @@ use std::{collections::HashMap, convert::Infallible};
 
 use crate::{
     env_overrides::{EnvVarOverrides, EnvVarOverridesError},
-    graphiql::GraphiQLConfig,
     http_server::HttpServerConfig,
     introspection_policy::IntrospectionPermissionConfig,
+    laboratory::LaboratoryConfig,
     log::LoggingConfig,
     override_labels::OverrideLabelsConfig,
     primitives::file_path::with_start_path,
@@ -51,9 +51,9 @@ pub struct HiveRouterConfig {
     #[serde(default)]
     pub log: LoggingConfig,
 
-    /// Configuration for the GraphiQL interface.
+    /// Configuration for the Hive Laboratory interface.
     #[serde(default)]
-    pub graphiql: GraphiQLConfig,
+    pub laboratory: LaboratoryConfig,
 
     /// Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).
     /// Each source has a different set of configuration, depending on the source type.

@@ -49,7 +49,7 @@ use crate::{
     },
     schema_state::SchemaState,
     shared_state::{RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse},
-    GRAPHIQL_HTML,
+    LABORATORY_HTML,
 };
 
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
@@ -94,11 +94,11 @@ pub async fn graphql_request_handler(
     // agree on the response content type
     *response_mode = req.negotiate()?;
 
-    if *response_mode == ResponseMode::GraphiQL {
-        if shared_state.router_config.graphiql.enabled {
+    if *response_mode == ResponseMode::Laboratory {
+        if shared_state.router_config.laboratory.enabled {
             return Ok(web::HttpResponse::Ok()
                 .header(CONTENT_TYPE, TEXT_HTML_MIME)
-                .body(GRAPHIQL_HTML));
+                .body(LABORATORY_HTML));
         } else {
             return Ok(web::HttpResponse::NotFound().into());
         }
