@@ -41,10 +41,10 @@ debug = 2
 inherits = "release"
 debug = true
 
-# [profile.release]
-# opt-level = 3
-# lto = true
-# codegen-units = 1
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
 
 [workspace.dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
