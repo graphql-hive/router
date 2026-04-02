@@ -4,14 +4,13 @@ use notify::{Config as NotifyConfig, EventKind, RecommendedWatcher, RecursiveMod
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fs;
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::Notify;
+use tokio::sync::{Mutex, Notify};
 use tracing::{info, warn};
 
 use hive_router_config::persisted_documents::PersistedDocumentsFileStorageConfig;
@@ -123,16 +122,14 @@ pub enum FileResolverError {
     WatcherInit { path: String, message: String },
     #[error("failed to watch persisted documents path '{path}': {message}")]
     WatcherWatchPath { path: String, message: String },
-    #[error("persisted documents reload state lock poisoned")]
-    ReloadLockPoisoned,
 }
 
 impl FileManifestResolver {
-    pub fn from_storage_config(
+    pub async fn from_storage_config(
         config: &PersistedDocumentsFileStorageConfig,
     ) -> Result<Self, PersistedDocumentResolverError> {
         let manifest_path = config.path.absolute.clone();
-        let documents = Self::read_manifest_documents(&manifest_path)?;
+        let documents = Self::read_manifest_documents(&manifest_path).await?;
         let dirty = Arc::new(AtomicBool::new(false));
         let reload_signal = Arc::new(Notify::new());
         let watcher = if config.watch {
@@ -165,23 +162,29 @@ impl FileManifestResolver {
         reload_signal: Arc<Notify>,
     ) -> Result<RecommendedWatcher, PersistedDocumentResolverError> {
         let path = Path::new(manifest_path);
+        let manifest_path_buf = PathBuf::from(manifest_path);
         // Watch the parent directory so replace/rename save patterns are observed.
         let watch_target = path.parent().unwrap_or(path);
 
         let mut watcher = match RecommendedWatcher::new(
-            move |result: notify::Result<notify::Event>| match result {
-                Ok(event) => {
-                    if matches!(
-                        event.kind,
-                        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-                    ) {
-                        // Mark dirty and notify the background task.
-                        dirty.store(true, Ordering::Relaxed);
-                        reload_signal.notify_one();
+            move |result: notify::Result<notify::Event>| {
+                let should_signal_reload = match result {
+                    Ok(event) => {
+                        let is_relevant_kind = matches!(
+                            event.kind,
+                            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+                        );
+                        let touches_manifest =
+                            event.paths.iter().any(|path| path == &manifest_path_buf);
+                        is_relevant_kind && touches_manifest
                     }
-                }
-                Err(err) => {
-                    warn!("persisted documents watcher event failed: {err}");
+                    Err(err) => {
+                        warn!("persisted documents watcher event failed: {err}");
+                        true
+                    }
+                };
+
+                if should_signal_reload {
                     dirty.store(true, Ordering::Relaxed);
                     reload_signal.notify_one();
                 }
@@ -210,17 +213,17 @@ impl FileManifestResolver {
     }
 
     // Keeps last known good snapshot active when reload fails
-    pub(crate) fn reload_if_needed(&self) -> Result<(), PersistedDocumentResolverError> {
+    pub(crate) async fn reload_if_needed(&self) -> Result<(), PersistedDocumentResolverError> {
         let _reload_guard = self
             .reload_guard
             .lock()
-            .map_err(|_| FileResolverError::ReloadLockPoisoned)?;
+            .await;
 
         if !self.dirty.swap(false, Ordering::Relaxed) {
             return Ok(());
         }
 
-        let documents = Self::read_manifest_documents(&self.manifest_path)?;
+        let documents = Self::read_manifest_documents(&self.manifest_path).await?;
         self.documents.store(Arc::new(documents));
         info!(
             "reloaded persisted documents manifest from '{}'",
@@ -229,10 +232,11 @@ impl FileManifestResolver {
         Ok(())
     }
 
-    fn read_manifest_documents(
+    async fn read_manifest_documents(
         manifest_path: &str,
     ) -> Result<DocumentsById, PersistedDocumentResolverError> {
-        fs::read(manifest_path)
+        tokio::fs::read(manifest_path)
+            .await
             .map_err(|err| {
                 PersistedDocumentResolverError::from(FileResolverError::ReadManifest {
                     path: manifest_path.to_string(),
@@ -267,7 +271,7 @@ impl BackgroundTask for FileManifestReloadTask {
             .await
             .is_some()
         {
-            if let Err(err) = self.reload_if_needed() {
+            if let Err(err) = self.reload_if_needed().await {
                 warn!("persisted documents background reload failed: {err}");
             }
         }

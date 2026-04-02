@@ -282,6 +282,7 @@ pub async fn configure_app_from_config(
         router_config_arc.http.graphql_endpoint(),
         bg_tasks_manager,
     )
+    .await
     .map_err(|err| crate::shared_state::SharedStateError::PersistedDocuments(Box::new(err)))?;
 
     if !persisted_documents_runtime
