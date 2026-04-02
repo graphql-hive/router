@@ -39,12 +39,16 @@ use crate::pipeline::coerce_variables::coerce_request_variables;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_pipeline;
 use crate::pipeline::execution_request::GetQueryStr;
-use crate::pipeline::normalize::normalize_request_with_cache;
-use crate::pipeline::parser::parse_operation_with_cache;
-use crate::pipeline::usage_reporting;
-use crate::pipeline::validation::validate_operation_with_cache;
+use crate::pipeline::{
+    hash_graphql_extensions, hash_graphql_variables, inbound_request_fingerprint,
+    normalize::normalize_request_with_cache, parser::parse_operation_with_cache, usage_reporting,
+    validation::validate_operation_with_cache,
+};
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
+
+use hive_router_plan_executor::execution::plan::FailedExecutionResult;
+use hive_router_plan_executor::executors::active_subscriptions::BroadcastItem;
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
@@ -480,6 +484,88 @@ async fn handle_text_frame(
                     jwt: jwt_request_details,
                 }.into();
 
+                let is_subscription = matches!(
+                    normalize_payload.operation_for_plan.operation_kind,
+                    Some(OperationKind::Subscription)
+                );
+                let request_dedupe_enabled =
+                    shared_state.router_config.traffic_shaping.router.dedupe.enabled;
+
+                // subscription dedup: try to join an existing subscription
+                if is_subscription && request_dedupe_enabled {
+                    let variables_hash = hash_graphql_variables(&payload.variables);
+                    let extensions_hash = payload
+                        .extensions
+                        .as_ref()
+                        .map_or(0, hash_graphql_extensions);
+                    let schema_checksum = supergraph.schema_checksum();
+                    let fingerprint = inbound_request_fingerprint(
+                        &Method::POST,
+                        ws_uri.path(),
+                        &headers,
+                        &shared_state.in_flight_requests_header_policy,
+                        schema_checksum,
+                        normalize_payload.normalized_operation_hash,
+                        variables_hash,
+                        extensions_hash,
+                    );
+
+                    let registry = &schema_state.active_subscriptions;
+                    if let Some((_sub_id, mut receiver, guard)) =
+                        registry.try_join_by_fingerprint(fingerprint)
+                    {
+                        let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+                        state.borrow_mut().subscriptions.insert(id.clone(), cancel_tx);
+
+                        let _ws_guard = SubscriptionGuard {
+                            state: state.clone(),
+                            id: id.clone(),
+                        };
+
+                        trace!(id = %id, "Subscription joined via dedup");
+
+                        let id_for_loop = id.clone();
+                        let mut cancelled = false;
+                        loop {
+                            tokio::select! {
+                                recv_result = receiver.recv() => {
+                                    match recv_result {
+                                        Ok(BroadcastItem::Event(data)) => {
+                                            let _ = sink.send(ServerMessage::next(&id_for_loop, &data)).await;
+                                        }
+                                        Ok(BroadcastItem::Error(errors)) => {
+                                            let body = FailedExecutionResult { errors }.serialize();
+                                            let _ = sink.send(ServerMessage::next(&id_for_loop, &body)).await;
+                                            break;
+                                        }
+                                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                            trace!(id = %id_for_loop, lagged = n, "broadcast receiver lagged, skipping missed messages");
+                                            continue;
+                                        }
+                                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ = cancel_rx.recv() => {
+                                    cancelled = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        drop(guard);
+
+                        return if cancelled {
+                            trace!(id = %id, "Deduped subscription cancelled");
+                            None
+                        } else {
+                            trace!(id = %id, "Deduped subscription completed");
+                            Some(ServerMessage::complete(&id))
+                        };
+                    }
+                }
+
                 match execute_pipeline(
                     &client_request_details,
                     &normalize_payload,
@@ -523,6 +609,67 @@ async fn handle_text_frame(
                         Some(ServerMessage::complete(&id))
                     }
                     Ok(QueryPlanExecutionResult::Stream(response)) => {
+                        // register with the active subscriptions registry for
+                        // dedup and close-with-error support
+                        let subscription_fingerprint = if is_subscription && request_dedupe_enabled {
+                            let variables_hash = hash_graphql_variables(&payload.variables);
+                            let extensions_hash = payload
+                                .extensions
+                                .as_ref()
+                                .map_or(0, hash_graphql_extensions);
+                            let schema_checksum = supergraph.schema_checksum();
+                            Some(inbound_request_fingerprint(
+                                &Method::POST,
+                                ws_uri.path(),
+                                &headers,
+                                &shared_state.in_flight_requests_header_policy,
+                                schema_checksum,
+                                normalize_payload.normalized_operation_hash,
+                                variables_hash,
+                                extensions_hash,
+                            ))
+                        } else {
+                            None
+                        };
+
+                        let (mut stream, _listener_guard) = if let Some(fp) = subscription_fingerprint {
+                            let registry = &schema_state.active_subscriptions;
+                            let (handle, receiver, guard) = registry.register(Some(fp), None);
+
+                            // spawn a task that reads from upstream and broadcasts
+                            let mut upstream = response.body;
+                            tokio::spawn(async move {
+                                while let Some(event) = upstream.next().await {
+                                    if !handle.send(BroadcastItem::Event(event.into())) {
+                                        break;
+                                    }
+                                }
+                            });
+
+                            let body_stream: futures::stream::BoxStream<'static, Vec<u8>> =
+                                Box::pin(async_stream::stream! {
+                                    let mut receiver = receiver;
+                                    loop {
+                                        match receiver.recv().await {
+                                            Ok(BroadcastItem::Event(data)) => yield data.to_vec(),
+                                            Ok(BroadcastItem::Error(errors)) => {
+                                                yield FailedExecutionResult { errors }.serialize();
+                                                break;
+                                            }
+                                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                                trace!(lagged = n, "broadcast receiver lagged, skipping missed messages");
+                                                continue;
+                                            }
+                                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                                        }
+                                    }
+                                });
+
+                            (body_stream, Some(guard))
+                        } else {
+                            (response.body, None)
+                        };
+
                         // we use mpsc::channel(1) instead of oneshot because oneshot::Receiver
                         // is consumed on first await, which doesn't work in tokio::select! loops that
                         // need to poll the receiver multiple times across iterations
@@ -539,7 +686,6 @@ async fn handle_text_frame(
                             id: id.clone(),
                         };
 
-                        let mut stream = response.body;
                         let mut cancelled = false;
 
                         trace!(id = %id, "Subscription started");

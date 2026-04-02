@@ -212,7 +212,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     .await?;
 
     let shared_state_clone = shared_state.clone();
-    let active_subs = schema_state.active_callback_subscriptions.clone();
+    let active_subs = schema_state.active_subscriptions.clone();
 
     // when `listen` is set, the callback route lives on a dedicated server bound to that address
     // otherwise, the callback route is mounted on the main server on the `callback_path`

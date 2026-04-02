@@ -1,12 +1,18 @@
 use futures::Stream;
+use futures::StreamExt;
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
     sync::Arc,
     time::Instant,
 };
-use tracing::{error, Instrument};
+use tracing::{error, trace, Instrument};
 use xxhash_rust::xxh3::Xxh3;
+
+use hive_router_plan_executor::execution::plan::FailedExecutionResult;
+use hive_router_plan_executor::executors::active_subscriptions::BroadcastItem;
+use hive_router_plan_executor::executors::active_subscriptions::ListenerGuard;
+use hive_router_plan_executor::headers::plan::ResponseHeaderAggregator;
 
 use hive_router_internal::telemetry::traces::spans::{
     graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
@@ -250,10 +256,11 @@ pub async fn graphql_request_handler(
         let request_dedupe_enabled =
             shared_state.router_config.traffic_shaping.router.dedupe.enabled;
 
-        let planned_response = if request_dedupe_enabled
+        let fingerprint = if request_dedupe_enabled
             && matches!(
                 normalize_payload.operation_for_plan.operation_kind,
-                Some(OperationKind::Query) | None
+                // same deduplication applies for queries and subscriptions
+                Some(OperationKind::Query) | Some(OperationKind::Subscription) | None
             ) {
             let variables_hash = hash_graphql_variables(&graphql_params.variables);
             let extensions_hash = graphql_params
@@ -262,17 +269,50 @@ pub async fn graphql_request_handler(
                 .map_or(0, hash_graphql_extensions);
 
             let schema_checksum = supergraph.schema_checksum();
-            let fingerprint = inbound_request_fingerprint(
-                req,
+            Some(inbound_request_fingerprint(
+                req.method(),
+                req.path(),
+                req.headers(),
                 &shared_state.in_flight_requests_header_policy,
                 schema_checksum,
                 normalize_payload.normalized_operation_hash,
                 variables_hash,
                 extensions_hash,
-            );
+            ))
+        } else {
+            None
+        };
+
+        // subscription dedup, try to join an existing subscription
+        if is_subscription {
+            if let Some(fp) = fingerprint {
+                let registry = &schema_state.active_subscriptions;
+                if let Some((_sub_id, receiver, guard)) =
+                    registry.try_join_by_fingerprint(fp)
+                {
+                    let body_stream = broadcast_receiver_to_body_stream(receiver, guard);
+                    let response = build_streaming_response(
+                        body_stream,
+                        response_mode,
+                        None,
+                    )?;
+                    return Ok(response);
+                }
+            }
+        }
+
+        // subscription fingerprint for leader registration (None disables broadcasting)
+        let subscription_fingerprint = if is_subscription { fingerprint } else { None };
+
+        let planned_response = if fingerprint.is_some()
+            && matches!(
+                normalize_payload.operation_for_plan.operation_kind,
+                Some(OperationKind::Query) | None
+            ) {
+            let fp = fingerprint.unwrap();
             let (shared_response, _role) = shared_state
                 .in_flight_requests
-                .claim(fingerprint)
+                .claim(fp)
                 .get_or_try_init(|| async {
                     match execute_planned_request(
                         req,
@@ -284,6 +324,7 @@ pub async fn graphql_request_handler(
                         operation_span,
                         plugin_req_state,
                         response_mode,
+                        subscription_fingerprint,
                     )
                     .await?
                     {
@@ -306,6 +347,7 @@ pub async fn graphql_request_handler(
                 operation_span,
                 plugin_req_state,
                 response_mode,
+                subscription_fingerprint,
             )
             .await?
         };
@@ -378,6 +420,7 @@ async fn execute_planned_request<'exec>(
     operation_span: GraphQLOperationSpan,
     plugin_req_state: Option<PluginRequestState<'exec>>,
     response_mode: &'exec ResponseMode,
+    subscription_fingerprint: Option<u64>,
 ) -> Result<PlannedResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
@@ -429,50 +472,31 @@ async fn execute_planned_request<'exec>(
     .await?
     {
         QueryPlanExecutionResult::Stream(result) => {
-            let stream_content_type = response_mode
-                .stream_content_type()
-                .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
+            let body_stream = if let Some(fingerprint) = subscription_fingerprint {
+                let registry = &schema_state.active_subscriptions;
+                let (handle, receiver, guard) = registry.register(Some(fingerprint), None);
 
-            let content_type_header = match stream_content_type {
-                StreamContentType::IncrementalDelivery => {
-                    http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE)
-                }
-                StreamContentType::SSE => http::HeaderValue::from_static("text/event-stream"),
-                StreamContentType::ApolloMultipartHTTP => {
-                    http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE)
-                }
+                // spawn a task that reads from the upstream and broadcasts to all listeners.
+                // dropping the handle when the upstream ends removes the registry entry
+                let mut upstream = result.body;
+                tokio::spawn(async move {
+                    while let Some(event) = upstream.next().await {
+                        if !handle.send(BroadcastItem::Event(event.into())) {
+                            break;
+                        }
+                    }
+                });
+
+                broadcast_receiver_to_body_stream(receiver, guard)
+            } else {
+                result.body
             };
 
-            // TODO: why exactly do we need a type cast here?
-            let body: std::pin::Pin<
-                Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
-            > = match stream_content_type {
-                StreamContentType::IncrementalDelivery => Box::pin(
-                    multipart_subscribe::create_incremental_delivery_stream(result.body),
-                ),
-                StreamContentType::SSE => Box::pin(sse::create_stream(
-                    result.body,
-                    std::time::Duration::from_secs(10),
-                )),
-                StreamContentType::ApolloMultipartHTTP => {
-                    Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
-                        result.body,
-                        std::time::Duration::from_secs(10),
-                    ))
-                }
-            };
-
-            let mut response_builder = web::HttpResponse::Ok();
-
-            if let Some(response_headers_aggregator) = result.response_headers_aggregator {
-                response_headers_aggregator
-                    .modify_client_response_headers(&mut response_builder)?;
-            }
-
-            let response = response_builder
-                // .status(result.status) status codes in streaming responses should always be ok
-                .header(http::header::CONTENT_TYPE, content_type_header)
-                .streaming(body);
+            let response = build_streaming_response(
+                body_stream,
+                response_mode,
+                result.response_headers_aggregator,
+            )?;
 
             Ok(PlannedResponse::Direct { response })
         }
@@ -569,8 +593,87 @@ pub async fn execute_pipeline<'exec>(
     execute_plan(supergraph, shared_state, planned_request, operation_span).await
 }
 
-fn inbound_request_fingerprint(
-    req: &HttpRequest,
+/// converts a broadcast receiver into a BoxStream of serialized event bodies.
+/// the listener guard is held for the lifetime of the stream to track listener count
+fn broadcast_receiver_to_body_stream(
+    mut receiver: tokio::sync::broadcast::Receiver<BroadcastItem>,
+    guard: ListenerGuard,
+) -> futures::stream::BoxStream<'static, Vec<u8>> {
+    Box::pin(async_stream::stream! {
+        let _guard = guard;
+        loop {
+            match receiver.recv().await {
+                Ok(BroadcastItem::Event(data)) => {
+                    yield data.to_vec();
+                }
+                Ok(BroadcastItem::Error(errors)) => {
+                    yield FailedExecutionResult { errors }.serialize();
+                    break;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    trace!(lagged = n, "broadcast receiver lagged, skipping missed messages");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    })
+}
+
+fn build_streaming_response(
+    body_stream: futures::stream::BoxStream<'static, Vec<u8>>,
+    response_mode: &ResponseMode,
+    response_headers_aggregator: Option<ResponseHeaderAggregator>,
+) -> Result<web::HttpResponse, PipelineError> {
+    let stream_content_type = response_mode
+        .stream_content_type()
+        .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
+
+    let content_type_header = match stream_content_type {
+        StreamContentType::IncrementalDelivery => {
+            http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE)
+        }
+        StreamContentType::SSE => http::HeaderValue::from_static("text/event-stream"),
+        StreamContentType::ApolloMultipartHTTP => {
+            http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE)
+        }
+    };
+
+    let body: std::pin::Pin<
+        Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
+    > = match stream_content_type {
+        StreamContentType::IncrementalDelivery => Box::pin(
+            multipart_subscribe::create_incremental_delivery_stream(body_stream),
+        ),
+        StreamContentType::SSE => Box::pin(sse::create_stream(
+            body_stream,
+            std::time::Duration::from_secs(10),
+        )),
+        StreamContentType::ApolloMultipartHTTP => {
+            Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
+                body_stream,
+                std::time::Duration::from_secs(10),
+            ))
+        }
+    };
+
+    let mut response_builder = web::HttpResponse::Ok();
+
+    if let Some(response_headers_aggregator) = response_headers_aggregator {
+        response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
+    }
+
+    Ok(response_builder
+        .header(http::header::CONTENT_TYPE, content_type_header)
+        .streaming(body))
+}
+
+pub fn inbound_request_fingerprint(
+    method: &http::Method,
+    path: &str,
+    request_headers: &ntex::http::HeaderMap,
     dedupe_header_policy: &RouterRequestDedupeHeaderPolicy,
     schema_checksum: u64,
     normalized_operation_hash: u64,
@@ -579,8 +682,7 @@ fn inbound_request_fingerprint(
 ) -> u64 {
     let mut hasher = Xxh3::new();
 
-    let mut headers: Vec<(&str, &str)> = req
-        .headers()
+    let mut headers: Vec<(&str, &str)> = request_headers
         .iter()
         .filter(|(name, _)| dedupe_header_policy.should_include(name.as_str()))
         .filter_map(|(name, value)| value.to_str().ok().map(|v_str| (name.as_str(), v_str)))
@@ -591,8 +693,8 @@ fn inbound_request_fingerprint(
             .then_with(|| left_value.cmp(right_value))
     });
 
-    req.method().hash(&mut hasher);
-    req.path().hash(&mut hasher);
+    method.hash(&mut hasher);
+    path.hash(&mut hasher);
     headers.hash(&mut hasher);
     schema_checksum.hash(&mut hasher);
     normalized_operation_hash.hash(&mut hasher);
@@ -602,7 +704,7 @@ fn inbound_request_fingerprint(
     hasher.finish()
 }
 
-fn hash_graphql_variables(variables: &HashMap<String, Value>) -> u64 {
+pub fn hash_graphql_variables(variables: &HashMap<String, Value>) -> u64 {
     let mut hasher = Xxh3::new();
 
     let mut keys: Vec<&str> = variables.keys().map(String::as_str).collect();
@@ -619,7 +721,7 @@ fn hash_graphql_variables(variables: &HashMap<String, Value>) -> u64 {
     hasher.finish()
 }
 
-fn hash_graphql_extensions(extensions: &HashMap<String, Value>) -> u64 {
+pub fn hash_graphql_extensions(extensions: &HashMap<String, Value>) -> u64 {
     // reused as hash_graphql_variables has the same function signature
     hash_graphql_variables(extensions)
 }
