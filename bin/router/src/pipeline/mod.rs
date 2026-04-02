@@ -74,6 +74,7 @@ pub mod execution_request;
 pub mod header;
 pub mod http_callback;
 pub mod introspection_policy;
+pub mod long_lived_client_limit;
 pub mod multipart_subscribe;
 pub mod normalize;
 pub mod parser;
@@ -472,11 +473,8 @@ async fn execute_planned_request<'exec>(
     .await?
     {
         QueryPlanExecutionResult::Stream(result) => {
-            let body_stream = register_subscription_leader(
-                result.body,
-                subscription_fingerprint,
-                schema_state,
-            );
+            let body_stream =
+                register_subscription_leader(result.body, subscription_fingerprint, schema_state);
 
             let response = build_streaming_response(
                 body_stream,

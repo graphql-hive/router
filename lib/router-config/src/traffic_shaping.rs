@@ -180,6 +180,13 @@ pub struct TrafficShapingRouterConfig {
     )]
     #[schemars(with = "String")]
     pub request_timeout: Duration,
+
+    /// Maximum number of concurrent long-lived clients (WebSocket connections and HTTP streaming responses).
+    /// Regular non-streaming requests are not counted toward this limit.
+    /// When the limit is reached, new WebSocket and streaming HTTP requests are rejected with 503.
+    /// If both WebSockets and Subscriptions are disabled, this setting has no effect.
+    #[serde(default = "default_max_long_lived_clients")]
+    pub max_long_lived_clients: usize,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -261,11 +268,16 @@ fn default_router_request_timeout() -> Duration {
     Duration::from_secs(60)
 }
 
+fn default_max_long_lived_clients() -> usize {
+    128
+}
+
 impl Default for TrafficShapingRouterConfig {
     fn default() -> Self {
         Self {
             dedupe: Default::default(),
             request_timeout: default_router_request_timeout(),
+            max_long_lived_clients: default_max_long_lived_clients(),
         }
     }
 }

@@ -26,6 +26,7 @@ use crate::{
         graphql_request_handler,
         header::ResponseMode,
         http_callback::handler,
+        long_lived_client_limit::LongLivedClientLimitService,
         request_extensions::{
             read_graphql_operation_metric_identity, read_graphql_response_metric_status,
             read_request_body_size, write_graphql_response_metric_status,
@@ -248,10 +249,15 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let paths = RouterPaths::new(graphql_path.clone(), websocket_path, callback_path);
     paths.detect_conflicts(&prometheus)?;
 
+    let long_lived_client_limit_service =
+        LongLivedClientLimitService::new(&shared_state.router_config);
+
     let maybe_error = web::HttpServer::new(async move || {
         let landing_page_path = graphql_path.clone();
         let prometheus = prometheus.clone();
+        let long_lived_client_limit_service = long_lived_client_limit_service.clone();
         web::App::new()
+            .middleware(long_lived_client_limit_service)
             .middleware(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())

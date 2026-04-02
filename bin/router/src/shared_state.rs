@@ -17,6 +17,7 @@ use moka::future::Cache;
 use moka::Expiry;
 use ntex::web;
 use ntex::{http::HeaderMap, util::Bytes};
+use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, sync::Arc};
 
@@ -153,6 +154,8 @@ pub struct RouterSharedState {
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     pub in_flight_requests: RouterInflightRequestsMap,
     pub in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy,
+    /// tracks the number of active long-lived clients (websockets + http streams)
+    pub long_lived_client_count: Arc<AtomicUsize>,
 }
 
 impl RouterSharedState {
@@ -195,6 +198,7 @@ impl RouterSharedState {
                 .dedupe
                 .headers)
                 .into(),
+            long_lived_client_count: Arc::new(AtomicUsize::new(0)),
         })
     }
 }
