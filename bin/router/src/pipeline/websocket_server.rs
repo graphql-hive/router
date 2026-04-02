@@ -507,6 +507,8 @@ async fn handle_text_frame(
                     jwt: jwt_request_details,
                 }.into();
 
+                // TODO: query dedupe
+
                 // subscription dedup: try to join an existing subscription
                 if let Some(fp) = fingerprint {
                     let registry = &schema_state.active_subscriptions;
