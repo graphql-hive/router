@@ -24,7 +24,10 @@ pub(super) fn write_manifest() -> NamedTempFile {
 pub(super) async fn assert_resolves_successfully(response: ntex::client::ClientResponse) {
     assert!(response.status().is_success(), "expected 2xx response");
     let body = response.json_body().await;
-    assert!(body["errors"].is_null(), "unexpected graphql errors: {body}");
+    assert!(
+        body["errors"].is_null(),
+        "unexpected graphql errors: {body}"
+    );
     assert!(
         body["data"]["topProducts"].is_array(),
         "expected resolved persisted query data: {body}"
