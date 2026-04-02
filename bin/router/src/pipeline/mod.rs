@@ -472,25 +472,11 @@ async fn execute_planned_request<'exec>(
     .await?
     {
         QueryPlanExecutionResult::Stream(result) => {
-            let body_stream = if let Some(fingerprint) = subscription_fingerprint {
-                let registry = &schema_state.active_subscriptions;
-                let (handle, receiver, guard) = registry.register(Some(fingerprint), None);
-
-                // spawn a task that reads from the upstream and broadcasts to all listeners.
-                // dropping the handle when the upstream ends removes the registry entry
-                let mut upstream = result.body;
-                tokio::spawn(async move {
-                    while let Some(event) = upstream.next().await {
-                        if !handle.send(BroadcastItem::Event(event.into())) {
-                            break;
-                        }
-                    }
-                });
-
-                broadcast_receiver_to_body_stream(receiver, guard)
-            } else {
-                result.body
-            };
+            let body_stream = register_subscription_leader(
+                result.body,
+                subscription_fingerprint,
+                schema_state,
+            );
 
             let response = build_streaming_response(
                 body_stream,
@@ -593,9 +579,36 @@ pub async fn execute_pipeline<'exec>(
     execute_plan(supergraph, shared_state, planned_request, operation_span).await
 }
 
+/// registers upstream as a subscription leader, spawning a broadcast task and
+/// returning a stream backed by the broadcast receiver. if fingerprint is None,
+/// the upstream stream is returned as-is with no registration.
+pub(crate) fn register_subscription_leader(
+    upstream: futures::stream::BoxStream<'static, Vec<u8>>,
+    fingerprint: Option<u64>,
+    schema_state: &SchemaState,
+) -> futures::stream::BoxStream<'static, Vec<u8>> {
+    let Some(fingerprint) = fingerprint else {
+        return upstream;
+    };
+
+    let registry = &schema_state.active_subscriptions;
+    let (handle, receiver, guard) = registry.register(Some(fingerprint), None);
+
+    let mut upstream = upstream;
+    tokio::spawn(async move {
+        while let Some(event) = upstream.next().await {
+            if !handle.send(BroadcastItem::Event(event.into())) {
+                break;
+            }
+        }
+    });
+
+    broadcast_receiver_to_body_stream(receiver, guard)
+}
+
 /// converts a broadcast receiver into a BoxStream of serialized event bodies.
 /// the listener guard is held for the lifetime of the stream to track listener count
-fn broadcast_receiver_to_body_stream(
+pub(crate) fn broadcast_receiver_to_body_stream(
     mut receiver: tokio::sync::broadcast::Receiver<BroadcastItem>,
     guard: ListenerGuard,
 ) -> futures::stream::BoxStream<'static, Vec<u8>> {

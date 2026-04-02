@@ -422,6 +422,29 @@ async fn handle_text_frame(
                     return Some(PipelineError::SubscriptionsNotSupported.into_server_message(&id));
                 }
 
+                let request_dedupe_enabled =
+                    shared_state.router_config.traffic_shaping.router.dedupe.enabled;
+
+                let fingerprint = if is_subscription && request_dedupe_enabled {
+                    let variables_hash = hash_graphql_variables(&payload.variables);
+                    let extensions_hash = payload
+                        .extensions
+                        .as_ref()
+                        .map_or(0, hash_graphql_extensions);
+                    Some(inbound_request_fingerprint(
+                        &Method::POST,
+                        ws_uri.path(),
+                        &headers,
+                        &shared_state.in_flight_requests_header_policy,
+                        supergraph.schema_checksum(),
+                        normalize_payload.normalized_operation_hash,
+                        variables_hash,
+                        extensions_hash,
+                    ))
+                } else {
+                    None
+                };
+
                 let jwt_request_details = match &shared_state.jwt_auth_runtime {
                     Some(jwt_auth_runtime) => match jwt_auth_runtime
                         .validate_headers(&headers, &shared_state.jwt_claims_cache)
@@ -484,35 +507,11 @@ async fn handle_text_frame(
                     jwt: jwt_request_details,
                 }.into();
 
-                let is_subscription = matches!(
-                    normalize_payload.operation_for_plan.operation_kind,
-                    Some(OperationKind::Subscription)
-                );
-                let request_dedupe_enabled =
-                    shared_state.router_config.traffic_shaping.router.dedupe.enabled;
-
                 // subscription dedup: try to join an existing subscription
-                if is_subscription && request_dedupe_enabled {
-                    let variables_hash = hash_graphql_variables(&payload.variables);
-                    let extensions_hash = payload
-                        .extensions
-                        .as_ref()
-                        .map_or(0, hash_graphql_extensions);
-                    let schema_checksum = supergraph.schema_checksum();
-                    let fingerprint = inbound_request_fingerprint(
-                        &Method::POST,
-                        ws_uri.path(),
-                        &headers,
-                        &shared_state.in_flight_requests_header_policy,
-                        schema_checksum,
-                        normalize_payload.normalized_operation_hash,
-                        variables_hash,
-                        extensions_hash,
-                    );
-
+                if let Some(fp) = fingerprint {
                     let registry = &schema_state.active_subscriptions;
                     if let Some((_sub_id, mut receiver, guard)) =
-                        registry.try_join_by_fingerprint(fingerprint)
+                        registry.try_join_by_fingerprint(fp)
                     {
                         let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
                         state.borrow_mut().subscriptions.insert(id.clone(), cancel_tx);
@@ -609,66 +608,12 @@ async fn handle_text_frame(
                         Some(ServerMessage::complete(&id))
                     }
                     Ok(QueryPlanExecutionResult::Stream(response)) => {
-                        // register with the active subscriptions registry for
-                        // dedup and close-with-error support
-                        let subscription_fingerprint = if is_subscription && request_dedupe_enabled {
-                            let variables_hash = hash_graphql_variables(&payload.variables);
-                            let extensions_hash = payload
-                                .extensions
-                                .as_ref()
-                                .map_or(0, hash_graphql_extensions);
-                            let schema_checksum = supergraph.schema_checksum();
-                            Some(inbound_request_fingerprint(
-                                &Method::POST,
-                                ws_uri.path(),
-                                &headers,
-                                &shared_state.in_flight_requests_header_policy,
-                                schema_checksum,
-                                normalize_payload.normalized_operation_hash,
-                                variables_hash,
-                                extensions_hash,
-                            ))
-                        } else {
-                            None
-                        };
-
-                        let (mut stream, _listener_guard) = if let Some(fp) = subscription_fingerprint {
-                            let registry = &schema_state.active_subscriptions;
-                            let (handle, receiver, guard) = registry.register(Some(fp), None);
-
-                            // spawn a task that reads from upstream and broadcasts
-                            let mut upstream = response.body;
-                            tokio::spawn(async move {
-                                while let Some(event) = upstream.next().await {
-                                    if !handle.send(BroadcastItem::Event(event.into())) {
-                                        break;
-                                    }
-                                }
-                            });
-
-                            let body_stream: futures::stream::BoxStream<'static, Vec<u8>> =
-                                Box::pin(async_stream::stream! {
-                                    let mut receiver = receiver;
-                                    loop {
-                                        match receiver.recv().await {
-                                            Ok(BroadcastItem::Event(data)) => yield data.to_vec(),
-                                            Ok(BroadcastItem::Error(errors)) => {
-                                                yield FailedExecutionResult { errors }.serialize();
-                                                break;
-                                            }
-                                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                                trace!(lagged = n, "broadcast receiver lagged, skipping missed messages");
-                                                continue;
-                                            }
-                                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                                        }
-                                    }
-                                });
-
-                            (body_stream, Some(guard))
-                        } else {
-                            (response.body, None)
-                        };
+                        let subscription_fingerprint = if is_subscription { fingerprint } else { None };
+                        let mut stream = crate::pipeline::register_subscription_leader(
+                            response.body,
+                            subscription_fingerprint,
+                            schema_state,
+                        );
 
                         // we use mpsc::channel(1) instead of oneshot because oneshot::Receiver
                         // is consumed on first await, which doesn't work in tokio::select! loops that
