@@ -101,7 +101,6 @@ async fn uses_first_value_for_duplicate_keys() {
                 "#,
             manifest.path().display(),
         ))
-        .skip_wait_for_ready_on_start()
         .build()
         .start()
         .await;
