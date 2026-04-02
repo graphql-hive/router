@@ -707,7 +707,7 @@ impl TestRouter<Built> {
 
         let serv_shared_state = shared_state.clone();
         let serv_schema_state = schema_state.clone();
-        let serv_active_subs = schema_state.active_callback_subscriptions.clone();
+        let serv_active_subs = schema_state.active_subscriptions.clone();
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
 
@@ -721,7 +721,7 @@ impl TestRouter<Built> {
             }) => {
                 let cb_path = path.to_string();
                 let cb_addr = listen.to_string();
-                let cb_active_subs = schema_state.active_callback_subscriptions.clone();
+                let cb_active_subs = schema_state.active_subscriptions.clone();
 
                 let server = web::HttpServer::new(async move || {
                     let active_subs = cb_active_subs.clone();
