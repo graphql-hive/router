@@ -41,7 +41,8 @@ impl PersistedDocumentsRuntime {
                 .ok_or(PersistedDocumentResolverError::StorageNotConfigured)?;
             match storage {
                 PersistedDocumentsStorageConfig::File { config } => {
-                    let resolver = Arc::new(FileManifestResolver::from_storage_config(config).await?);
+                    let resolver =
+                        Arc::new(FileManifestResolver::from_storage_config(config).await?);
                     if resolver.has_watcher() {
                         background_tasks_mgr
                             .register_task(FileManifestReloadTask(resolver.clone()));

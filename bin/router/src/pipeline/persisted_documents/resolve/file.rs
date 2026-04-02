@@ -214,10 +214,7 @@ impl FileManifestResolver {
 
     // Keeps last known good snapshot active when reload fails
     pub(crate) async fn reload_if_needed(&self) -> Result<(), PersistedDocumentResolverError> {
-        let _reload_guard = self
-            .reload_guard
-            .lock()
-            .await;
+        let _reload_guard = self.reload_guard.lock().await;
 
         if !self.dirty.swap(false, Ordering::Relaxed) {
             return Ok(());
