@@ -793,9 +793,26 @@ impl TestRouter<Started> {
         variables: Option<sonic_rs::Value>,
         headers: Option<http::HeaderMap>,
     ) -> ClientResponse {
+        self.send_post_request(
+            self.graphql_path(),
+            json!({
+              "query": query,
+              "variables": variables,
+            }),
+            headers,
+        )
+        .await
+    }
+
+    pub async fn send_post_request(
+        &self,
+        path: &str,
+        payload: sonic_rs::Value,
+        headers: Option<http::HeaderMap>,
+    ) -> ClientResponse {
         let mut req = self
             .serv()
-            .post(self.graphql_path())
+            .post(path)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/graphql-response+json");
 
@@ -805,12 +822,9 @@ impl TestRouter<Started> {
             }
         }
 
-        req.send_json(&json!({
-          "query": query,
-          "variables": variables,
-        }))
-        .await
-        .expect("Failed to send graphql request")
+        req.send_json(&payload)
+            .await
+            .expect("Failed to send graphql request")
     }
 }
 

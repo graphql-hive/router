@@ -26,6 +26,8 @@ use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
 use crate::pipeline::introspection_policy::compile_introspection_policy;
 use crate::pipeline::parser::ParseCacheEntry;
+use crate::pipeline::persisted_documents::resolve::PersistedDocumentResolverError;
+use crate::pipeline::persisted_documents::PersistedDocumentsRuntime;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
@@ -137,6 +139,7 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
 pub struct RouterSharedState {
     pub validation_plan: Arc<ValidationPlan>,
     pub parse_cache: Cache<u64, ParseCacheEntry>,
+    pub persisted_documents_runtime: PersistedDocumentsRuntime,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: HeaderRulesPlan,
     pub override_labels_evaluator: OverrideLabelsEvaluator,
@@ -156,8 +159,10 @@ pub struct RouterSharedState {
 }
 
 impl RouterSharedState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
+        persisted_documents_runtime: PersistedDocumentsRuntime,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
         hive_usage_agent: Option<UsageAgent>,
         validation_plan: ValidationPlan,
@@ -170,6 +175,7 @@ impl RouterSharedState {
             validation_plan: Arc::new(validation_plan),
             headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
             parse_cache,
+            persisted_documents_runtime,
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             jwt_claims_cache: Cache::builder()
                 // High capacity due to potentially high token diversity.
@@ -209,6 +215,8 @@ pub enum SharedStateError {
     OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
     #[error("error creating hive usage agent: {0}")]
     UsageAgent(#[from] Box<AgentError>),
+    #[error("invalid persisted documents config: {0}")]
+    PersistedDocuments(#[from] Box<PersistedDocumentResolverError>),
     #[error("invalid introspection config: {0}")]
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
 }

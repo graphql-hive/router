@@ -26,6 +26,8 @@ pub enum RouterInitError {
     TelemetryInitError(#[from] TelemetryInitError),
     #[error(transparent)]
     PluginRegistryError(#[from] PluginRegistryError),
+    #[error("Persisted documents endpoint incompatible: {0}")]
+    PersistedDocumentsEndpointIncompatible(String),
     #[error("Endpoints of '{endpoint_name_one}' and '{endpoint_name_two}' cannot both use the same endpoint: {endpoint}")]
     EndpointConflict {
         endpoint_name_one: String,
