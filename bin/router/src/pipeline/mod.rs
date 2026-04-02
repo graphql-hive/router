@@ -161,11 +161,11 @@ pub async fn graphql_request_handler(
 
         let operation_preparation_result = OperationPreparation::prepare(
             req,
-            &shared_state,
+            shared_state,
             &plugin_req_state,
             body_bytes,
-            client_name.as_deref(),
-            client_version.as_deref(),
+            client_name,
+            client_version,
         )
         .await?;
 
