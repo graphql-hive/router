@@ -21,13 +21,6 @@ pub struct PersistedDocumentsManager {
     endpoints_with_circuit_breakers: Vec<(String, AsyncRecloser)>,
 }
 
-#[derive(Debug)]
-enum EndpointFetchFailure {
-    NotFound,
-    OtherHttp,
-    Error(PersistedDocumentsError),
-}
-
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum PersistedDocumentsError {
     #[error("Failed to read body: {0}")]
@@ -119,7 +112,7 @@ impl PersistedDocumentsManager {
         endpoint: &str,
         document_id: &str,
         circuit_breaker: &AsyncRecloser,
-    ) -> Result<String, EndpointFetchFailure> {
+    ) -> Result<String, PersistedDocumentsError> {
         let cdn_document_id = str::replace(document_id, "~", "/");
         let cdn_artifact_url = format!("{}/apps/{}", endpoint, cdn_document_id);
         info!(
@@ -132,18 +125,15 @@ impl PersistedDocumentsManager {
             .call(response_fut)
             .await
             .map_err(|e| match e {
-                recloser::Error::Inner(e) => EndpointFetchFailure::Error(e.into()),
-                recloser::Error::Rejected => {
-                    EndpointFetchFailure::Error(PersistedDocumentsError::CircuitBreakerRejected)
-                }
+                recloser::Error::Inner(e) => PersistedDocumentsError::from(e),
+                recloser::Error::Rejected => PersistedDocumentsError::CircuitBreakerRejected,
             })?;
 
         if response.status().is_success() {
-            let document = response.text().await.map_err(|e| {
-                EndpointFetchFailure::Error(PersistedDocumentsError::FailedToReadCDNResponse(
-                    e.to_string(),
-                ))
-            })?;
+            let document = response
+                .text()
+                .await
+                .map_err(|e| PersistedDocumentsError::FailedToReadCDNResponse(e.to_string()))?;
             debug!("Document fetched from CDN: {}", document);
 
             return Ok(document);
@@ -160,11 +150,7 @@ impl PersistedDocumentsManager {
                 .unwrap_or_else(|_| "Unavailable".to_string())
         );
 
-        if status == reqwest::StatusCode::NOT_FOUND {
-            Err(EndpointFetchFailure::NotFound)
-        } else {
-            Err(EndpointFetchFailure::OtherHttp)
-        }
+        Err(PersistedDocumentsError::DocumentNotFound)
     }
 
     /// Resolves the document from the cache, or from the CDN
@@ -201,10 +187,7 @@ impl PersistedDocumentsManager {
                         .await
                     {
                         Ok(document) => return Ok(document),
-                        Err(EndpointFetchFailure::NotFound | EndpointFetchFailure::OtherHttp) => {
-                            last_error = Some(PersistedDocumentsError::DocumentNotFound)
-                        }
-                        Err(EndpointFetchFailure::Error(error)) => last_error = Some(error),
+                        Err(error) => last_error = Some(error),
                     }
                 }
 
