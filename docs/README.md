@@ -16,7 +16,7 @@
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
-|[**persisted\_documents**](#persisted_documents)|`object`|Configuration for persisted documents extraction and resolution.<br/>Default: `{"enabled":false,"extractors":null,"log_missing_id":false,"require_id":false,"storage":null}`<br/>||
+|[**persisted\_documents**](#persisted_documents)|`object`|Configuration for persisted documents extraction and resolution.<br/>Default: `{"enabled":false,"log_missing_id":false,"require_id":false,"selectors":null,"storage":null}`<br/>||
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
@@ -118,9 +118,9 @@ override_subgraph_urls:
             
 persisted_documents:
   enabled: false
-  extractors: null
   log_missing_id: false
   require_id: false
+  selectors: null
   storage: null
 plugins: {}
 query_planner:
@@ -1892,24 +1892,24 @@ Configuration for persisted documents extraction and resolution.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Default: `false`<br/>||
-|[**extractors**](#persisted_documentsextractors)|`array`|||
 |**log\_missing\_id**|`boolean`|Default: `false`<br/>||
 |**require\_id**|`boolean`|Default: `false`<br/>||
+|[**selectors**](#persisted_documentsselectors)|`array`|||
 |**storage**||||
 
 **Example**
 
 ```yaml
 enabled: false
-extractors: null
 log_missing_id: false
 require_id: false
+selectors: null
 storage: null
 
 ```
 
-<a name="persisted_documentsextractors"></a>
-### persisted\_documents\.extractors\[\]: array,null
+<a name="persisted_documentsselectors"></a>
+### persisted\_documents\.selectors\[\]: array,null
 
 **Items**
 
