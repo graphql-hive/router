@@ -206,6 +206,8 @@ impl SchemaState {
 
                         // close all active subscriptions before swapping supergraph data
                         active_subscriptions_for_reload.close_all_with_error(vec![
+                            // this is litearaly the same message apollo sends - reasoning is
+                            // drop-in-replacement - is that oke? should we have our own?
                             GraphQLError::from_message_and_code(
                                 "subscription has been closed due to a schema reload",
                                 "SUBSCRIPTION_SCHEMA_RELOAD",
