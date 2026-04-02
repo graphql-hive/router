@@ -99,6 +99,7 @@ impl SubgraphExecutorMap {
             .build(build_https_executor()?);
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
+        let broadcast_capacity = config.subscriptions.broadcast_capacity;
 
         Ok(SubgraphExecutorMap {
             http_executors_by_subgraph: Default::default(),
@@ -113,7 +114,7 @@ impl SubgraphExecutorMap {
             timeouts_by_subgraph: Default::default(),
             global_timeout,
             telemetry_context,
-            active_subscriptions: Arc::new(ActiveSubscriptionsRegistry::new()),
+            active_subscriptions: Arc::new(ActiveSubscriptionsRegistry::new(broadcast_capacity)),
         })
     }
 

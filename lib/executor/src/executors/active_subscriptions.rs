@@ -44,18 +44,16 @@ struct ActiveSubscriptionEntry {
 pub struct ActiveSubscriptionsRegistry {
     subscriptions: DashMap<SubscriptionId, ActiveSubscriptionEntry>,
     fingerprints: DashMap<Fingerprint, SubscriptionId>,
+    // capacity of the broadcast channel per subscription, see router config `subscriptions.broadcast_capacity`
+    broadcast_capacity: usize,
 }
 
-// tokio::sync::broadcast capacity. subscription events are typically low-frequency,
-// so a small buffer is fine. if backpressure becomes an issue, we should rethink
-// this (e.g. per-consumer mpsc channels with a fan-out task)
-const BROADCAST_CAPACITY: usize = 32;
-
 impl ActiveSubscriptionsRegistry {
-    pub fn new() -> Self {
+    pub fn new(broadcast_capacity: usize) -> Self {
         Self {
             subscriptions: DashMap::new(),
             fingerprints: DashMap::new(),
+            broadcast_capacity,
         }
     }
 
@@ -101,7 +99,7 @@ impl ActiveSubscriptionsRegistry {
         ListenerGuard,
     ) {
         let id = Uuid::new_v4().to_string();
-        let (sender, receiver) = tokio::sync::broadcast::channel(BROADCAST_CAPACITY);
+        let (sender, receiver) = tokio::sync::broadcast::channel(self.broadcast_capacity);
         let listener_count = Arc::new(AtomicUsize::new(1));
 
         let entry = ActiveSubscriptionEntry {
