@@ -110,6 +110,41 @@ async fn requires_id_when_query_is_empty() {
 }
 
 #[ntex::test]
+// Verifies queryless GET request is possible
+async fn requires_id_when_queryless_get_has_no_id() {
+    let manifest = write_manifest();
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let router = TestRouter::builder()
+        .with_subgraphs(&subgraphs)
+        .inline_config(format!(
+            r#"
+                supergraph:
+                  source: file
+                  path: supergraph.graphql
+                persisted_documents:
+                  enabled: true
+                  require_id: true
+                  storage:
+                    type: file
+                    path: "{}"
+                "#,
+            manifest.path().display(),
+        ))
+        .build()
+        .start()
+        .await;
+
+    let response = router
+        .serv()
+        .get("/graphql")
+        .send()
+        .await
+        .expect("failed to send graphql request");
+
+    assert_error_code(response, "PERSISTED_DOCUMENT_ID_REQUIRED").await;
+}
+
+#[ntex::test]
 // Verifies percent-encoded values in the configured custom query parameter are decoded before lookup
 async fn decodes_percent_encoded_custom_param() {
     let manifest = write_manifest();

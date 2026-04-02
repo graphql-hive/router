@@ -184,3 +184,41 @@ async fn uses_first_match_with_other_extractors() {
 
     assert_resolves_successfully(response).await;
 }
+
+#[ntex::test]
+// Verifies queryless GET path requests can resolve persisted document id from url_path_param extractor.
+async fn resolves_id_from_queryless_get_path() {
+    let manifest = write_manifest();
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let router = TestRouter::builder()
+        .with_subgraphs(&subgraphs)
+        .inline_config(format!(
+            r#"
+                supergraph:
+                  source: file
+                  path: supergraph.graphql
+                persisted_documents:
+                  enabled: true
+                  require_id: true
+                  storage:
+                    type: file
+                    path: "{}"
+                  extractors:
+                    - type: url_path_param
+                      template: /docs/:id
+                "#,
+            manifest.path().display(),
+        ))
+        .build()
+        .start()
+        .await;
+
+    let response = router
+        .serv()
+        .get(&format!("/graphql/docs/{PATH_DOC_ID}"))
+        .send()
+        .await
+        .expect("failed to send graphql request");
+
+    assert_resolves_successfully(response).await;
+}
