@@ -185,10 +185,33 @@ pub struct TrafficShapingRouterConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingRouterDedupeConfig {
-    /// Enables/disables in-flight request deduplication at the router endpoint level.
+    /// Enables/disables in-flight request and active subscriptions deduplication at the router level.
     ///
-    /// When enabled, identical incoming GraphQL query requests that are processed at the same time
-    /// share the same in-flight execution result.
+    /// When enabled, the router deduplicates both queries and subscriptions using the same
+    /// fingerprint key (method, path, selected headers, schema checksum, normalized operation
+    /// hash, variables, and extensions). The `headers` configuration below controls which
+    /// headers participate in that key for all operation types.
+    ///
+    /// For queries, concurrent HTTP requests that produce the same fingerprint share a single
+    /// in-flight execution - only the first one runs, and the rest wait for and receive the
+    /// same result.
+    ///
+    /// For subscriptions, the mechanism is broadcast-based rather than request-sharing. The
+    /// first client with a given fingerprint becomes the leader: it runs the upstream subscription
+    /// and its events are fanned out through a broadcast channel backed by an active subscriptions
+    /// registry. Any subsequent client that arrives with an identical fingerprint while that subscription
+    /// is still active joins as a listener on the same broadcast channel instead of starting a new upstream
+    /// connection. When all listeners have dropped and the leader finishes, the entry is removed from the
+    /// registry.
+    ///
+    /// WebSocket connections participate in the same deduplication space as HTTP. Each
+    /// subscribe message is processed with a synthetic request assembled from the WebSocket
+    /// path and the headers derived from the `websocket.headers` config. The fingerprint is computed
+    /// from those synthetic headers using the same header policy, so a subscription started over HTTP
+    /// and an identical one started over WebSocket will deduplicate against each other.
+    ///
+    /// The deduplication is transport agnostic. A query over WebSocket would get deduplicated with an
+    /// identical query over HTTP if they arrive at the same time and have the same fingerprint.
     #[serde(default = "default_router_dedupe_enabled")]
     pub enabled: bool,
 
