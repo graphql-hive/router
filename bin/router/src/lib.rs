@@ -291,7 +291,7 @@ pub async fn configure_app_from_config(
         // Root endpoint would make all routes ambiguous for persisted-document extraction.
         // Even /health could be treated as a graphql request with document id == "health".
         return Err(RouterInitError::PersistedDocumentsEndpointIncompatible(
-            "http.graphql_endpoint='/' is not allowed when persisted_documents.extractors contains type=url_path_param. Use a non-root endpoint like '/graphql'.".to_string(),
+            "http.graphql_endpoint='/' is not allowed when persisted_documents.selectors contains type=url_path_param. Use a non-root endpoint like '/graphql'.".to_string(),
         ));
     }
 

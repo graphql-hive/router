@@ -21,7 +21,7 @@ async fn extracts_from_extensions_nested_path() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: json_path
                       path: extensions.custom.document.id
                 "#,
@@ -67,7 +67,7 @@ async fn extracts_from_nonstandard_root_field() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: json_path
                       path: custom.document.id
                 "#,
@@ -112,7 +112,7 @@ async fn returns_none_when_path_missing() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: json_path
                       path: extensions.custom.document.id
                 "#,

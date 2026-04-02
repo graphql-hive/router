@@ -54,7 +54,7 @@ async fn resolves_from_custom_query_param_extractor() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_query_param
                       name: pid
                 "#,
@@ -162,7 +162,7 @@ async fn decodes_percent_encoded_custom_param() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_query_param
                       name: pid
                 "#,
@@ -200,7 +200,7 @@ async fn requires_id_when_custom_param_is_missing() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_query_param
                       name: pid
                 "#,

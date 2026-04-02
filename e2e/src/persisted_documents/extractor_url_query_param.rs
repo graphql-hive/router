@@ -22,7 +22,7 @@ async fn missing_query_string_returns_none() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_query_param
                       name: documentId
                 "#,
@@ -60,7 +60,7 @@ async fn decodes_percent_encoded_value() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_query_param
                       name: documentId
                 "#,
@@ -95,7 +95,7 @@ async fn uses_first_value_for_duplicate_keys() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_query_param
                       name: documentId
                 "#,
@@ -135,7 +135,7 @@ async fn first_empty_match() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_query_param
                       name: documentId
                 "#,
@@ -186,7 +186,7 @@ async fn ignores_prefix_matches_and_continues() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_query_param
                       name: key
                 "#,

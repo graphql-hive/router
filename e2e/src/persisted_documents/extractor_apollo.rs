@@ -21,7 +21,7 @@ async fn extracts_sha256_hash_from_extensions() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: json_path
                       path: extensions.persistedQuery.sha256Hash
                 "#,
@@ -65,7 +65,7 @@ async fn returns_none_when_hash_missing() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: json_path
                       path: extensions.persistedQuery.sha256Hash
                 "#,

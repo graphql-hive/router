@@ -20,7 +20,7 @@ async fn extracts_id_from_path() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_path_param
                       template: /docs/:id
                 "#,
@@ -54,7 +54,7 @@ async fn mismatch() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_path_param
                       template: /docs/:id
                 "#,
@@ -88,7 +88,7 @@ async fn matches_wildcard_template() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_path_param
                       template: /v1/*/:id/details
                 "#,
@@ -128,7 +128,7 @@ async fn works_with_custom_graphql_endpoint() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_path_param
                       template: /docs/:id
                 "#,
@@ -146,7 +146,7 @@ async fn works_with_custom_graphql_endpoint() {
 }
 
 #[ntex::test]
-async fn uses_first_match_with_other_extractors() {
+async fn uses_first_match_with_other_selectors() {
     let manifest = write_manifest();
     let subgraphs = TestSubgraphs::builder().build().start().await;
     let router = TestRouter::builder()
@@ -162,7 +162,7 @@ async fn uses_first_match_with_other_extractors() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_path_param
                       template: /docs/:id
                     - type: url_query_param
@@ -203,7 +203,7 @@ async fn resolves_id_from_queryless_get_path() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: url_path_param
                       template: /docs/:id
                 "#,

@@ -27,7 +27,7 @@ fn build_resolver(template: &str) -> DocumentIdResolver {
     "path": "{}",
     "watch": false
   }},
-  "extractors": [
+  "selectors": [
     {{ "type": "url_path_param", "template": "{template}" }}
   ]
 }}"#,
@@ -52,7 +52,7 @@ fn build_query_param_resolver(name: &str) -> DocumentIdResolver {
     "path": "{}",
     "watch": false
   }},
-  "extractors": [
+  "selectors": [
     {{ "type": "url_query_param", "name": "{name}" }}
   ]
 }}"#,

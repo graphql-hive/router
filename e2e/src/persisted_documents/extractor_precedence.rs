@@ -21,7 +21,7 @@ async fn uses_first_match() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: json_path
                       path: documentId
                     - type: url_query_param

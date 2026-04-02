@@ -70,7 +70,7 @@ enum ResolverState {
 }
 
 struct ActivePlan {
-    extractors: Vec<Box<dyn DocumentIdSourceExtractor>>,
+    selectors: Vec<Box<dyn DocumentIdSourceExtractor>>,
     requires_nonstandard_json_fields: bool,
     depends_on_graphql_path: bool,
 }
@@ -142,27 +142,27 @@ impl DocumentIdResolver {
             });
         }
 
-        let configured_extractors = match config.extractors.as_ref() {
-            Some(extractors) => extractors.clone(),
-            None => PersistedDocumentsConfig::default_extractors(),
+        let configured_selectors = match config.selectors.as_ref() {
+            Some(selectors) => selectors.clone(),
+            None => PersistedDocumentsConfig::default_selectors(),
         };
 
-        let mut extractors = Vec::with_capacity(configured_extractors.len());
+        let mut selectors = Vec::with_capacity(configured_selectors.len());
         let mut requires_nonstandard_json_fields = false;
         let mut depends_on_graphql_path = false;
 
-        for extractor_config in &configured_extractors {
+        for selector_config in &configured_selectors {
             let (extractor, requires_nonstandard_fields, depends_on_url_path) =
-                build_extractor(extractor_config)?;
+                build_extractor(selector_config)?;
             requires_nonstandard_json_fields |= requires_nonstandard_fields;
             depends_on_graphql_path |= depends_on_url_path;
-            extractors.push(extractor);
+            selectors.push(extractor);
         }
 
         Ok(Self {
             graphql_endpoint,
             state: ResolverState::Enabled(ActivePlan {
-                extractors,
+                selectors,
                 requires_nonstandard_json_fields,
                 depends_on_graphql_path,
             }),
@@ -200,8 +200,8 @@ impl DocumentIdResolver {
 
         let ctx = ExtractionContext::new(input, &self.graphql_endpoint);
 
-        for extractor in &active_plan.extractors {
-            if let Some(persisted_document_id) = extractor.extract(&ctx) {
+        for selector in &active_plan.selectors {
+            if let Some(persisted_document_id) = selector.extract(&ctx) {
                 return Some(persisted_document_id);
             }
         }

@@ -19,7 +19,7 @@ pub struct PersistedDocumentsConfig {
     #[serde(default)]
     pub storage: Option<PersistedDocumentsStorageConfig>,
     #[serde(default)]
-    pub extractors: Option<Vec<PersistedDocumentExtractorConfig>>,
+    pub selectors: Option<Vec<PersistedDocumentExtractorConfig>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,7 +34,7 @@ struct RawPersistedDocumentsConfig {
     #[serde(default)]
     storage: Option<PersistedDocumentsStorageConfig>,
     #[serde(default)]
-    extractors: Option<Vec<PersistedDocumentExtractorConfig>>,
+    selectors: Option<Vec<PersistedDocumentExtractorConfig>>,
 }
 
 impl<'de> Deserialize<'de> for PersistedDocumentsConfig {
@@ -44,11 +44,10 @@ impl<'de> Deserialize<'de> for PersistedDocumentsConfig {
     {
         let raw = RawPersistedDocumentsConfig::deserialize(deserializer)?;
 
-        if raw.enabled
-            && matches!(raw.extractors.as_ref(), Some(extractors) if extractors.is_empty())
+        if raw.enabled && matches!(raw.selectors.as_ref(), Some(selectors) if selectors.is_empty())
         {
             return Err(D::Error::custom(
-                "persisted_documents.extractors must not be an explicit empty list when persisted_documents.enabled=true",
+                "persisted_documents.selectors must not be an explicit empty list when persisted_documents.enabled=true",
             ));
         }
 
@@ -58,12 +57,12 @@ impl<'de> Deserialize<'de> for PersistedDocumentsConfig {
             ));
         }
 
-        if let Some(extractors) = raw.extractors.as_ref() {
+        if let Some(selectors) = raw.selectors.as_ref() {
             let mut seen = HashSet::new();
-            for extractor in extractors {
-                if !seen.insert(extractor.clone()) {
+            for selector in selectors {
+                if !seen.insert(selector.clone()) {
                     return Err(D::Error::custom(format!(
-                        "persisted_documents.extractors contains a duplicate entry: {extractor:?}"
+                        "persisted_documents.selectors contains a duplicate entry: {selector:?}"
                     )));
                 }
             }
@@ -74,7 +73,7 @@ impl<'de> Deserialize<'de> for PersistedDocumentsConfig {
             require_id: raw.require_id,
             log_missing_id: raw.log_missing_id,
             storage: raw.storage,
-            extractors: raw.extractors,
+            selectors: raw.selectors,
         })
     }
 }
@@ -370,7 +369,7 @@ impl<'de> Deserialize<'de> for PersistedDocumentQueryParamName {
 }
 
 impl PersistedDocumentsConfig {
-    pub fn default_extractors() -> Vec<PersistedDocumentExtractorConfig> {
+    pub fn default_selectors() -> Vec<PersistedDocumentExtractorConfig> {
         vec![
             PersistedDocumentExtractorConfig::JsonPath {
                 path: PersistedDocumentJsonPath("documentId".to_string()),

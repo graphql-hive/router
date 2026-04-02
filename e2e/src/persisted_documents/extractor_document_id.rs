@@ -21,7 +21,7 @@ async fn empty_id_is_ignored() {
                   storage:
                     type: file
                     path: "{}"
-                  extractors:
+                  selectors:
                     - type: json_path
                       path: documentId
                 "#,

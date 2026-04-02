@@ -18,7 +18,7 @@ Supports extracting persisted document IDs from:
 - custom `url_query_param` (for example `?doc_id=123`)
 - custom `url_path_param` (for example `/graphql/:id`)
 
-Extractor order is configurable and evaluated top-to-bottom.
+Order is configurable and evaluated top-to-bottom.
 
 Supports persisted document resolution from:
 - file manifests (Apollo and Relay KV styles)

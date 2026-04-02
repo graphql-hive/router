@@ -4,10 +4,10 @@ use super::shared::{assert_resolves_successfully, write_manifest, DOC_ID};
 use crate::testkit::{TestRouter, TestSubgraphs};
 
 #[ntex::test]
-// Make sure Hive Router accepts by default:
+// Make sure Hive Router accepts by default selectors:
 // - json: documentId
 // - json: extensions.persistedQuery.sha256
-async fn default_extractors() {
+async fn default_selectors() {
     let manifest = write_manifest();
     let subgraphs = TestSubgraphs::builder().build().start().await;
     let router = TestRouter::builder()
