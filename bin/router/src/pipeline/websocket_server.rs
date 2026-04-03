@@ -30,6 +30,7 @@ use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLEr
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 
 use crate::jwt::errors::JwtError;
+use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_planned_request;
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
@@ -39,7 +40,7 @@ use crate::pipeline::{
     validation::validate_operation_with_cache,
 };
 use crate::schema_state::SchemaState;
-use crate::shared_state::RouterSharedState;
+use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
@@ -468,6 +469,12 @@ async fn handle_text_frame(
                         })
                         .await {
                             Ok(result) => result,
+                            Err(PipelineError::JwtError(err)) => {
+                                let _ = sink.send(err.clone().into_server_message(&id)).await;
+                                // we report error as graphql error, but we also close the
+                                // connection since we're dealing with auth so let's be safe
+                                return Some(err.into_close_message());
+                            },
                             Err(err) => return Some(err.into_server_message(&id)),
                         };
                     Arc::unwrap_or_clone(shared_response)
@@ -495,7 +502,89 @@ async fn handle_text_frame(
                     }
                 };
 
-                todo!();
+                if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                    usage_reporting::collect_usage_report(
+                        supergraph.supergraph_schema.clone(),
+                        started_at.elapsed(),
+                        client_name,
+                        client_version,
+                        normalize_payload.operation_for_plan.name.as_deref(),
+                        &parser_payload.minified_document,
+                        hive_usage_agent,
+                        shared_state
+                            .router_config
+                            .telemetry
+                            .hive
+                            .as_ref()
+                            .map(|c| &c.usage_reporting)
+                            .expect("Expected Usage Reporting options to be present when Hive Usage Agent is initialized"),
+                        shared_response.error_count(),
+                    )
+                    .await;
+                }
+
+                match shared_response {
+                    SharedRouterResponse::Single(response) => {
+                        let _ = sink.send(ServerMessage::next(&id, &response.body)).await;
+                        Some(ServerMessage::complete(&id))
+                    }
+                    SharedRouterResponse::Stream(response) => {
+                        let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+
+                        state
+                            .borrow_mut()
+                            .subscriptions
+                            .insert(id.clone(), cancel_tx);
+
+                        let _guard = SubscriptionGuard {
+                            state: state.clone(),
+                            id: id.clone(),
+                        };
+
+                        let mut receiver = response
+                            .receiver
+                            .unwrap_or_else(|| response.body.subscribe());
+                        let mut cancelled = false;
+
+                        trace!(id = %id, "Subscription started");
+
+                        let id_for_loop = id.clone();
+                        loop {
+                            tokio::select! {
+                                maybe_item = receiver.recv() => {
+                                    match maybe_item {
+                                        Ok(SubscriptionEvent::Raw(data)) => {
+                                            let _ = sink.send(ServerMessage::next(&id_for_loop, &data)).await;
+                                        }
+                                        Ok(SubscriptionEvent::Error(errors)) => {
+                                            let _ = sink.send(ServerMessage::error(&id_for_loop, &errors)).await;
+                                            break;
+                                        }
+                                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                            trace!(id = %id_for_loop, lagged = n, "broadcast receiver lagged, skipping missed messages");
+                                            continue;
+                                        }
+                                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ = cancel_rx.recv() => {
+                                    cancelled = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if cancelled {
+                            trace!(id = %id, "Subscription cancelled");
+                            None
+                        } else {
+                            trace!(id = %id, "Subscription completed");
+                            Some(ServerMessage::complete(&id))
+                        }
+                    }
+                }
             }
             .instrument(span_clone)
             .await;
