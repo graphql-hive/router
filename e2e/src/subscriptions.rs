@@ -1568,6 +1568,7 @@ mod subscriptions_e2e_tests {
                     router:
                         dedupe:
                             enabled: true
+                            headers: none
                 "#,
             )
             .build()
@@ -1667,6 +1668,7 @@ mod subscriptions_e2e_tests {
                     router:
                         dedupe:
                             enabled: true
+                            headers: none
                 "#,
             )
             .build()
@@ -1694,17 +1696,17 @@ mod subscriptions_e2e_tests {
         // consume 3 events from sub1 to let the source stream advance
         let response = ws_stream.next().await.unwrap();
         assert!(
-            response.data.to_string().contains(r#""id":"1""#),
+            response.data.to_string().contains(r#""id": "1""#),
             "Expected first event to be id=1"
         );
         let response = ws_stream.next().await.unwrap();
         assert!(
-            response.data.to_string().contains(r#""id":"2""#),
+            response.data.to_string().contains(r#""id": "2""#),
             "Expected second event to be id=2"
         );
         let response = ws_stream.next().await.unwrap();
         assert!(
-            response.data.to_string().contains(r#""id":"3""#),
+            response.data.to_string().contains(r#""id": "3""#),
             "Expected third event to be id=3"
         );
 
