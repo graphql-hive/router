@@ -2,7 +2,7 @@
 
 # This script is meant to be run in CI (./github/workflows/ci.yaml#router-benchmark).
 #
-# It's a script to detect performance regression between two k6 benchmark summary files.
+# It's a script to detect performance regression between two goose benchmark summary files.
 # It compares the 'http_reqs' rate metric from the PR summary against the main branch
 # summary and determines if there is a regression of more than 2%.
 # If a regression is detected, the script exits with a non-zero status code.
@@ -19,8 +19,8 @@ then
     exit 1
 fi
 
-PR_SUMMARY="./bench/results/pr/k6_summary.json"
-MAIN_SUMMARY="./bench/results/main/k6_summary.json"
+PR_SUMMARY="./bench/results/pr/goose_summary.json"
+MAIN_SUMMARY="./bench/results/main/goose_summary.json"
 
 # Check if the summary files exist
 if [ ! -f "$PR_SUMMARY" ] || [ ! -f "$MAIN_SUMMARY" ]; then

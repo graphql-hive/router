@@ -22,9 +22,9 @@ cargo build --release -p hive-router
 Defaults: 50 vus for 30s
 
 ```
-k6 run k6.js
+cargo run --release -p goose-benchmark
 
 # Custom settings
-k6 run k6.js -e BENCH_VUS=69
-k6 run k6.js -e BENCH_OVER_TIME=10s
+BENCH_VUS=69 cargo run --release -p goose-benchmark
+BENCH_OVER_TIME=10s cargo run --release -p goose-benchmark
 ```
