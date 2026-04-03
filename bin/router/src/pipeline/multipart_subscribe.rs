@@ -10,7 +10,9 @@ use tokio_util::bytes::BufMut;
 // we use macros to retain constness
 macro_rules! make_content_type {
     ($boundary:expr) => {
-        concat!("multipart/mixed;boundary=", $boundary)
+        // wrapping with "" is not necessary in our case since the boundaries we use do not contain special
+        // characters - but clients out there probably rely on the quotes so we add them just in case
+        concat!("multipart/mixed;boundary=\"", $boundary, "\"")
     };
 }
 macro_rules! make_boundaries {
@@ -73,8 +75,10 @@ pub fn create_incremental_delivery_stream(
 
 const APOLLO_MULTIPART_HTTP_BOUNDARY: &str = "graphql";
 
-pub const APOLLO_MULTIPART_HTTP_CONTENT_TYPE: &str =
-    make_content_type!(APOLLO_MULTIPART_HTTP_BOUNDARY);
+pub const APOLLO_MULTIPART_HTTP_CONTENT_TYPE: &str = concat!(
+    make_content_type!(APOLLO_MULTIPART_HTTP_BOUNDARY),
+    ";subscriptionSpec=1.0"
+);
 
 /// Create a multipart subscription stream following Apollo's Multipart HTTP spec.
 ///

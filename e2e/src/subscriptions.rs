@@ -343,7 +343,7 @@ mod subscriptions_e2e_tests {
     }
 
     #[ntex::test]
-    async fn subscription_yes_entity_resolution_multipart_client() {
+    async fn subscription_yes_entity_resolution_multipart_client_unquoted_spec() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
@@ -374,7 +374,108 @@ mod subscriptions_e2e_tests {
                 "#,
                 None,
                 some_header_map! {
-                    // as per https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol#executing-a-subscription
+                    http::header::ACCEPT => r#"multipart/mixed;subscriptionSpec=1.0"#
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = res
+            .header("content-type")
+            .expect("must have content-type header");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}}
+        --graphql--
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header,
+            "multipart/mixed;boundary=\"graphql\";subscriptionSpec=1.0",
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_yes_entity_resolution_multipart_client_quoted_spec() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    // exactly as per https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol#executing-a-subscription
                     http::header::ACCEPT => r#"multipart/mixed;subscriptionSpec="1.0", application/json"#
                 },
             )
@@ -439,8 +540,8 @@ mod subscriptions_e2e_tests {
 
         // we check this at the end because the body will hold clues to why the test fails
         assert_eq!(
-            content_type_header, "multipart/mixed;boundary=graphql",
-            "Expected Content-Type to be multipart/mixed; boundary=graphql"
+            content_type_header,
+            "multipart/mixed;boundary=\"graphql\";subscriptionSpec=1.0",
         );
     }
 
@@ -539,10 +640,7 @@ mod subscriptions_e2e_tests {
         "#);
 
         // we check this at the end because the body will hold clues to why the test fails
-        assert_eq!(
-            content_type_header, "multipart/mixed;boundary=-",
-            "Expected Content-Type to be multipart/mixed; boundary=-"
-        );
+        assert_eq!(content_type_header, "multipart/mixed;boundary=\"-\"",);
     }
 
     #[ntex::test]
@@ -1292,7 +1390,7 @@ mod subscriptions_e2e_tests {
 
         event: next
         data: {"errors":[{"message":"Error reading SSE subscription stream: Stream read error: error reading a body from connection","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_SSE_STREAM_ERROR","serviceName":"reviews"}}]}
-        
+
         event: complete
         "#);
     }
