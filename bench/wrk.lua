@@ -51,59 +51,6 @@ local function build_graphql_request_body(query)
   return "{\"query\":\"" .. escaped_query .. "\"}"
 end
 
-local function is_array(value)
-  return type(value) == "table" and value[1] ~= nil
-end
-
-local function sorted_keys(value)
-  local keys = {}
-  for key, _ in pairs(value) do
-    keys[#keys + 1] = key
-  end
-  table.sort(keys)
-  return keys
-end
-
-local function canonical_json_encode(value)
-  local value_type = type(value)
-
-  if value_type == "table" then
-    local parts = {}
-
-    if is_array(value) then
-      for i = 1, #value do
-        parts[#parts + 1] = canonical_json_encode(value[i])
-      end
-      return "[" .. table.concat(parts, ",") .. "]"
-    end
-
-    local keys = sorted_keys(value)
-    for _, key in ipairs(keys) do
-      local encoded_key = cjson and cjson.encode and cjson.encode(key) or ('"' .. escape_json(key) .. '"')
-      parts[#parts + 1] = encoded_key .. ":" .. canonical_json_encode(value[key])
-    end
-    return "{" .. table.concat(parts, ",") .. "}"
-  end
-
-  if cjson and cjson.encode then
-    return cjson.encode(value)
-  end
-
-  if value_type == "string" then
-    return '"' .. escape_json(value) .. '"'
-  end
-
-  if value_type == "number" then
-    return tostring(value)
-  end
-
-  if value_type == "boolean" then
-    return value and "true" or "false"
-  end
-
-  return "null"
-end
-
 local function hash_string(value)
   local hash = 5381
   local max_u32 = 4294967296
@@ -114,50 +61,6 @@ local function hash_string(value)
 
   return string.format("%08x", hash)
 end
-
-local function normalize_with_template(value, template)
-  if type(template) ~= "table" then
-    if type(value) ~= type(template) then
-      return nil
-    end
-
-    return type(template)
-  end
-
-  if type(value) ~= "table" then
-    return nil
-  end
-
-  if is_array(template) then
-    if value[1] == nil then
-      return nil
-    end
-
-    local first = normalize_with_template(value[1], template[1])
-    if first == nil then
-      return nil
-    end
-
-    return { first }
-  end
-
-  local normalized = {}
-  for key, expected in pairs(template) do
-    if value[key] == nil then
-      return nil
-    end
-
-    local normalized_child = normalize_with_template(value[key], expected)
-    if normalized_child == nil then
-      return nil
-    end
-
-    normalized[key] = normalized_child
-  end
-
-  return normalized
-end
-
 local ok_safe, cjson_safe_module = pcall(require, "cjson.safe")
 if ok_safe then
   cjson_safe = cjson_safe_module
@@ -177,118 +80,24 @@ local sample_graphql_error = nil
 local sample_structure_error = nil
 local find = string.find
 
-local expected_structure = {
-  data = {
-    users = {
-      {
-        id = "1",
-        username = "urigo",
-        name = "Uri Goldshtein",
-        reviews = {
-          {
-            id = "",
-            body = "",
-            product = {
-              inStock = true,
-              name = "Table",
-              price = 899,
-              shippingEstimate = 50,
-              upc = "1",
-              weight = 100,
-              reviews = {
-                {
-                  id = "",
-                  body = "",
-                  author = {
-                    id = "1",
-                    username = "urigo",
-                    name = "Uri Goldshtein",
-                    reviews = {
-                      {
-                        id = "",
-                        body = "",
-                        product = {
-                          inStock = true,
-                          name = "Table",
-                          price = 899,
-                          shippingEstimate = 50,
-                          upc = "1",
-                          weight = 100,
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-    topProducts = {
-      {
-        inStock = true,
-        name = "Table",
-        price = 899,
-        shippingEstimate = 50,
-        upc = "1",
-        weight = 100,
-        reviews = {
-          {
-            id = "",
-            body = "",
-            author = {
-              id = "1",
-              username = "urigo",
-              name = "Uri Goldshtein",
-              reviews = {
-                {
-                  id = "",
-                  body = "",
-                  product = {
-                    inStock = true,
-                    name = "Table",
-                    price = 899,
-                    shippingEstimate = 50,
-                    upc = "1",
-                    weight = 100,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-}
+local expected_response_file = os.getenv("BENCH_EXPECTED_RESPONSE_FILE")
+local expected_response
 
-local expected_structure_hash = hash_string(
-  canonical_json_encode(normalize_with_template(expected_structure, expected_structure))
-)
+if expected_response_file ~= nil and expected_response_file ~= "" then
+  expected_response = read_file(expected_response_file)
+else
+  expected_response = read_file_if_exists("expected_response.json") or read_file("bench/expected_response.json")
+end
+
+local expected_response_hash = hash_string(expected_response)
 
 local function check_response_structure(body)
-  local decoded = nil
-  if cjson_safe ~= nil then
-    decoded = cjson_safe.decode(body)
-  elseif cjson ~= nil then
-    local ok_decode, result = pcall(cjson.decode, body)
-    if ok_decode then
-      decoded = result
-    end
-  end
-
-  if decoded == nil then
+  if body == nil then
     return false
   end
 
-  local normalized_response = normalize_with_template(decoded, expected_structure)
-  if normalized_response == nil then
-    return false
-  end
-
-  local response_hash = hash_string(canonical_json_encode(normalized_response))
-  return response_hash == expected_structure_hash
+  local response_hash = hash_string(body)
+  return response_hash == expected_response_hash
 end
 
 local operation_file = os.getenv("BENCH_OPERATION_FILE")

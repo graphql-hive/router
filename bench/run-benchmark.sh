@@ -115,7 +115,7 @@ SUMMARY_PATH="$(resolve_summary_path)"
 mkdir -p "$SUMMARY_PATH"
 WRK_OUTPUT_FILE="$SUMMARY_PATH/wrk_output.txt"
 
-BENCH_OPERATION_FILE="$SCRIPT_DIR/operation.graphql" wrk \
+BENCH_OPERATION_FILE="$SCRIPT_DIR/operation.graphql" BENCH_EXPECTED_RESPONSE_FILE="$SCRIPT_DIR/expected_response.json" wrk \
   -t"$BENCH_THREADS" \
   -c"$BENCH_CONNECTIONS" \
   -d"$BENCH_DURATION" \
