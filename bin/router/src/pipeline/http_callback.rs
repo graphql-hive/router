@@ -1,6 +1,6 @@
 use bytes::Bytes as BytesLib;
 use hive_router_plan_executor::executors::active_subscriptions::{
-    ActiveSubscriptionsMap, BroadcastItem,
+    ActiveSubscriptions, BroadcastItem,
 };
 use hive_router_plan_executor::executors::http_callback::{
     CALLBACK_PROTOCOL_VERSION, SUBSCRIPTION_PROTOCOL_HEADER,
@@ -142,7 +142,7 @@ fn validate_payload(
     Ok(())
 }
 
-fn handle_check(subscription_id: &str, registry: &ActiveSubscriptionsMap) {
+fn handle_check(subscription_id: &str, registry: &ActiveSubscriptions) {
     trace!(subscription_id = %subscription_id, "Received check message");
     registry.record_heartbeat(subscription_id);
 }
@@ -150,7 +150,7 @@ fn handle_check(subscription_id: &str, registry: &ActiveSubscriptionsMap) {
 fn handle_next(
     subscription_id: &str,
     payload: &CallbackPayload<'_>,
-    registry: &ActiveSubscriptionsMap,
+    registry: &ActiveSubscriptions,
 ) -> Result<(), CallbackError> {
     trace!(subscription_id = %subscription_id, "Received next message");
 
@@ -179,7 +179,7 @@ fn handle_next(
 fn handle_complete(
     subscription_id: &str,
     payload: &CallbackPayload<'_>,
-    registry: &ActiveSubscriptionsMap,
+    registry: &ActiveSubscriptions,
 ) {
     trace!(subscription_id = %subscription_id, "Received complete message");
     if let Some(errors) = &payload.errors {
@@ -194,7 +194,7 @@ pub async fn handler(
     req: HttpRequest,
     path: Path<String>,
     body: Bytes,
-    active_subscriptions: web::types::State<ActiveSubscriptionsMap>,
+    active_subscriptions: web::types::State<ActiveSubscriptions>,
 ) -> Result<HttpResponse, CallbackError> {
     let subscription_id_from_path = path.into_inner();
 

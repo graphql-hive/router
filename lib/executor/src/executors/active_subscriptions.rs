@@ -13,15 +13,14 @@ pub type SubscriptionId = String;
 
 #[derive(Clone, Debug)]
 pub enum BroadcastItem {
-    /// a normal subscription event from the upstream, already serialized.
-    /// uses Bytes for zero-copy cloning across broadcast receivers
+    /// A normal subscription event from the upstream, already serialized.
+    /// Uses Bytes for zero-copy cloning across broadcast receivers.
     Event(Bytes),
-    /// a terminal error pushed externally (e.g. supergraph reload, shutdown).
-    /// consumers should yield this as the final event and then stop
+    /// An error pushed externally (e.g. supergraph reload, shutdown).
+    /// Consumers should yield this as the final event and then stop.
     Error(Vec<GraphQLError>),
 }
 
-/// state specific to http callback subscriptions
 pub struct CallbackState {
     pub verifier: String,
     pub last_heartbeat: Arc<Mutex<Instant>>,
@@ -33,61 +32,60 @@ impl CallbackState {
     }
 }
 
-struct ActiveSubscriptionEntry {
+struct Subscription {
     sender: tokio::sync::broadcast::Sender<BroadcastItem>,
+    /// The optional callback state that is only present for http callback subscriptions.
     callback_state: Option<CallbackState>,
 }
 
-struct ActiveSubscriptionsInner {
-    subscriptions: DashMap<SubscriptionId, ActiveSubscriptionEntry>,
-    // capacity of the broadcast channel per subscription, see router config `subscriptions.broadcast_capacity`
+#[derive(Clone)]
+pub struct ActiveSubscriptions {
+    // map of subscription ids to their sender
+    map: Arc<DashMap<SubscriptionId, Subscription>>,
+    // capacity of the broadcast channel per subscription,
+    // see router config `subscriptions.broadcast_capacity`
     broadcast_capacity: usize,
 }
 
-/// cheap to clone - all clones share the same inner state
-#[derive(Clone)]
-pub struct ActiveSubscriptionsMap {
-    inner: Arc<ActiveSubscriptionsInner>,
-}
-
-impl ActiveSubscriptionsMap {
+impl ActiveSubscriptions {
     pub fn new(broadcast_capacity: usize) -> Self {
         Self {
-            inner: Arc::new(ActiveSubscriptionsInner {
-                subscriptions: DashMap::new(),
-                broadcast_capacity,
-            }),
+            map: Arc::new(DashMap::new()),
+            broadcast_capacity,
         }
     }
 
-    /// Register a new subscription (e.g. http callbacks).
-    /// Always creates a new entry. Deduplication for fingerprinted subscriptions is handled
-    /// by the inflight map in the request pipeline, not here.
+    /// Register a new subscription to be used for broadcasting events to consuming clients.
+    /// Returns a handle for the producer to send events, a receiver for consumers to subscribe
+    /// to, and a guard that each consumer must hold onto while consuming.
     pub fn register(
         &self,
+        guard: Option<Box<dyn std::any::Any + Send + 'static>>,
         callback_state: Option<CallbackState>,
     ) -> (
-        SubscriptionHandle,
+        ProducerHandle,
         tokio::sync::broadcast::Receiver<BroadcastItem>,
-        ListenerGuard,
+        ConsumerGuard,
     ) {
-        let id = Ulid::new().to_string();
-        let (sender, receiver) = tokio::sync::broadcast::channel(self.inner.broadcast_capacity);
         let listener_count = Arc::new(AtomicUsize::new(1));
+        let (sender, receiver) = tokio::sync::broadcast::channel(self.broadcast_capacity);
 
-        self.inner.subscriptions.insert(
+        let id = Ulid::new().to_string();
+
+        self.map.insert(
             id.clone(),
-            ActiveSubscriptionEntry {
+            Subscription {
                 sender,
                 callback_state,
             },
         );
 
-        let handle = SubscriptionHandle {
+        let handle = ProducerHandle {
             id: id.clone(),
             map: self.clone(),
+            _guard: guard,
         };
-        let guard = ListenerGuard {
+        let guard = ConsumerGuard {
             id: id.clone(),
             map: self.clone(),
             listener_count,
@@ -100,20 +98,19 @@ impl ActiveSubscriptionsMap {
 
     /// check if a subscription exists
     pub fn contains(&self, id: &str) -> bool {
-        self.inner.subscriptions.contains_key(id)
+        self.map.contains_key(id)
     }
 
     /// get the verifier for a callback subscription
     pub fn get_callback_verifier(&self, id: &str) -> Option<String> {
-        self.inner
-            .subscriptions
+        self.map
             .get(id)
             .and_then(|entry| entry.callback_state.as_ref().map(|cs| cs.verifier.clone()))
     }
 
     /// record a heartbeat for a callback subscription
     pub fn record_heartbeat(&self, id: &str) -> bool {
-        if let Some(entry) = self.inner.subscriptions.get(id) {
+        if let Some(entry) = self.map.get(id) {
             if let Some(ref cs) = entry.callback_state {
                 cs.record_heartbeat();
                 return true;
@@ -124,7 +121,7 @@ impl ActiveSubscriptionsMap {
 
     /// send an event to a specific subscription's broadcast channel
     pub fn send_event(&self, id: &str, item: BroadcastItem) -> bool {
-        if let Some(entry) = self.inner.subscriptions.get(id) {
+        if let Some(entry) = self.map.get(id) {
             // if the channel is closed or full it means the consuming client is gone or too slow and
             // unable to keep up. in both cases, we dont emit an error messages because it anyways cant
             // go through
@@ -136,23 +133,23 @@ impl ActiveSubscriptionsMap {
 
     /// remove a subscription entry
     pub fn remove(&self, id: &str) {
-        self.inner.subscriptions.remove(id);
+        self.map.remove(id);
     }
 
     /// close all active subscriptions with an error message
     pub fn close_all_with_error(&self, errors: Vec<GraphQLError>) {
         let item = BroadcastItem::Error(errors);
-        for entry in self.inner.subscriptions.iter() {
+        for entry in self.map.iter() {
             let _ = entry.sender.send(item.clone());
         }
-        self.inner.subscriptions.clear();
+        self.map.clear();
     }
 
     /// iterate over all subscription ids and their callback state for heartbeat enforcement
     pub fn iter_callback_subscriptions(
         &self,
     ) -> impl Iterator<Item = (SubscriptionId, Arc<Mutex<Instant>>)> + '_ {
-        self.inner.subscriptions.iter().filter_map(|entry| {
+        self.map.iter().filter_map(|entry| {
             entry
                 .callback_state
                 .as_ref()
@@ -162,15 +159,17 @@ impl ActiveSubscriptionsMap {
 }
 
 /// Held by the upstream producer (the task that reads from the subgraph).
+/// It is the actual subscription handle that can be used to send events to consumers.
 /// Dropping this removes the subscription entry from the registry, which drops
 /// the broadcast sender and closes the channel. All receivers will see `Closed`
 /// and their streams will end naturally.
-pub struct SubscriptionHandle {
+pub struct ProducerHandle {
     id: SubscriptionId,
-    map: ActiveSubscriptionsMap,
+    map: ActiveSubscriptions,
+    _guard: Option<Box<dyn std::any::Any + Send>>,
 }
 
-impl SubscriptionHandle {
+impl ProducerHandle {
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -180,7 +179,7 @@ impl SubscriptionHandle {
     }
 }
 
-impl Drop for SubscriptionHandle {
+impl Drop for ProducerHandle {
     fn drop(&mut self) {
         // removing the entry drops the broadcast sender inside it, closing the channel.
         // all receivers will see Closed and their streams will end naturally
@@ -189,22 +188,22 @@ impl Drop for SubscriptionHandle {
     }
 }
 
-/// Held by each consumer of a subscription. On drop, decrements the listener count.
+/// Held by each consumer of a subscription (producer). On drop, decrements the listener count.
 /// When the last guard drops and the subscription entry still exists (upstream hasn't dropped
 /// yet), removes it - causing the upstream producer's `send()` to return `false` and exit.
-pub struct ListenerGuard {
+pub struct ConsumerGuard {
     id: SubscriptionId,
-    map: ActiveSubscriptionsMap,
+    map: ActiveSubscriptions,
     listener_count: Arc<AtomicUsize>,
 }
 
-impl Drop for ListenerGuard {
+impl Drop for ConsumerGuard {
     fn drop(&mut self) {
         let prev = self.listener_count.fetch_sub(1, Ordering::AcqRel);
         if prev == 1 {
             // last listener gone, clean up. this also drops the sender,
             // causing the upstream producer's send() to return false
-            self.map.inner.subscriptions.remove(&self.id);
+            self.map.map.remove(&self.id);
             trace!(subscription_id = %self.id, "last listener dropped, subscription removed");
         } else {
             trace!(subscription_id = %self.id, remaining = prev - 1, "listener dropped");

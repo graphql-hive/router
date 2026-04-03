@@ -1,6 +1,6 @@
 use futures::Stream;
 use futures::StreamExt;
-use hive_router_internal::inflight::InFlightCleanupGuard;
+use graphql_tools::parser::schema;
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -59,7 +59,7 @@ use crate::{
     schema_state::SchemaState,
     shared_state::{
         RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse,
-        SharedRouterSingleResponse,
+        SharedRouterResponseGuard, SharedRouterSingleResponse,
     },
     LABORATORY_HTML,
 };
@@ -379,7 +379,7 @@ async fn execute_planned_request<'exec>(
     operation_span: GraphQLOperationSpan,
     plugin_req_state: Option<PluginRequestState<'exec>>,
     response_mode: &'exec ResponseMode,
-    in_flight_cleanup_guard: Option<InFlightCleanupGuard<u64, SharedRouterResponse>>,
+    guard: Option<SharedRouterResponseGuard>,
 ) -> Result<SharedRouterResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
@@ -435,6 +435,13 @@ async fn execute_planned_request<'exec>(
                 .stream_content_type()
                 .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
 
+            // TODO: ugly AF, to use actual type - we must remove active_subscriptions
+            // from the executors and move it elsehwerhwe
+            schema_state.active_subscriptions.register(
+                guard.map(|g| Box::new(g) as Box<dyn std::any::Any + Send>),
+                None,
+            );
+
             todo!();
         }
         QueryPlanExecutionResult::Single(result) => {
@@ -444,7 +451,7 @@ async fn execute_planned_request<'exec>(
                 ok_or(PipelineError::UnsupportedContentType)?;
 
             // drop the inflight planned request as soon as the response is ready
-            let _query_guard = in_flight_cleanup_guard;
+            let _query_guard = guard;
 
             let error_count = result.error_count;
             let mut response_builder = web::HttpResponse::Ok();

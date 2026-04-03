@@ -7,7 +7,7 @@ use hive_router_config::traffic_shaping::{
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
-use hive_router_internal::inflight::InFlightMap;
+use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
 use hive_router_plan_executor::headers::{
@@ -83,6 +83,8 @@ impl From<&TrafficShapingRouterDedupeHeadersConfig> for RouterRequestDedupeHeade
         }
     }
 }
+
+pub type SharedRouterResponseGuard = InFlightCleanupGuard<u64, SharedRouterResponse>;
 
 #[derive(Clone)]
 pub enum SharedRouterResponse {

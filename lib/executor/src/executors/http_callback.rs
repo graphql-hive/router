@@ -11,9 +11,7 @@ use hyper::Version;
 use tracing::{debug, error, trace};
 use ulid::Ulid;
 
-use crate::executors::active_subscriptions::{
-    ActiveSubscriptionsMap, BroadcastItem, CallbackState,
-};
+use crate::executors::active_subscriptions::{ActiveSubscriptions, BroadcastItem, CallbackState};
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::http::{build_request_body, HttpClient};
@@ -30,7 +28,7 @@ pub struct HttpCallbackSubgraphExecutor {
     pub header_map: HeaderMap,
     pub callback_base_url: String,
     pub heartbeat_interval_ms: u64,
-    pub active_subscriptions: ActiveSubscriptionsMap,
+    pub active_subscriptions: ActiveSubscriptions,
 }
 
 impl HttpCallbackSubgraphExecutor {
@@ -40,7 +38,7 @@ impl HttpCallbackSubgraphExecutor {
         http_client: Arc<HttpClient>,
         callback_base_url: String,
         heartbeat_interval_ms: u64,
-        active_subscriptions: ActiveSubscriptionsMap,
+        active_subscriptions: ActiveSubscriptions,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -131,8 +129,9 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             )),
         };
 
-        let (handle, mut receiver, guard) =
-            self.active_subscriptions.register(Some(callback_state));
+        let (handle, mut receiver, guard) = self
+            .active_subscriptions
+            .register(None, Some(callback_state));
 
         let subscription_id = handle.id().to_string();
 

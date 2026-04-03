@@ -27,7 +27,7 @@ use tokio::sync::Semaphore;
 use crate::{
     execution::client_request_details::ClientRequestDetails,
     executors::{
-        active_subscriptions::ActiveSubscriptionsMap,
+        active_subscriptions::ActiveSubscriptions,
         common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, SubgraphHttpResponse},
@@ -76,7 +76,7 @@ pub struct SubgraphExecutorMap {
     in_flight_requests: InflightRequestsMap,
     telemetry_context: Arc<TelemetryContext>,
     /// Shared registry of all active subscriptions (http streaming, websocket, http callback)
-    active_subscriptions: ActiveSubscriptionsMap,
+    active_subscriptions: ActiveSubscriptions,
 }
 
 fn build_https_executor() -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
@@ -114,7 +114,7 @@ impl SubgraphExecutorMap {
             timeouts_by_subgraph: Default::default(),
             global_timeout,
             telemetry_context,
-            active_subscriptions: ActiveSubscriptionsMap::new(broadcast_capacity),
+            active_subscriptions: ActiveSubscriptions::new(broadcast_capacity),
         })
     }
 
@@ -122,7 +122,7 @@ impl SubgraphExecutorMap {
         subgraph_endpoint_map: &HashMap<SubgraphName, String>,
         config: Arc<HiveRouterConfig>,
         telemetry_context: Arc<TelemetryContext>,
-        active_subscriptions: ActiveSubscriptionsMap,
+        active_subscriptions: ActiveSubscriptions,
     ) -> Result<Self, SubgraphExecutorError> {
         let global_timeout = DurationOrProgram::compile(
             &config.traffic_shaping.all.request_timeout,
@@ -159,7 +159,7 @@ impl SubgraphExecutorMap {
     }
 
     /// Returns the shared active subscriptions registry.
-    pub fn active_subscriptions(&self) -> ActiveSubscriptionsMap {
+    pub fn active_subscriptions(&self) -> ActiveSubscriptions {
         self.active_subscriptions.clone()
     }
 
