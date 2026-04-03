@@ -10,7 +10,7 @@ use hive_router_internal::{
     background_tasks::{BackgroundTask, BackgroundTasksManager},
 };
 use hive_router_plan_executor::{
-    executors::active_subscriptions::{ActiveSubscriptionsRegistry, BroadcastItem},
+    executors::active_subscriptions::{ActiveSubscriptionsMap, BroadcastItem},
     executors::error::SubgraphExecutorError,
     hooks::on_supergraph_load::{
         OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload, SupergraphData,
@@ -47,7 +47,7 @@ pub struct SchemaState {
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
     pub telemetry_context: Arc<TelemetryContext>,
-    pub active_subscriptions: Arc<ActiveSubscriptionsRegistry>,
+    pub active_subscriptions: ActiveSubscriptionsMap,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -97,9 +97,9 @@ impl SchemaState {
         let plan_cache = cache_state.plan_cache.clone();
         let validate_cache = cache_state.validate_cache.clone();
         let normalize_cache = cache_state.normalize_cache.clone();
-        let active_subscriptions = Arc::new(ActiveSubscriptionsRegistry::new(
+        let active_subscriptions = ActiveSubscriptionsMap::new(
             router_config.subscriptions.broadcast_capacity,
-        ));
+        );
 
         // This is cheap clone, as Cache is thread-safe and can be cloned without any performance penalty.
         let cache_state_for_invalidation = cache_state.clone();
@@ -245,7 +245,7 @@ impl SchemaState {
         router_config: Arc<HiveRouterConfig>,
         telemetry_context: Arc<TelemetryContext>,
         parsed_supergraph_sdl: Document,
-        active_subscriptions: Arc<ActiveSubscriptionsRegistry>,
+        active_subscriptions: ActiveSubscriptionsMap,
     ) -> Result<SupergraphData, SupergraphManagerError> {
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
         let metadata = Arc::new(planner.consumer_schema.schema_metadata());
@@ -346,7 +346,7 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
 }
 
 struct HeartbeatEnforcerTask {
-    active_subscriptions: Arc<ActiveSubscriptionsRegistry>,
+    active_subscriptions: ActiveSubscriptionsMap,
     heartbeat_interval: Duration,
 }
 

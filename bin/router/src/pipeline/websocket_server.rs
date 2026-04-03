@@ -47,6 +47,7 @@ use crate::pipeline::{
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 
+use crate::shared_state::SharedRouterResponse;
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
 use hive_router_plan_executor::executors::active_subscriptions::BroadcastItem;
 
@@ -425,7 +426,12 @@ async fn handle_text_frame(
                 let request_dedupe_enabled =
                     shared_state.router_config.traffic_shaping.router.dedupe.enabled;
 
-                let fingerprint = if is_subscription && request_dedupe_enabled {
+                let fingerprint = if request_dedupe_enabled
+            && matches!(
+                normalize_payload.operation_for_plan.operation_kind,
+                // same deduplication applies for queries and subscriptions
+                None | Some(OperationKind::Query) | Some(OperationKind::Subscription)
+            ) {
                     let variables_hash = hash_graphql_variables(&payload.variables);
                     let extensions_hash = payload
                         .extensions
@@ -507,70 +513,7 @@ async fn handle_text_frame(
                     jwt: jwt_request_details,
                 }.into();
 
-                // TODO: query dedupe
-
-                // subscription dedup: join or create a fingerprinted subscription.
-                // joiners read from the existing broadcast channel.
-                // the leader gets a handle to feed upstream events into later
-                let sub_dedup = if let Some(fp) = fingerprint {
-                    let (handle, receiver, guard) =
-                        schema_state.active_subscriptions.dedupe_by_fingerprint(fp);
-                    if handle.is_none() {
-                        let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
-                        state.borrow_mut().subscriptions.insert(id.clone(), cancel_tx);
-
-                        let _ws_guard = SubscriptionGuard {
-                            state: state.clone(),
-                            id: id.clone(),
-                        };
-
-                        trace!(id = %id, "Subscription joined via dedup");
-
-                        let id_for_loop = id.clone();
-                        let mut cancelled = false;
-                        let mut receiver = receiver;
-                        loop {
-                            tokio::select! {
-                                recv_result = receiver.recv() => {
-                                    match recv_result {
-                                        Ok(BroadcastItem::Event(data)) => {
-                                            let _ = sink.send(ServerMessage::next(&id_for_loop, &data)).await;
-                                        }
-                                        Ok(BroadcastItem::Error(errors)) => {
-                                            let body = FailedExecutionResult { errors }.serialize();
-                                            let _ = sink.send(ServerMessage::next(&id_for_loop, &body)).await;
-                                            break;
-                                        }
-                                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                            trace!(id = %id_for_loop, lagged = n, "broadcast receiver lagged, skipping missed messages");
-                                            continue;
-                                        }
-                                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                            break;
-                                        }
-                                    }
-                                }
-                                _ = cancel_rx.recv() => {
-                                    cancelled = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        drop(guard);
-
-                        return if cancelled {
-                            trace!(id = %id, "Deduped subscription cancelled");
-                            None
-                        } else {
-                            trace!(id = %id, "Deduped subscription completed");
-                            Some(ServerMessage::complete(&id))
-                        };
-                    }
-                    Some((handle, receiver, guard))
-                } else {
-                    None
-                };
+                // TODO: dedupe
 
                 match execute_pipeline(
                     &client_request_details,
@@ -615,10 +558,7 @@ async fn handle_text_frame(
                         Some(ServerMessage::complete(&id))
                     }
                     Ok(QueryPlanExecutionResult::Stream(response)) => {
-                        let mut stream = crate::pipeline::start_subscription_leader(
-                            response.body,
-                            sub_dedup,
-                        );
+                        let mut stream = response.body;
 
                         // we use mpsc::channel(1) instead of oneshot because oneshot::Receiver
                         // is consumed on first await, which doesn't work in tokio::select! loops that

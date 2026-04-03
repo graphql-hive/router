@@ -1,5 +1,6 @@
 use futures::Stream;
 use futures::StreamExt;
+use hive_router_internal::inflight::InFlightCleanupGuard;
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -10,9 +11,7 @@ use tracing::{error, trace, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
-use hive_router_plan_executor::executors::active_subscriptions::{
-    BroadcastItem, FingerprintGuard, SubscriptionHandle,
-};
+use hive_router_plan_executor::executors::active_subscriptions::BroadcastItem;
 use hive_router_plan_executor::headers::plan::ResponseHeaderAggregator;
 
 use hive_router_internal::telemetry::traces::spans::{
@@ -58,7 +57,10 @@ use crate::{
         validation::validate_operation_with_cache,
     },
     schema_state::SchemaState,
-    shared_state::{RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse},
+    shared_state::{
+        RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse,
+        SharedRouterSingleResponse,
+    },
     LABORATORY_HTML,
 };
 
@@ -251,7 +253,7 @@ pub async fn graphql_request_handler(
         if is_subscription
             && (!shared_state.router_config.subscriptions.enabled || !response_mode.can_stream())
         {
-            // check early, even though we check again after pipeline execution below
+            // check early, even though we check again planned execution below
             return Err(PipelineError::SubscriptionsNotSupported);
         }
 
@@ -262,7 +264,7 @@ pub async fn graphql_request_handler(
             && matches!(
                 normalize_payload.operation_for_plan.operation_kind,
                 // same deduplication applies for queries and subscriptions
-                Some(OperationKind::Query) | Some(OperationKind::Subscription) | None
+                None | Some(OperationKind::Query) | Some(OperationKind::Subscription)
             ) {
             let variables_hash = hash_graphql_variables(&graphql_params.variables);
             let extensions_hash = graphql_params
@@ -285,32 +287,12 @@ pub async fn graphql_request_handler(
             None
         };
 
-        // subscription dedup: join or create a fingerprinted subscription.
-        // joiners get a receiver from the existing broadcast channel.
-        // the leader gets a handle to feed upstream events into later
-        let sub_dedup = if let Some(fp) = fingerprint.filter(|_| is_subscription) {
-            let (handle, receiver, guard) =
-                schema_state.active_subscriptions.dedupe_by_fingerprint(fp);
-            if handle.is_none() {
-                let body_stream = broadcast_receiver_to_body_stream(receiver, guard);
-                return build_streaming_response(body_stream, response_mode, None);
-            }
-            Some((handle, receiver, guard))
-        } else {
-            None
-        };
-
-        let planned_response = if fingerprint.is_some()
-            && matches!(
-                normalize_payload.operation_for_plan.operation_kind,
-                Some(OperationKind::Query) | None
-            ) {
-            let fp = fingerprint.unwrap();
-            let (shared_response, _role) = shared_state
+        let shared_response = if let Some(fp) = fingerprint {
+            let (planned_response, _role) = shared_state
                 .in_flight_requests
                 .claim(fp)
-                .get_or_try_init(|| async {
-                    match execute_planned_request(
+                .get_or_try_init(|guard| async {
+                     execute_planned_request(
                         req,
                         graphql_params,
                         &normalize_payload,
@@ -320,18 +302,12 @@ pub async fn graphql_request_handler(
                         operation_span,
                         plugin_req_state,
                         response_mode,
-                        None,
+                        Some(guard),
                     )
-                    .await?
-                    {
-                        PlannedResponse::Shared(r) => Ok::<SharedRouterResponse, PipelineError>(r),
-                        // subscriptions are excluded from the dedup branch above, so this is unreachable
-                        PlannedResponse::Direct { .. } => unreachable!("stream responses never enter the dedup path"),
-                    }
+                    .await
                 })
                 .await?;
-
-            PlannedResponse::Shared(Arc::unwrap_or_clone(shared_response))
+            Arc::unwrap_or_clone(planned_response)
         } else {
             execute_planned_request(
                 req,
@@ -343,17 +319,9 @@ pub async fn graphql_request_handler(
                 operation_span,
                 plugin_req_state,
                 response_mode,
-                sub_dedup,
+                None,
             )
             .await?
-        };
-
-        let (response, error_count) = match planned_response {
-            PlannedResponse::Shared(shared_response) => {
-                let error_count = shared_response.error_count;
-                (shared_response.into(), error_count)
-            }
-            PlannedResponse::Direct { response, .. } => (response, 0),
         };
 
         if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
@@ -377,32 +345,27 @@ pub async fn graphql_request_handler(
                         // Thus, this expect should never panic.
                         "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
                     ),
-                error_count,
+                shared_response.error_count(),
             )
             .await;
         }
 
         write_graphql_response_metric_status(
             req,
-            if error_count > 0 {
+            if shared_response.error_count() > 0 {
                 GraphQLResponseStatus::Error
             } else {
                 GraphQLResponseStatus::Ok
             },
         );
 
-        Ok(response)
+        Ok(shared_response.into())
     }
     .instrument(span_clone)
     .await
     .inspect_err(|_| {
         write_graphql_response_metric_status(req, GraphQLResponseStatus::Error);
     })
-}
-
-enum PlannedResponse {
-    Shared(SharedRouterResponse),
-    Direct { response: web::HttpResponse },
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -416,12 +379,8 @@ async fn execute_planned_request<'exec>(
     operation_span: GraphQLOperationSpan,
     plugin_req_state: Option<PluginRequestState<'exec>>,
     response_mode: &'exec ResponseMode,
-    sub_dedup: Option<(
-        Option<SubscriptionHandle>,
-        tokio::sync::broadcast::Receiver<BroadcastItem>,
-        FingerprintGuard,
-    )>,
-) -> Result<PlannedResponse, PipelineError> {
+    in_flight_cleanup_guard: Option<InFlightCleanupGuard<u64, SharedRouterResponse>>,
+) -> Result<SharedRouterResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
             .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
@@ -472,21 +431,20 @@ async fn execute_planned_request<'exec>(
     .await?
     {
         QueryPlanExecutionResult::Stream(result) => {
-            let body_stream = start_subscription_leader(result.body, sub_dedup);
+            let stream_content_type = response_mode
+                .stream_content_type()
+                .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
 
-            let response = build_streaming_response(
-                body_stream,
-                response_mode,
-                result.response_headers_aggregator,
-            )?;
-
-            Ok(PlannedResponse::Direct { response })
+            todo!();
         }
         QueryPlanExecutionResult::Single(result) => {
             let single_content_type = response_mode.
                 single_content_type().
                 // TODO: streaming single responses
                 ok_or(PipelineError::UnsupportedContentType)?;
+
+            // drop the inflight planned request as soon as the response is ready
+            let _query_guard = in_flight_cleanup_guard;
 
             let error_count = result.error_count;
             let mut response_builder = web::HttpResponse::Ok();
@@ -503,7 +461,7 @@ async fn execute_planned_request<'exec>(
                 .status(result.status_code)
                 .body(body.clone());
 
-            Ok(PlannedResponse::Shared(SharedRouterResponse {
+            Ok(SharedRouterResponse::Single(SharedRouterSingleResponse {
                 body,
                 headers: Arc::new(response.headers().clone()),
                 status: response.status(),
@@ -573,113 +531,6 @@ pub async fn execute_pipeline<'exec>(
     };
 
     execute_plan(supergraph, shared_state, planned_request, operation_span).await
-}
-
-/// if sub_dedup is provided, spawns a task that feeds upstream events into
-/// the broadcast channel and returns a stream backed by the broadcast receiver.
-/// otherwise returns the upstream stream directly
-pub(crate) fn start_subscription_leader(
-    upstream: futures::stream::BoxStream<'static, Vec<u8>>,
-    sub_dedup: Option<(
-        Option<SubscriptionHandle>,
-        tokio::sync::broadcast::Receiver<BroadcastItem>,
-        FingerprintGuard,
-    )>,
-) -> futures::stream::BoxStream<'static, Vec<u8>> {
-    let Some((handle, receiver, guard)) = sub_dedup else {
-        return upstream;
-    };
-
-    // handle is always Some for the leader, but satisfy the type
-    if let Some(handle) = handle {
-        let mut upstream = upstream;
-        tokio::spawn(async move {
-            while let Some(event) = upstream.next().await {
-                if !handle.send(BroadcastItem::Event(event.into())) {
-                    break;
-                }
-            }
-        });
-    }
-
-    broadcast_receiver_to_body_stream(receiver, guard)
-}
-
-/// converts a broadcast receiver into a BoxStream of serialized event bodies.
-/// the listener guard is held for the lifetime of the stream to track listener count
-pub(crate) fn broadcast_receiver_to_body_stream(
-    mut receiver: tokio::sync::broadcast::Receiver<BroadcastItem>,
-    guard: FingerprintGuard,
-) -> futures::stream::BoxStream<'static, Vec<u8>> {
-    Box::pin(async_stream::stream! {
-        let _guard = guard;
-        loop {
-            match receiver.recv().await {
-                Ok(BroadcastItem::Event(data)) => {
-                    yield data.to_vec();
-                }
-                Ok(BroadcastItem::Error(errors)) => {
-                    yield FailedExecutionResult { errors }.serialize();
-                    break;
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    trace!(lagged = n, "broadcast receiver lagged, skipping missed messages");
-                    continue;
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    break;
-                }
-            }
-        }
-    })
-}
-
-fn build_streaming_response(
-    body_stream: futures::stream::BoxStream<'static, Vec<u8>>,
-    response_mode: &ResponseMode,
-    response_headers_aggregator: Option<ResponseHeaderAggregator>,
-) -> Result<web::HttpResponse, PipelineError> {
-    let stream_content_type = response_mode
-        .stream_content_type()
-        .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
-
-    let content_type_header = match stream_content_type {
-        StreamContentType::IncrementalDelivery => {
-            http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE)
-        }
-        StreamContentType::SSE => http::HeaderValue::from_static("text/event-stream"),
-        StreamContentType::ApolloMultipartHTTP => {
-            http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE)
-        }
-    };
-
-    let body: std::pin::Pin<
-        Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
-    > = match stream_content_type {
-        StreamContentType::IncrementalDelivery => Box::pin(
-            multipart_subscribe::create_incremental_delivery_stream(body_stream),
-        ),
-        StreamContentType::SSE => Box::pin(sse::create_stream(
-            body_stream,
-            std::time::Duration::from_secs(10),
-        )),
-        StreamContentType::ApolloMultipartHTTP => {
-            Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
-                body_stream,
-                std::time::Duration::from_secs(10),
-            ))
-        }
-    };
-
-    let mut response_builder = web::HttpResponse::Ok();
-
-    if let Some(response_headers_aggregator) = response_headers_aggregator {
-        response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
-    }
-
-    Ok(response_builder
-        .header(http::header::CONTENT_TYPE, content_type_header)
-        .streaming(body))
 }
 
 pub fn inbound_request_fingerprint(

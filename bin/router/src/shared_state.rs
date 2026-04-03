@@ -1,3 +1,4 @@
+use futures::Stream;
 use graphql_tools::validation::validate::ValidationPlan;
 use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::traffic_shaping::{
@@ -8,6 +9,7 @@ use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
 use hive_router_internal::inflight::InFlightMap;
 use hive_router_internal::telemetry::TelemetryContext;
+use hive_router_plan_executor::execution::plan::FailedExecutionResult;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
@@ -20,14 +22,21 @@ use ntex::{http::HeaderMap, util::Bytes};
 use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, sync::Arc};
+use tracing::trace;
 
 use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
+use crate::pipeline::header::StreamContentType;
 use crate::pipeline::introspection_policy::compile_introspection_policy;
+use crate::pipeline::multipart_subscribe::{
+    self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
+};
 use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
+use crate::pipeline::sse;
+use hive_router_plan_executor::executors::active_subscriptions::BroadcastItem;
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
 pub type RouterInflightRequestsMap = InFlightMap<u64, SharedRouterResponse>;
@@ -76,15 +85,39 @@ impl From<&TrafficShapingRouterDedupeHeadersConfig> for RouterRequestDedupeHeade
 }
 
 #[derive(Clone)]
-pub struct SharedRouterResponse {
+pub enum SharedRouterResponse {
+    Single(SharedRouterSingleResponse),
+    Stream(SharedRouterSingleResponse),
+}
+
+impl SharedRouterResponse {
+    pub fn error_count(&self) -> usize {
+        match self {
+            SharedRouterResponse::Single(resp) => resp.error_count,
+            SharedRouterResponse::Stream(resp) => resp.error_count,
+        }
+    }
+}
+
+impl From<SharedRouterResponse> for web::HttpResponse {
+    fn from(shared_response: SharedRouterResponse) -> Self {
+        match shared_response {
+            SharedRouterResponse::Single(single) => single.into(),
+            SharedRouterResponse::Stream(stream) => stream.into(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SharedRouterSingleResponse {
     pub body: Bytes,
     pub headers: Arc<HeaderMap>,
     pub status: StatusCode,
     pub error_count: usize,
 }
 
-impl From<SharedRouterResponse> for web::HttpResponse {
-    fn from(shared_response: SharedRouterResponse) -> Self {
+impl From<SharedRouterSingleResponse> for web::HttpResponse {
+    fn from(shared_response: SharedRouterSingleResponse) -> Self {
         let mut response = web::HttpResponse::Ok();
         response.status(shared_response.status);
 
@@ -93,6 +126,82 @@ impl From<SharedRouterResponse> for web::HttpResponse {
         }
 
         response.body(shared_response.body)
+    }
+}
+
+#[derive(Clone)]
+pub struct SharedRouterStreamResponse {
+    // status is always 200 for streaming responses, errors are sent through the stream
+    pub body: tokio::sync::broadcast::Sender<BroadcastItem>,
+    pub headers: Arc<HeaderMap>,
+    pub stream_content_type: StreamContentType,
+    pub error_count: usize,
+}
+
+impl From<SharedRouterStreamResponse> for web::HttpResponse {
+    fn from(shared_response: SharedRouterStreamResponse) -> Self {
+        let mut receiver = shared_response.body.subscribe();
+
+        let stream = Box::pin(async_stream::stream! {
+            loop {
+                match receiver.recv().await {
+                    Ok(BroadcastItem::Event(data)) => {
+                        yield data.to_vec();
+                    }
+                    Ok(BroadcastItem::Error(errors)) => {
+                        yield FailedExecutionResult { errors }.serialize();
+                        break;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        trace!(lagged = n, "broadcast receiver lagged, skipping missed messages");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let stream_content_type = shared_response.stream_content_type;
+
+        let content_type_header = match stream_content_type {
+            StreamContentType::IncrementalDelivery => {
+                http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE)
+            }
+            StreamContentType::SSE => http::HeaderValue::from_static("text/event-stream"),
+            StreamContentType::ApolloMultipartHTTP => {
+                http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE)
+            }
+        };
+
+        let body: std::pin::Pin<
+            Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
+        > = match stream_content_type {
+            StreamContentType::IncrementalDelivery => Box::pin(
+                multipart_subscribe::create_incremental_delivery_stream(stream),
+            ),
+            StreamContentType::SSE => Box::pin(sse::create_stream(
+                stream,
+                std::time::Duration::from_secs(10),
+            )),
+            StreamContentType::ApolloMultipartHTTP => {
+                Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
+                    stream,
+                    std::time::Duration::from_secs(10),
+                ))
+            }
+        };
+
+        let mut response = web::HttpResponse::Ok();
+
+        for (header_name, header_value) in shared_response.headers.iter() {
+            response.set_header(header_name, header_value);
+        }
+
+        response
+            .header(http::header::CONTENT_TYPE, content_type_header)
+            .streaming(body)
     }
 }
 

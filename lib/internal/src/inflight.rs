@@ -92,10 +92,22 @@ where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
 {
+    /// Initialises the cell if empty (leader) or waits for the existing value (joiner).
+    ///
+    /// The leader's `init` closure receives an `InFlightCleanupGuard`. Dropping the guard removes
+    /// the entry from the map. For short-lived work (queries) drop it immediately. For long-lived
+    /// work (subscriptions) move it into the task that owns the upstream so the entry stays
+    /// visible to joiners for the full lifetime of the stream.
+    ///
+    /// On init failure the entry is cleaned up automatically regardless of what the caller does
+    /// with the guard, so no entry is left dangling.
+    ///
+    /// Joiners do not invoke `init` - they share the already-initialised value and have no cleanup
+    /// responsibility.
     #[inline]
     pub async fn get_or_try_init<E, F, Fut>(self, init: F) -> Result<(Arc<V>, InFlightRole), E>
     where
-        F: FnOnce() -> Fut,
+        F: FnOnce(InFlightCleanupGuard<K, V, S>) -> Fut,
         Fut: Future<Output = Result<V, E>>,
     {
         let mut did_initialize = false;
@@ -106,25 +118,39 @@ where
             .cell
             .get_or_try_init(|| {
                 did_initialize = true;
+                let guard = InFlightCleanupGuard {
+                    key: self.key.clone(),
+                    map: self.map.clone(),
+                };
                 async {
-                    let _cleanup = InFlightCleanupGuard { key, map };
-                    init().await.map(Arc::new)
+                    match init(guard).await {
+                        Ok(v) => Ok(Arc::new(v)),
+                        Err(e) => {
+                            // clean up immediately on failure so a future request can retry
+                            map.remove(&key);
+                            Err(e)
+                        }
+                    }
                 }
             })
             .await?
             .clone();
 
-        let role = if did_initialize {
-            InFlightRole::Leader
+        if did_initialize {
+            Ok((value, InFlightRole::Leader))
         } else {
-            InFlightRole::Joiner
-        };
-
-        Ok((value, role))
+            Ok((value, InFlightRole::Joiner))
+        }
     }
 }
 
-struct InFlightCleanupGuard<K, V, S = ABuildHasher>
+/// Removes the entry from the inflight map when dropped.
+///
+/// For queries, drop this immediately after `get_or_try_init` returns so subsequent requests
+/// are not deduplicated against a completed response.
+/// For subscriptions, move this into the upstream pump task so the entry remains in the map
+/// (and joiners can find it) for the full lifetime of the stream.
+pub struct InFlightCleanupGuard<K, V, S = ABuildHasher>
 where
     K: Eq + Hash,
     S: BuildHasher + Clone,
@@ -139,9 +165,6 @@ where
     S: BuildHasher + Clone,
 {
     fn drop(&mut self) {
-        // It's important to remove the entry from the map before returning the result.
-        // This ensures that once the OnceCell is set, no future requests can join it.
-        // The cache is for the lifetime of the in-flight request only.
         self.map.remove(&self.key);
     }
 }
