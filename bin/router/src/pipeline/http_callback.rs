@@ -14,7 +14,6 @@ use ntex::web::WebResponseError;
 use ntex::web::{self, types::Path, HttpRequest, HttpResponse};
 use serde::Deserialize;
 use strum::EnumString;
-use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
 #[derive(Debug, Deserialize, EnumString)]
