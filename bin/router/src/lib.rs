@@ -434,7 +434,19 @@ pub fn configure_ntex_app(
     prometheus: Option<PrometheusAttached>,
 ) {
     if let Some(websocket) = &paths.websocket {
-        cfg.route(websocket.as_str(), web::get().to(ws_index));
+        cfg.service(
+            web::resource(websocket.as_str())
+                // guard ensures this resource is only matched for actual ws upgrade requests,
+                // so a plain GET to the same path (e.g. graphql GET request) falls through
+                // to the next registered resource instead of hitting the ws handshake
+                .guard(web::guard::fn_guard(|head| {
+                    head.headers()
+                        .get(ntex::http::header::UPGRADE)
+                        .and_then(|v| v.to_str().ok())
+                        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
+                }))
+                .route(web::get().to(ws_index)),
+        );
     }
 
     cfg.route(paths.graphql.as_str(), web::to(graphql_endpoint_handler))

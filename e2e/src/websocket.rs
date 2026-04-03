@@ -440,4 +440,39 @@ mod websocket_e2e_tests {
             "my-extensions-value",
         )
     }
+
+    #[ntex::test]
+    async fn should_not_steal_non_upgrade_get_requests_on_same_graphql_path() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let req = router
+            .serv()
+            .get(router.graphql_path()) // same path as the websocket upgrade endpoint
+            .header(http::header::ACCEPT, "application/graphql-response+json")
+            .query(&[("query", "{ __typename }")])
+            .unwrap();
+
+        let res = req.send().await.unwrap();
+
+        assert_eq!(res.status(), http::StatusCode::OK);
+        assert_eq!(
+            res.header(http::header::CONTENT_TYPE)
+                .expect("expected content-type header to be present"),
+            "application/graphql-response+json"
+        );
+    }
 }
