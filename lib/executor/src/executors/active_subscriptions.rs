@@ -202,6 +202,9 @@ impl ActiveSubscriptionsRegistry {
     /// send an event to a specific subscription's broadcast channel
     pub fn send_event(&self, id: &str, item: BroadcastItem) -> bool {
         if let Some(entry) = self.subscriptions.get(id) {
+            // if the channel is closed or full it means the consuming client is gone or too slow and
+            // unable to keep up. in both cases, we dont emit an error messages because it anyways cant
+            // go through
             entry.sender.send(item).is_ok()
         } else {
             false
