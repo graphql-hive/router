@@ -30,7 +30,7 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     pipeline::{
-        active_subscriptions::BroadcastItem,
+        active_subscriptions::SubscriptionEvent,
         authorization::enforce_operation_authorization,
         body_read::read_body_stream,
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
@@ -441,7 +441,7 @@ async fn execute_planned_request<'exec>(
                 // from active_subscriptions before the producer has a chance to send
                 let _consumer_guard = consumer_guard;
                 while let Some(chunk) = body_stream.next().await {
-                    if !producer_handle.send(BroadcastItem::Event(bytes::Bytes::from(chunk))) {
+                    if !producer_handle.send(SubscriptionEvent::Raw(bytes::Bytes::from(chunk))) {
                         // all receivers gone, stop draining
                         break;
                     }

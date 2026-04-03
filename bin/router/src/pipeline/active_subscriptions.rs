@@ -12,17 +12,17 @@ use crate::shared_state::SharedRouterResponseGuard;
 pub type SubscriptionId = String;
 
 #[derive(Clone, Debug)]
-pub enum BroadcastItem {
+pub enum SubscriptionEvent {
     /// A normal subscription event from the upstream, already serialized.
     /// Uses Bytes for zero-copy cloning across broadcast receivers.
-    Event(Bytes),
+    Raw(Bytes),
     /// An error pushed externally (e.g. supergraph reload, shutdown).
     /// Consumers should yield this as the final event and then stop.
     Error(Vec<GraphQLError>),
 }
 
 struct Subscription {
-    sender: tokio::sync::broadcast::Sender<BroadcastItem>,
+    sender: tokio::sync::broadcast::Sender<SubscriptionEvent>,
 }
 
 #[derive(Clone)]
@@ -51,8 +51,8 @@ impl ActiveSubscriptions {
         guard: Option<SharedRouterResponseGuard>,
     ) -> (
         ProducerHandle,
-        tokio::sync::broadcast::Sender<BroadcastItem>,
-        tokio::sync::broadcast::Receiver<BroadcastItem>,
+        tokio::sync::broadcast::Sender<SubscriptionEvent>,
+        tokio::sync::broadcast::Receiver<SubscriptionEvent>,
         ConsumerGuard,
     ) {
         let listener_count = Arc::new(AtomicUsize::new(1));
@@ -65,7 +65,7 @@ impl ActiveSubscriptions {
 
         let handle = ProducerHandle {
             id: id.clone(),
-            map: self.clone(),
+            subscriptions: self.clone(),
             _guard: guard,
         };
         let guard = ConsumerGuard {
@@ -79,13 +79,8 @@ impl ActiveSubscriptions {
         (handle, sender_clone, receiver, guard)
     }
 
-    /// check if a subscription exists
-    pub fn contains(&self, id: &str) -> bool {
-        self.map.contains_key(id)
-    }
-
     /// send an event to a specific subscription's broadcast channel
-    pub fn send_event(&self, id: &str, item: BroadcastItem) -> bool {
+    pub fn send(&self, id: &str, item: SubscriptionEvent) -> bool {
         if let Some(entry) = self.map.get(id) {
             // if the channel is closed or full it means the consuming client is gone or too slow and
             // unable to keep up. in both cases, we dont emit an error messages because it anyways cant
@@ -103,7 +98,7 @@ impl ActiveSubscriptions {
 
     /// close all active subscriptions with an error message
     pub fn close_all_with_error(&self, errors: Vec<GraphQLError>) {
-        let item = BroadcastItem::Error(errors);
+        let item = SubscriptionEvent::Error(errors);
         for entry in self.map.iter() {
             let _ = entry.sender.send(item.clone());
         }
@@ -118,7 +113,7 @@ impl ActiveSubscriptions {
 /// and their streams will end naturally.
 pub struct ProducerHandle {
     id: SubscriptionId,
-    map: ActiveSubscriptions,
+    subscriptions: ActiveSubscriptions,
     _guard: Option<SharedRouterResponseGuard>,
 }
 
@@ -127,8 +122,8 @@ impl ProducerHandle {
         &self.id
     }
 
-    pub fn send(&self, item: BroadcastItem) -> bool {
-        self.map.send_event(&self.id, item)
+    pub fn send(&self, item: SubscriptionEvent) -> bool {
+        self.subscriptions.send(&self.id, item)
     }
 }
 
@@ -136,7 +131,7 @@ impl Drop for ProducerHandle {
     fn drop(&mut self) {
         // removing the entry drops the broadcast sender inside it, closing the channel.
         // all receivers will see Closed and their streams will end naturally
-        self.map.remove(&self.id);
+        self.subscriptions.remove(&self.id);
         trace!(subscription_id = %self.id, "subscription handle dropped, upstream closed");
     }
 }

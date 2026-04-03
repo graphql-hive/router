@@ -27,7 +27,7 @@ use tracing::trace;
 use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
-use crate::pipeline::active_subscriptions::{ActiveSubscriptions, BroadcastItem};
+use crate::pipeline::active_subscriptions::{ActiveSubscriptions, SubscriptionEvent};
 use crate::pipeline::cors::{CORSConfigError, Cors};
 use crate::pipeline::header::{SingleContentType, StreamContentType};
 use crate::pipeline::introspection_policy::compile_introspection_policy;
@@ -134,7 +134,7 @@ impl From<SharedRouterSingleResponse> for web::HttpResponse {
 
 pub struct SharedRouterStreamResponse {
     // status is always 200 for streaming responses, errors are sent through the stream
-    pub body: tokio::sync::broadcast::Sender<BroadcastItem>,
+    pub body: tokio::sync::broadcast::Sender<SubscriptionEvent>,
     pub headers: Arc<HeaderMap>,
     pub stream_content_type: StreamContentType,
     pub error_count: usize,
@@ -152,7 +152,7 @@ pub struct SharedRouterStreamResponse {
     // guarantees no event is sent to an empty channel and no event is missed. None on clones
     // because joiners are already late subscribers and create their own receiver when they
     // call body.subscribe().
-    pub bootstrap_receiver: Option<tokio::sync::broadcast::Receiver<BroadcastItem>>,
+    pub bootstrap_receiver: Option<tokio::sync::broadcast::Receiver<SubscriptionEvent>>,
 }
 
 impl Clone for SharedRouterStreamResponse {
@@ -178,10 +178,10 @@ impl From<SharedRouterStreamResponse> for web::HttpResponse {
         let stream = Box::pin(async_stream::stream! {
             loop {
                 match receiver.recv().await {
-                    Ok(BroadcastItem::Event(data)) => {
+                    Ok(SubscriptionEvent::Raw(data)) => {
                         yield data.to_vec();
                     }
-                    Ok(BroadcastItem::Error(errors)) => {
+                    Ok(SubscriptionEvent::Error(errors)) => {
                         yield FailedExecutionResult { errors }.serialize();
                         break;
                     }
