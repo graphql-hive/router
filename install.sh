@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 set -e
 
 # Color support: check NO_COLOR or non-TTY (stdout)
@@ -32,17 +32,17 @@ BINARY_NAME="hive_router"
 CARGO_PKG_NAME="hive-router"
 
 print_step() {
-    echo -e "${BLUE}▸${NC} $1"
+    printf '%b\n' "${BLUE}▸${NC} $1"
 }
 
 print_success() {
     # Move up one line and clear it
-    echo -ne "\033[1A\033[2K\r"
-    echo -e "${GREEN}✓${NC} $1"
+    printf '%b' "\033[1A\033[2K\r"
+    printf '%b\n' "${GREEN}✓${NC} $1"
 }
 
 print_error() {
-    echo -e "${RED}✗${NC} $1"
+    printf '%b\n' "${RED}✗${NC} $1"
 }
 
 check_tool() {
@@ -116,7 +116,7 @@ download_binary() {
     DOWNLOAD_URL="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/hive-router%2F${VERSION}/${ASSET_NAME}"
 
     print_step "Downloading Hive Router binary..."
-    echo -e "${DIM}  Download URL: ${DOWNLOAD_URL}${NC}"
+    printf '%b\n' "${DIM}  Download URL: ${DOWNLOAD_URL}${NC}"
 
     # -f: Fail silently on server errors (like 404)
     # -L: Follow redirects
@@ -126,9 +126,8 @@ download_binary() {
     fi
 
     if [ -t 1 ]; then
-        // Must be 2
-        echo -ne "\033[1A\033[2K\r"
-        echo -ne "\033[1A\033[2K\r"
+        printf '%b' "\033[1A\033[2K\r"
+        printf '%b' "\033[1A\033[2K\r"
     fi
 
     print_success "Binary downloaded"
@@ -141,9 +140,9 @@ install_binary() {
 }
 
 main() {
-    echo ""
-    echo -e "${BOLD}Hive Router Installer${NC}"
-    echo ""
+    printf '\n'
+    printf '%b\n' "${BOLD}Hive Router Installer${NC}"
+    printf '\n'
 
     check_tool "curl"
     check_tool "grep"
@@ -155,15 +154,15 @@ main() {
     download_binary
     install_binary
 
-    echo ""
-    echo -e "${BOLD}${GREEN}✨ Installation Complete!${NC}"
-    echo ""
-    echo -e "${BOLD}Start using Hive Router:${NC}"
-    echo -e "   ${BOLD}${BINARY_NAME}${NC}"
-    echo ""
-    echo -e "${BOLD}Documentation:${NC}"
-    echo -e "   https://the-guild.dev/graphql/hive/docs/router"
-    echo ""
+    printf '\n'
+    printf '%b\n' "${BOLD}${GREEN}✨ Installation Complete!${NC}"
+    printf '\n'
+    printf '%b\n' "${BOLD}Start using Hive Router:${NC}"
+    printf '%b\n' "   ${BOLD}${BINARY_NAME}${NC}"
+    printf '\n'
+    printf '%b\n' "${BOLD}Documentation:${NC}"
+    printf '%b\n' "   https://the-guild.dev/graphql/hive/docs/router"
+    printf '\n'
 }
 
 main "$@"
