@@ -210,6 +210,22 @@ jobs:
           sleep 5
         env:
           ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
+      - name: Wait for PR router readiness
+        if: github.event_name == 'pull_request'
+        run: |
+          for i in {1..30}; do
+            status=$(curl -s -o /tmp/pr-router-ready-body.txt -w "%{http_code}" -X POST http://127.0.0.1:4000/graphql \
+              -H 'content-type: application/json' \
+              --data '{"query":"query { __typename }"}' || true)
+            if [ "$status" = "200" ]; then
+              echo "PR router is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "PR router did not become ready, last status: ${status}"
+          cat /tmp/pr-router-ready-body.txt || true
+          exit 1
       - name: Run goose benchmark for ${{ github.ref }}
         if: github.event_name == 'pull_request'
         run: SUMMARY_PATH=./bench/results/pr cargo run --release -p goose-benchmark
@@ -246,9 +262,25 @@ jobs:
         env:
           ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
 
+      - name: Wait for main router readiness
+        if: github.event_name == 'pull_request'
+        run: |
+          for i in {1..30}; do
+            status=$(curl -s -o /tmp/main-router-ready-body.txt -w "%{http_code}" -X POST http://127.0.0.1:4000/graphql \
+              -H 'content-type: application/json' \
+              --data '{"query":"query { __typename }"}' || true)
+            if [ "$status" = "200" ]; then
+              echo "Main router is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Main router did not become ready, last status: ${status}"
+          cat /tmp/main-router-ready-body.txt || true
+          exit 1
       - name: Run goose benchmark for main
         if: github.event_name == 'pull_request'
-        run: SUMMARY_PATH=./bench/results/main cargo run --release -p goose-benchmark --manifest-path ./main-branch/Cargo.toml
+        run: SUMMARY_PATH=./bench/results/main cargo run --release -p goose-benchmark
       - name: Compare benchmark results
         if: github.event_name == 'pull_request'
         run: |
