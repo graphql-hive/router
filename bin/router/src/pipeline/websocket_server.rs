@@ -509,12 +509,13 @@ async fn handle_text_frame(
 
                 // TODO: query dedupe
 
-                // subscription dedup: try to join an existing subscription
-                if let Some(fp) = fingerprint {
-                    let registry = &schema_state.active_subscriptions;
-                    if let Some((_sub_id, mut receiver, guard)) =
-                        registry.try_join_by_fingerprint(fp)
-                    {
+                // subscription dedup: join or create a fingerprinted subscription.
+                // joiners read from the existing broadcast channel.
+                // the leader gets a handle to feed upstream events into later
+                let sub_dedup = if let Some(fp) = fingerprint {
+                    let (handle, receiver, guard) =
+                        schema_state.active_subscriptions.dedupe_by_fingerprint(fp);
+                    if handle.is_none() {
                         let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
                         state.borrow_mut().subscriptions.insert(id.clone(), cancel_tx);
 
@@ -527,6 +528,7 @@ async fn handle_text_frame(
 
                         let id_for_loop = id.clone();
                         let mut cancelled = false;
+                        let mut receiver = receiver;
                         loop {
                             tokio::select! {
                                 recv_result = receiver.recv() => {
@@ -565,7 +567,10 @@ async fn handle_text_frame(
                             Some(ServerMessage::complete(&id))
                         };
                     }
-                }
+                    Some((handle, receiver, guard))
+                } else {
+                    None
+                };
 
                 match execute_pipeline(
                     &client_request_details,
@@ -610,11 +615,9 @@ async fn handle_text_frame(
                         Some(ServerMessage::complete(&id))
                     }
                     Ok(QueryPlanExecutionResult::Stream(response)) => {
-                        let subscription_fingerprint = if is_subscription { fingerprint } else { None };
-                        let mut stream = crate::pipeline::register_subscription_leader(
+                        let mut stream = crate::pipeline::start_subscription_leader(
                             response.body,
-                            subscription_fingerprint,
-                            schema_state,
+                            sub_dedup,
                         );
 
                         // we use mpsc::channel(1) instead of oneshot because oneshot::Receiver

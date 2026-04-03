@@ -117,7 +117,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        let verifier = Uuid::new_v4().to_string();
+        let verifier = Uuid::new_v4().to_string(); // TODO: doesnt have to be a UUID
 
         let callback_state = CallbackState {
             verifier: verifier.clone(),

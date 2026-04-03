@@ -42,6 +42,9 @@ struct ActiveSubscriptionEntry {
 }
 
 pub struct ActiveSubscriptionsRegistry {
+    // two maps becuase http callbacks need uuids as ids which is the
+    // true map of all subscriptions, and then the fingerprint map is a
+    // secondary map only for deduplication
     subscriptions: DashMap<SubscriptionId, ActiveSubscriptionEntry>,
     fingerprints: DashMap<Fingerprint, SubscriptionId>,
     // capacity of the broadcast channel per subscription, see router config `subscriptions.broadcast_capacity`
@@ -57,38 +60,79 @@ impl ActiveSubscriptionsRegistry {
         }
     }
 
-    /// try to join an existing subscription by fingerprint.
-    /// returns the subscription id, a broadcast receiver, and a listener guard if a match exists
-    pub fn try_join_by_fingerprint(
+    /// Atomically joins or creates a subscription for the given fingerprint.
+    ///
+    /// The broadcast entry is created immediately so concurrent requests
+    /// subscribe to the same channel, even if the subscription has not
+    /// resolved yet.
+    ///
+    /// Returns a `SubscriptionHandle` only for the leader (first caller).
+    /// the leader uses it to feed upstream events into the broadcast channel.
+    ///
+    /// All callers (leader included) get a receiver and a `FingerprintGuard`.
+    pub fn dedupe_by_fingerprint(
         self: &Arc<Self>,
         fingerprint: Fingerprint,
-    ) -> Option<(
-        SubscriptionId,
+    ) -> (
+        Option<SubscriptionHandle>,
         tokio::sync::broadcast::Receiver<BroadcastItem>,
-        ListenerGuard,
-    )> {
-        let sub_id = self.fingerprints.get(&fingerprint)?.value().clone();
+        FingerprintGuard,
+    ) {
+        use dashmap::mapref::entry::Entry;
+        match self.fingerprints.entry(fingerprint) {
+            Entry::Occupied(entry) => {
+                let sub_id = entry.get().clone();
+                // unwrap: fingerprints and subscriptions are always in sync
+                let sub = self.subscriptions.get(&sub_id).unwrap();
+                let receiver = sub.sender.subscribe();
+                sub.listener_count.fetch_add(1, Ordering::AcqRel);
 
-        let entry = self.subscriptions.get(&sub_id)?;
-        let receiver = entry.sender.subscribe();
-        entry.listener_count.fetch_add(1, Ordering::AcqRel);
+                let guard = FingerprintGuard {
+                    id: sub_id.clone(),
+                    registry: Arc::clone(self),
+                    listener_count: sub.listener_count.clone(),
+                    fingerprint: Some(fingerprint),
+                };
 
-        let guard = ListenerGuard {
-            id: sub_id.clone(),
-            registry: Arc::clone(self),
-            listener_count: entry.listener_count.clone(),
-            fingerprint: entry.fingerprint,
-        };
+                trace!(subscription_id = %sub_id, fingerprint, "joined existing subscription via dedup");
 
-        trace!(subscription_id = %sub_id, fingerprint = fingerprint, "joined existing subscription via dedup");
+                (None, receiver, guard)
+            }
+            Entry::Vacant(fp_slot) => {
+                let id = Uuid::new_v4().to_string(); // TODO: doesnt have to be a UUID
+                let (sender, receiver) = tokio::sync::broadcast::channel(self.broadcast_capacity);
+                let listener_count = Arc::new(AtomicUsize::new(1));
 
-        Some((sub_id, receiver, guard))
+                self.subscriptions.insert(
+                    id.clone(),
+                    ActiveSubscriptionEntry {
+                        sender,
+                        listener_count: listener_count.clone(),
+                        fingerprint: Some(fingerprint),
+                        callback_state: None,
+                    },
+                );
+                fp_slot.insert(id.clone());
+
+                let handle = SubscriptionHandle {
+                    id: id.clone(),
+                    registry: Arc::clone(self),
+                };
+                let guard = FingerprintGuard {
+                    id: id.clone(),
+                    registry: Arc::clone(self),
+                    listener_count,
+                    fingerprint: Some(fingerprint),
+                };
+
+                trace!(subscription_id = %id, fingerprint, "registered new fingerprinted subscription");
+
+                (Some(handle), receiver, guard)
+            }
+        }
     }
 
-    /// register a brand new subscription. returns:
-    /// - a SubscriptionHandle for the upstream producer (dropping it removes the entry and closes the channel)
-    /// - a broadcast receiver for the first consumer
-    /// - a ListenerGuard that tracks this consumer's lifetime
+    /// register a subscription without dedup (e.g. http callbacks)
     pub fn register(
         self: &Arc<Self>,
         fingerprint: Option<Fingerprint>,
@@ -96,9 +140,9 @@ impl ActiveSubscriptionsRegistry {
     ) -> (
         SubscriptionHandle,
         tokio::sync::broadcast::Receiver<BroadcastItem>,
-        ListenerGuard,
+        FingerprintGuard,
     ) {
-        let id = Uuid::new_v4().to_string();
+        let id = Uuid::new_v4().to_string(); // TODO: doesnt have to be a UUID
         let (sender, receiver) = tokio::sync::broadcast::channel(self.broadcast_capacity);
         let listener_count = Arc::new(AtomicUsize::new(1));
 
@@ -120,7 +164,7 @@ impl ActiveSubscriptionsRegistry {
             registry: Arc::clone(self),
         };
 
-        let guard = ListenerGuard {
+        let guard = FingerprintGuard {
             id: id.clone(),
             registry: Arc::clone(self),
             listener_count,
@@ -219,26 +263,26 @@ impl SubscriptionHandle {
 impl Drop for SubscriptionHandle {
     fn drop(&mut self) {
         // removing the entry drops the broadcast sender inside it, closing the channel.
-        // all receivers will see Closed and their ListenerGuards will drop.
-        // we remove here (rather than in ListenerGuard) because the upstream is the
+        // all receivers will see Closed and their FingerprintGuards will drop.
+        // we remove here (rather than in FingerprintGuard) because the upstream is the
         // authoritative source - when it's gone, the subscription is done
         self.registry.remove(&self.id);
         trace!(subscription_id = %self.id, "subscription handle dropped, upstream closed");
     }
 }
 
-/// held by each consumer. on drop, decrements the listener count.
-/// when the last listener drops and the subscription entry still exists
+/// held by each consumer of a subscription. on drop, decrements the listener
+/// count. when the last guard drops and the subscription entry still exists
 /// (upstream hasn't dropped yet), removes it - causing the upstream
-/// task to see send() fail and exit
-pub struct ListenerGuard {
+/// producer's send() to return false and exit
+pub struct FingerprintGuard {
     id: SubscriptionId,
     registry: Arc<ActiveSubscriptionsRegistry>,
     listener_count: Arc<AtomicUsize>,
     fingerprint: Option<Fingerprint>,
 }
 
-impl Drop for ListenerGuard {
+impl Drop for FingerprintGuard {
     fn drop(&mut self) {
         let prev = self.listener_count.fetch_sub(1, Ordering::AcqRel);
         if prev == 1 {

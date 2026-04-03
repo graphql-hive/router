@@ -10,8 +10,9 @@ use tracing::{error, trace, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
-use hive_router_plan_executor::executors::active_subscriptions::BroadcastItem;
-use hive_router_plan_executor::executors::active_subscriptions::ListenerGuard;
+use hive_router_plan_executor::executors::active_subscriptions::{
+    BroadcastItem, FingerprintGuard, SubscriptionHandle,
+};
 use hive_router_plan_executor::headers::plan::ResponseHeaderAggregator;
 
 use hive_router_internal::telemetry::traces::spans::{
@@ -284,26 +285,20 @@ pub async fn graphql_request_handler(
             None
         };
 
-        // subscription dedup, try to join an existing subscription
-        if is_subscription {
-            if let Some(fp) = fingerprint {
-                let registry = &schema_state.active_subscriptions;
-                if let Some((_sub_id, receiver, guard)) =
-                    registry.try_join_by_fingerprint(fp)
-                {
-                    let body_stream = broadcast_receiver_to_body_stream(receiver, guard);
-                    let response = build_streaming_response(
-                        body_stream,
-                        response_mode,
-                        None,
-                    )?;
-                    return Ok(response);
-                }
+        // subscription dedup: join or create a fingerprinted subscription.
+        // joiners get a receiver from the existing broadcast channel.
+        // the leader gets a handle to feed upstream events into later
+        let sub_dedup = if let Some(fp) = fingerprint.filter(|_| is_subscription) {
+            let (handle, receiver, guard) =
+                schema_state.active_subscriptions.dedupe_by_fingerprint(fp);
+            if handle.is_none() {
+                let body_stream = broadcast_receiver_to_body_stream(receiver, guard);
+                return build_streaming_response(body_stream, response_mode, None);
             }
-        }
-
-        // subscription fingerprint for leader registration (None disables broadcasting)
-        let subscription_fingerprint = if is_subscription { fingerprint } else { None };
+            Some((handle, receiver, guard))
+        } else {
+            None
+        };
 
         let planned_response = if fingerprint.is_some()
             && matches!(
@@ -325,7 +320,7 @@ pub async fn graphql_request_handler(
                         operation_span,
                         plugin_req_state,
                         response_mode,
-                        subscription_fingerprint,
+                        None,
                     )
                     .await?
                     {
@@ -348,7 +343,7 @@ pub async fn graphql_request_handler(
                 operation_span,
                 plugin_req_state,
                 response_mode,
-                subscription_fingerprint,
+                sub_dedup,
             )
             .await?
         };
@@ -421,7 +416,11 @@ async fn execute_planned_request<'exec>(
     operation_span: GraphQLOperationSpan,
     plugin_req_state: Option<PluginRequestState<'exec>>,
     response_mode: &'exec ResponseMode,
-    subscription_fingerprint: Option<u64>,
+    sub_dedup: Option<(
+        Option<SubscriptionHandle>,
+        tokio::sync::broadcast::Receiver<BroadcastItem>,
+        FingerprintGuard,
+    )>,
 ) -> Result<PlannedResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
@@ -473,8 +472,7 @@ async fn execute_planned_request<'exec>(
     .await?
     {
         QueryPlanExecutionResult::Stream(result) => {
-            let body_stream =
-                register_subscription_leader(result.body, subscription_fingerprint, schema_state);
+            let body_stream = start_subscription_leader(result.body, sub_dedup);
 
             let response = build_streaming_response(
                 body_stream,
@@ -577,29 +575,32 @@ pub async fn execute_pipeline<'exec>(
     execute_plan(supergraph, shared_state, planned_request, operation_span).await
 }
 
-/// registers upstream as a subscription leader, spawning a broadcast task and
-/// returning a stream backed by the broadcast receiver. if fingerprint is None,
-/// the upstream stream is returned as-is with no registration.
-pub(crate) fn register_subscription_leader(
+/// if sub_dedup is provided, spawns a task that feeds upstream events into
+/// the broadcast channel and returns a stream backed by the broadcast receiver.
+/// otherwise returns the upstream stream directly
+pub(crate) fn start_subscription_leader(
     upstream: futures::stream::BoxStream<'static, Vec<u8>>,
-    fingerprint: Option<u64>,
-    schema_state: &SchemaState,
+    sub_dedup: Option<(
+        Option<SubscriptionHandle>,
+        tokio::sync::broadcast::Receiver<BroadcastItem>,
+        FingerprintGuard,
+    )>,
 ) -> futures::stream::BoxStream<'static, Vec<u8>> {
-    let Some(fingerprint) = fingerprint else {
+    let Some((handle, receiver, guard)) = sub_dedup else {
         return upstream;
     };
 
-    let registry = &schema_state.active_subscriptions;
-    let (handle, receiver, guard) = registry.register(Some(fingerprint), None);
-
-    let mut upstream = upstream;
-    tokio::spawn(async move {
-        while let Some(event) = upstream.next().await {
-            if !handle.send(BroadcastItem::Event(event.into())) {
-                break;
+    // handle is always Some for the leader, but satisfy the type
+    if let Some(handle) = handle {
+        let mut upstream = upstream;
+        tokio::spawn(async move {
+            while let Some(event) = upstream.next().await {
+                if !handle.send(BroadcastItem::Event(event.into())) {
+                    break;
+                }
             }
-        }
-    });
+        });
+    }
 
     broadcast_receiver_to_body_stream(receiver, guard)
 }
@@ -608,7 +609,7 @@ pub(crate) fn register_subscription_leader(
 /// the listener guard is held for the lifetime of the stream to track listener count
 pub(crate) fn broadcast_receiver_to_body_stream(
     mut receiver: tokio::sync::broadcast::Receiver<BroadcastItem>,
-    guard: ListenerGuard,
+    guard: FingerprintGuard,
 ) -> futures::stream::BoxStream<'static, Vec<u8>> {
     Box::pin(async_stream::stream! {
         let _guard = guard;
