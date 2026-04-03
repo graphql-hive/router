@@ -15,6 +15,7 @@ use hive_router_query_planner::{
 };
 use http::{header::CONTENT_TYPE, Method};
 use ntex::{
+    http::HeaderMap,
     rt,
     web::{self, HttpRequest},
 };
@@ -288,7 +289,9 @@ pub async fn graphql_request_handler(
                 .claim(fp)
                 .get_or_try_init(|guard| async {
                      execute_planned_request(
-                        req,
+                        req.method(),
+                        req.uri(),
+                        req.headers(),
                         graphql_params,
                         &normalize_payload,
                         supergraph,
@@ -305,7 +308,9 @@ pub async fn graphql_request_handler(
             Arc::unwrap_or_clone(planned_response)
         } else {
             execute_planned_request(
-                req,
+                req.method(),
+                req.uri(),
+                req.headers(),
                 graphql_params,
                 &normalize_payload,
                 supergraph,
@@ -364,8 +369,10 @@ pub async fn graphql_request_handler(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn execute_planned_request<'exec>(
-    req: &'exec HttpRequest,
+pub async fn execute_planned_request<'exec>(
+    method: &'exec Method,
+    url: &'exec http::Uri,
+    headers: &'exec HeaderMap,
     mut graphql_params: GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     supergraph: &'exec SupergraphData,
@@ -378,7 +385,7 @@ async fn execute_planned_request<'exec>(
 ) -> Result<SharedRouterResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
-            .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
+            .validate_headers(headers, &shared_state.jwt_claims_cache)
             .await?
         {
             Some(jwt_context) => JwtRequestDetails::Authenticated {
@@ -396,9 +403,9 @@ async fn execute_planned_request<'exec>(
         coerce_request_variables(supergraph, &mut graphql_params.variables, normalize_payload)?;
 
     let client_request_details = ClientRequestDetails {
-        method: req.method(),
-        url: req.uri(),
-        headers: req.headers(),
+        method,
+        url,
+        headers,
         operation: OperationDetails {
             name: normalize_payload.operation_for_plan.name.as_deref(),
             kind: match normalize_payload.operation_for_plan.operation_kind {
@@ -454,7 +461,7 @@ async fn execute_planned_request<'exec>(
                 aggregator.modify_client_response_headers(&mut builder)?;
                 Arc::new(builder.finish().headers().clone())
             } else {
-                Arc::new(ntex::http::HeaderMap::new())
+                Arc::new(HeaderMap::new())
             };
 
             Ok(SharedRouterResponse::Stream(SharedRouterStreamResponse {
@@ -480,7 +487,7 @@ async fn execute_planned_request<'exec>(
                 aggregator.modify_client_response_headers(&mut builder)?;
                 Arc::new(builder.finish().headers().clone())
             } else {
-                Arc::new(ntex::http::HeaderMap::new())
+                Arc::new(HeaderMap::new())
             };
 
             Ok(SharedRouterResponse::Single(SharedRouterSingleResponse {
@@ -559,7 +566,7 @@ pub async fn execute_pipeline<'exec>(
 pub fn inbound_request_fingerprint(
     method: &http::Method,
     path: &str,
-    request_headers: &ntex::http::HeaderMap,
+    request_headers: &HeaderMap,
     dedupe_header_policy: &RouterRequestDedupeHeaderPolicy,
     schema_checksum: u64,
     normalized_operation_hash: u64,

@@ -1,16 +1,21 @@
+use http::Method;
+use ntex::channel::oneshot;
+use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
+use ntex::router::Path;
+use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
+use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
+use ntex::{chain, rt};
+use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::mpsc;
+use tracing::{debug, error, trace, warn, Instrument};
 
-use futures::StreamExt;
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLOperationSpan;
-use hive_router_plan_executor::execution::client_request_details::{
-    ClientRequestDetails, JwtRequestDetails, OperationDetails,
-};
-use hive_router_plan_executor::execution::plan::QueryPlanExecutionResult;
 use hive_router_plan_executor::executors::graphql_transport_ws::{
     ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
 };
@@ -23,22 +28,11 @@ use hive_router_plan_executor::plugin_context::{
 };
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use hive_router_query_planner::state::supergraph_state::OperationKind;
-use http::Method;
-use ntex::channel::oneshot;
-use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
-use ntex::router::Path;
-use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
-use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
-use ntex::{chain, rt};
-use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
-use tokio::sync::mpsc;
-use tracing::{debug, error, trace, warn, Instrument};
 
 use crate::jwt::errors::JwtError;
-use crate::pipeline::coerce_variables::coerce_request_variables;
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::execute_pipeline;
-use crate::pipeline::execution_request::GetQueryStr;
+use crate::pipeline::execute_planned_request;
+use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
 use crate::pipeline::{
     hash_graphql_extensions, hash_graphql_variables, inbound_request_fingerprint,
     normalize::normalize_request_with_cache, parser::parse_operation_with_cache, usage_reporting,
@@ -299,7 +293,7 @@ async fn handle_text_frame(
                     }
                 }
 
-                let mut payload = GraphQLParams {
+                let payload = GraphQLParams {
                     query: Some(payload.query),
                     operation_name: payload.operation_name,
                     variables: payload.variables.unwrap_or_default(),
@@ -423,11 +417,11 @@ async fn handle_text_frame(
                     shared_state.router_config.traffic_shaping.router.dedupe.enabled;
 
                 let fingerprint = if request_dedupe_enabled
-            && matches!(
-                normalize_payload.operation_for_plan.operation_kind,
-                // same deduplication applies for queries and subscriptions
-                None | Some(OperationKind::Query) | Some(OperationKind::Subscription)
-            ) {
+                    && matches!(
+                        normalize_payload.operation_for_plan.operation_kind,
+                        // same deduplication applies for queries and subscriptions
+                        None | Some(OperationKind::Query) | Some(OperationKind::Subscription)
+                    ) {
                     let variables_hash = hash_graphql_variables(&payload.variables);
                     let extensions_hash = payload
                         .extensions
@@ -447,169 +441,61 @@ async fn handle_text_frame(
                     None
                 };
 
-                let jwt_request_details = match &shared_state.jwt_auth_runtime {
-                    Some(jwt_auth_runtime) => match jwt_auth_runtime
-                        .validate_headers(&headers, &shared_state.jwt_claims_cache)
-                        .await
-                    {
-                        Ok(Some(jwt_context)) => JwtRequestDetails::Authenticated {
-                            scopes: jwt_context.extract_scopes(),
-                            claims: match jwt_context
-                                .get_claims_value()
-                                .map_err(PipelineError::JwtForwardingError)
-                            {
-                                Ok(claims) => claims,
-                                Err(e) => return Some(e.into_server_message(&id)),
-                            },
-                            token: jwt_context.token_raw,
-                            prefix: jwt_context.token_prefix,
-                        },
-                        Ok(None) => JwtRequestDetails::Unauthenticated,
-                        // jwt_auth_runtime.validate_headers() will error out only if
-                        // authentication is required and has failed. we therefore use
-                        // the JwtError conversion here to respond with proper error message
-                        // close with Forbidden.
-                        Err(e) => {
-                            let _ = sink.send(e.clone().into_server_message(&id)).await;
-                            // we report error as graphql error, but we also close the
-                            // connection since we're dealing with auth so let's be safe
-                            return Some(e.into_close_message());
-                        }
-                    },
-                    None => JwtRequestDetails::Unauthenticated,
-                };
-
-                let variable_payload = match coerce_request_variables(
-                    supergraph,
-                    &mut payload.variables,
-                    &normalize_payload,
-                ) {
-                    Ok(payload) => payload,
-                    Err(err) => return Some(err.into_server_message(&id)),
-                };
-
-                // synthetic client request details for plan executor
-                let client_request_details = ClientRequestDetails {
-                    method: &Method::POST,
-                    url: &WS_URI_PATH,
-                    headers: &headers,
-                    operation: OperationDetails {
-                        name: normalize_payload.operation_for_plan.name.as_deref(),
-                        kind: match normalize_payload.operation_for_plan.operation_kind {
-                            Some(OperationKind::Query) => "query",
-                            Some(OperationKind::Mutation) => "mutation",
-                            Some(OperationKind::Subscription) => "subscription",
-                            None => "query",
-                        },
-                        query: match payload.get_query() {
-                            Ok(q) => q,
-                            Err(e) => return Some(e.into_server_message(&id)),
-                        },
-                    },
-                    jwt: jwt_request_details,
-                }.into();
-
-                // TODO: dedupe
-
-                match execute_pipeline(
-                    &client_request_details,
-                    &normalize_payload,
-                    variable_payload,
-                    supergraph,
-                    shared_state,
-                    schema_state,
-                    operation_span,
-                    plugin_req_state,
-                )
-                .await
-                {
-                    Ok(QueryPlanExecutionResult::Single(response)) => {
-                        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-                            usage_reporting::collect_usage_report(
-                                supergraph.supergraph_schema.clone(),
-                                started_at.elapsed(),
-                                client_name,
-                                client_version,
-                                normalize_payload.operation_for_plan.name.as_deref(),
-                                &parser_payload.minified_document,
-                                hive_usage_agent,
-                                shared_state
-                                    .router_config
-                                    .telemetry
-                                    .hive
-                                    .as_ref()
-                                    .map(|c| &c.usage_reporting)
-                                    .expect(
-                                        // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
-                                        // the UsageAgent is only created when usage reporting is enabled.
-                                        // Thus, this expect should never panic.
-                                        "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
-                                    ),
-                                response.error_count,
+                // synthetic request details for plan executor
+                let shared_response = if let Some(fp) = fingerprint {
+                    let (shared_response, _role) = match shared_state
+                        .in_flight_requests
+                        .claim(fp)
+                        .get_or_try_init(|guard| async {
+                            execute_planned_request(
+                                &Method::POST,
+                                ws_uri,
+                                &headers,
+                                payload,
+                                &normalize_payload,
+                                supergraph,
+                                shared_state,
+                                schema_state,
+                                operation_span,
+                                plugin_req_state,
+                                &ResponseMode::Dual(
+                                    SingleContentType::default(),
+                                    StreamContentType::default(),
+                                ),
+                                Some(guard),
                             )
-                            .await;
-                        }
-
-                        let _ = sink.send(ServerMessage::next(&id, &response.body)).await;
-                        Some(ServerMessage::complete(&id))
-                    }
-                    Ok(QueryPlanExecutionResult::Stream(response)) => {
-                        let mut stream = response.body;
-
-                        // we use mpsc::channel(1) instead of oneshot because oneshot::Receiver
-                        // is consumed on first await, which doesn't work in tokio::select! loops that
-                        // need to poll the receiver multiple times across iterations
-                        let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
-
-                        state
-                            .borrow_mut()
-                            .subscriptions
-                            .insert(id.clone(), cancel_tx);
-
-                        // automatically remove the subscription from subscriptions when dropped
-                        let _guard = SubscriptionGuard {
-                            state: state.clone(),
-                            id: id.clone(),
+                            .await
+                        })
+                        .await {
+                            Ok(result) => result,
+                            Err(err) => return Some(err.into_server_message(&id)),
                         };
-
-                        let mut cancelled = false;
-
-                        trace!(id = %id, "Subscription started");
-
-                        let id_for_loop = id.clone();
-                        loop {
-                            tokio::select! {
-                                maybe_item = stream.next() => {
-                                    match maybe_item {
-                                        Some(body) => {
-                                            let _ = sink.send(ServerMessage::next(&id_for_loop, &body)).await;
-                                        }
-                                        None => {
-                                            break; // completed
-                                        }
-                                    }
-                                }
-                                _ = cancel_rx.recv() => {
-                                    cancelled = true;
-                                    break; // cancelled
-                                }
-                            }
-                        }
-
-                        if cancelled {
-                            trace!(id = %id, "Subscription cancelled");
-                            // we dont emit complete on cancelled subscriptions.
-                            // they're either deliberately cancelled by the client
-                            // or dropped due to connection close, either way
-                            // we dont/cant inform the client with a complete message
-                            None
-                        } else {
-                            trace!(id = %id, "Subscription completed");
-                            Some(ServerMessage::complete(&id))
-                        }
+                    Arc::unwrap_or_clone(shared_response)
+                } else {
+                    match execute_planned_request(
+                        &Method::POST,
+                        ws_uri,
+                        &headers,
+                        payload,
+                        &normalize_payload,
+                        supergraph,
+                        shared_state,
+                        schema_state,
+                        operation_span,
+                        plugin_req_state,
+                        &ResponseMode::Dual(
+                            SingleContentType::default(),
+                            StreamContentType::default(),
+                        ),
+                        None,
+                    )
+                    .await {
+                        Ok(result) => result,
+                        Err(err) => return Some(err.into_server_message(&id)),
                     }
-                    Err(err) => Some(err.into_server_message(&id)),
-                }
+                };
+
+                todo!();
             }
             .instrument(span_clone)
             .await;
