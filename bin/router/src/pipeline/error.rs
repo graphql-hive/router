@@ -297,8 +297,8 @@ pub fn handle_pipeline_error(
     let data = FailedExecutionResult { errors }.serialize();
 
     match response_mode {
-        ResponseMode::SingleOnly(_) | ResponseMode::Dual(_, _) => res
-            .header(header::CONTENT_TYPE, "application/json")
+        ResponseMode::SingleOnly(content_type) | ResponseMode::Dual(content_type, _) => res
+            .header(header::CONTENT_TYPE, content_type.as_ref())
             .body(data),
         ResponseMode::StreamOnly(StreamContentType::IncrementalDelivery) => res
             .header(
