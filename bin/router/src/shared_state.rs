@@ -128,6 +128,8 @@ impl From<SharedRouterSingleResponse> for web::HttpResponse {
             response.set_header(header_name, header_value);
         }
 
+        response.content_type(shared_response.single_content_type.as_ref());
+
         response.body(shared_response.body)
     }
 }
@@ -221,9 +223,9 @@ impl From<SharedRouterStreamResponse> for web::HttpResponse {
             response.set_header(header_name, header_value);
         }
 
-        response
-            .header(http::header::CONTENT_TYPE, content_type_header)
-            .streaming(body)
+        response.content_type(content_type_header);
+
+        response.streaming(body)
     }
 }
 
