@@ -431,15 +431,15 @@ async fn execute_planned_request<'exec>(
                 .ok_or(PipelineError::SubscriptionsTransportNotSupported)?
                 .clone();
 
-            let (producer_handle, sender, bootstrap_receiver, consumer_guard) =
-                shared_state.active_subscriptions.register(guard);
+            let (producer_handle, receiver) = shared_state.active_subscriptions.register(guard);
+
+            // subscribe the sender before spawning the pump so the channel always has
+            // at least one receiver - prevents events from being lost in the window
+            // between spawn and the consumer calling subscribe()
+            let sender = producer_handle.sender().clone();
 
             let mut body_stream = result.body;
             rt::spawn(async move {
-                // keep consumer_guard alive for the duration of the pump so it doesn't
-                // decrement the listener count to 0 and remove the subscription entry
-                // from active_subscriptions before the producer has a chance to send
-                let _consumer_guard = consumer_guard;
                 while let Some(chunk) = body_stream.next().await {
                     if !producer_handle.send(SubscriptionEvent::Raw(bytes::Bytes::from(chunk))) {
                         // all receivers gone, stop draining
@@ -462,7 +462,7 @@ async fn execute_planned_request<'exec>(
                 headers,
                 stream_content_type,
                 error_count: result.error_count,
-                bootstrap_receiver: Some(bootstrap_receiver),
+                receiver: Some(receiver),
             }))
         }
         QueryPlanExecutionResult::Single(result) => {

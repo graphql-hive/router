@@ -1,9 +1,9 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
+use tokio::sync::broadcast;
 use tracing::trace;
 use ulid::Ulid;
 
@@ -21,16 +21,9 @@ pub enum SubscriptionEvent {
     Error(Vec<GraphQLError>),
 }
 
-struct Subscription {
-    sender: tokio::sync::broadcast::Sender<SubscriptionEvent>,
-}
-
 #[derive(Clone)]
 pub struct ActiveSubscriptions {
-    // map of subscription ids to their sender
-    map: Arc<DashMap<SubscriptionId, Subscription>>,
-    // capacity of the broadcast channel per subscription,
-    // see router config `subscriptions.broadcast_capacity`
+    map: Arc<DashMap<SubscriptionId, broadcast::Sender<SubscriptionEvent>>>,
     broadcast_capacity: usize,
 }
 
@@ -42,119 +35,64 @@ impl ActiveSubscriptions {
         }
     }
 
-    /// Register a new subscription to be used for broadcasting events to consuming clients.
-    /// Returns a handle for the producer to send events, a sender that can be cloned to subscribe
-    /// new receivers, a receiver for consumers to subscribe to, and a guard that each consumer
-    /// must hold onto while consuming.
+    /// Register a new active subscription. Returns a producer handle for the upstream pump
+    /// and a pre-subscribed receiver for the leader consumer. The pump task owns the handle
+    /// for the full lifetime of the upstream stream - when the handle drops (pump done or all
+    /// receivers gone) the broadcast channel closes and all consumer receivers terminate.
     pub fn register(
         &self,
         guard: Option<SharedRouterResponseGuard>,
-    ) -> (
-        ProducerHandle,
-        tokio::sync::broadcast::Sender<SubscriptionEvent>,
-        tokio::sync::broadcast::Receiver<SubscriptionEvent>,
-        ConsumerGuard,
-    ) {
-        let listener_count = Arc::new(AtomicUsize::new(1));
-        let (sender, receiver) = tokio::sync::broadcast::channel(self.broadcast_capacity);
-        let sender_clone = sender.clone();
-
+    ) -> (ProducerHandle, broadcast::Receiver<SubscriptionEvent>) {
+        let (sender, receiver) = broadcast::channel(self.broadcast_capacity);
         let id = Ulid::new().to_string();
-
-        self.map.insert(id.clone(), Subscription { sender });
+        self.map.insert(id.clone(), sender.clone());
 
         let handle = ProducerHandle {
             id: id.clone(),
-            subscriptions: self.clone(),
+            map: self.map.clone(),
+            sender,
             _guard: guard,
-        };
-        let guard = ConsumerGuard {
-            id: id.clone(),
-            map: self.clone(),
-            listener_count,
         };
 
         trace!(subscription_id = %id, "registered new subscription");
 
-        (handle, sender_clone, receiver, guard)
+        (handle, receiver)
     }
 
-    /// send an event to a specific subscription's broadcast channel
-    pub fn send(&self, id: &str, item: SubscriptionEvent) -> bool {
-        if let Some(entry) = self.map.get(id) {
-            // if the channel is closed or full it means the consuming client is gone or too slow and
-            // unable to keep up. in both cases, we dont emit an error messages because it anyways cant
-            // go through
-            entry.sender.send(item).is_ok()
-        } else {
-            false
-        }
-    }
-
-    /// remove a subscription entry
-    pub fn remove(&self, id: &str) {
-        self.map.remove(id);
-    }
-
-    /// close all active subscriptions with an error message
+    /// Close all active subscriptions with an error and clear the registry.
     pub fn close_all_with_error(&self, errors: Vec<GraphQLError>) {
         let item = SubscriptionEvent::Error(errors);
         for entry in self.map.iter() {
-            let _ = entry.sender.send(item.clone());
+            let _ = entry.send(item.clone());
         }
         self.map.clear();
     }
 }
 
-/// Held by the upstream producer (the task that reads from the subgraph).
-/// It is the actual subscription handle that can be used to send events to consumers.
-/// Dropping this removes the subscription entry from the registry, which drops
-/// the broadcast sender and closes the channel. All receivers will see `Closed`
-/// and their streams will end naturally.
+/// Held by the upstream pump task for the full lifetime of the stream. Dropping it removes
+/// the subscription from the registry, closes the broadcast channel, and drops the inflight
+/// cleanup guard - which removes the dedupe entry so new requests start a fresh upstream.
 pub struct ProducerHandle {
     id: SubscriptionId,
-    subscriptions: ActiveSubscriptions,
+    map: Arc<DashMap<SubscriptionId, broadcast::Sender<SubscriptionEvent>>>,
+    sender: broadcast::Sender<SubscriptionEvent>,
     _guard: Option<SharedRouterResponseGuard>,
 }
 
 impl ProducerHandle {
-    pub fn id(&self) -> &str {
-        &self.id
+    pub fn sender(&self) -> &broadcast::Sender<SubscriptionEvent> {
+        &self.sender
     }
 
+    /// Returns false when all consumers have gone and the event cannot be delivered.
     pub fn send(&self, item: SubscriptionEvent) -> bool {
-        self.subscriptions.send(&self.id, item)
+        self.sender.send(item).is_ok()
     }
 }
 
 impl Drop for ProducerHandle {
     fn drop(&mut self) {
-        // removing the entry drops the broadcast sender inside it, closing the channel.
-        // all receivers will see Closed and their streams will end naturally
-        self.subscriptions.remove(&self.id);
-        trace!(subscription_id = %self.id, "subscription handle dropped, upstream closed");
-    }
-}
-
-/// Held by each consumer of a subscription (producer). On drop, decrements the listener count.
-/// When the last guard drops and the subscription entry still exists (upstream hasn't dropped
-/// yet), removes it - causing the upstream producer's `send()` to return `false` and exit.
-pub struct ConsumerGuard {
-    id: SubscriptionId,
-    map: ActiveSubscriptions,
-    listener_count: Arc<AtomicUsize>,
-}
-
-impl Drop for ConsumerGuard {
-    fn drop(&mut self) {
-        let prev = self.listener_count.fetch_sub(1, Ordering::AcqRel);
-        if prev == 1 {
-            // last listener gone, clean up. this also drops the sender,
-            // causing the upstream producer's send() to return false
-            self.map.map.remove(&self.id);
-            trace!(subscription_id = %self.id, "last listener dropped, subscription removed");
-        } else {
-            trace!(subscription_id = %self.id, remaining = prev - 1, "listener dropped");
-        }
+        self.map.remove(&self.id);
+        trace!(subscription_id = %self.id, "producer dropped, upstream closed");
     }
 }
