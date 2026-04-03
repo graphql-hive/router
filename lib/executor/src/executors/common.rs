@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use futures::stream::BoxStream;
 use http::{HeaderMap, Uri};
 use sonic_rs::Value;
 
@@ -12,12 +13,22 @@ use crate::{
 #[async_trait]
 pub trait SubgraphExecutor {
     fn endpoint(&self) -> &Uri;
+
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-        plugin_req_state: &'a Option<PluginRequestState<'a>>,
+        plugin_req_state: Option<&'a PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError>;
+
+    async fn subscribe<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+        timeout: Option<Duration>,
+    ) -> Result<
+        BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
+        SubgraphExecutorError,
+    >;
 
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
     where
@@ -51,3 +62,16 @@ impl SubgraphExecutionRequest<'_> {
             .insert(key, value);
     }
 }
+
+// the channel capacity for buffering subscription events between websockets or the callback
+// handler and the stream consumer. back-pressure flows like this:
+//
+//   ntex h1 dispatcher (send to client)
+//     poll_flush() blocks when TCP send buffer is full (slow client)
+//     poll_next_chunk() is not called until flush completes
+//     rx.recv() in the async_stream is not polled
+//     channel fills up
+//
+// so this bound only triggers when the client reading from the router is too slow, hence
+// backpressure comes from the client itself, not the router
+pub const SUBSCRIPTION_EVENT_BUFFER_CAPACITY: usize = 256;

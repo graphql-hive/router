@@ -1,3 +1,4 @@
+use futures::Stream;
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -13,10 +14,9 @@ use hive_router_internal::telemetry::traces::spans::{
 use hive_router_plan_executor::{
     execution::{
         client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-        plan::PlanExecutionOutput,
+        plan::QueryPlanExecutionResult,
     },
-    hooks::on_graphql_params::GraphQLParams,
-    hooks::on_supergraph_load::SupergraphData,
+    hooks::{on_graphql_params::GraphQLParams, on_supergraph_load::SupergraphData},
     plugin_context::{PluginContext, PluginRequestState},
 };
 use hive_router_query_planner::{
@@ -35,8 +35,11 @@ use crate::{
         error::PipelineError,
         execution::{execute_plan, PlannedRequest},
         execution_request::{deserialize_graphql_params, DeserializationResult, GetQueryStr},
-        header::{RequestAccepts, ResponseMode, SingleContentType, TEXT_HTML_MIME},
+        header::{RequestAccepts, ResponseMode, StreamContentType, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
+        multipart_subscribe::{
+            APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
+        },
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::{parse_operation_with_cache, ParseResult},
         progressive_override::request_override_context,
@@ -63,15 +66,19 @@ pub mod error;
 pub mod execution;
 pub mod execution_request;
 pub mod header;
+pub mod http_callback;
 pub mod introspection_policy;
+pub mod multipart_subscribe;
 pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
 pub mod request_extensions;
+pub mod sse;
 pub mod timeout;
 pub mod usage_reporting;
 pub mod validation;
+pub mod websocket_server;
 
 #[inline]
 pub async fn graphql_request_handler(
@@ -106,6 +113,7 @@ pub async fn graphql_request_handler(
 
     let started_at = Instant::now();
     let operation_span = GraphQLOperationSpan::new();
+    let span_clone = operation_span.clone();
 
     async {
         perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
@@ -233,21 +241,16 @@ pub async fn graphql_request_handler(
         );
 
         if is_subscription
-        // coming soon
-        // && !response_mode.can_stream()
+            && (!shared_state.router_config.subscriptions.enabled || !response_mode.can_stream())
         {
+            // check early, even though we check again after pipeline execution below
             return Err(PipelineError::SubscriptionsNotSupported);
         }
-
-        let Some(single_content_type) = response_mode.single_content_type() else {
-            // streaming responses coming soon
-            return Err(PipelineError::UnsupportedContentType);
-        };
 
         let request_dedupe_enabled =
             shared_state.router_config.traffic_shaping.router.dedupe.enabled;
 
-        let shared_response = if request_dedupe_enabled
+        let planned_response = if request_dedupe_enabled
             && matches!(
                 normalize_payload.operation_for_plan.operation_kind,
                 Some(OperationKind::Query) | None
@@ -271,22 +274,27 @@ pub async fn graphql_request_handler(
                 .in_flight_requests
                 .claim(fingerprint)
                 .get_or_try_init(|| async {
-                    execute_planned_request(
+                    match execute_planned_request(
                         req,
                         graphql_params,
                         &normalize_payload,
                         supergraph,
                         shared_state,
                         schema_state,
-                        &operation_span,
-                        &plugin_req_state,
-                        single_content_type,
+                        operation_span,
+                        plugin_req_state,
+                        response_mode,
                     )
-                    .await
+                    .await?
+                    {
+                        PlannedResponse::Shared(r) => Ok::<SharedRouterResponse, PipelineError>(r),
+                        // subscriptions are excluded from the dedup branch above, so this is unreachable
+                        PlannedResponse::Direct { .. } => unreachable!("stream responses never enter the dedup path"),
+                    }
                 })
                 .await?;
 
-            Arc::unwrap_or_clone(shared_response)
+            PlannedResponse::Shared(Arc::unwrap_or_clone(shared_response))
         } else {
             execute_planned_request(
                 req,
@@ -295,11 +303,19 @@ pub async fn graphql_request_handler(
                 supergraph,
                 shared_state,
                 schema_state,
-                &operation_span,
-                &plugin_req_state,
-                single_content_type,
+                operation_span,
+                plugin_req_state,
+                response_mode,
             )
             .await?
+        };
+
+        let (response, error_count) = match planned_response {
+            PlannedResponse::Shared(shared_response) => {
+                let error_count = shared_response.error_count;
+                (shared_response.into(), error_count)
+            }
+            PlannedResponse::Direct { response, .. } => (response, 0),
         };
 
         if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
@@ -323,17 +339,14 @@ pub async fn graphql_request_handler(
                         // Thus, this expect should never panic.
                         "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
                     ),
-                shared_response.error_count,
+                error_count,
             )
             .await;
         }
 
-        let pipeline_error_count = shared_response.error_count;
-        let response = shared_response.into();
-
         write_graphql_response_metric_status(
             req,
-            if pipeline_error_count > 0 {
+            if error_count > 0 {
                 GraphQLResponseStatus::Error
             } else {
                 GraphQLResponseStatus::Ok
@@ -342,11 +355,16 @@ pub async fn graphql_request_handler(
 
         Ok(response)
     }
-    .instrument(operation_span.clone())
+    .instrument(span_clone)
     .await
     .inspect_err(|_| {
         write_graphql_response_metric_status(req, GraphQLResponseStatus::Error);
     })
+}
+
+enum PlannedResponse {
+    Shared(SharedRouterResponse),
+    Direct { response: web::HttpResponse },
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -357,10 +375,10 @@ async fn execute_planned_request<'exec>(
     supergraph: &'exec SupergraphData,
     shared_state: &'exec Arc<RouterSharedState>,
     schema_state: &'exec Arc<SchemaState>,
-    operation_span: &'exec GraphQLOperationSpan,
-    plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
-    single_content_type: &'exec SingleContentType,
-) -> Result<SharedRouterResponse, PipelineError> {
+    operation_span: GraphQLOperationSpan,
+    plugin_req_state: Option<PluginRequestState<'exec>>,
+    response_mode: &'exec ResponseMode,
+) -> Result<PlannedResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
             .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
@@ -395,54 +413,112 @@ async fn execute_planned_request<'exec>(
             query: graphql_params.get_query()?,
         },
         jwt: jwt_request_details,
-    };
+    }
+    .into();
 
-    let pipeline_result = execute_pipeline(
+    match execute_pipeline(
         &client_request_details,
         normalize_payload,
-        &variable_payload,
+        variable_payload,
         supergraph,
         shared_state,
         schema_state,
         operation_span,
         plugin_req_state,
     )
-    .await?;
+    .await?
+    {
+        QueryPlanExecutionResult::Stream(result) => {
+            let stream_content_type = response_mode
+                .stream_content_type()
+                .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
 
-    let error_count = pipeline_result.error_count;
-    let mut response_builder = web::HttpResponse::Ok();
+            let content_type_header = match stream_content_type {
+                StreamContentType::IncrementalDelivery => {
+                    http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE)
+                }
+                StreamContentType::SSE => http::HeaderValue::from_static("text/event-stream"),
+                StreamContentType::ApolloMultipartHTTP => {
+                    http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE)
+                }
+            };
 
-    if let Some(response_headers_aggregator) = pipeline_result.response_headers_aggregator {
-        response_headers_aggregator.modify_client_response_headers(&mut response_builder)?;
+            // TODO: why exactly do we need a type cast here?
+            let body: std::pin::Pin<
+                Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
+            > = match stream_content_type {
+                StreamContentType::IncrementalDelivery => Box::pin(
+                    multipart_subscribe::create_incremental_delivery_stream(result.body),
+                ),
+                StreamContentType::SSE => Box::pin(sse::create_stream(
+                    result.body,
+                    std::time::Duration::from_secs(10),
+                )),
+                StreamContentType::ApolloMultipartHTTP => {
+                    Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
+                        result.body,
+                        std::time::Duration::from_secs(10),
+                    ))
+                }
+            };
+
+            let mut response_builder = web::HttpResponse::Ok();
+
+            if let Some(response_headers_aggregator) = result.response_headers_aggregator {
+                response_headers_aggregator
+                    .modify_client_response_headers(&mut response_builder)?;
+            }
+
+            let response = response_builder
+                // .status(result.status) status codes in streaming responses should always be ok
+                .header(http::header::CONTENT_TYPE, content_type_header)
+                .streaming(body);
+
+            Ok(PlannedResponse::Direct { response })
+        }
+        QueryPlanExecutionResult::Single(result) => {
+            let single_content_type = response_mode.
+                single_content_type().
+                // TODO: streaming single responses
+                ok_or(PipelineError::UnsupportedContentType)?;
+
+            let error_count = result.error_count;
+            let mut response_builder = web::HttpResponse::Ok();
+
+            if let Some(response_headers_aggregator) = result.response_headers_aggregator {
+                response_headers_aggregator
+                    .modify_client_response_headers(&mut response_builder)?;
+            }
+
+            let body = ntex::util::Bytes::from(result.body);
+
+            let response = response_builder
+                .content_type(single_content_type.as_ref())
+                .status(result.status_code)
+                .body(body.clone());
+
+            Ok(PlannedResponse::Shared(SharedRouterResponse {
+                body,
+                headers: Arc::new(response.headers().clone()),
+                status: response.status(),
+                error_count,
+            }))
+        }
     }
-
-    let body = ntex::util::Bytes::from(pipeline_result.body);
-
-    let response = response_builder
-        .content_type(single_content_type.as_ref())
-        .status(pipeline_result.status_code)
-        .body(body.clone());
-
-    Ok(SharedRouterResponse {
-        body,
-        headers: Arc::new(response.headers().clone()),
-        status: response.status(),
-        error_count,
-    })
 }
 
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_pipeline<'exec>(
-    client_request_details: &ClientRequestDetails<'exec>,
+    client_request_details: &Arc<ClientRequestDetails<'exec>>,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
-    variable_payload: &CoerceVariablesPayload,
+    variable_payload: CoerceVariablesPayload,
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
-    operation_span: &GraphQLOperationSpan,
-    plugin_req_state: &Option<PluginRequestState<'exec>>,
-) -> Result<PlanExecutionOutput, PipelineError> {
+    operation_span: GraphQLOperationSpan,
+    plugin_req_state: Option<PluginRequestState<'exec>>,
+) -> Result<QueryPlanExecutionResult, PipelineError> {
     if normalize_payload.operation_for_introspection.is_some() {
         handle_introspection_policy(&shared_state.introspection_policy, client_request_details)?;
     }
@@ -460,7 +536,7 @@ pub async fn execute_pipeline<'exec>(
         normalize_payload,
         &supergraph.authorization,
         &supergraph.metadata,
-        variable_payload,
+        &variable_payload,
         &client_request_details.jwt,
     )?;
 
@@ -470,22 +546,22 @@ pub async fn execute_pipeline<'exec>(
         &normalize_payload,
         &progressive_override_ctx,
         &cancellation_token,
-        plugin_req_state,
+        &plugin_req_state,
     )
     .await?;
 
     let query_plan_payload = match query_plan_result {
         QueryPlanResult::QueryPlan(plan) => plan,
         QueryPlanResult::EarlyResponse(response) => {
-            return Ok(response);
+            return Ok(QueryPlanExecutionResult::Single(response));
         }
     };
 
     let planned_request = PlannedRequest {
-        normalized_payload: &normalize_payload,
+        normalized_payload: normalize_payload,
         query_plan_payload: &query_plan_payload,
         variable_payload,
-        client_request_details,
+        client_request_details: client_request_details.clone(),
         authorization_errors,
         plugin_req_state,
     };

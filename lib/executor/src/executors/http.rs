@@ -3,12 +3,15 @@ use std::time::{Duration, Instant};
 
 use crate::executors::dedupe::unique_leader_fingerprint;
 use crate::executors::map::InflightRequestsMap;
+use crate::executors::multipart_subscribe;
+use crate::executors::sse;
 use crate::hooks::on_subgraph_http_request::{
     OnSubgraphHttpRequestHookPayload, OnSubgraphHttpResponseHookPayload,
 };
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::response::subgraph_response::SubgraphResponse;
+use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::inflight::InFlightRole;
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
@@ -27,7 +30,7 @@ use hyper::Version;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -71,6 +74,66 @@ struct HttpRequestTelemetryCapture<'a> {
     transport_duration: Duration,
 }
 
+pub fn build_request_body(
+    execution_request: &SubgraphExecutionRequest<'_>,
+) -> Result<Vec<u8>, SubgraphExecutorError> {
+    let mut body = Vec::with_capacity(4096);
+    body.put(FIRST_QUOTE_STR);
+    write_and_escape_string(&mut body, execution_request.query);
+    let mut first_variable = true;
+    if let Some(variables) = &execution_request.variables {
+        for (variable_name, variable_value) in variables {
+            if first_variable {
+                body.put(FIRST_VARIABLE_STR);
+                first_variable = false;
+            } else {
+                body.put(COMMA);
+            }
+            body.put(QUOTE);
+            body.put(variable_name.as_bytes());
+            body.put(QUOTE);
+            body.put(COLON);
+            let value_str = sonic_rs::to_string(variable_value).map_err(|err| {
+                SubgraphExecutorError::VariablesSerializationFailure(variable_name.to_string(), err)
+            })?;
+            body.put(value_str.as_bytes());
+        }
+    }
+    if let Some(raw_variable_values) = &execution_request.raw_variable_values {
+        for (variable_name, variable_value) in raw_variable_values {
+            if first_variable {
+                body.put(FIRST_VARIABLE_STR);
+                first_variable = false;
+            } else {
+                body.put(COMMA);
+            }
+            body.put(QUOTE);
+            body.put(variable_name.as_bytes());
+            body.put(QUOTE);
+            body.put(COLON);
+            body.extend_from_slice(variable_value);
+        }
+    }
+    // "first_variable" should be still true if there are no variables
+    if !first_variable {
+        body.put(CLOSE_BRACE);
+    }
+
+    if let Some(extensions) = &execution_request.extensions {
+        if !extensions.is_empty() {
+            let as_value = sonic_rs::to_value(extensions).unwrap();
+
+            body.put(COMMA);
+            body.put("\"extensions\":".as_bytes());
+            body.extend_from_slice(as_value.to_string().as_bytes());
+        }
+    }
+
+    body.put(CLOSE_BRACE);
+
+    Ok(body)
+}
+
 impl HTTPSubgraphExecutor {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -104,70 +167,6 @@ impl HTTPSubgraphExecutor {
             telemetry_context,
             config,
         }
-    }
-
-    fn build_request_body<'a>(
-        &self,
-        execution_request: &SubgraphExecutionRequest<'a>,
-    ) -> Result<Vec<u8>, SubgraphExecutorError> {
-        let mut body = Vec::with_capacity(4096);
-        body.put(FIRST_QUOTE_STR);
-        write_and_escape_string(&mut body, execution_request.query);
-        let mut first_variable = true;
-        if let Some(variables) = &execution_request.variables {
-            for (variable_name, variable_value) in variables {
-                if first_variable {
-                    body.put(FIRST_VARIABLE_STR);
-                    first_variable = false;
-                } else {
-                    body.put(COMMA);
-                }
-                body.put(QUOTE);
-                body.put(variable_name.as_bytes());
-                body.put(QUOTE);
-                body.put(COLON);
-                let value_str = sonic_rs::to_string(variable_value).map_err(|err| {
-                    SubgraphExecutorError::VariablesSerializationFailure(
-                        variable_name.to_string(),
-                        err,
-                    )
-                })?;
-                body.put(value_str.as_bytes());
-            }
-        }
-        if let Some(raw_variable_values) = &execution_request.raw_variable_values {
-            for (variable_name, variable_value) in raw_variable_values {
-                if first_variable {
-                    body.put(FIRST_VARIABLE_STR);
-                    first_variable = false;
-                } else {
-                    body.put(COMMA);
-                }
-                body.put(QUOTE);
-                body.put(variable_name.as_bytes());
-                body.put(QUOTE);
-                body.put(COLON);
-                body.extend_from_slice(variable_value);
-            }
-        }
-        // "first_variable" should be still true if there are no variables
-        if !first_variable {
-            body.put(CLOSE_BRACE);
-        }
-
-        if let Some(extensions) = &execution_request.extensions {
-            if !extensions.is_empty() {
-                let as_value = sonic_rs::to_value(extensions).unwrap();
-
-                body.put(COMMA);
-                body.put("\"extensions\":".as_bytes());
-                body.extend_from_slice(as_value.to_string().as_bytes());
-            }
-        }
-
-        body.put(CLOSE_BRACE);
-
-        Ok(body)
     }
 }
 
@@ -300,13 +299,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
     fn endpoint(&self) -> &http::Uri {
         &self.endpoint
     }
+
     async fn execute<'a>(
         &self,
         mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-        plugin_req_state: &'a Option<PluginRequestState<'a>>,
+        plugin_req_state: Option<&'a PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
-        let mut body = self.build_request_body(&execution_request)?;
+        let mut body = build_request_body(&execution_request)?;
 
         self.header_map.iter().for_each(|(key, value)| {
             execution_request.headers.insert(key, value.clone());
@@ -481,6 +481,138 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         response_result
     }
+
+    async fn subscribe<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+        connection_timeout: Option<Duration>,
+    ) -> Result<
+        BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
+        SubgraphExecutorError,
+    > {
+        let body = build_request_body(&execution_request)?;
+
+        let mut req = hyper::Request::builder()
+            .method(http::Method::POST)
+            .uri(&self.endpoint)
+            .version(Version::HTTP_11)
+            .body(Full::new(Bytes::from(body)))?;
+
+        let mut headers = execution_request.headers;
+        self.header_map.iter().for_each(|(key, value)| {
+            headers.insert(key, value.clone());
+        });
+
+        // Prefer multipart over SSE for subscriptions
+        // https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol
+        headers.insert(
+            http::header::ACCEPT,
+            HeaderValue::from_static(
+                r#"multipart/mixed;subscriptionSpec="1.0", text/event-stream"#,
+            ),
+        );
+        *req.headers_mut() = headers;
+
+        debug!(
+            "establishing subscription connection to subgraph {} at {}",
+            self.subgraph_name,
+            self.endpoint.to_string()
+        );
+
+        let res_fut = self.http_client.request(req);
+
+        let res = if let Some(timeout_duration) = connection_timeout {
+            tokio::time::timeout(timeout_duration, res_fut)
+                .await
+                .map_err(|_| {
+                    SubgraphExecutorError::RequestTimeout(
+                        self.endpoint.to_string(),
+                        timeout_duration.as_millis(),
+                    )
+                })?
+        } else {
+            res_fut.await
+        }?;
+
+        debug!(
+            "subscription connection to subgraph {} at {} established, status: {}",
+            self.subgraph_name,
+            self.endpoint.to_string(),
+            res.status()
+        );
+
+        if !res.status().is_success() {
+            return Err(SubgraphExecutorError::StreamStatusCodeNotOk(res.status()));
+        }
+
+        let (parts, body_stream) = res.into_parts();
+
+        let content_type = parts
+            .headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        let is_multipart = content_type.starts_with("multipart/mixed");
+        let is_sse = content_type == "text/event-stream";
+
+        if !is_multipart && !is_sse {
+            return Err(SubgraphExecutorError::UnsupportedContentTypeError(
+                content_type.to_string(),
+            ));
+        }
+
+        if is_multipart {
+            debug!(
+                subgraph_name = self.subgraph_name,
+                "using multipart HTTP for subscription",
+            );
+
+            let boundary = multipart_subscribe::parse_boundary_from_header(content_type)
+                .map_err(|e| SubgraphExecutorError::MultipartBoundaryParseFailure(e.to_string()))?;
+            let stream = multipart_subscribe::parse_to_stream(boundary, body_stream);
+
+            Ok(Box::pin(async_stream::stream! {
+                trace!("multipart subscription stream started");
+                for await result in stream {
+                    match result {
+                        Ok(response) => {
+                            trace!(response = ?response, "multipart subscription event received");
+                            yield Ok(response);
+                        }
+                        Err(e) => {
+                            yield Err(SubgraphExecutorError::MultipartStreamError(e.to_string()));
+                            return;
+                        }
+                    }
+                }
+            }))
+        } else {
+            debug!(
+                "using SSE for subscription connection to subgraph {} at {}",
+                self.subgraph_name,
+                self.endpoint.to_string(),
+            );
+
+            let stream = sse::parse_to_stream(body_stream);
+
+            Ok(Box::pin(async_stream::stream! {
+                trace!("SSE subscription stream started");
+                for await result in stream {
+                    match result {
+                        Ok(response) => {
+                            trace!(response = ?response, "SSE subscription event received");
+                            yield Ok(response);
+                        }
+                        Err(e) => {
+                            yield Err(SubgraphExecutorError::SseStreamError(e.to_string()));
+                            return;
+                        }
+                    }
+                }
+            }))
+        }
+    }
 }
 
 fn finish_capture_from_subgraph_result(
@@ -518,25 +650,13 @@ pub struct SubgraphHttpResponse {
 
 impl SubgraphHttpResponse {
     fn deserialize_http_response<'a>(self) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
-        let bytes_ref: &[u8] = &self.body;
-
-        // SAFETY: The byte slice `bytes_ref` is transmuted to have lifetime `'a`.
-        // This is safe because the returned `SubgraphResponse` contains a clone of `self.body`
-        // in its `bytes` field. `Bytes` is a reference-counted buffer, so this ensures the
-        // underlying data remains alive as long as the `SubgraphResponse` does.
-        // The `data` field of `SubgraphResponse` contains values that borrow from this buffer,
-        // creating a self-referential struct, which is why `unsafe` is required.
-        let bytes_ref: &'a [u8] = unsafe { std::mem::transmute(bytes_ref) };
-
-        sonic_rs::from_slice(bytes_ref)
-            .map_err(SubgraphExecutorError::ResponseDeserializationFailure)
-            .map(|mut resp: SubgraphResponse<'a>| {
-                // This is Arc
-                resp.headers = Some(self.headers);
-                // Zero cost of cloning Bytes
-                resp.bytes = Some(self.body);
+        SubgraphResponse::deserialize_from_bytes(self.body.clone()).map(
+            |mut resp: SubgraphResponse<'a>| {
+                // headers are under arc, zero cost clone
+                resp.headers = Some(self.headers.clone());
                 resp
-            })
+            },
+        )
     }
 }
 
