@@ -512,10 +512,7 @@ fn plans_query_with_nested_directive_only_inline_fragments() -> Result<(), Box<d
         "#,
     );
 
-    let query_plan = build_query_plan(
-        "fixture/tests/products-example.supergraph.graphql",
-        document,
-    );
+    let query_plan = build_query_plan("fixture/products-example.supergraph.graphql", document);
     assert!(
         query_plan.is_ok(),
         "expected query planning to succeed, got: {:?}",
@@ -591,10 +588,7 @@ fn plans_query_with_field_level_include_skip_conditions() -> Result<(), Box<dyn 
         "#,
     );
 
-    let query_plan = build_query_plan(
-        "fixture/tests/products-example.supergraph.graphql",
-        document,
-    );
+    let query_plan = build_query_plan("fixture/products-example.supergraph.graphql", document);
     assert!(
         query_plan.is_ok(),
         "expected query planning to succeed, got: {:?}",
