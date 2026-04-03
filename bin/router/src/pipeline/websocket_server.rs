@@ -536,7 +536,7 @@ async fn handle_text_frame(
                             .subscriptions
                             .insert(id.clone(), cancel_tx);
 
-                        let _guard = SubscriptionGuard {
+                        let guard = SubscriptionGuard {
                             state: state.clone(),
                             id: id.clone(),
                         };
@@ -544,45 +544,54 @@ async fn handle_text_frame(
                         let mut receiver = response
                             .receiver
                             .unwrap_or_else(|| response.body.subscribe());
-                        let mut cancelled = false;
 
                         trace!(id = %id, "Subscription started");
 
+                        let sink = sink.clone();
                         let id_for_loop = id.clone();
-                        loop {
-                            tokio::select! {
-                                maybe_item = receiver.recv() => {
-                                    match maybe_item {
-                                        Ok(SubscriptionEvent::Raw(data)) => {
-                                            let _ = sink.send(ServerMessage::next(&id_for_loop, &data)).await;
-                                        }
-                                        Ok(SubscriptionEvent::Error(errors)) => {
-                                            let _ = sink.send(ServerMessage::error(&id_for_loop, &errors)).await;
-                                            break;
-                                        }
-                                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                            trace!(id = %id_for_loop, lagged = n, "broadcast receiver lagged, skipping missed messages");
-                                            continue;
-                                        }
-                                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                            break;
+                        // must be spawned - blocking the frame handler would prevent
+                        // ClientMessage::Complete from being received and processed,
+                        // making cancellation impossible
+                        rt::spawn(async move {
+                            let _guard = guard;
+                            let mut cancelled = false;
+
+                            loop {
+                                tokio::select! {
+                                    maybe_item = receiver.recv() => {
+                                        match maybe_item {
+                                            Ok(SubscriptionEvent::Raw(data)) => {
+                                                let _ = sink.send(ServerMessage::next(&id_for_loop, &data)).await;
+                                            }
+                                            Ok(SubscriptionEvent::Error(errors)) => {
+                                                let _ = sink.send(ServerMessage::error(&id_for_loop, &errors)).await;
+                                                break;
+                                            }
+                                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                                trace!(id = %id_for_loop, lagged = n, "broadcast receiver lagged, skipping missed messages");
+                                                continue;
+                                            }
+                                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                                break;
+                                            }
                                         }
                                     }
-                                }
-                                _ = cancel_rx.recv() => {
-                                    cancelled = true;
-                                    break;
+                                    _ = cancel_rx.recv() => {
+                                        cancelled = true;
+                                        break;
+                                    }
                                 }
                             }
-                        }
 
-                        if cancelled {
-                            trace!(id = %id, "Subscription cancelled");
-                            None
-                        } else {
-                            trace!(id = %id, "Subscription completed");
-                            Some(ServerMessage::complete(&id))
-                        }
+                            if cancelled {
+                                trace!(id = %id_for_loop, "Subscription cancelled");
+                            } else {
+                                trace!(id = %id_for_loop, "Subscription completed");
+                                let _ = sink.send(ServerMessage::complete(&id_for_loop)).await;
+                            }
+                        });
+
+                        None
                     }
                 }
             }
