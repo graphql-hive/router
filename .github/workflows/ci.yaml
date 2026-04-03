@@ -24,6 +24,12 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          # Key includes OS + Cargo.lock hash for deterministic cache reuse
+          shared-key: rust-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: test all
         run: cargo test_all
         timeout-minutes: 5
@@ -37,6 +43,12 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          # Key includes OS + Cargo.lock hash for deterministic cache reuse
+          shared-key: rust-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: test e2e
         run: cargo test_e2e
         timeout-minutes: 10
@@ -53,6 +65,8 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: test plugin examples
         run: cargo test_plugin_examples
         timeout-minutes: 10
@@ -69,6 +83,12 @@ jobs:
         uses: the-guild-org/shared-config/setup@v1
         with:
           node-version-file: .node-version
+      - uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: build
         run: npm run build:debug
         working-directory: lib/node-addon
@@ -83,8 +103,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: build
-        run: cargo build --release
+        run: cargo build --release --locked
 
   fmt:
     name: check / fmt
@@ -95,6 +120,11 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
         with:
           components: rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo fmt
         uses: actions-rust-lang/rustfmt@4066006ec54a31931b9b1fddfd38f2fdf2d27143 # v1
 
@@ -107,8 +137,13 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo clippy
-        run: cargo clippy --all
+        run: cargo clippy --all --locked
 
   benchmark:
     strategy:
@@ -126,14 +161,19 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - if: matrix.name == 'executor'
         name: Build subgraphs
-        run: cargo build --release -p subgraphs
+        run: cargo build --release --locked -p subgraphs
       - if: matrix.name == 'executor'
         name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
       - name: Run benchmarks
-        run: cargo bench
+        run: cargo bench --locked
         working-directory: ${{ matrix.package }}
       - name: Upload benchmark results
         if: always() # Upload results even if benchmarks fail
@@ -197,17 +237,22 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Setup K6
         run: |
           wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
           sudo apt-get update
           sudo apt-get install ./k6-v0.37.0-linux-amd64.deb
       - name: Build subgraphs
-        run: cargo build --release -p subgraphs
+        run: cargo build --release --locked -p subgraphs
       - name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
       - name: Build router
-        run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
+        run: cargo build --release --locked -p ${{ matrix.package }} ${{matrix.args}}
       - name: Run router
         run: |
           ./target/release/${{ matrix.binary }} &
@@ -227,7 +272,7 @@ jobs:
 
       - name: Build router from main branch w/ default config
         if: github.event_name == 'pull_request' && matrix.compare_with_default == true
-        run: cargo build --release -p hive-router
+        run: cargo build --release --locked -p hive-router
         working-directory: main-branch
       - name: Run router from main branch w/ default config
         if: github.event_name == 'pull_request' && matrix.compare_with_default == true
@@ -240,7 +285,7 @@ jobs:
 
       - name: Build router from main branch w/ ${{ matrix.config }} config
         if: github.event_name == 'pull_request' && matrix.compare_with_default == false
-        run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
+        run: cargo build --release --locked -p ${{ matrix.package }} ${{matrix.args}}
         working-directory: main-branch
       - name: Run router from main branch w/ ${{ matrix.config }} config
         if: github.event_name == 'pull_request' && matrix.compare_with_default == false

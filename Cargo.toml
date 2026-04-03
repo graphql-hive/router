@@ -36,6 +36,13 @@ default-members = ["bin/router"]
 [profile.dev]
 debug = 2
 
+# Speed up runtime of dependencies in local dev/tests while keeping app code fast to recompile
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.test]
+opt-level = 1
+
 # See PROFILING.md
 [profile.profiling]
 inherits = "release"

@@ -40,6 +40,14 @@ jobs:
           token: ${{ secrets.BOT_GITHUB_TOKEN }}
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: check lockfile
+        # Fail early if Cargo.lock is stale or missing updates
+        run: cargo fetch --locked
       - name: generate config schema
         run: cargo router-config
       - name: setup node
@@ -118,6 +126,14 @@ jobs:
         with:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+          # Avoid PR cache bloat, only main updates cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: check lockfile
+        # Fail early if Cargo.lock is stale or missing updates
+        run: cargo fetch --locked
 
       # Only if using Zigbuild
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -130,10 +146,10 @@ jobs:
         if: ${{ matrix.zigbuild }}
       - name: zigbuild (${{ matrix.zigbuild_target }})
         if: ${{ matrix.zigbuild }}
-        run: cargo zigbuild --release --target ${{ matrix.zigbuild_target }}
+        run: cargo zigbuild --release --locked --target ${{ matrix.zigbuild_target }}
       # Only if NOT using Zigbuild
       - name: cargo build (${{ matrix.rust_target }})
-        run: cargo build --release --target ${{ matrix.rust_target }}
+        run: cargo build --release --locked --target ${{ matrix.rust_target }}
         if: ${{ !matrix.zigbuild }}
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
