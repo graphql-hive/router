@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use goose::config::{GooseDefault, GooseDefaultType};
 use goose::metrics::GooseMetrics;
 use goose::prelude::*;
@@ -14,7 +15,7 @@ static BENCHMARK_CONFIG: OnceLock<BenchmarkConfig> = OnceLock::new();
 struct BenchmarkConfig {
     host: String,
     path: String,
-    request_body: String,
+    request_body: Bytes,
     expected_hash: u64,
     vus: usize,
     run_time_label: String,
@@ -99,6 +100,7 @@ fn build_benchmark_config() -> Result<BenchmarkConfig, GooseError> {
                 detail: e.to_string(),
             }
         })?;
+    let request_body = Bytes::from(request_body);
 
     let expected_hash = hash_bytes(include_bytes!("../../expected_response.json"));
 
@@ -133,7 +135,19 @@ fn build_benchmark_config() -> Result<BenchmarkConfig, GooseError> {
 
 async fn run_graphql_request(user: &mut GooseUser) -> TransactionResult {
     let cfg = benchmark();
-    let mut goose = user.post(&cfg.path, cfg.request_body.as_str()).await?;
+    let request_builder = user
+        .get_request_builder(&GooseMethod::Post, &cfg.path)?
+        .header("content-type", "application/json")
+        .header("accept", "application/json")
+        .body(cfg.request_body.clone());
+
+    let goose_request = GooseRequest::builder()
+        .method(GooseMethod::Post)
+        .path(cfg.path.as_str())
+        .set_request_builder(request_builder)
+        .build();
+
+    let mut goose = user.request(goose_request).await?;
 
     match goose.response {
         Ok(response) => {

@@ -2230,6 +2230,7 @@ dependencies = [
 name = "goose-benchmark"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "goose",
  "humantime",
  "serde",
