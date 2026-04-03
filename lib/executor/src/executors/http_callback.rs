@@ -3,23 +3,62 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use dashmap::DashMap;
 use futures::stream::BoxStream;
 use http::{HeaderMap, HeaderValue};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
+use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
 use ulid::Ulid;
 
-use crate::executors::active_subscriptions::{ActiveSubscriptions, BroadcastItem, CallbackState};
-use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
+use crate::executors::common::{
+    SubgraphExecutionRequest, SubgraphExecutor, SUBSCRIPTION_EVENT_BUFFER_CAPACITY,
+};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::http::{build_request_body, HttpClient};
 use crate::plugin_context::PluginRequestState;
+use crate::response::graphql_error::GraphQLError;
 use crate::response::subgraph_response::SubgraphResponse;
 
 pub const CALLBACK_PROTOCOL_VERSION: &str = "callback/1.0";
 pub const SUBSCRIPTION_PROTOCOL_HEADER: &str = "subscription-protocol";
+
+type SubscriptionId = String;
+
+#[derive(Clone)]
+pub struct ActiveSubscription {
+    pub verifier: String,
+    pub sender: mpsc::Sender<CallbackMessage>,
+    pub last_heartbeat: Arc<Mutex<Instant>>,
+}
+
+impl ActiveSubscription {
+    pub fn record_heartbeat(&self) {
+        *self.last_heartbeat.lock().unwrap() = Instant::now();
+    }
+}
+
+#[derive(Debug)]
+pub enum CallbackMessage {
+    Next { payload: Bytes },
+    Complete { errors: Option<Vec<GraphQLError>> },
+}
+
+pub type ActiveSubscriptionsMap = Arc<DashMap<SubscriptionId, ActiveSubscription>>;
+
+struct SubscriptionGuard {
+    subscription_id: SubscriptionId,
+    active_subscriptions: ActiveSubscriptionsMap,
+}
+
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        self.active_subscriptions.remove(&self.subscription_id);
+        trace!(subscription_id = %self.subscription_id, "HTTP callback subscription entry removed from active subscriptions");
+    }
+}
 
 pub struct HttpCallbackSubgraphExecutor {
     pub subgraph_name: String,
@@ -28,7 +67,7 @@ pub struct HttpCallbackSubgraphExecutor {
     pub header_map: HeaderMap,
     pub callback_base_url: String,
     pub heartbeat_interval_ms: u64,
-    pub active_subscriptions: ActiveSubscriptions,
+    pub active_subscriptions: ActiveSubscriptionsMap,
 }
 
 impl HttpCallbackSubgraphExecutor {
@@ -38,7 +77,7 @@ impl HttpCallbackSubgraphExecutor {
         http_client: Arc<HttpClient>,
         callback_base_url: String,
         heartbeat_interval_ms: u64,
-        active_subscriptions: ActiveSubscriptions,
+        active_subscriptions: ActiveSubscriptionsMap,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -115,27 +154,33 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
+        let subscription_id = Ulid::new().to_string();
         let verifier = Ulid::new().to_string();
 
-        let callback_state = CallbackState {
-            verifier: verifier.clone(),
-            // initialize last_heartbeat to now + heartbeat_interval so the enforcer
-            // won't evict the subscription before the subgraph's initial check arrives.
-            // the initial check from the subgraph can take up to heartbeat_interval to
-            // arrive (due to network latency), and without this head start the enforcer
-            // would evict the subscription before the first heartbeat is recorded.
-            last_heartbeat: Arc::new(Mutex::new(
-                Instant::now() + Duration::from_millis(self.heartbeat_interval_ms),
-            )),
-        };
-
-        let (handle, _sender, mut receiver, guard) = self
-            .active_subscriptions
-            .register(None, Some(callback_state));
-
-        let subscription_id = handle.id().to_string();
-
         let body = self.build_request_body(&mut execution_request, &subscription_id, &verifier)?;
+
+        let (tx, mut rx) = mpsc::channel::<CallbackMessage>(SUBSCRIPTION_EVENT_BUFFER_CAPACITY);
+        self.active_subscriptions.insert(
+            subscription_id.clone(),
+            ActiveSubscription {
+                verifier,
+                sender: tx,
+                // initialize last_heartbeat to now + heartbeat_interval so the enforcer
+                // won't evict the subscription before the subgraph's initial check arrives.
+                // the initial check from the subgraph can take up to heartbeat_interval to
+                // arrive (due to network latency), and without this head start the enforcer
+                // would evict the subscription before the first heartbeat is recorded.
+                last_heartbeat: Arc::new(Mutex::new(
+                    Instant::now() + Duration::from_millis(self.heartbeat_interval_ms),
+                )),
+            },
+        );
+
+        // guard removes the entry from `active_subscriptions` when dropped
+        let guard = SubscriptionGuard {
+            subscription_id: subscription_id.clone(),
+            active_subscriptions: self.active_subscriptions.clone(),
+        };
 
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
@@ -199,15 +244,14 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         }
 
         Ok(Box::pin(async_stream::stream! {
-            // hold the handle and guard so the subscription entry is removed when the stream ends
-            let _handle = handle;
+            // `guard` is held here; dropping the stream drops `guard`, removing the map entry.
             let _guard = guard;
 
             trace!(subscription_id = %subscription_id, "HTTP callback subscription stream started");
 
-            loop {
-                match receiver.recv().await {
-                    Ok(BroadcastItem::Event(payload)) => {
+            while let Some(msg) = rx.recv().await {
+                match msg {
+                    CallbackMessage::Next { payload } => {
                         trace!(subscription_id = %subscription_id, "received next payload");
                         match SubgraphResponse::deserialize_from_bytes(payload) {
                             Ok(response) => yield Ok(response),
@@ -222,23 +266,16 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                             }
                         }
                     }
-                    Ok(BroadcastItem::Error(errors)) => {
-                        trace!(subscription_id = %subscription_id, "received close with error");
-                        if !errors.is_empty() {
-                            yield Ok(SubgraphResponse {
-                                errors: Some(errors),
-                                ..Default::default()
-                            });
+                    CallbackMessage::Complete { errors } => {
+                        trace!(subscription_id = %subscription_id, "received complete");
+                        if let Some(errors) = errors {
+                            if !errors.is_empty() {
+                                yield Ok(SubgraphResponse {
+                                    errors: Some(errors),
+                                    ..Default::default()
+                                });
+                            }
                         }
-                        break;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        // slow consumer, skip missed messages and continue
-                        trace!(subscription_id = %subscription_id, lagged = n, "broadcast receiver lagged, skipping missed messages");
-                        continue;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        trace!(subscription_id = %subscription_id, "broadcast channel closed");
                         break;
                     }
                 }
