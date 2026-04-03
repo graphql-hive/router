@@ -132,18 +132,48 @@ impl From<SharedRouterSingleResponse> for web::HttpResponse {
     }
 }
 
-#[derive(Clone)]
 pub struct SharedRouterStreamResponse {
     // status is always 200 for streaming responses, errors are sent through the stream
     pub body: tokio::sync::broadcast::Sender<BroadcastItem>,
     pub headers: Arc<HeaderMap>,
     pub stream_content_type: StreamContentType,
     pub error_count: usize,
+    // only set for the leader (the request that actually opens the upstream). the pump task
+    // is spawned before this response is returned to the caller, so there is a window between
+    // the spawn and the leader eventually calling body.subscribe() where the pump could send
+    // events to a channel with no receivers. broadcast does buffer sent events in its internal
+    // ring buffer, but a receiver created via subscribe() only sees events sent after it was
+    // created - it cannot read anything already in the buffer. so even though the events are
+    // technically buffered, the real consumer would miss them. worse, if there are zero
+    // receivers at send time, broadcast returns an error and the event is gone entirely, not
+    // even buffered. this receiver is created before the pump spawns, keeping the receiver
+    // count above zero during that window. it is dropped inside From<SharedRouterStreamResponse>
+    // only after the real consumer receiver has been created via body.subscribe(), which
+    // guarantees no event is sent to an empty channel and no event is missed. None on clones
+    // because joiners are already late subscribers and create their own receiver when they
+    // call body.subscribe().
+    pub bootstrap_receiver: Option<tokio::sync::broadcast::Receiver<BroadcastItem>>,
+}
+
+impl Clone for SharedRouterStreamResponse {
+    fn clone(&self) -> Self {
+        Self {
+            body: self.body.clone(),
+            headers: self.headers.clone(),
+            stream_content_type: self.stream_content_type.clone(),
+            error_count: self.error_count,
+            bootstrap_receiver: None,
+        }
+    }
 }
 
 impl From<SharedRouterStreamResponse> for web::HttpResponse {
     fn from(shared_response: SharedRouterStreamResponse) -> Self {
         let mut receiver = shared_response.body.subscribe();
+
+        // drop the bootstrap receiver only after the real consumer receiver is created above,
+        // closing the gap where events could be lost between pump spawn and subscribe()
+        drop(shared_response.bootstrap_receiver);
 
         let stream = Box::pin(async_stream::stream! {
             loop {

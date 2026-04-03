@@ -439,7 +439,7 @@ async fn execute_planned_request<'exec>(
                 .ok_or(PipelineError::SubscriptionsTransportNotSupported)?
                 .clone();
 
-            let (producer_handle, sender, _receiver, _consumer_guard) =
+            let (producer_handle, sender, bootstrap_receiver, consumer_guard) =
                 schema_state.active_subscriptions.register(
                     // TODO: ugly AF (and unnecessary), to use actual type - we must
                     // remove active_subscriptions from the executors and move it elsehwerhwe
@@ -449,6 +449,10 @@ async fn execute_planned_request<'exec>(
 
             let mut body_stream = result.body;
             rt::spawn(async move {
+                // keep consumer_guard alive for the duration of the pump so it doesn't
+                // decrement the listener count to 0 and remove the subscription entry
+                // from active_subscriptions before the producer has a chance to send
+                let _consumer_guard = consumer_guard;
                 while let Some(chunk) = body_stream.next().await {
                     if !producer_handle.send(BroadcastItem::Event(bytes::Bytes::from(chunk))) {
                         // all receivers gone, stop draining
@@ -471,6 +475,7 @@ async fn execute_planned_request<'exec>(
                 headers,
                 stream_content_type,
                 error_count: result.error_count,
+                bootstrap_receiver: Some(bootstrap_receiver),
             }))
         }
         QueryPlanExecutionResult::Single(result) => {
