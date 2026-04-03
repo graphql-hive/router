@@ -1,7 +1,5 @@
 {
     "name": "benchmarks",
     "private": true,
-    "devDependencies": {
-        "@types/k6": "1.6.0"
-    }
+    "devDependencies": {}
 }

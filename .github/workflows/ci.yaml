@@ -197,11 +197,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
-      - name: Setup K6
-        run: |
-          wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
-          sudo apt-get update
-          sudo apt-get install ./k6-v0.37.0-linux-amd64.deb
       - name: Build subgraphs
         run: cargo build --release -p subgraphs
       - name: Run subgraphs
@@ -215,9 +210,9 @@ jobs:
           sleep 5
         env:
           ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
-      - name: Run k6 benchmark for ${{ github.ref }}
+      - name: Run goose benchmark for ${{ github.ref }}
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./bench/results/pr bench/k6.js
+        run: SUMMARY_PATH=./bench/results/pr cargo run --release -p goose-benchmark
       - name: Checkout main branch in a separate directory
         if: github.event_name == 'pull_request'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -251,9 +246,9 @@ jobs:
         env:
           ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
 
-      - name: Run k6 benchmark for main
+      - name: Run goose benchmark for main
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./bench/results/main bench/k6.js
+        run: SUMMARY_PATH=./bench/results/main cargo run --release -p goose-benchmark --manifest-path ./main-branch/Cargo.toml
       - name: Compare benchmark results
         if: github.event_name == 'pull_request'
         run: |
