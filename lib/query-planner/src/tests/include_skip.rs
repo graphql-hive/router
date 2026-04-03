@@ -435,3 +435,171 @@ fn include_union_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn plans_query_with_nested_directive_only_inline_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        fragment User on User {
+          id
+          username
+          name
+        }
+
+        fragment Review on Review {
+          id
+          body
+        }
+
+        fragment Product on Product {
+          inStock
+          name
+          price
+          shippingEstimate
+          upc
+          weight
+        }
+
+        query TestQuery($user: Boolean = true, $product: Boolean = true, $reviews: Boolean = true) {
+          users {
+            ...User
+            ... @include(if: $reviews) {
+              reviews {
+                ...Review
+                product {
+                  ...Product
+                  reviews {
+                    ...Review
+                    ... @include(if: $user) {
+                      author {
+                        ...User
+                        reviews {
+                          ...Review
+                          ... @include(if: $product) {
+                            product {
+                              ...Product
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          ... @include(if: $product) {
+            topProducts {
+              ...Product
+              reviews {
+                ...Review
+                author {
+                  ...User
+                  ... @include(if: $reviews) {
+                    reviews {
+                      ...Review
+                      product {
+                        ...Product
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+
+    let query_plan = build_query_plan(
+        "fixture/tests/products-example.supergraph.graphql",
+        document,
+    );
+    assert!(
+        query_plan.is_ok(),
+        "expected query planning to succeed, got: {:?}",
+        query_plan.err()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn plans_query_with_field_level_include_skip_conditions() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        fragment User on User {
+          id
+          username
+          name
+        }
+
+        fragment Review on Review {
+          id
+          body
+        }
+
+        fragment Product on Product {
+          inStock
+          name
+          price
+          shippingEstimate
+          upc
+          weight
+        }
+
+        query TestQuery($user: Boolean = true, $product: Boolean = true, $reviews: Boolean = true) {
+          users {
+            ...User
+            reviews @include(if: $reviews) {
+              ...Review
+              product {
+                ...Product
+                reviews {
+                  ...Review
+                  author @include(if: $user) {
+                    ...User
+                    reviews {
+                      ...Review
+                      product @include(if: $product) {
+                        ...Product
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          topProducts @include(if: $product) {
+            ...Product
+            reviews {
+              ...Review
+              author {
+                ...User
+                reviews @include(if: $reviews) {
+                  ...Review
+                  product {
+                    ...Product
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+
+    let query_plan = build_query_plan(
+        "fixture/tests/products-example.supergraph.graphql",
+        document,
+    );
+    assert!(
+        query_plan.is_ok(),
+        "expected query planning to succeed, got: {:?}",
+        query_plan.err()
+    );
+
+    Ok(())
+}
