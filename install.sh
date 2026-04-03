@@ -126,6 +126,7 @@ download_binary() {
     fi
 
     if [ -t 1 ]; then
+        // Must be 2
         echo -ne "\033[1A\033[2K\r"
         echo -ne "\033[1A\033[2K\r"
     fi
