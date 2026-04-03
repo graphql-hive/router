@@ -4,9 +4,12 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures_util::StreamExt;
 use ntex::rt::Arbiter;
-use tracing::debug;
+use tokio::sync::mpsc;
+use tracing::{debug, warn};
 
-use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
+use crate::executors::common::{
+    SubgraphExecutionRequest, SubgraphExecutor, SUBSCRIPTION_EVENT_BUFFER_CAPACITY,
+};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::graphql_transport_ws::build_subscribe_payload;
 use crate::executors::websocket_client::{connect, WsClient};
@@ -111,9 +114,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<
-            Result<SubgraphResponse<'static>, SubgraphExecutorError>,
-        >();
+        let (tx, mut rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
+            SUBSCRIPTION_EVENT_BUFFER_CAPACITY,
+        );
 
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
@@ -132,7 +135,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             let connection = match connect(&endpoint).await {
                 Ok(conn) => conn,
                 Err(e) => {
-                    let _ = tx.send(Err(SubgraphExecutorError::WebSocketConnectFailure(
+                    let _ = tx.try_send(Err(SubgraphExecutorError::WebSocketConnectFailure(
                         endpoint.to_string(),
                         e.to_string(),
                     )));
@@ -143,7 +146,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             let mut client = match WsClient::init(connection, init_payload).await {
                 Ok(client) => client,
                 Err(e) => {
-                    let _ = tx.send(Err(SubgraphExecutorError::WebSocketHandshakeFailure(
+                    let _ = tx.try_send(Err(SubgraphExecutorError::WebSocketHandshakeFailure(
                         endpoint.to_string(),
                         e.to_string(),
                     )));
@@ -159,8 +162,25 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             let mut stream = client.subscribe(subscribe_payload).await;
 
             while let Some(response) = stream.next().await {
-                if tx.send(Ok(response)).is_err() {
-                    break;
+                match tx.try_send(Ok(response)) {
+                    Ok(()) => (),
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        // if the channel is full it means the consuming client is too slow and unable to keep
+                        // up. we terminate the subscription without an error message because it anyways cant
+                        // go through
+                        warn!(
+                            "Client for subgraph {} at {} subscriptions is too slow",
+                            subgraph_name, endpoint
+                        );
+                        break;
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        debug!(
+                            "Client for subgraph {} at {} dropped the receiver",
+                            subgraph_name, endpoint
+                        );
+                        break;
+                    }
                 }
             }
         }));

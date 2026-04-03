@@ -62,3 +62,16 @@ impl SubgraphExecutionRequest<'_> {
             .insert(key, value);
     }
 }
+
+// the channel capacity for buffering subscription events between websockets or the callback
+// handler and the stream consumer. back-pressure flows like this:
+//
+//   ntex h1 dispatcher (send to client)
+//     poll_flush() blocks when TCP send buffer is full (slow client)
+//     poll_next_chunk() is not called until flush completes
+//     rx.recv() in the async_stream is not polled
+//     channel fills up
+//
+// so this bound only triggers when the client reading from the router is too slow, hence
+// backpressure comes from the client itself, not the router
+pub const SUBSCRIPTION_EVENT_BUFFER_CAPACITY: usize = 256;

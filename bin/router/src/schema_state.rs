@@ -376,7 +376,9 @@ impl BackgroundTask for HeartbeatEnforcerTask {
                     "terminating subscription due to missed heartbeat"
                 );
                 if let Some((_, sub)) = self.active_subscriptions.remove(&id) {
-                    let _ = sub.sender.send(CallbackMessage::Complete {
+                    // we dont care about the result of this send, if it fails it means the client
+                    // is already gone or too slow, either way we just terminate the subscription
+                    let _ = sub.sender.try_send(CallbackMessage::Complete {
                         errors: Some(vec![GraphQLError::from_message_and_extensions(
                             "Subgraph gone due to heartbeat timeout".to_string(),
                             GraphQLErrorExtensions::new_from_code("SUBGRAPH_GONE"),

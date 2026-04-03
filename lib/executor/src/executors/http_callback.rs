@@ -13,7 +13,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
 use uuid::Uuid;
 
-use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
+use crate::executors::common::{
+    SubgraphExecutionRequest, SubgraphExecutor, SUBSCRIPTION_EVENT_BUFFER_CAPACITY,
+};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::http::{build_request_body, HttpClient};
 use crate::plugin_context::PluginRequestState;
@@ -28,7 +30,7 @@ type SubscriptionId = String;
 #[derive(Clone)]
 pub struct ActiveSubscription {
     pub verifier: String,
-    pub sender: mpsc::UnboundedSender<CallbackMessage>,
+    pub sender: mpsc::Sender<CallbackMessage>,
     pub last_heartbeat: Arc<Mutex<Instant>>,
 }
 
@@ -157,7 +159,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
 
         let body = self.build_request_body(&mut execution_request, &subscription_id, &verifier)?;
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<CallbackMessage>();
+        let (tx, mut rx) = mpsc::channel::<CallbackMessage>(SUBSCRIPTION_EVENT_BUFFER_CAPACITY);
         self.active_subscriptions.insert(
             subscription_id.clone(),
             ActiveSubscription {

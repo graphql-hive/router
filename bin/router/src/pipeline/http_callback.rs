@@ -11,6 +11,7 @@ use ntex::web::WebResponseError;
 use ntex::web::{self, types::Path, HttpRequest, HttpResponse};
 use serde::Deserialize;
 use strum::EnumString;
+use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
 #[derive(Debug, Deserialize, EnumString)]
@@ -65,6 +66,11 @@ pub enum CallbackError {
     InvalidVerifier { subscription_id: String },
     #[error("Subscription receiver dropped for subscription ID '{subscription_id}'")]
     SubscriptionDropped { subscription_id: String },
+    // NOTE: intentionally a different variant from SubscriptionDropped
+    #[error(
+        "Client consuming too slowly. Event buffer full for subscription ID '{subscription_id}'"
+    )]
+    ClientTooSlow { subscription_id: String },
 }
 
 impl CallbackError {
@@ -77,6 +83,7 @@ impl CallbackError {
             CallbackError::SubscriptionNotFound { .. } => warn!("{}", self),
             CallbackError::InvalidVerifier { .. } => warn!("{}", self),
             CallbackError::SubscriptionDropped { .. } => debug!("{}", self),
+            CallbackError::ClientTooSlow { .. } => warn!("{}", self),
         }
     }
 }
@@ -91,6 +98,9 @@ impl WebResponseError for CallbackError {
             CallbackError::SubscriptionNotFound { .. }
             | CallbackError::SubscriptionDropped { .. }
             | CallbackError::SubscriptionIdMismatch { .. } => StatusCode::NOT_FOUND,
+            // 503 signals the subgraph that the router is temporarily unable to accept events,
+            // the subgraph can decide to retry or close the subscription on its end
+            CallbackError::ClientTooSlow { .. } => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
     fn error_response(&self, _: &HttpRequest) -> HttpResponse {
@@ -154,20 +164,30 @@ fn handle_next(
         }
     };
 
-    if subscription
+    match subscription
         .sender
-        .send(CallbackMessage::Next { payload: data })
-        .is_err()
+        .try_send(CallbackMessage::Next { payload: data })
     {
-        debug!(subscription_id = %subscription_id, "Subscription receiver dropped");
-        drop(subscription);
-        active_subscriptions.remove(subscription_id);
-        return Err(CallbackError::SubscriptionDropped {
-            subscription_id: subscription_id.to_string(),
-        });
+        Ok(()) => Ok(()),
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            // if the channel is full it means the consuming client is too slow and unable to keep
+            // up. we terminate the subscription without an error message because it anyways cant go through
+            warn!(subscription_id = %subscription_id, "Subscription client is too slow");
+            drop(subscription);
+            active_subscriptions.remove(subscription_id);
+            Err(CallbackError::ClientTooSlow {
+                subscription_id: subscription_id.to_string(),
+            })
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            debug!(subscription_id = %subscription_id, "Subscription receiver dropped");
+            drop(subscription);
+            active_subscriptions.remove(subscription_id);
+            Err(CallbackError::SubscriptionDropped {
+                subscription_id: subscription_id.to_string(),
+            })
+        }
     }
-
-    Ok(())
 }
 
 fn handle_complete(
@@ -177,7 +197,9 @@ fn handle_complete(
     active_subscriptions: &ActiveSubscriptionsMap,
 ) {
     trace!(subscription_id = %subscription_id, "Received complete message");
-    let _ = subscription.sender.send(CallbackMessage::Complete {
+    // if the buffer is full or closed we ignore and remove the subscription, we dont send
+    // the final error message because the client is already unable to consume
+    let _ = subscription.sender.try_send(CallbackMessage::Complete {
         errors: payload.errors.clone(),
     });
     drop(subscription);
