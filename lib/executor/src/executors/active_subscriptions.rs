@@ -5,7 +5,7 @@ use std::time::Instant;
 use bytes::Bytes;
 use dashmap::DashMap;
 use tracing::trace;
-use uuid::Uuid;
+use ulid::Ulid;
 
 use crate::response::graphql_error::GraphQLError;
 
@@ -71,7 +71,7 @@ impl ActiveSubscriptionsMap {
         tokio::sync::broadcast::Receiver<BroadcastItem>,
         ListenerGuard,
     ) {
-        let id = Uuid::new_v4().to_string();
+        let id = Ulid::new().to_string();
         let (sender, receiver) = tokio::sync::broadcast::channel(self.inner.broadcast_capacity);
         let listener_count = Arc::new(AtomicUsize::new(1));
 

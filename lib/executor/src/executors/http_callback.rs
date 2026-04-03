@@ -9,7 +9,7 @@ use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
 use tracing::{debug, error, trace};
-use uuid::Uuid;
+use ulid::Ulid;
 
 use crate::executors::active_subscriptions::{
     ActiveSubscriptionsMap, BroadcastItem, CallbackState,
@@ -117,7 +117,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        let verifier = Uuid::new_v4().to_string(); // TODO: doesnt have to be a UUID
+        let verifier = Ulid::new().to_string();
 
         let callback_state = CallbackState {
             verifier: verifier.clone(),
@@ -131,9 +131,8 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             )),
         };
 
-        let (handle, mut receiver, guard) = self
-            .active_subscriptions
-            .register(Some(callback_state));
+        let (handle, mut receiver, guard) =
+            self.active_subscriptions.register(Some(callback_state));
 
         let subscription_id = handle.id().to_string();
 
