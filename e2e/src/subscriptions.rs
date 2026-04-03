@@ -1452,4 +1452,96 @@ mod subscriptions_e2e_tests {
             "Expected requests to reviews subgraph to be deduplicated"
         );
     }
+
+    #[ntex::test]
+    async fn active_subscriptions_deduplication_promotion() {
+        use futures::StreamExt;
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        dedupe:
+                            enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                }
+            }
+        "#;
+        let headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+
+        let mut sub1 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+
+        assert!(sub1.status().is_success(), "Expected 200 OK");
+
+        // consume 2 events from sub1 to let the source stream advance
+        let chunk = sub1.next().await.unwrap().unwrap();
+        assert!(
+            std::str::from_utf8(&chunk).unwrap().contains(r#""id":"1""#),
+            "Expected first event to be id=1"
+        );
+        let chunk = sub1.next().await.unwrap().unwrap();
+        assert!(
+            std::str::from_utf8(&chunk).unwrap().contains(r#""id":"2""#),
+            "Expected second event to be id=2"
+        );
+        let chunk = sub1.next().await.unwrap().unwrap();
+        assert!(
+            std::str::from_utf8(&chunk).unwrap().contains(r#""id":"3""#),
+            "Expected third event to be id=3"
+        );
+
+        // subscribe again with the same query - dedup promotes sub2 onto the live source
+        let sub2 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+
+        assert!(sub2.status().is_success(), "Expected 200 OK");
+
+        // drop sub1 now that sub2 is connected; sub2 must become the active subscriber
+        drop(sub1);
+
+        // sub2 should receive the remainder of the stream from where the source left off
+        let body = sub2.string_body().await;
+        assert!(
+            body.contains("event: next") && body.contains("event: complete"),
+            "Expected sub2 to receive remaining events and complete, got: {body}"
+        );
+
+        // sub2 must not have received the first 3 events that were already consumed by sub1
+        assert!(
+            !body.contains(r#""id":"1""#)
+                && !body.contains(r#""id":"2""#)
+                && !body.contains(r#""id":"3""#),
+            "Expected sub2 to not replay events already consumed by sub1, got: {body}"
+        );
+
+        // only one subgraph request should have been made
+        let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(
+            reviews_requests.len(),
+            1,
+            "Expected requests to reviews subgraph to be deduplicated"
+        );
+    }
 }
