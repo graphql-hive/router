@@ -1394,4 +1394,62 @@ mod subscriptions_e2e_tests {
         event: complete
         "#);
     }
+
+    #[ntex::test]
+    async fn active_subscriptions_deduplication() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        dedupe:
+                            enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                    product {
+                        name
+                    }
+                }
+            }
+        "#;
+        let headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+
+        let (sub1, sub2, sub3) = tokio::join!(
+            router.send_graphql_request(query, None, headers.clone()),
+            router.send_graphql_request(query, None, headers.clone()),
+            router.send_graphql_request(query, None, headers.clone()),
+        );
+
+        for sub in [&sub1, &sub2, &sub3] {
+            let body = sub.string_body().await;
+            assert!(
+                body.contains("event: next") && body.contains("event: complete"),
+                "Expected subscription to receive events and complete"
+            );
+        }
+
+        let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(
+            reviews_requests.len(),
+            1,
+            "Expected requests to reviews subgraph to be deduplicated"
+        );
+    }
 }
