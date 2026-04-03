@@ -74,7 +74,7 @@ pub use tokio;
 pub use tracing;
 use tracing::{info, warn, Instrument};
 
-static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
+static LABORATORY_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/laboratory.html"));
 
 struct CallbackServer(std::sync::Mutex<Option<ntex::server::Server>>);
 

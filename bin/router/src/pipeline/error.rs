@@ -326,9 +326,9 @@ pub fn handle_pipeline_error(
                 Box::pin(stream::once(async move { data })),
                 std::time::Duration::from_secs(10),
             )),
-        ResponseMode::GraphiQL => {
+        ResponseMode::Laboratory => {
             unreachable!(
-                "GraphiQL can not be a response mode because GraphiQL requests can not execute operations"
+                "Laboratory can not be a response mode because Laboratory requests can not execute operations"
             )
         }
     }

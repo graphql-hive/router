@@ -1,0 +1,159 @@
+schema
+@link(url: "https://specs.apollo.dev/link/v1.0")
+@link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+{
+    query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+"""Root Query Type"""
+type Query @join__type(graph: SERVICE) {
+    """Get a root entity"""
+    getTypes: CommonInterface @join__field(graph: SERVICE)
+}
+
+"""
+Type A - field is an EnumA
+"""
+type TypeA implements CommonInterface
+@join__type(graph: SERVICE, key: "id")
+@join__implements(graph: SERVICE, interface: "CommonInterface")
+{
+    id: ID!
+    identifier: String!
+    code: String!
+    """Field with EnumA type"""
+    field: EnumA!
+    isScalar: Int
+    metadata: Data!
+}
+
+
+
+"""
+Type B - field is an EnumB
+"""
+type TypeB implements CommonInterface
+@join__type(graph: SERVICE, key: "id")
+@join__implements(graph: SERVICE, interface: "CommonInterface")
+{
+    id: ID!
+    identifier: String!
+    code: String!
+    """Field with EnumB type (different from EnumA)"""
+    field: EnumB!
+    isScalar: Boolean
+    metadata: Data!
+}
+
+"""
+Type C - field is an EnumC
+"""
+type TypeC implements CommonInterface
+@join__type(graph: SERVICE, key: "id")
+@join__implements(graph: SERVICE, interface: "CommonInterface")
+{
+    id: ID!
+    identifier: String!
+    code: String!
+    """Field with EnumC type (different from EnumA and EnumB)"""
+    field: EnumC!
+    isScalar: Float
+    metadata: Data!
+}
+
+"""
+Type D - field is an EnumD
+"""
+type TypeD implements CommonInterface
+@join__type(graph: SERVICE, key: "id")
+@join__implements(graph: SERVICE, interface: "CommonInterface")
+{
+    id: ID!
+    identifier: String!
+    code: String!
+    """Field with EnumD type (different from others)"""
+    field: EnumD!
+    isScalar: ID
+    metadata: Data!
+}
+
+"""
+Common interface for all types
+Note: The field field is intentionally NOT defined here to force the query planner
+to resolve conflicts when accessing it on the union type
+"""
+interface CommonInterface @join__type(graph: SERVICE, key: "id") {
+    id: ID!
+    identifier: String! @join__field(graph: SERVICE)
+    code: String! @join__field(graph: SERVICE)
+    metadata: Data! @join__field(graph: SERVICE)
+}
+
+"""Enum A"""
+enum EnumA {
+    VALUE_A1
+    VALUE_A2
+    VALUE_A3
+    VALUE_A4
+}
+
+"""Enum B - intentionally different from EnumA"""
+enum EnumB {
+    VALUE_B1
+    VALUE_B2
+    VALUE_B3
+    VALUE_B4
+}
+
+"""Enum C - intentionally different from EnumA and EnumB"""
+enum EnumC {
+    VALUE_C1
+    VALUE_C2
+    VALUE_C3
+    VALUE_C4
+}
+
+"""Enum D - intentionally different from all"""
+enum EnumD {
+    VALUE_D1
+    VALUE_D2
+    VALUE_D3
+    VALUE_D4
+}
+
+"""Data representation"""
+type Data @join__type(graph: SERVICE){
+    value: Float! @join__field(graph: SERVICE)
+    unit: String! @join__field(graph: SERVICE)
+}
+
+"""Link directive definition"""
+scalar link__Import
+
+enum link__Purpose {
+    SECURITY
+    EXECUTION
+}
+
+"""Join directive scalar for field set"""
+scalar join__FieldSet
+
+"""Graph enumeration"""
+enum join__Graph {
+    SERVICE @join__graph(name: "service", url: "")
+}
+

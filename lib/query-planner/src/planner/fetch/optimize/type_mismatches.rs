@@ -73,9 +73,12 @@ impl FetchGraph<MultiTypeFetchStep> {
                         let item = selection_set
                           .items
                           .iter_mut()
-                          .find(|v| matches!(v, SelectionItem::Field(field) if field.name == *field_lookup && field.arguments_hash() == *args_hash_lookup && field_condition_equal(condition, field)));
+                          .find(|v| matches!(v, SelectionItem::Field(field) if field.selection_identifier() == *field_lookup && field.arguments_hash() == *args_hash_lookup && field_condition_equal(condition, field)));
 
                         if let Some(SelectionItem::Field(field_to_alias)) = item {
+                            let original_response_key =
+                                field_to_alias.selection_identifier().to_string();
+
                             trace!(
                                 "applying alias '{}' to existing field '{}' at path '{}'",
                                 next_alias,
@@ -90,7 +93,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                             pending_output_rewrites.push((
                                 node_index,
                                 FetchRewrite::KeyRenamer(KeyRenamer {
-                                    rename_key_to: field_to_alias.name.to_string(),
+                                    rename_key_to: original_response_key,
                                     path: output_rewrite_path,
                                 }),
                             ));

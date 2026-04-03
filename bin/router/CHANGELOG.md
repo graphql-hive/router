@@ -116,6 +116,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.45 (2026-03-31)
+
+### Fixes
+
+- preserve client aliases in mismatch output rewrites (#870)
+
+#### Preserve client aliases in mismatch rewrites
+
+Fixed query planner mismatch handling so conflicting fields are tracked by response key (alias-aware), and internal alias rewrites restore the original client-facing key (alias-or-name) instead of always the schema field name.
+
 ## 0.0.44 (2026-03-29)
 
 ### Fixes
