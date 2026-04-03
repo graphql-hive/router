@@ -269,6 +269,13 @@ impl WsClient {
     ) -> LocalBoxStream<'static, SubgraphResponse<'static>> {
         let subscribe_id = self.next_subscription_id();
 
+        let (tx, rx) = mpsc::channel();
+
+        self.state
+            .borrow_mut()
+            .subscriptions
+            .insert(subscribe_id.clone(), tx);
+
         let _ = self
             .sink
             .send(ClientMessage::subscribe(
@@ -278,13 +285,6 @@ impl WsClient {
             .await;
 
         trace!(id = %subscribe_id, "Subscribe message sent");
-
-        let (tx, rx) = mpsc::channel();
-
-        self.state
-            .borrow_mut()
-            .subscriptions
-            .insert(subscribe_id.clone(), tx);
 
         let state = self.state.clone();
         let sink = self.sink.clone();
