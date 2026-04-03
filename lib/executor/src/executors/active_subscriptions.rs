@@ -56,19 +56,22 @@ impl ActiveSubscriptions {
     }
 
     /// Register a new subscription to be used for broadcasting events to consuming clients.
-    /// Returns a handle for the producer to send events, a receiver for consumers to subscribe
-    /// to, and a guard that each consumer must hold onto while consuming.
+    /// Returns a handle for the producer to send events, a sender that can be cloned to subscribe
+    /// new receivers, a receiver for consumers to subscribe to, and a guard that each consumer
+    /// must hold onto while consuming.
     pub fn register(
         &self,
         guard: Option<Box<dyn std::any::Any + Send + 'static>>,
         callback_state: Option<CallbackState>,
     ) -> (
         ProducerHandle,
+        tokio::sync::broadcast::Sender<BroadcastItem>,
         tokio::sync::broadcast::Receiver<BroadcastItem>,
         ConsumerGuard,
     ) {
         let listener_count = Arc::new(AtomicUsize::new(1));
         let (sender, receiver) = tokio::sync::broadcast::channel(self.broadcast_capacity);
+        let sender_clone = sender.clone();
 
         let id = Ulid::new().to_string();
 
@@ -93,7 +96,7 @@ impl ActiveSubscriptions {
 
         trace!(subscription_id = %id, "registered new subscription");
 
-        (handle, receiver, guard)
+        (handle, sender_clone, receiver, guard)
     }
 
     /// check if a subscription exists

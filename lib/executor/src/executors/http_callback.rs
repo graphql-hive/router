@@ -129,7 +129,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             )),
         };
 
-        let (handle, mut receiver, guard) = self
+        let (handle, _sender, mut receiver, guard) = self
             .active_subscriptions
             .register(None, Some(callback_state));
 

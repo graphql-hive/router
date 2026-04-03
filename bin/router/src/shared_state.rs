@@ -28,7 +28,7 @@ use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
-use crate::pipeline::header::StreamContentType;
+use crate::pipeline::header::{SingleContentType, StreamContentType};
 use crate::pipeline::introspection_policy::compile_introspection_policy;
 use crate::pipeline::multipart_subscribe::{
     self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
@@ -89,7 +89,7 @@ pub type SharedRouterResponseGuard = InFlightCleanupGuard<u64, SharedRouterRespo
 #[derive(Clone)]
 pub enum SharedRouterResponse {
     Single(SharedRouterSingleResponse),
-    Stream(SharedRouterSingleResponse),
+    Stream(SharedRouterStreamResponse),
 }
 
 impl SharedRouterResponse {
@@ -115,6 +115,7 @@ pub struct SharedRouterSingleResponse {
     pub body: Bytes,
     pub headers: Arc<HeaderMap>,
     pub status: StatusCode,
+    pub single_content_type: SingleContentType,
     pub error_count: usize,
 }
 

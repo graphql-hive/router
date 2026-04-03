@@ -29,7 +29,10 @@ use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
 use http::{header::CONTENT_TYPE, Method};
-use ntex::web::{self, HttpRequest};
+use ntex::{
+    rt,
+    web::{self, HttpRequest},
+};
 use sonic_rs::{JsonContainerTrait, JsonType, JsonValueTrait, Value};
 
 use crate::{
@@ -59,7 +62,7 @@ use crate::{
     schema_state::SchemaState,
     shared_state::{
         RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse,
-        SharedRouterResponseGuard, SharedRouterSingleResponse,
+        SharedRouterResponseGuard, SharedRouterSingleResponse, SharedRouterStreamResponse,
     },
     LABORATORY_HTML,
 };
@@ -433,46 +436,67 @@ async fn execute_planned_request<'exec>(
         QueryPlanExecutionResult::Stream(result) => {
             let stream_content_type = response_mode
                 .stream_content_type()
-                .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
+                .ok_or(PipelineError::SubscriptionsTransportNotSupported)?
+                .clone();
 
-            // TODO: ugly AF, to use actual type - we must remove active_subscriptions
-            // from the executors and move it elsehwerhwe
-            schema_state.active_subscriptions.register(
-                guard.map(|g| Box::new(g) as Box<dyn std::any::Any + Send>),
-                None,
-            );
+            let (producer_handle, sender, _receiver, _consumer_guard) =
+                schema_state.active_subscriptions.register(
+                    // TODO: ugly AF (and unnecessary), to use actual type - we must
+                    // remove active_subscriptions from the executors and move it elsehwerhwe
+                    guard.map(|g| Box::new(g) as Box<dyn std::any::Any + Send>),
+                    None,
+                );
 
-            todo!();
+            let mut body_stream = result.body;
+            rt::spawn(async move {
+                while let Some(chunk) = body_stream.next().await {
+                    if !producer_handle.send(BroadcastItem::Event(bytes::Bytes::from(chunk))) {
+                        // all receivers gone, stop draining
+                        break;
+                    }
+                }
+                // dropping producer_handle closes the broadcast channel
+            });
+
+            let headers = if let Some(aggregator) = result.response_headers_aggregator {
+                let mut builder = web::HttpResponse::Ok();
+                aggregator.modify_client_response_headers(&mut builder)?;
+                Arc::new(builder.finish().headers().clone())
+            } else {
+                Arc::new(ntex::http::HeaderMap::new())
+            };
+
+            Ok(SharedRouterResponse::Stream(SharedRouterStreamResponse {
+                body: sender,
+                headers,
+                stream_content_type,
+                error_count: result.error_count,
+            }))
         }
         QueryPlanExecutionResult::Single(result) => {
             let single_content_type = response_mode.
                 single_content_type().
                 // TODO: streaming single responses
-                ok_or(PipelineError::UnsupportedContentType)?;
+                ok_or(PipelineError::UnsupportedContentType)?.
+                clone();
 
-            // drop the inflight planned request as soon as the response is ready
+            // drop the router shared request as soon as the response is ready
             let _query_guard = guard;
 
-            let error_count = result.error_count;
-            let mut response_builder = web::HttpResponse::Ok();
-
-            if let Some(response_headers_aggregator) = result.response_headers_aggregator {
-                response_headers_aggregator
-                    .modify_client_response_headers(&mut response_builder)?;
-            }
-
-            let body = ntex::util::Bytes::from(result.body);
-
-            let response = response_builder
-                .content_type(single_content_type.as_ref())
-                .status(result.status_code)
-                .body(body.clone());
+            let headers = if let Some(aggregator) = result.response_headers_aggregator {
+                let mut builder = web::HttpResponse::Ok();
+                aggregator.modify_client_response_headers(&mut builder)?;
+                Arc::new(builder.finish().headers().clone())
+            } else {
+                Arc::new(ntex::http::HeaderMap::new())
+            };
 
             Ok(SharedRouterResponse::Single(SharedRouterSingleResponse {
-                body,
-                headers: Arc::new(response.headers().clone()),
-                status: response.status(),
-                error_count,
+                body: ntex::util::Bytes::from(result.body),
+                headers,
+                single_content_type,
+                status: result.status_code,
+                error_count: result.error_count,
             }))
         }
     }
