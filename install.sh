@@ -128,7 +128,6 @@ download_binary() {
     if [ -t 1 ]; then
         echo -ne "\033[1A\033[2K\r"
         echo -ne "\033[1A\033[2K\r"
-        echo -ne "\033[1A\033[2K\r"
     fi
 
     print_success "Binary downloaded"
