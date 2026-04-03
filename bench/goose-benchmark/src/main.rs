@@ -3,7 +3,6 @@ use goose::metrics::GooseMetrics;
 use goose::prelude::*;
 use humantime::parse_duration;
 use serde::Serialize;
-use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use url::Url;
@@ -51,9 +50,8 @@ fn benchmark() -> &'static BenchmarkConfig {
         .expect("benchmark config initialized")
 }
 
-fn hash_json(value: &Value) -> u64 {
-    let canonical = serde_json::to_vec(value).expect("failed to serialize json for hashing");
-    xxh3_64(&canonical)
+fn hash_bytes(value: &[u8]) -> u64 {
+    xxh3_64(value)
 }
 
 fn parse_endpoint(endpoint: &str) -> Result<(String, String), GooseError> {
@@ -102,13 +100,7 @@ fn build_benchmark_config() -> Result<BenchmarkConfig, GooseError> {
             }
         })?;
 
-    let expected: Value = serde_json::from_str(include_str!("../../expected_response.json"))
-        .map_err(|e| GooseError::InvalidOption {
-            option: "expected_response".to_string(),
-            value: "bench/expected_response.json".to_string(),
-            detail: e.to_string(),
-        })?;
-    let expected_hash = hash_json(&expected);
+    let expected_hash = hash_bytes(include_bytes!("../../expected_response.json"));
 
     let vus = std::env::var("BENCH_VUS")
         .ok()
@@ -147,45 +139,36 @@ async fn run_graphql_request(user: &mut GooseUser) -> TransactionResult {
         Ok(response) => {
             let status = response.status();
             let headers = response.headers().clone();
-            let body = response.text().await?;
+            let body = response.bytes().await?;
 
             if status.as_u16() != 200 {
                 return user.set_failure(
                     "response code was not 200",
                     &mut goose.request,
                     Some(&headers),
-                    Some(&body),
+                    std::str::from_utf8(&body).ok(),
                 );
             }
 
-            let json: Value = match serde_json::from_str(&body) {
-                Ok(value) => value,
-                Err(_) => {
-                    return user.set_failure(
-                        "invalid json response",
-                        &mut goose.request,
-                        Some(&headers),
-                        Some(&body),
-                    )
-                }
-            };
-
-            if json.get("errors").is_some() {
+            if body
+                .windows(br#""errors""#.len())
+                .any(|window| window == br#""errors""#)
+            {
                 return user.set_failure(
                     "graphql errors in response",
                     &mut goose.request,
                     Some(&headers),
-                    Some(&body),
+                    std::str::from_utf8(&body).ok(),
                 );
             }
 
-            let actual_hash = hash_json(&json);
+            let actual_hash = hash_bytes(&body);
             if actual_hash != cfg.expected_hash {
                 return user.set_failure(
                     "response hash mismatch",
                     &mut goose.request,
                     Some(&headers),
-                    Some(&body),
+                    std::str::from_utf8(&body).ok(),
                 );
             }
 
