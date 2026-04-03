@@ -1,13 +1,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
+use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use tracing::trace;
 use ulid::Ulid;
 
-use crate::response::graphql_error::GraphQLError;
+use crate::shared_state::SharedRouterResponseGuard;
 
 pub type SubscriptionId = String;
 
@@ -21,21 +21,8 @@ pub enum BroadcastItem {
     Error(Vec<GraphQLError>),
 }
 
-pub struct CallbackState {
-    pub verifier: String,
-    pub last_heartbeat: Arc<Mutex<Instant>>,
-}
-
-impl CallbackState {
-    pub fn record_heartbeat(&self) {
-        *self.last_heartbeat.lock().unwrap() = Instant::now();
-    }
-}
-
 struct Subscription {
     sender: tokio::sync::broadcast::Sender<BroadcastItem>,
-    /// The optional callback state that is only present for http callback subscriptions.
-    callback_state: Option<CallbackState>,
 }
 
 #[derive(Clone)]
@@ -61,8 +48,7 @@ impl ActiveSubscriptions {
     /// must hold onto while consuming.
     pub fn register(
         &self,
-        guard: Option<Box<dyn std::any::Any + Send + 'static>>,
-        callback_state: Option<CallbackState>,
+        guard: Option<SharedRouterResponseGuard>,
     ) -> (
         ProducerHandle,
         tokio::sync::broadcast::Sender<BroadcastItem>,
@@ -75,13 +61,7 @@ impl ActiveSubscriptions {
 
         let id = Ulid::new().to_string();
 
-        self.map.insert(
-            id.clone(),
-            Subscription {
-                sender,
-                callback_state,
-            },
-        );
+        self.map.insert(id.clone(), Subscription { sender });
 
         let handle = ProducerHandle {
             id: id.clone(),
@@ -102,24 +82,6 @@ impl ActiveSubscriptions {
     /// check if a subscription exists
     pub fn contains(&self, id: &str) -> bool {
         self.map.contains_key(id)
-    }
-
-    /// get the verifier for a callback subscription
-    pub fn get_callback_verifier(&self, id: &str) -> Option<String> {
-        self.map
-            .get(id)
-            .and_then(|entry| entry.callback_state.as_ref().map(|cs| cs.verifier.clone()))
-    }
-
-    /// record a heartbeat for a callback subscription
-    pub fn record_heartbeat(&self, id: &str) -> bool {
-        if let Some(entry) = self.map.get(id) {
-            if let Some(ref cs) = entry.callback_state {
-                cs.record_heartbeat();
-                return true;
-            }
-        }
-        false
     }
 
     /// send an event to a specific subscription's broadcast channel
@@ -147,18 +109,6 @@ impl ActiveSubscriptions {
         }
         self.map.clear();
     }
-
-    /// iterate over all subscription ids and their callback state for heartbeat enforcement
-    pub fn iter_callback_subscriptions(
-        &self,
-    ) -> impl Iterator<Item = (SubscriptionId, Arc<Mutex<Instant>>)> + '_ {
-        self.map.iter().filter_map(|entry| {
-            entry
-                .callback_state
-                .as_ref()
-                .map(|cs| (entry.key().clone(), cs.last_heartbeat.clone()))
-        })
-    }
 }
 
 /// Held by the upstream producer (the task that reads from the subgraph).
@@ -169,7 +119,7 @@ impl ActiveSubscriptions {
 pub struct ProducerHandle {
     id: SubscriptionId,
     map: ActiveSubscriptions,
-    _guard: Option<Box<dyn std::any::Any + Send>>,
+    _guard: Option<SharedRouterResponseGuard>,
 }
 
 impl ProducerHandle {

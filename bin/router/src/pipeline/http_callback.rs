@@ -1,9 +1,8 @@
 use bytes::Bytes as BytesLib;
-use hive_router_plan_executor::executors::active_subscriptions::{
-    ActiveSubscriptions, BroadcastItem,
-};
+use dashmap::mapref::one::Ref;
 use hive_router_plan_executor::executors::http_callback::{
-    CALLBACK_PROTOCOL_VERSION, SUBSCRIPTION_PROTOCOL_HEADER,
+    CallbackMessage, CallbackSubscription, CallbackSubscriptionsMap, CALLBACK_PROTOCOL_VERSION,
+    SUBSCRIPTION_PROTOCOL_HEADER,
 };
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use http::StatusCode;
@@ -12,6 +11,7 @@ use ntex::web::WebResponseError;
 use ntex::web::{self, types::Path, HttpRequest, HttpResponse};
 use serde::Deserialize;
 use strum::EnumString;
+use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
 #[derive(Debug, Deserialize, EnumString)]
@@ -142,15 +142,16 @@ fn validate_payload(
     Ok(())
 }
 
-fn handle_check(subscription_id: &str, registry: &ActiveSubscriptions) {
+fn handle_check(subscription_id: &str, subscription: &Ref<'_, String, CallbackSubscription>) {
     trace!(subscription_id = %subscription_id, "Received check message");
-    registry.record_heartbeat(subscription_id);
+    subscription.record_heartbeat();
 }
 
 fn handle_next(
     subscription_id: &str,
     payload: &CallbackPayload<'_>,
-    registry: &ActiveSubscriptions,
+    subscription: Ref<'_, String, CallbackSubscription>,
+    callback_subscriptions: &CallbackSubscriptionsMap,
 ) -> Result<(), CallbackError> {
     trace!(subscription_id = %subscription_id, "Received next message");
 
@@ -163,38 +164,53 @@ fn handle_next(
         }
     };
 
-    if !registry.send_event(subscription_id, BroadcastItem::Event(data)) {
-        debug!(subscription_id = %subscription_id, "Subscription receiver dropped");
-        registry.remove(subscription_id);
-        return Err(CallbackError::SubscriptionDropped {
-            subscription_id: subscription_id.to_string(),
-        });
+    match subscription
+        .sender
+        .try_send(CallbackMessage::Next { payload: data })
+    {
+        Ok(()) => Ok(()),
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            // if the channel is full it means the consuming client is too slow and unable to keep
+            // up. we terminate the subscription without an error message because it anyways cant go through
+            warn!(subscription_id = %subscription_id, "Subscription client is too slow");
+            drop(subscription);
+            callback_subscriptions.remove(subscription_id);
+            Err(CallbackError::ClientTooSlow {
+                subscription_id: subscription_id.to_string(),
+            })
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            debug!(subscription_id = %subscription_id, "Subscription receiver dropped");
+            drop(subscription);
+            callback_subscriptions.remove(subscription_id);
+            Err(CallbackError::SubscriptionDropped {
+                subscription_id: subscription_id.to_string(),
+            })
+        }
     }
-
-    // TODO: ClientTooSlow
-
-    Ok(())
 }
 
 fn handle_complete(
     subscription_id: &str,
     payload: &CallbackPayload<'_>,
-    registry: &ActiveSubscriptions,
+    subscription: Ref<'_, String, CallbackSubscription>,
+    callback_subscriptions: &CallbackSubscriptionsMap,
 ) {
     trace!(subscription_id = %subscription_id, "Received complete message");
-    if let Some(errors) = &payload.errors {
-        if !errors.is_empty() {
-            registry.send_event(subscription_id, BroadcastItem::Error(errors.clone()));
-        }
-    }
-    registry.remove(subscription_id);
+    // if the buffer is full or closed we ignore and remove the subscription, we dont send
+    // the final error message because the client is already unable to consume
+    let _ = subscription.sender.try_send(CallbackMessage::Complete {
+        errors: payload.errors.clone(),
+    });
+    drop(subscription);
+    callback_subscriptions.remove(subscription_id);
 }
 
 pub async fn handler(
     req: HttpRequest,
     path: Path<String>,
     body: Bytes,
-    active_subscriptions: web::types::State<ActiveSubscriptions>,
+    callback_subscriptions: web::types::State<CallbackSubscriptionsMap>,
 ) -> Result<HttpResponse, CallbackError> {
     let subscription_id_from_path = path.into_inner();
 
@@ -204,30 +220,29 @@ pub async fn handler(
 
     validate_payload(&payload, &subscription_id_from_path)?;
 
-    if !active_subscriptions.contains(&payload.id) {
-        return Err(CallbackError::SubscriptionNotFound {
-            subscription_id: payload.id.clone(),
-        });
-    }
+    let subscription = match callback_subscriptions.get(&payload.id) {
+        Some(sub) => sub,
+        None => {
+            return Err(CallbackError::SubscriptionNotFound {
+                subscription_id: payload.id.clone(),
+            });
+        }
+    };
 
-    let verifier = active_subscriptions
-        .get_callback_verifier(&payload.id)
-        .ok_or_else(|| CallbackError::SubscriptionNotFound {
-            subscription_id: payload.id.clone(),
-        })?;
-
-    if verifier != payload.verifier {
+    if subscription.verifier != payload.verifier {
         return Err(CallbackError::InvalidVerifier {
             subscription_id: payload.id.clone(),
         });
     }
 
     match payload.action {
-        CallbackAction::Check => handle_check(&payload.id, &active_subscriptions),
+        CallbackAction::Check => handle_check(&payload.id, &subscription),
         CallbackAction::Next => {
-            handle_next(&payload.id, &payload, &active_subscriptions)?;
+            handle_next(&payload.id, &payload, subscription, &callback_subscriptions)?;
         }
-        CallbackAction::Complete => handle_complete(&payload.id, &payload, &active_subscriptions),
+        CallbackAction::Complete => {
+            handle_complete(&payload.id, &payload, subscription, &callback_subscriptions)
+        }
     };
 
     Ok(HttpResponse::NoContent()

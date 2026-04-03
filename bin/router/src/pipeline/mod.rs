@@ -1,19 +1,4 @@
-use futures::Stream;
 use futures::StreamExt;
-use graphql_tools::parser::schema;
-use std::{
-    collections::HashMap,
-    hash::{Hash, Hasher},
-    sync::Arc,
-    time::Instant,
-};
-use tracing::{error, trace, Instrument};
-use xxhash_rust::xxh3::Xxh3;
-
-use hive_router_plan_executor::execution::plan::FailedExecutionResult;
-use hive_router_plan_executor::executors::active_subscriptions::BroadcastItem;
-use hive_router_plan_executor::headers::plan::ResponseHeaderAggregator;
-
 use hive_router_internal::telemetry::traces::spans::{
     graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
 };
@@ -34,9 +19,18 @@ use ntex::{
     web::{self, HttpRequest},
 };
 use sonic_rs::{JsonContainerTrait, JsonType, JsonValueTrait, Value};
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+    sync::Arc,
+    time::Instant,
+};
+use tracing::{error, Instrument};
+use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     pipeline::{
+        active_subscriptions::BroadcastItem,
         authorization::enforce_operation_authorization,
         body_read::read_body_stream,
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
@@ -44,11 +38,8 @@ use crate::{
         error::PipelineError,
         execution::{execute_plan, PlannedRequest},
         execution_request::{deserialize_graphql_params, DeserializationResult, GetQueryStr},
-        header::{RequestAccepts, ResponseMode, StreamContentType, TEXT_HTML_MIME},
+        header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
-        multipart_subscribe::{
-            APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
-        },
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::{parse_operation_with_cache, ParseResult},
         progressive_override::request_override_context,
@@ -69,6 +60,7 @@ use crate::{
 
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 
+pub mod active_subscriptions;
 pub mod authorization;
 pub mod body_read;
 pub mod coerce_variables;
@@ -440,12 +432,7 @@ async fn execute_planned_request<'exec>(
                 .clone();
 
             let (producer_handle, sender, bootstrap_receiver, consumer_guard) =
-                schema_state.active_subscriptions.register(
-                    // TODO: ugly AF (and unnecessary), to use actual type - we must
-                    // remove active_subscriptions from the executors and move it elsehwerhwe
-                    guard.map(|g| Box::new(g) as Box<dyn std::any::Any + Send>),
-                    None,
-                );
+                shared_state.active_subscriptions.register(guard);
 
             let mut body_stream = result.body;
             rt::spawn(async move {

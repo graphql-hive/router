@@ -1,4 +1,3 @@
-pub mod active_subscriptions;
 pub mod common;
 pub mod dedupe;
 pub mod error;

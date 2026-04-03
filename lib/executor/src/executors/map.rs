@@ -30,7 +30,7 @@ use crate::{
         common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, SubgraphHttpResponse},
-        http_callback::{ActiveSubscriptionsMap, HttpCallbackSubgraphExecutor},
+        http_callback::{CallbackSubscriptionsMap, HttpCallbackSubgraphExecutor},
         websocket::WsSubgraphExecutor,
     },
     hooks::on_subgraph_execute::{
@@ -75,7 +75,7 @@ pub struct SubgraphExecutorMap {
     in_flight_requests: InflightRequestsMap,
     telemetry_context: Arc<TelemetryContext>,
     /// Shared map of active HTTP callback subscriptions
-    active_callback_subscriptions: ActiveSubscriptionsMap,
+    callback_subscriptions: CallbackSubscriptionsMap,
 }
 
 fn build_https_executor() -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
@@ -112,7 +112,7 @@ impl SubgraphExecutorMap {
             timeouts_by_subgraph: Default::default(),
             global_timeout,
             telemetry_context,
-            active_callback_subscriptions: Arc::new(DashMap::new()),
+            callback_subscriptions: Arc::new(DashMap::new()),
         })
     }
 
@@ -120,7 +120,7 @@ impl SubgraphExecutorMap {
         subgraph_endpoint_map: &HashMap<SubgraphName, String>,
         config: Arc<HiveRouterConfig>,
         telemetry_context: Arc<TelemetryContext>,
-        active_callback_subscriptions: ActiveSubscriptionsMap,
+        active_callback_subscriptions: CallbackSubscriptionsMap,
     ) -> Result<Self, SubgraphExecutorError> {
         let global_timeout = DurationOrProgram::compile(
             &config.traffic_shaping.all.request_timeout,
@@ -131,7 +131,7 @@ impl SubgraphExecutorMap {
         })?;
         let mut subgraph_executor_map =
             SubgraphExecutorMap::new(config.clone(), global_timeout, telemetry_context)?;
-        subgraph_executor_map.active_callback_subscriptions = active_callback_subscriptions;
+        subgraph_executor_map.callback_subscriptions = active_callback_subscriptions;
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.iter() {
             let endpoint_config = config
@@ -157,8 +157,8 @@ impl SubgraphExecutorMap {
     }
 
     /// Returns the shared active callback subscriptions map for use by callback handlers.
-    pub fn active_callback_subscriptions(&self) -> ActiveSubscriptionsMap {
-        self.active_callback_subscriptions.clone()
+    pub fn callback_subscriptions(&self) -> CallbackSubscriptionsMap {
+        self.callback_subscriptions.clone()
     }
 
     pub async fn execute<'exec>(
@@ -505,7 +505,7 @@ impl SubgraphExecutorMap {
                     self.client.clone(),
                     callback_config.public_url.to_string(),
                     heartbeat_interval_ms,
-                    self.active_callback_subscriptions.clone(),
+                    self.callback_subscriptions.clone(),
                 )
                 .to_boxed_arc();
 

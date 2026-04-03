@@ -22,6 +22,7 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     pipeline::{
+        active_subscriptions::ActiveSubscriptions,
         error::handle_pipeline_error,
         graphql_request_handler,
         header::ResponseMode,
@@ -213,7 +214,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     .await?;
 
     let shared_state_clone = shared_state.clone();
-    let active_subs = schema_state.active_subscriptions.clone();
+    let callback_subscriptions_for_handler = schema_state.callback_subscriptions.clone();
 
     // when `listen` is set, the callback route lives on a dedicated server bound to that address
     // otherwise, the callback route is mounted on the main server on the `callback_path`
@@ -225,12 +226,12 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         }) => {
             let cb_path = path.to_string();
             let cb_addr = listen.to_string();
-            let cb_active_subs = active_subs.clone();
+            let cb_subs = callback_subscriptions_for_handler.clone();
             let cb_server = web::HttpServer::new(async move || {
-                let cb_active_subs = cb_active_subs.clone();
+                let cb_subs = cb_subs.clone();
                 let cb_path = cb_path.clone();
                 web::App::new()
-                    .state(cb_active_subs)
+                    .state(cb_subs)
                     .configure(move |m| add_callback_handler(m, &cb_path))
             })
             .bind(&cb_addr)
@@ -316,6 +317,8 @@ pub async fn configure_app_from_config(
     };
     let plugins_arc = plugin_registry.initialize_plugins(&router_config, bg_tasks_manager)?;
 
+    let active_subscriptions =
+        ActiveSubscriptions::new(router_config.subscriptions.broadcast_capacity);
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
     let cache_state = Arc::new(CacheState::new());
@@ -330,6 +333,7 @@ pub async fn configure_app_from_config(
         router_config_arc.clone(),
         plugins_arc.clone(),
         cache_state.clone(),
+        active_subscriptions.clone(),
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
@@ -357,6 +361,7 @@ pub async fn configure_app_from_config(
         telemetry_context_arc,
         plugins_arc,
         cache_state,
+        active_subscriptions.clone(),
     )?);
 
     Ok((shared_state, schema_state_arc))

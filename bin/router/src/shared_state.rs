@@ -27,6 +27,7 @@ use tracing::trace;
 use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
+use crate::pipeline::active_subscriptions::{ActiveSubscriptions, BroadcastItem};
 use crate::pipeline::cors::{CORSConfigError, Cors};
 use crate::pipeline::header::{SingleContentType, StreamContentType};
 use crate::pipeline::introspection_policy::compile_introspection_policy;
@@ -36,7 +37,6 @@ use crate::pipeline::multipart_subscribe::{
 use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 use crate::pipeline::sse;
-use hive_router_plan_executor::executors::active_subscriptions::BroadcastItem;
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
 pub type RouterInflightRequestsMap = InFlightMap<u64, SharedRouterResponse>;
@@ -296,8 +296,10 @@ pub struct RouterSharedState {
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     pub in_flight_requests: RouterInflightRequestsMap,
     pub in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy,
-    /// tracks the number of active long-lived clients (websockets + http streams)
+    /// Tracks the number of active long-lived clients (websockets + http streams)
     pub long_lived_client_count: Arc<AtomicUsize>,
+    /// Tracks all active subscriptions from clients to the router.
+    pub active_subscriptions: ActiveSubscriptions,
 }
 
 impl RouterSharedState {
@@ -309,6 +311,7 @@ impl RouterSharedState {
         telemetry_context: Arc<TelemetryContext>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         cache_state: Arc<CacheState>,
+        active_subscriptions: ActiveSubscriptions,
     ) -> Result<Self, SharedStateError> {
         let parse_cache = cache_state.parse_cache.clone();
         Ok(Self {
@@ -341,6 +344,7 @@ impl RouterSharedState {
                 .headers)
                 .into(),
             long_lived_client_count: Arc::new(AtomicUsize::new(0)),
+            active_subscriptions,
         })
     }
 }

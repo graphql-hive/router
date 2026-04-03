@@ -707,7 +707,7 @@ impl TestRouter<Built> {
 
         let serv_shared_state = shared_state.clone();
         let serv_schema_state = schema_state.clone();
-        let serv_active_subs = schema_state.active_subscriptions.clone();
+        let serv_callback_subs = schema_state.callback_subscriptions.clone();
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
 
@@ -721,13 +721,13 @@ impl TestRouter<Built> {
             }) => {
                 let cb_path = path.to_string();
                 let cb_addr = listen.to_string();
-                let cb_active_subs = schema_state.active_subscriptions.clone();
+                let cb_subs = schema_state.callback_subscriptions.clone();
 
                 let server = web::HttpServer::new(async move || {
-                    let active_subs = cb_active_subs.clone();
+                    let cb_subs = cb_subs.clone();
                     let cb_path = cb_path.clone();
                     web::App::new()
-                        .state(active_subs)
+                        .state(cb_subs)
                         .configure(move |m| add_callback_handler(m, &cb_path))
                 })
                 .bind(&cb_addr)
@@ -761,7 +761,7 @@ impl TestRouter<Built> {
             let paths = serv_paths.clone();
             let prometheus = serv_prometheus.clone();
             let serv_callback_path = serv_callback_path.clone();
-            let active_subs = serv_active_subs.clone();
+            let callback_subs = serv_callback_subs.clone();
 
             // set the tracing dispatch on the server thread. the guard is
             // intentionally leaked: dropping it would restore the no-op default
@@ -778,7 +778,7 @@ impl TestRouter<Built> {
                     .middleware(PluginService)
                     .state(shared_state)
                     .state(schema_state)
-                    .state(active_subs)
+                    .state(callback_subs)
                     .configure(|m| configure_ntex_app(m, &paths, prometheus))
                     .configure(|m| {
                         if let Some(ref callback) = serv_callback_path {

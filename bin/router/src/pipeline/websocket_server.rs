@@ -47,10 +47,6 @@ use crate::pipeline::{
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 
-use crate::shared_state::SharedRouterResponse;
-use hive_router_plan_executor::execution::plan::FailedExecutionResult;
-use hive_router_plan_executor::executors::active_subscriptions::BroadcastItem;
-
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
 pub async fn ws_index(
