@@ -447,7 +447,7 @@ async fn handle_text_frame(
                     let (shared_response, _role) = match shared_state
                         .in_flight_requests
                         .claim(fp)
-                        .get_or_try_init(|guard| async {
+                        .get_or_try_init(|| async {
                             execute_planned_request(
                                 &Method::POST,
                                 ws_uri,
@@ -463,7 +463,7 @@ async fn handle_text_frame(
                                     SingleContentType::default(),
                                     StreamContentType::default(),
                                 ),
-                                Some(guard),
+                                None,
                             )
                             .await
                         })

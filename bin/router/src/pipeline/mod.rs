@@ -287,7 +287,7 @@ pub async fn graphql_request_handler(
             let (planned_response, _role) = shared_state
                 .in_flight_requests
                 .claim(fp)
-                .get_or_try_init(|guard| async {
+                .get_or_try_init(|| async {
                      execute_planned_request(
                         req.method(),
                         req.uri(),
@@ -300,7 +300,7 @@ pub async fn graphql_request_handler(
                         operation_span,
                         plugin_req_state,
                         response_mode,
-                        Some(guard),
+                        None,
                     )
                     .await
                 })
