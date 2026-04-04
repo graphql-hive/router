@@ -95,21 +95,17 @@ where
     #[inline]
     pub async fn get_or_try_init<E, F, Fut>(self, init: F) -> Result<(Arc<V>, InFlightRole), E>
     where
-        F: FnOnce() -> Fut,
+        F: FnOnce(InFlightCleanupGuard<K, V, S>) -> Fut,
         Fut: Future<Output = Result<V, E>>,
     {
         let mut did_initialize = false;
-        let key = self.key.clone();
-        let map = self.map.clone();
+        let InFlightClaim { key, map, cell } = self;
 
-        let value = self
-            .cell
+        let value = cell
             .get_or_try_init(|| {
                 did_initialize = true;
-                async {
-                    let _cleanup = InFlightCleanupGuard { key, map };
-                    init().await.map(Arc::new)
-                }
+                let guard = InFlightCleanupGuard { key, map };
+                async { init(guard).await.map(Arc::new) }
             })
             .await?
             .clone();
