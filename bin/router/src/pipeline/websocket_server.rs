@@ -443,56 +443,37 @@ async fn handle_text_frame(
                 };
 
                 // synthetic request details for plan executor
+                let response_mode = ResponseMode::Dual(
+                    SingleContentType::default(),
+                    StreamContentType::default(),
+                );
+                let exec = |guard| execute_planned_request(
+                    &Method::POST,
+                    ws_uri,
+                    &headers,
+                    payload,
+                    &normalize_payload,
+                    supergraph,
+                    shared_state,
+                    schema_state,
+                    operation_span,
+                    plugin_req_state,
+                    &response_mode,
+                    guard,
+                );
+
                 let shared_response = if let Some(fp) = fingerprint {
                     let result = if is_subscription {
                         shared_state
                             .in_flight_requests
                             .claim(fp)
-                            .get_or_try_init_with_guard(|guard| async {
-                                execute_planned_request(
-                                    &Method::POST,
-                                    ws_uri,
-                                    &headers,
-                                    payload,
-                                    &normalize_payload,
-                                    supergraph,
-                                    shared_state,
-                                    schema_state,
-                                    operation_span,
-                                    plugin_req_state,
-                                    &ResponseMode::Dual(
-                                        SingleContentType::default(),
-                                        StreamContentType::default(),
-                                    ),
-                                    Some(guard),
-                                )
-                                .await
-                            })
+                            .get_or_try_init_with_guard(|guard| exec(Some(guard)))
                             .await
                     } else {
                         shared_state
                             .in_flight_requests
                             .claim(fp)
-                            .get_or_try_init(|| async {
-                                execute_planned_request(
-                                    &Method::POST,
-                                    ws_uri,
-                                    &headers,
-                                    payload,
-                                    &normalize_payload,
-                                    supergraph,
-                                    shared_state,
-                                    schema_state,
-                                    operation_span,
-                                    plugin_req_state,
-                                    &ResponseMode::Dual(
-                                        SingleContentType::default(),
-                                        StreamContentType::default(),
-                                    ),
-                                    None,
-                                )
-                                .await
-                            })
+                            .get_or_try_init(|| exec(None))
                             .await
                     };
                     let (shared_response, _role) = match result {
@@ -507,24 +488,7 @@ async fn handle_text_frame(
                     };
                     Arc::unwrap_or_clone(shared_response)
                 } else {
-                    match execute_planned_request(
-                        &Method::POST,
-                        ws_uri,
-                        &headers,
-                        payload,
-                        &normalize_payload,
-                        supergraph,
-                        shared_state,
-                        schema_state,
-                        operation_span,
-                        plugin_req_state,
-                        &ResponseMode::Dual(
-                            SingleContentType::default(),
-                            StreamContentType::default(),
-                        ),
-                        None,
-                    )
-                    .await {
+                    match exec(None).await {
                         Ok(result) => result,
                         Err(PipelineError::JwtError(err)) => {
                             let _ = sink.send(err.clone().into_server_message(&id)).await;
