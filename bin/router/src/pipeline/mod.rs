@@ -284,52 +284,28 @@ pub async fn graphql_request_handler(
         };
 
         let shared_response = if let Some(fp) = fingerprint {
-            let (shared_response, _role) = if is_subscription {
-                    shared_state
-                        .in_flight_requests
-                        .claim(fp)
-                        .get_or_try_init_with_guard(|guard| async {
-                            execute_planned_request(
-                                req.method(),
-                                req.uri(),
-                                req.headers(),
-                                graphql_params,
-                                &normalize_payload,
-                                supergraph,
-                                shared_state,
-                                schema_state,
-                                operation_span,
-                                plugin_req_state,
-                                response_mode,
-                                Some(guard),
-                            )
-                            .await
-                        })
-                        .await?
-                } else {
-                    shared_state
-                        .in_flight_requests
-                        .claim(fp)
-                        .get_or_try_init(|| async {
-                            execute_planned_request(
-                                req.method(),
-                                req.uri(),
-                                req.headers(),
-                                graphql_params,
-                                &normalize_payload,
-                                supergraph,
-                                shared_state,
-                                schema_state,
-                                operation_span,
-                                plugin_req_state,
-                                response_mode,
-                                None,
-                            )
-                            .await
-                        })
-                        .await?
-                };
-            Arc::unwrap_or_clone(shared_response)
+            let (planned_response, _role) = shared_state
+                .in_flight_requests
+                .claim(fp)
+                .get_or_try_init(|guard| async {
+                     execute_planned_request(
+                        req.method(),
+                        req.uri(),
+                        req.headers(),
+                        graphql_params,
+                        &normalize_payload,
+                        supergraph,
+                        shared_state,
+                        schema_state,
+                        operation_span,
+                        plugin_req_state,
+                        response_mode,
+                        Some(guard),
+                    )
+                    .await
+                })
+                .await?;
+            Arc::unwrap_or_clone(planned_response)
         } else {
             execute_planned_request(
                 req.method(),
