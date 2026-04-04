@@ -481,8 +481,7 @@ pub async fn execute_planned_request<'exec>(
                 ok_or(PipelineError::UnsupportedContentType)?.
                 clone();
 
-            // drop the router shared request as soon as the response is ready
-            let _query_guard = guard;
+            // drop the `guard` as soon as the response is ready
 
             let mut builder = web::HttpResponse::Ok();
             if let Some(aggregator) = result.response_headers_aggregator {

@@ -392,7 +392,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                         let claim = self.in_flight_requests.claim(fingerprint);
                         let mut leader_http_request_capture = None;
                         let (shared_response, role) = claim
-                            .get_or_try_init(|_| async {
+                            .get_or_try_init(|_guard| async {
                                 let res = {
                                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
