@@ -18,10 +18,10 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
-|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"enabled":false}`<br/>||
+|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"request_timeout":"1m"}}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
 |[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -122,6 +122,7 @@ query_planner:
   allow_expose: false
   timeout: 10s
 subscriptions:
+  broadcast_capacity: 0
   enabled: false
 supergraph: {}
 telemetry:
@@ -202,6 +203,7 @@ traffic_shaping:
     dedupe:
       enabled: false
       headers: all
+    max_long_lived_clients: 128
     request_timeout: 1m
 websocket:
   enabled: false
@@ -1949,6 +1951,7 @@ Configuration for subscriptions.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**broadcast\_capacity**|`integer`|The capacity of the broadcast channel used to fan out subscription events to all active listeners.<br/><br/>Each active subscription has its own broadcast channel. This value controls how many events<br/>can be buffered in that channel before slow consumers start lagging. If a consumer falls too<br/>far behind and the buffer is full, it will skip the missed messages and continue from the<br/>latest available event.<br/><br/>Subscription events are typically low-frequency, so the default of 32 is sufficient for most<br/>use cases. Increase this value if you expect bursts of events or have slow consumers that<br/>need more headroom to catch up.<br/><br/>Defaults to 32.<br/>Default: `32`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |[**callback**](#subscriptionscallback)|`object`, `null`|Configuration for subgraphs using the HTTP Callback protocol.<br/>|yes|
 |**enabled**|`boolean`|Enables/disables subscriptions. By default, the subscriptions are disabled.<br/><br/>You can override this setting by setting the `SUBSCRIPTIONS_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
 |[**websocket**](#subscriptionswebsocket)|`object`, `null`|Configuration for subgraphs using WebSocket protocol.<br/>||
@@ -1957,6 +1960,7 @@ Configuration for subscriptions.
 **Example**
 
 ```yaml
+broadcast_capacity: 0
 enabled: false
 
 ```
@@ -3038,7 +3042,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 |----|----|-----------|--------|
 |[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
-|[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"dedupe":{"enabled":false,"headers":"all"},"request_timeout":"1m"}`<br/>||
+|[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}`<br/>||
 |[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
 
 **Additional Properties:** not allowed  
@@ -3054,6 +3058,7 @@ router:
   dedupe:
     enabled: false
     headers: all
+  max_long_lived_clients: 128
   request_timeout: 1m
 
 ```
@@ -3093,6 +3098,7 @@ Configuration for the router itself, e.g., for handling incoming requests, or ot
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**dedupe**](#traffic_shapingrouterdedupe)|`object`|Default: `{"enabled":false,"headers":"all"}`<br/>||
+|**max\_long\_lived\_clients**|`integer`|Maximum number of concurrent long-lived clients (WebSocket connections and HTTP streaming responses).<br/>Regular non-streaming requests are not counted toward this limit.<br/>When the limit is reached, new WebSocket and streaming HTTP requests are rejected with 503.<br/>If both WebSockets and Subscriptions are disabled, this setting has no effect.<br/>Default: `128`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |**request\_timeout**|`string`|Optional timeout configuration for incoming requests to the router.<br/>It starts from the moment the request is received by the router,<br/>and includes the entire processing of the request (validation, execution, etc.) until a response is sent back to the client.<br/>If a request takes longer than the specified duration, it will be aborted and a timeout error will be returned to the client.<br/>Default: `"1m"`<br/>||
 
 **Additional Properties:** not allowed  
@@ -3102,6 +3108,7 @@ Configuration for the router itself, e.g., for handling incoming requests, or ot
 dedupe:
   enabled: false
   headers: all
+max_long_lived_clients: 128
 request_timeout: 1m
 
 ```
@@ -3113,7 +3120,7 @@ request_timeout: 1m
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**enabled**|`boolean`|Enables/disables in-flight request deduplication at the router endpoint level.<br/><br/>When enabled, identical incoming GraphQL query requests that are processed at the same time<br/>share the same in-flight execution result.<br/>Default: `false`<br/>||
+|**enabled**|`boolean`|Enables/disables in-flight request and active subscriptions deduplication at the router level.<br/><br/>When enabled, the router deduplicates both queries and subscriptions using the same<br/>fingerprint key (method, path, selected headers, schema checksum, normalized operation<br/>hash, variables, and extensions). The `headers` configuration below controls which<br/>headers participate in that key for all operation types.<br/><br/>For queries, concurrent HTTP requests that produce the same fingerprint share a single<br/>in-flight execution - only the first one runs, and the rest wait for and receive the<br/>same result.<br/><br/>For subscriptions, the mechanism is broadcast-based rather than request-sharing. The<br/>first client with a given fingerprint becomes the leader: it runs the upstream subscription<br/>and its events are fanned out through a broadcast channel backed by an active subscriptions<br/>registry. Any subsequent client that arrives with an identical fingerprint while that subscription<br/>is still active joins as a listener on the same broadcast channel instead of starting a new upstream<br/>connection. When all listeners have dropped and the leader finishes, the entry is removed from the<br/>registry.<br/><br/>WebSocket connections participate in the same deduplication space as HTTP. Each<br/>subscribe message is processed with a synthetic request assembled from the WebSocket<br/>path and the headers derived from the `websocket.headers` config. The fingerprint is computed<br/>from those synthetic headers using the same header policy, so a subscription started over HTTP<br/>and an identical one started over WebSocket will deduplicate against each other.<br/><br/>The deduplication is transport agnostic. A query over WebSocket would get deduplicated with an<br/>identical query over HTTP if they arrive at the same time and have the same fingerprint.<br/><br/>Note: `content-type` is part of the fingerprint when `headers` includes it (e.g. `all`).<br/>Since HTTP streaming clients send different `accept` headers than WebSocket clients,<br/>cross-transport deduplication for subscriptions only applies when `content-type` (and<br/>transport-specific headers) are excluded from the key. Configure `headers: none` or<br/>`headers: { include: [] }` (or exclude the relevant headers) to enable true cross-transport<br/>deduplication, where a WebSocket subscription and an SSE subscription with the same operation<br/>share a single upstream connection and the events are fanned out to both.<br/>Default: `false`<br/>||
 |**headers**||Header configuration participating in the dedupe key.<br/><br/>Accepted forms:<br/>- `all`<br/>- `none`<br/>- `{ include: ["authorization", "cookie"] }`<br/><br/>Header names are case-insensitive and validated as standard HTTP header names.<br/>Default: `"all"`<br/>||
 
 **Additional Properties:** not allowed  
