@@ -99,11 +99,9 @@ where
         Fut: Future<Output = Result<V, E>>,
     {
         let mut did_initialize = false;
-        let key = self.key.clone();
-        let map = self.map.clone();
+        let InFlightClaim { key, map, cell } = self;
 
-        let value = self
-            .cell
+        let value = cell
             .get_or_try_init(|| {
                 did_initialize = true;
                 async {
@@ -122,9 +120,45 @@ where
 
         Ok((value, role))
     }
+
+    /// Like [`get_or_try_init`](Self::get_or_try_init), but passes the cleanup guard to the
+    /// caller. The caller is responsible for dropping the guard when deduplication should end.
+    /// This is useful for long-lived operations like subscriptions where the deduplication
+    /// window extends beyond the init future.
+    #[inline]
+    pub async fn get_or_try_init_with_guard<E, F, Fut>(
+        self,
+        init: F,
+    ) -> Result<(Arc<V>, InFlightRole), E>
+    where
+        F: FnOnce(InFlightCleanupGuard<K, V, S>) -> Fut,
+        Fut: Future<Output = Result<V, E>>,
+    {
+        let mut did_initialize = false;
+        let InFlightClaim { key, map, cell } = self;
+
+        let value = cell
+            .get_or_try_init(|| {
+                did_initialize = true;
+                async {
+                    let guard = InFlightCleanupGuard { key, map };
+                    init(guard).await.map(Arc::new)
+                }
+            })
+            .await?
+            .clone();
+
+        let role = if did_initialize {
+            InFlightRole::Leader
+        } else {
+            InFlightRole::Joiner
+        };
+
+        Ok((value, role))
+    }
 }
 
-struct InFlightCleanupGuard<K, V, S = ABuildHasher>
+pub struct InFlightCleanupGuard<K, V, S = ABuildHasher>
 where
     K: Eq + Hash,
     S: BuildHasher + Clone,

@@ -7,9 +7,7 @@ use ntex::rt::Arbiter;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use crate::executors::common::{
-    SubgraphExecutionRequest, SubgraphExecutor, SUBSCRIPTION_EVENT_BUFFER_CAPACITY,
-};
+use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::graphql_transport_ws::build_subscribe_payload;
 use crate::executors::websocket_client::{connect, WsClient};
@@ -114,9 +112,12 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        let (tx, mut rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
-            SUBSCRIPTION_EVENT_BUFFER_CAPACITY,
-        );
+        // all subscriptions emit events into the shared active subscriptions broadcaster
+        // which itself handles back-pressure by dropping old events when the buffer is full,
+        // so we can use a small buffer here
+        // TODO: do we thererefore need to buffer at all?
+        let (tx, mut rx) =
+            mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(16);
 
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
