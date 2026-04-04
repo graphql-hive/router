@@ -444,39 +444,67 @@ async fn handle_text_frame(
 
                 // synthetic request details for plan executor
                 let shared_response = if let Some(fp) = fingerprint {
-                    let (shared_response, _role) = match shared_state
-                        .in_flight_requests
-                        .claim(fp)
-                        .get_or_try_init(|guard| async {
-                            execute_planned_request(
-                                &Method::POST,
-                                ws_uri,
-                                &headers,
-                                payload,
-                                &normalize_payload,
-                                supergraph,
-                                shared_state,
-                                schema_state,
-                                operation_span,
-                                plugin_req_state,
-                                &ResponseMode::Dual(
-                                    SingleContentType::default(),
-                                    StreamContentType::default(),
-                                ),
-                                Some(guard),
-                            )
+                    let result = if is_subscription {
+                        shared_state
+                            .in_flight_requests
+                            .claim(fp)
+                            .get_or_try_init_with_guard(|guard| async {
+                                execute_planned_request(
+                                    &Method::POST,
+                                    ws_uri,
+                                    &headers,
+                                    payload,
+                                    &normalize_payload,
+                                    supergraph,
+                                    shared_state,
+                                    schema_state,
+                                    operation_span,
+                                    plugin_req_state,
+                                    &ResponseMode::Dual(
+                                        SingleContentType::default(),
+                                        StreamContentType::default(),
+                                    ),
+                                    Some(guard),
+                                )
+                                .await
+                            })
                             .await
-                        })
-                        .await {
-                            Ok(result) => result,
-                            Err(PipelineError::JwtError(err)) => {
-                                let _ = sink.send(err.clone().into_server_message(&id)).await;
-                                // we report error as graphql error, but we also close the
-                                // connection since we're dealing with auth so let's be safe
-                                return Some(err.into_close_message());
-                            },
-                            Err(err) => return Some(err.into_server_message(&id)),
-                        };
+                    } else {
+                        shared_state
+                            .in_flight_requests
+                            .claim(fp)
+                            .get_or_try_init(|| async {
+                                execute_planned_request(
+                                    &Method::POST,
+                                    ws_uri,
+                                    &headers,
+                                    payload,
+                                    &normalize_payload,
+                                    supergraph,
+                                    shared_state,
+                                    schema_state,
+                                    operation_span,
+                                    plugin_req_state,
+                                    &ResponseMode::Dual(
+                                        SingleContentType::default(),
+                                        StreamContentType::default(),
+                                    ),
+                                    None,
+                                )
+                                .await
+                            })
+                            .await
+                    };
+                    let (shared_response, _role) = match result {
+                        Ok(result) => result,
+                        Err(PipelineError::JwtError(err)) => {
+                            let _ = sink.send(err.clone().into_server_message(&id)).await;
+                            // we report error as graphql error, but we also close the
+                            // connection since we're dealing with auth so let's be safe
+                            return Some(err.into_close_message());
+                        },
+                        Err(err) => return Some(err.into_server_message(&id)),
+                    };
                     Arc::unwrap_or_clone(shared_response)
                 } else {
                     match execute_planned_request(
@@ -498,6 +526,12 @@ async fn handle_text_frame(
                     )
                     .await {
                         Ok(result) => result,
+                        Err(PipelineError::JwtError(err)) => {
+                            let _ = sink.send(err.clone().into_server_message(&id)).await;
+                            // we report error as graphql error, but we also close the
+                            // connection since we're dealing with auth so let's be safe
+                            return Some(err.into_close_message());
+                        },
                         Err(err) => return Some(err.into_server_message(&id)),
                     }
                 };
