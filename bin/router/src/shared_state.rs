@@ -30,7 +30,7 @@ use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::active_subscriptions::{ActiveSubscriptions, SubscriptionEvent};
 use crate::pipeline::cors::{CORSConfigError, Cors};
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
+use crate::pipeline::header::{ResponseMode, StreamContentType};
 use crate::pipeline::introspection_policy::compile_introspection_policy;
 use crate::pipeline::multipart_subscribe::{
     self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
