@@ -29,7 +29,8 @@ use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::active_subscriptions::{ActiveSubscriptions, SubscriptionEvent};
 use crate::pipeline::cors::{CORSConfigError, Cors};
-use crate::pipeline::header::{SingleContentType, StreamContentType};
+use crate::pipeline::error::PipelineError;
+use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
 use crate::pipeline::introspection_policy::compile_introspection_policy;
 use crate::pipeline::multipart_subscribe::{
     self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
@@ -99,13 +100,18 @@ impl SharedRouterResponse {
             SharedRouterResponse::Stream(resp) => resp.error_count,
         }
     }
-}
-
-impl From<SharedRouterResponse> for web::HttpResponse {
-    fn from(shared_response: SharedRouterResponse) -> Self {
-        match shared_response {
-            SharedRouterResponse::Single(single) => single.into(),
-            SharedRouterResponse::Stream(stream) => stream.into(),
+    pub fn into_response(
+        self,
+        response_mode: &ResponseMode,
+    ) -> Result<web::HttpResponse, PipelineError> {
+        match self {
+            SharedRouterResponse::Single(single) => Ok(single.into()),
+            SharedRouterResponse::Stream(stream) => {
+                let stream_content_type = response_mode
+                    .stream_content_type()
+                    .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
+                Ok(stream.into_response(stream_content_type))
+            }
         }
     }
 }
@@ -115,7 +121,6 @@ pub struct SharedRouterSingleResponse {
     pub body: Bytes,
     pub headers: Arc<HeaderMap>,
     pub status: StatusCode,
-    pub single_content_type: SingleContentType,
     pub error_count: usize,
 }
 
@@ -123,22 +128,19 @@ impl From<SharedRouterSingleResponse> for web::HttpResponse {
     fn from(shared_response: SharedRouterSingleResponse) -> Self {
         let mut response = web::HttpResponse::Ok();
         response.status(shared_response.status);
-
         for (header_name, header_value) in shared_response.headers.iter() {
             response.set_header(header_name, header_value);
         }
-
-        response.content_type(shared_response.single_content_type.as_ref());
-
         response.body(shared_response.body)
     }
 }
 
+// status is always 200 for streaming responses, errors are sent through the stream.
+// stream content type is not included because we can deduplicate subscriptions across
+// different content types, the response format is decided when converting to response
 pub struct SharedRouterStreamResponse {
-    // status is always 200 for streaming responses, errors are sent through the stream
     pub body: tokio::sync::broadcast::Sender<SubscriptionEvent>,
     pub headers: Arc<HeaderMap>,
-    pub stream_content_type: StreamContentType,
     pub error_count: usize,
     // the leader gets the receiver that was subscribed before the pump was spawned, so
     // there is no window where the channel has zero receivers and events can be lost.
@@ -151,20 +153,17 @@ impl Clone for SharedRouterStreamResponse {
         Self {
             body: self.body.clone(),
             headers: self.headers.clone(),
-            stream_content_type: self.stream_content_type.clone(),
             error_count: self.error_count,
             receiver: None,
         }
     }
 }
 
-impl From<SharedRouterStreamResponse> for web::HttpResponse {
-    fn from(shared_response: SharedRouterStreamResponse) -> Self {
+impl SharedRouterStreamResponse {
+    pub fn into_response(self, stream_content_type: &StreamContentType) -> web::HttpResponse {
         // leader already has a pre-subscribed receiver to avoid missing
         // any potential events emitted. joiners, on the other hand, subscribe
-        let mut receiver = shared_response
-            .receiver
-            .unwrap_or_else(|| shared_response.body.subscribe());
+        let mut receiver = self.receiver.unwrap_or_else(|| self.body.subscribe());
 
         let stream = Box::pin(async_stream::stream! {
             loop {
@@ -186,8 +185,6 @@ impl From<SharedRouterStreamResponse> for web::HttpResponse {
                 }
             }
         });
-
-        let stream_content_type = shared_response.stream_content_type;
 
         let content_type_header = match stream_content_type {
             StreamContentType::IncrementalDelivery => {
@@ -219,10 +216,11 @@ impl From<SharedRouterStreamResponse> for web::HttpResponse {
 
         let mut response = web::HttpResponse::Ok();
 
-        for (header_name, header_value) in shared_response.headers.iter() {
+        for (header_name, header_value) in self.headers.iter() {
             response.set_header(header_name, header_value);
         }
 
+        // we set content type after so that we can override the shared header
         response.content_type(content_type_header);
 
         response.streaming(body)

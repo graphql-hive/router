@@ -359,7 +359,7 @@ pub async fn graphql_request_handler(
             },
         );
 
-        Ok(shared_response.into())
+        shared_response.into_response(response_mode)
     }
     .instrument(span_clone)
     .await
@@ -433,6 +433,10 @@ pub async fn execute_planned_request<'exec>(
     .await?
     {
         QueryPlanExecutionResult::Stream(result) => {
+            // we dont use the stream content type because subscriptions
+            // can be deduplicated across transports - but we do store
+            // the header value in the shared response because the user
+            // might choose to not deduplicate across transport boundaries
             let stream_content_type = response_mode
                 .stream_content_type()
                 .ok_or(PipelineError::SubscriptionsTransportNotSupported)?
@@ -456,18 +460,16 @@ pub async fn execute_planned_request<'exec>(
                 // dropping producer_handle closes the broadcast channel
             });
 
-            let headers = if let Some(aggregator) = result.response_headers_aggregator {
-                let mut builder = web::HttpResponse::Ok();
+            let mut builder = web::HttpResponse::Ok();
+            if let Some(aggregator) = result.response_headers_aggregator {
                 aggregator.modify_client_response_headers(&mut builder)?;
-                Arc::new(builder.finish().headers().clone())
-            } else {
-                Arc::new(HeaderMap::new())
             };
+            builder.content_type(stream_content_type.as_ref());
+            let headers = Arc::new(builder.finish().headers().clone());
 
             Ok(SharedRouterResponse::Stream(SharedRouterStreamResponse {
                 body: sender,
                 headers,
-                stream_content_type,
                 error_count: result.error_count,
                 receiver: Some(receiver),
             }))
@@ -482,18 +484,16 @@ pub async fn execute_planned_request<'exec>(
             // drop the router shared request as soon as the response is ready
             let _query_guard = guard;
 
-            let headers = if let Some(aggregator) = result.response_headers_aggregator {
-                let mut builder = web::HttpResponse::Ok();
+            let mut builder = web::HttpResponse::Ok();
+            if let Some(aggregator) = result.response_headers_aggregator {
                 aggregator.modify_client_response_headers(&mut builder)?;
-                Arc::new(builder.finish().headers().clone())
-            } else {
-                Arc::new(HeaderMap::new())
             };
+            builder.content_type(single_content_type.as_ref());
+            let headers = Arc::new(builder.finish().headers().clone());
 
             Ok(SharedRouterResponse::Single(SharedRouterSingleResponse {
                 body: ntex::util::Bytes::from(result.body),
                 headers,
-                single_content_type,
                 status: result.status_code,
                 error_count: result.error_count,
             }))
