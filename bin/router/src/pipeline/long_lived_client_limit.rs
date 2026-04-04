@@ -1,21 +1,26 @@
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::{
+    rc::Rc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    task::{Context, Poll},
 };
 
 use http::{header, StatusCode};
 use ntex::{
+    http::body::{Body, BodySize, MessageBody},
     service::{Service, ServiceCtx},
+    util::Bytes,
     web::{self, DefaultError},
     Middleware, SharedCfg,
 };
 
 use crate::RouterSharedState;
 
-/// pre-resolved at app construction time so the per-request path is branch-free
 #[derive(Clone)]
 pub struct LongLivedClientLimitService {
-    /// false means the middleware is entirely bypassed on every request
+    // false means the middleware is entirely bypassed on every request
     enabled: bool,
 }
 
@@ -79,7 +84,7 @@ where
             .max_long_lived_clients;
         let counter = shared_state.long_lived_client_count.clone();
 
-        // try to reserve a slot; back off if we're at the limit
+        // try to reserve a slot, bail if at the limit
         let prev = counter.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             if current < limit {
                 Some(current + 1)
@@ -87,7 +92,6 @@ where
                 None
             }
         });
-
         if prev.is_err() {
             let error_response = web::HttpResponse::build(StatusCode::SERVICE_UNAVAILABLE)
                 .header(header::RETRY_AFTER, "5")
@@ -97,13 +101,21 @@ where
 
         let guard = LongLivedClientGuard(counter);
         let response = ctx.call(&self.service, req).await?;
-        drop(guard);
+
+        // wrap the body so the guard lives until the stream is fully consumed
+        let response = response.map_body(|_head, body| {
+            let wrapped = GuardedBody {
+                inner: body.into_body().into(),
+                _guard: guard,
+            };
+            Body::from_message(wrapped).into()
+        });
 
         Ok(response)
     }
 }
 
-/// decrements the counter when dropped
+// decrements the counter when dropped
 struct LongLivedClientGuard(Arc<AtomicUsize>);
 
 impl Drop for LongLivedClientGuard {
@@ -112,11 +124,30 @@ impl Drop for LongLivedClientGuard {
     }
 }
 
-/// returns true if the request is a websocket upgrade or an http streaming request.
-///
-/// deliberately ordered cheapest check first:
-/// 1. upgrade: websocket - two header lookups, no parsing
-/// 2. accept streaming - one header lookup + fast substring pre-filter, full parse only if needed
+// wraps the body and keeps the guard alive until it's fully consumed and dropped.
+// one extra vtable call per chunk on top of the Box<dyn MessageBody> dispatch streaming bodies
+// already go through - negligible next to actual I/O cost per chunk.
+struct GuardedBody {
+    inner: Body,
+    _guard: LongLivedClientGuard,
+}
+
+impl MessageBody for GuardedBody {
+    fn size(&self) -> BodySize {
+        self.inner.size()
+    }
+
+    fn poll_next_chunk(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, Rc<dyn std::error::Error>>>> {
+        self.inner.poll_next_chunk(cx)
+    }
+}
+
+// cheapest check first:
+// 1. upgrade: websocket - two header lookups, no parsing
+// 2. accept: streaming - one header lookup + fast substring pre-filter, full parse only if needed
 #[inline]
 fn is_long_lived_request(headers: &ntex::http::HeaderMap) -> bool {
     // websocket: Connection: Upgrade + Upgrade: websocket
@@ -133,9 +164,7 @@ fn is_long_lived_request(headers: &ntex::http::HeaderMap) -> bool {
         return true;
     }
 
-    // http streaming: Accept header contains a known streaming content type.
-    // we do a fast substring scan before handing off to the full Accept parser
-    // to avoid the parse cost on the hot path for regular requests.
+    // fast substring scan before full Accept parse to avoid cost on regular requests
     let accept = match headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()) {
         Some(v) if !v.is_empty() => v,
         _ => return false,
@@ -155,9 +184,6 @@ fn is_long_lived_request(headers: &ntex::http::HeaderMap) -> bool {
         .is_some()
 }
 
-/// fast pre-filter: returns true if the raw Accept string contains any substring
-/// that could match a known streaming content type, avoiding the full parse on
-/// the vast majority of regular (application/json) requests.
 #[inline]
 fn looks_like_streaming_accept(accept: &str) -> bool {
     // covers: multipart/mixed, text/event-stream

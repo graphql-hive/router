@@ -27,6 +27,7 @@ use tracing::{info, warn};
 use hive_router::{
     add_callback_handler, background_tasks::BackgroundTasksManager, configure_app_from_config,
     configure_ntex_app, init_rustls_crypto_provider, invoke_shutdown_hooks,
+    pipeline::long_lived_client_limit::LongLivedClientLimitService,
     plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry, RouterPaths,
     RouterSharedState, SchemaState,
 };
@@ -755,6 +756,7 @@ impl TestRouter<Built> {
 
         let serv_paths = paths.clone();
         let serv_prometheus = prometheus.clone();
+        let long_lived_limit = LongLivedClientLimitService::new(&shared_state.router_config);
         let serv = test::server_with(test::config().port(self.port), move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
@@ -762,6 +764,7 @@ impl TestRouter<Built> {
             let prometheus = serv_prometheus.clone();
             let serv_callback_path = serv_callback_path.clone();
             let callback_subs = serv_callback_subs.clone();
+            let long_lived_limit = long_lived_limit.clone();
 
             // set the tracing dispatch on the server thread. the guard is
             // intentionally leaked: dropping it would restore the no-op default
@@ -775,6 +778,7 @@ impl TestRouter<Built> {
 
             async move {
                 web::App::new()
+                    .middleware(long_lived_limit)
                     .middleware(PluginService)
                     .state(shared_state)
                     .state(schema_state)

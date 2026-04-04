@@ -1745,4 +1745,85 @@ mod subscriptions_e2e_tests {
             "Expected requests to reviews subgraph to be deduplicated across transports"
         );
     }
+
+    #[ntex::test]
+    async fn max_long_lived_clients_rejects_over_limit() {
+        use futures::StreamExt;
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        max_long_lived_clients: 2
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 200) {
+                    id
+                }
+            }
+        "#;
+        let headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+
+        // open two subscriptions and keep them alive by reading the first event
+        let mut sub1 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert!(sub1.status().is_success(), "sub1 should be accepted");
+        let _ = sub1.next().await;
+
+        let mut sub2 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert!(sub2.status().is_success(), "sub2 should be accepted");
+        let _ = sub2.next().await;
+
+        // the third subscriber exceeds the limit and must be rejected
+        let sub3 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert_eq!(
+            sub3.status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            "sub3 should be rejected with 503 when the limit is reached"
+        );
+        let retry_after = sub3.header("retry-after");
+        assert!(
+            retry_after.is_some(),
+            "rejected response should include a Retry-After header"
+        );
+        let body = sub3.string_body().await;
+        assert_eq!(body, "Too many long-lived clients");
+
+        // release the two held subscriptions
+        drop(sub1);
+        drop(sub2);
+
+        // wait briefly for the slots to be freed
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // a new subscriber should now be accepted again
+        let sub4 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert!(
+            sub4.status().is_success(),
+            "sub4 should be accepted after the previous slots were freed"
+        );
+    }
 }
