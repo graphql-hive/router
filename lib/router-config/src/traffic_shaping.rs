@@ -219,6 +219,14 @@ pub struct TrafficShapingRouterDedupeConfig {
     ///
     /// The deduplication is transport agnostic. A query over WebSocket would get deduplicated with an
     /// identical query over HTTP if they arrive at the same time and have the same fingerprint.
+    ///
+    /// Note: `content-type` is part of the fingerprint when `headers` includes it (e.g. `all`).
+    /// Since HTTP streaming clients send different `accept` headers than WebSocket clients,
+    /// cross-transport deduplication for subscriptions only applies when `content-type` (and
+    /// transport-specific headers) are excluded from the key. Configure `headers: none` or
+    /// `headers: { include: [] }` (or exclude the relevant headers) to enable true cross-transport
+    /// deduplication, where a WebSocket subscription and an SSE subscription with the same operation
+    /// share a single upstream connection and the events are fanned out to both.
     #[serde(default = "default_router_dedupe_enabled")]
     pub enabled: bool,
 
