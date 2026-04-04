@@ -563,6 +563,7 @@ pub async fn execute_pipeline<'exec>(
     execute_plan(supergraph, shared_state, planned_request, operation_span).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn inbound_request_fingerprint(
     method: &http::Method,
     path: &str,

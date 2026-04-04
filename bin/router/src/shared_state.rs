@@ -292,6 +292,7 @@ pub struct RouterSharedState {
 }
 
 impl RouterSharedState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
