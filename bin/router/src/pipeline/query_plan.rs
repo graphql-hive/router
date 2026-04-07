@@ -118,17 +118,15 @@ pub async fn plan_operation_with_cache(
                     return Ok(EMPTY_QUERY_PLAN.clone());
                 }
 
-                supergraph
-                    .planner
-                    .plan_from_normalized_operation(
-                        filtered_operation_for_plan,
-                        (&request_override_context.clone()).into(),
-                        cancellation_token,
-                    )
-                    .map(Arc::new)
+                let query_plan = supergraph.planner.plan_from_normalized_operation(
+                    filtered_operation_for_plan,
+                    (&request_override_context.clone()).into(),
+                    cancellation_token,
+                )?;
+
+                Ok(query_plan.into())
             })
             .await
-            .map_err(PipelineError::from)
             .into_result_with_hit_miss(|hit_miss| match hit_miss {
                 CacheHitMiss::Hit => {
                     cache_hint = CacheHint::Hit;
