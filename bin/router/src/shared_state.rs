@@ -138,7 +138,7 @@ pub struct RouterSharedState {
     pub validation_plan: Arc<ValidationPlan>,
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub router_config: Arc<HiveRouterConfig>,
-    pub headers_plan: HeaderRulesPlan,
+    pub headers_plan: Arc<HeaderRulesPlan>,
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     /// Cache for validated JWT claims to avoid re-parsing on every request.
@@ -168,7 +168,7 @@ impl RouterSharedState {
         let parse_cache = cache_state.parse_cache.clone();
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
-            headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
+            headers_plan: Arc::new(compile_headers_plan(&router_config.headers).map_err(Box::new)?),
             parse_cache,
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             jwt_claims_cache: Cache::builder()

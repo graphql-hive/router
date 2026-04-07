@@ -359,7 +359,8 @@ pub struct ValueSetter {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionNode {
-    pub primary: Box<PlanNode>, // Use Box to prevent size issues
+    // A subscription node can only really have a primary fetch node.
+    pub primary: FetchNode,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -576,15 +577,17 @@ impl PlanNode {
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
     ) -> Self {
-        let node = if step.response_path.is_empty() {
-            PlanNode::Fetch(FetchNode::from_fetch_step(step, supergraph))
-        } else {
+        let fetch = FetchNode::from_fetch_step(step, supergraph);
+
+        let node = if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
-                node: Box::new(PlanNode::Fetch(FetchNode::from_fetch_step(
-                    step, supergraph,
-                ))),
+                node: Box::new(PlanNode::Fetch(fetch)),
             })
+        } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
+            PlanNode::Subscription(SubscriptionNode { primary: fetch })
+        } else {
+            PlanNode::Fetch(fetch)
         };
 
         match step.condition.as_ref() {
@@ -630,6 +633,12 @@ impl Display for BatchFetchNode {
 }
 
 impl Display for FlattenNode {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
+impl Display for SubscriptionNode {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
@@ -754,6 +763,16 @@ impl PrettyDisplay for ConditionNode {
     }
 }
 
+impl PrettyDisplay for SubscriptionNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(f, "{indent}Subscription {{")?;
+        self.primary.pretty_fmt(f, depth + 1)?;
+        writeln!(f, "{indent}}},")?;
+        Ok(())
+    }
+}
+
 impl PrettyDisplay for PlanNode {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         match self {
@@ -763,6 +782,7 @@ impl PrettyDisplay for PlanNode {
             PlanNode::Sequence(node) => node.pretty_fmt(f, depth),
             PlanNode::Parallel(node) => node.pretty_fmt(f, depth),
             PlanNode::Condition(node) => node.pretty_fmt(f, depth),
+            PlanNode::Subscription(node) => node.pretty_fmt(f, depth),
             _ => Ok(()),
         }
     }

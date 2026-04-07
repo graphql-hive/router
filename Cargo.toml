@@ -64,9 +64,10 @@ thiserror = "2.0.14"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 tokio = { version = "1.47.1", features = ["full"] }
 tokio-util = { version = "0.7.16" }
+tokio-stream = { version = "0.1.17" }
 rand = "0.10.0"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
-ntex = { version = "3.4.0", features = ["tokio"] }
+ntex = { version = "3.4.0", features = ["tokio", "rustls"] }
 tonic = { version = "0.14.2", features = ["tls-aws-lc"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["http2", "rustls-tls"] }
 reqwest-retry = "0.8.0"
@@ -108,3 +109,6 @@ tracing-subscriber = { version = "0.3.22", features = [
   "json",
 ] }
 tracing-tree = "0.4.0"
+
+[patch.crates-io]
+ntex = { git = "https://github.com/enisdenjo/ntex", branch = "v3-4-0-tserv-port" }
