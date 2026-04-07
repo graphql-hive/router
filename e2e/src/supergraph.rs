@@ -265,7 +265,7 @@ mod supergraph_e2e_tests {
                   source: hive
                   endpoint: http://{host}/supergraph
                   key: dummy_key
-                  poll_interval: 50ms
+                  poll_interval: 200ms
                 "#,
             ))
             .build()
@@ -309,9 +309,6 @@ mod supergraph_e2e_tests {
             .await
             .expect("Expected to match 404 mock");
 
-        // Give it some time to process it
-        time::sleep(Duration::from_millis(50)).await;
-
         // Router should still be using the initial supergraph
         let res = router
             .send_graphql_request(
@@ -349,9 +346,6 @@ mod supergraph_e2e_tests {
             .await
             .expect("Expected to match final mock");
         mock_final.assert();
-
-        // Give it some time to process it
-        time::sleep(Duration::from_millis(200)).await;
 
         // Check if final supergraph is working
         let res = router
