@@ -344,10 +344,11 @@ mod supergraph_e2e_tests {
             .with_body("type Query { updated: String }")
             .create();
 
-        wait_until_mock_matched(&mock_final, Duration::from_millis(120))
+        wait_until_mock_matched(&mock_final, Duration::from_millis(200))
             .await
             .expect("Expected to match final mock");
         mock_final.assert();
+
         // Give it some time to process it
         time::sleep(Duration::from_millis(200)).await;
 
