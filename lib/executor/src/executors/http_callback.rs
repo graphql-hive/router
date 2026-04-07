@@ -11,11 +11,9 @@ use http_body_util::Full;
 use hyper::Version;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
-use uuid::Uuid;
+use ulid::Ulid;
 
-use crate::executors::common::{
-    SubgraphExecutionRequest, SubgraphExecutor, SUBSCRIPTION_EVENT_BUFFER_CAPACITY,
-};
+use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::http::{build_request_body, HttpClient};
 use crate::plugin_context::PluginRequestState;
@@ -25,16 +23,14 @@ use crate::response::subgraph_response::SubgraphResponse;
 pub const CALLBACK_PROTOCOL_VERSION: &str = "callback/1.0";
 pub const SUBSCRIPTION_PROTOCOL_HEADER: &str = "subscription-protocol";
 
-type SubscriptionId = String;
-
 #[derive(Clone)]
-pub struct ActiveSubscription {
+pub struct CallbackSubscription {
     pub verifier: String,
     pub sender: mpsc::Sender<CallbackMessage>,
     pub last_heartbeat: Arc<Mutex<Instant>>,
 }
 
-impl ActiveSubscription {
+impl CallbackSubscription {
     pub fn record_heartbeat(&self) {
         *self.last_heartbeat.lock().unwrap() = Instant::now();
     }
@@ -46,16 +42,16 @@ pub enum CallbackMessage {
     Complete { errors: Option<Vec<GraphQLError>> },
 }
 
-pub type ActiveSubscriptionsMap = Arc<DashMap<SubscriptionId, ActiveSubscription>>;
+pub type CallbackSubscriptionsMap = Arc<DashMap<String, CallbackSubscription>>;
 
-struct SubscriptionGuard {
-    subscription_id: SubscriptionId,
-    active_subscriptions: ActiveSubscriptionsMap,
+struct CallbackSubscriptionGuard {
+    subscription_id: String,
+    callback_subscriptions: CallbackSubscriptionsMap,
 }
 
-impl Drop for SubscriptionGuard {
+impl Drop for CallbackSubscriptionGuard {
     fn drop(&mut self) {
-        self.active_subscriptions.remove(&self.subscription_id);
+        self.callback_subscriptions.remove(&self.subscription_id);
         trace!(subscription_id = %self.subscription_id, "HTTP callback subscription entry removed from active subscriptions");
     }
 }
@@ -67,7 +63,7 @@ pub struct HttpCallbackSubgraphExecutor {
     pub header_map: HeaderMap,
     pub callback_base_url: String,
     pub heartbeat_interval_ms: u64,
-    pub active_subscriptions: ActiveSubscriptionsMap,
+    pub active_subscriptions: CallbackSubscriptionsMap,
 }
 
 impl HttpCallbackSubgraphExecutor {
@@ -77,7 +73,7 @@ impl HttpCallbackSubgraphExecutor {
         http_client: Arc<HttpClient>,
         callback_base_url: String,
         heartbeat_interval_ms: u64,
-        active_subscriptions: ActiveSubscriptionsMap,
+        active_subscriptions: CallbackSubscriptionsMap,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -154,15 +150,20 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        let subscription_id = Uuid::new_v4().to_string();
-        let verifier = Uuid::new_v4().to_string();
+        let subscription_id = Ulid::new().to_string();
+        let verifier = Ulid::new().to_string();
 
         let body = self.build_request_body(&mut execution_request, &subscription_id, &verifier)?;
 
-        let (tx, mut rx) = mpsc::channel::<CallbackMessage>(SUBSCRIPTION_EVENT_BUFFER_CAPACITY);
+        // all subscriptions emit events into the shared active subscriptions broadcaster
+        // which itself handles back-pressure by dropping old events when the buffer is full,
+        // so we can use a small buffer here
+        // TODO: do we thererefore need to buffer at all?
+        let (tx, mut rx) = mpsc::channel::<CallbackMessage>(16);
+
         self.active_subscriptions.insert(
             subscription_id.clone(),
-            ActiveSubscription {
+            CallbackSubscription {
                 verifier,
                 sender: tx,
                 // initialize last_heartbeat to now + heartbeat_interval so the enforcer
@@ -177,9 +178,9 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         );
 
         // guard removes the entry from `active_subscriptions` when dropped
-        let guard = SubscriptionGuard {
+        let guard = CallbackSubscriptionGuard {
             subscription_id: subscription_id.clone(),
-            active_subscriptions: self.active_subscriptions.clone(),
+            callback_subscriptions: self.active_subscriptions.clone(),
         };
 
         let mut req = hyper::Request::builder()

@@ -15,6 +15,20 @@ pub struct SubscriptionsConfig {
     /// You can override this setting by setting the `SUBSCRIPTIONS_ENABLED` environment variable to `true` or `false`.
     #[serde(default)]
     pub enabled: bool,
+    /// The capacity of the broadcast channel used to fan out subscription events to all active listeners.
+    ///
+    /// Each active subscription has its own broadcast channel. This value controls how many events
+    /// can be buffered in that channel before slow consumers start lagging. If a consumer falls too
+    /// far behind and the buffer is full, it will skip the missed messages and continue from the
+    /// latest available event.
+    ///
+    /// Subscription events are typically low-frequency, so the default of 32 is sufficient for most
+    /// use cases. Increase this value if you expect bursts of events or have slow consumers that
+    /// need more headroom to catch up.
+    ///
+    /// Defaults to 32.
+    #[serde(default = "default_broadcast_capacity")]
+    pub broadcast_capacity: usize,
     /// Configuration for subgraphs using the HTTP Callback protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callback: Option<CallbackConfig>,
@@ -59,6 +73,10 @@ pub struct CallbackConfig {
     /// The list of subgraph names that use the HTTP callback protocol.
     #[serde(default)]
     pub subgraphs: HashSet<String>,
+}
+
+fn default_broadcast_capacity() -> usize {
+    32
 }
 
 fn default_callback_path() -> AbsolutePath {
