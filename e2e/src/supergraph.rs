@@ -1,13 +1,14 @@
 #[cfg(test)]
 mod supergraph_e2e_tests {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use hive_router::invoke_shutdown_hooks;
-    use mockito::Mock;
     use ntex::time;
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        wait_until_mock_matched, ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     async fn should_clear_internal_caches_when_supergraph_changes() {
@@ -245,7 +246,11 @@ mod supergraph_e2e_tests {
 
     #[ntex::test]
     async fn should_be_resilient_to_supergraph_polling_errors() {
-        let mut server = mockito::Server::new_async().await;
+        let mut server = mockito::Server::new_with_opts_async(mockito::ServerOpts {
+            port: 0,
+            ..Default::default()
+        })
+        .await;
         let host = server.host_with_port();
 
         // We want: Initial (200) -> Error (429) -> Error (404) -> Final (200)
@@ -304,7 +309,7 @@ mod supergraph_e2e_tests {
             .with_status(404)
             .create();
 
-        wait_until_mock_matched(&mock_404, Duration::from_millis(500))
+        wait_until_mock_matched(&mock_404)
             .await
             .expect("Expected to match 404 mock");
 
@@ -344,7 +349,7 @@ mod supergraph_e2e_tests {
             .with_body("type Query { updated: String }")
             .create();
 
-        wait_until_mock_matched(&mock_final, Duration::from_millis(200))
+        wait_until_mock_matched(&mock_final)
             .await
             .expect("Expected to match final mock");
         mock_final.assert();
@@ -374,19 +379,5 @@ mod supergraph_e2e_tests {
           }
         }
         "#);
-    }
-
-    async fn wait_until_mock_matched(mock: &Mock, timeout: Duration) -> Result<(), String> {
-        let now = Instant::now();
-        loop {
-            if mock.matched_async().await {
-                return Ok(());
-            }
-            time::sleep(Duration::from_millis(10)).await;
-
-            if now.elapsed() > timeout {
-                return Err(format!("timeout after {:?}", now.elapsed()));
-            }
-        }
     }
 }

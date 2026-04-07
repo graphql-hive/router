@@ -5,6 +5,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use hive_router_plan_executor::plugin_trait::RouterPlugin;
 use lazy_static::lazy_static;
+use mockito::Mock;
 use ntex::{
     client::ClientResponse,
     web::{self, test},
@@ -12,13 +13,19 @@ use ntex::{
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
 use std::{
-    any::Any, future::Future, marker::PhantomData, net::SocketAddr, path::PathBuf, sync::Arc,
-    time::Duration,
+    any::Any,
+    future::Future,
+    marker::PhantomData,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use tempfile::{NamedTempFile, TempPath};
 use tokio::{
     net::TcpListener,
     sync::{oneshot, Semaphore},
+    time,
 };
 use tracing::{info, warn};
 
@@ -836,5 +843,22 @@ impl ClientResponseExt for ClientResponse {
     async fn json_body_string_pretty(&self) -> String {
         sonic_rs::to_string_pretty(&self.json_body().await)
             .expect("failed to pretty print JSON body")
+    }
+}
+
+pub async fn wait_until_mock_matched(mock: &Mock) -> Result<(), String> {
+    let now = Instant::now();
+    let timeout = Duration::from_secs(5); // always a sane default
+    loop {
+        if mock.matched_async().await {
+            return Ok(());
+        }
+
+        // anything less will congest the router, keep the interval chill
+        time::sleep(Duration::from_millis(100)).await;
+
+        if now.elapsed() > timeout {
+            return Err(format!("timeout after {:?}", now.elapsed()));
+        }
     }
 }
