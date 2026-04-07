@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+
+persisted_documents:
+  enabled: true
+  require_id: true
+  storage:
+    type: file
+    path: ../persisted-documents.json
+    watch: false
+
+log:
+  level: info

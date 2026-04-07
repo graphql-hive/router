@@ -16,6 +16,7 @@
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
+|[**persisted\_documents**](#persisted_documents)|`object`|Configuration for persisted documents extraction and resolution.<br/>Default: `{"enabled":false,"log_missing_id":false,"require_id":false,"selectors":null,"storage":null}`<br/>||
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
@@ -115,6 +116,12 @@ override_subgraph_urls:
                   .default
                 }
             
+persisted_documents:
+  enabled: false
+  log_missing_id: false
+  require_id: false
+  selectors: null
+  storage: null
 plugins: {}
 query_planner:
   allow_expose: false
@@ -1873,6 +1880,75 @@ products:
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**url**||Overrides for the URL of the subgraph.<br/><br/>For convenience, a plain string in your configuration will be treated as a static URL.<br/><br/>### Static URL Example<br/>```yaml<br/>url: "https://api.example.com/graphql"<br/>```<br/><br/>### Dynamic Expression Example<br/><br/>The expression has access to the following variables:<br/>- `request`: The incoming HTTP request, including headers and other metadata.<br/>- `default`: The original URL of the subgraph (from supergraph sdl).<br/><br/>```yaml<br/>url:<br/>  expression: \|<br/>    if .request.headers."x-region" == "us-east" {<br/>      "https://products-us-east.example.com/graphql"<br/>    } else if .request.headers."x-region" == "eu-west" {<br/>      "https://products-eu-west.example.com/graphql"<br/>    } else {<br/>      .default<br/>    }<br/>|yes|
+
+<a name="persisted_documents"></a>
+## persisted\_documents: object
+
+Configuration for persisted documents extraction and resolution.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Default: `false`<br/>||
+|**log\_missing\_id**|`boolean`|Default: `false`<br/>||
+|**require\_id**|`boolean`|Default: `false`<br/>||
+|[**selectors**](#persisted_documentsselectors)|`array`|||
+|**storage**||||
+
+**Example**
+
+```yaml
+enabled: false
+log_missing_id: false
+require_id: false
+selectors: null
+storage: null
+
+```
+
+<a name="persisted_documentsselectors"></a>
+### persisted\_documents\.selectors\[\]: array,null
+
+**Items**
+
+   
+**Option 1 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**path**|`string`||yes|
+|**type**|`string`|Constant Value: `"json_path"`<br/>|yes|
+
+
+   
+**Option 2 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**template**|`string`||yes|
+|**type**|`string`|Constant Value: `"url_path_param"`<br/>|yes|
+
+
+   
+**Option 3 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**name**|`string`||yes|
+|**type**|`string`|Constant Value: `"url_query_param"`<br/>|yes|
+
+
+**Example**
+
+```yaml
+{}
+
+```
 
 <a name="plugins"></a>
 ## plugins: object
