@@ -246,11 +246,7 @@ mod supergraph_e2e_tests {
 
     #[ntex::test]
     async fn should_be_resilient_to_supergraph_polling_errors() {
-        let mut server = mockito::Server::new_with_opts_async(mockito::ServerOpts {
-            port: 0,
-            ..Default::default()
-        })
-        .await;
+        let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
 
         // We want: Initial (200) -> Error (429) -> Error (404) -> Final (200)
