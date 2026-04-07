@@ -46,6 +46,7 @@ async-trait = { workspace = true }
 xxhash-rust = { workspace = true }
 rand = { workspace = true }
 ntex = { workspace = true }
+ntex-rt = { workspace = true }
 jsonwebtoken = { workspace = true }
 retry-policies = { workspace = true}
 reqwest-retry = { workspace = true }
