@@ -554,7 +554,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .unwrap_or("");
 
         let is_multipart = content_type.starts_with("multipart/mixed");
-        let is_sse = content_type == "text/event-stream";
+        let is_sse = content_type.starts_with("text/event-stream");
 
         if !is_multipart && !is_sse {
             return Err(SubgraphExecutorError::UnsupportedContentTypeError(
