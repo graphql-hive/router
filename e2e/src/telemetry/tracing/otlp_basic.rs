@@ -35,7 +35,7 @@ async fn test_otlp_http_export_with_graphql_request() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -50,20 +50,39 @@ async fn test_otlp_http_export_with_graphql_request() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    let all_traces = otlp_collector.wait_for_traces_count(1).await;
-    let trace = all_traces.first().unwrap();
-
-    let http_server_span = trace.span_by_hive_kind_one("http.server");
-    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
-    let parse_span = trace.span_by_hive_kind_one("graphql.parse");
-    let validate_span = trace.span_by_hive_kind_one("graphql.validate");
-    let variable_coercion_span = trace.span_by_hive_kind_one("graphql.variable_coercion");
-    let normalization_span = trace.span_by_hive_kind_one("graphql.normalize");
-    let plan_span = trace.span_by_hive_kind_one("graphql.plan");
-    let execution_span = trace.span_by_hive_kind_one("graphql.execute");
-    let subgraph_operation_span = trace.span_by_hive_kind_one("graphql.subgraph.operation");
-    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
-    let http_client_span = trace.span_by_hive_kind_one("http.client");
+    let http_server_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.server")
+        .await;
+    let operation_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.operation")
+        .await;
+    let parse_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.parse")
+        .await;
+    let validate_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.validate")
+        .await;
+    let variable_coercion_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.variable_coercion")
+        .await;
+    let normalization_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.normalize")
+        .await;
+    let plan_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.plan")
+        .await;
+    let execution_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.execute")
+        .await;
+    let subgraph_operation_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.subgraph.operation")
+        .await;
+    let http_inflight_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.inflight")
+        .await;
+    let http_client_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.client")
+        .await;
 
     insta::assert_snapshot!(
       http_server_span,
@@ -273,7 +292,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
                   protocol: grpc
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -531,14 +550,14 @@ async fn test_otlp_disabled() {
                   enabled: false
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
                 - kind: otlp
                   endpoint: {otlp_http_endpoint}
                   enabled: false
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -594,7 +613,7 @@ async fn test_otlp_http_headers() {
                       custom-header: custom-value
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -658,7 +677,7 @@ async fn test_otlp_grpc_metadata() {
                       custom-header: custom-value
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -720,7 +739,7 @@ async fn test_otlp_cache_hits() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -734,7 +753,9 @@ async fn test_otlp_cache_hits() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    otlp_collector.wait_for_traces_count(1).await;
+    otlp_collector
+        .wait_for_traces_with_span(1, "graphql.validate")
+        .await;
 
     // Should hit the caches
     let res = router
@@ -742,8 +763,10 @@ async fn test_otlp_cache_hits() {
         .await;
     assert!(res.status().is_success());
 
-    // Wait for exports to be sent
-    let all_traces = otlp_collector.wait_for_traces_count(2).await;
+    // Wait for both traces to have all expected spans
+    let all_traces = otlp_collector
+        .wait_for_traces_with_span(2, "graphql.validate")
+        .await;
     let first_trace = all_traces.first().unwrap();
     let second_trace = all_traces.get(1).unwrap();
 
@@ -815,7 +838,7 @@ async fn test_otlp_no_trace_id_collision() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)

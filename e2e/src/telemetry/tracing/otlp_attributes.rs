@@ -35,7 +35,7 @@ async fn test_deprecated_span_attributes() {
                   protocol: grpc
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -165,7 +165,7 @@ async fn test_spec_and_deprecated_span_attributes() {
                   protocol: grpc
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -318,7 +318,7 @@ async fn test_default_client_identification() {
                       custom-header: custom-value
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -398,7 +398,7 @@ async fn test_custom_client_identification() {
                       custom-header: custom-value
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -471,7 +471,7 @@ async fn test_default_resource_attributes() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -542,7 +542,7 @@ async fn test_custom_resource_attributes() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
