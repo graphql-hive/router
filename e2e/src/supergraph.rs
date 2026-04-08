@@ -51,6 +51,8 @@ mod supergraph_e2e_tests {
         router.schema_state().plan_cache.run_pending_tasks().await;
         invoke_shutdown_hooks(router.shared_state()).await;
 
+        ntex::time::sleep(Duration::from_millis(100)).await;
+
         // Now it should have the record
         assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
