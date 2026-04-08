@@ -3046,7 +3046,7 @@ Optional per-subgraph configurations that will override the default configuratio
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**circuit\_breaker**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breaker)|`object`, `null`|Circuit Breaker configuration for the subgraph. <br/>||
+|[**circuit\_breaker**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breaker)|`object`, `null`|Circuit Breaker configuration for the subgraph.<br/>||
 |**dedupe\_enabled**|`boolean`, `null`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>||
 |**pool\_idle\_timeout**|`string`, `null`|Timeout for idle sockets being kept-alive.<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
@@ -3055,7 +3055,7 @@ Optional per-subgraph configurations that will override the default configuratio
 <a name="traffic_shapingsubgraphsadditionalpropertiescircuit_breaker"></a>
 ##### traffic\_shaping\.subgraphs\.additionalProperties\.circuit\_breaker: object,null
 
-Circuit Breaker configuration for the subgraph. 
+Circuit Breaker configuration for the subgraph.
 When the circuit breaker is open, requests to the subgraph will be short-circuited and an error will be returned to the client.
 The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
 
