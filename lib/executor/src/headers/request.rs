@@ -110,7 +110,7 @@ impl ApplyRequestHeader for RequestPropagateRegex {
         ctx: &RequestExpressionContext,
         output_headers: &mut HeaderMap,
     ) -> Result<(), HeaderRuleRuntimeError> {
-        for (header_name, header_value) in ctx.client_request.headers {
+        for (header_name, header_value) in &ctx.client_request.headers {
             if is_denied_header(header_name) {
                 continue;
             }

@@ -8,6 +8,7 @@ use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
 use hive_router_internal::inflight::InFlightMap;
 use hive_router_internal::telemetry::TelemetryContext;
+use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
@@ -150,6 +151,7 @@ pub struct RouterSharedState {
     pub hive_usage_agent: Option<UsageAgent>,
     pub introspection_policy: BooleanOrProgram,
     pub telemetry_context: Arc<TelemetryContext>,
+    pub coprocessor: Option<CoprocessorRuntime>,
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     pub in_flight_requests: RouterInflightRequestsMap,
     pub in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy,
@@ -166,6 +168,19 @@ impl RouterSharedState {
         cache_state: Arc<CacheState>,
     ) -> Result<Self, SharedStateError> {
         let parse_cache = cache_state.parse_cache.clone();
+        let coprocessor = router_config
+            .coprocessor
+            .as_ref()
+            .map(|coprocessor_config| {
+                CoprocessorRuntime::from_config(
+                    coprocessor_config,
+                    telemetry_context.clone(),
+                    router_config.limits.max_request_body_size.to_bytes() as usize,
+                )
+                .map_err(Box::new)
+            })
+            .transpose()?;
+
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
             headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
@@ -187,6 +202,7 @@ impl RouterSharedState {
             introspection_policy: compile_introspection_policy(&router_config.introspection)
                 .map_err(Box::new)?,
             telemetry_context,
+            coprocessor,
             plugins,
             in_flight_requests: InFlightMap::default(),
             in_flight_requests_header_policy: (&router_config
@@ -211,6 +227,8 @@ pub enum SharedStateError {
     UsageAgent(#[from] Box<AgentError>),
     #[error("invalid introspection config: {0}")]
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
+    #[error("invalid coprocessor config: {0}")]
+    CoprocessorRuntime(#[from] Box<CoprocessorError>),
 }
 
 #[cfg(test)]

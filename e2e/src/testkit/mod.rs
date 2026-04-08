@@ -1,3 +1,4 @@
+pub mod coprocessor;
 pub mod docker;
 pub mod otel;
 
@@ -686,7 +687,10 @@ impl TestRouter<Built> {
 
             async move {
                 web::App::new()
-                    .middleware(PluginService)
+                    .middleware(PluginService::new(
+                        paths.clone(),
+                        prometheus.as_ref().map(|p| p.endpoint.clone()),
+                    ))
                     .state(shared_state)
                     .state(schema_state)
                     .configure(|m| configure_ntex_app(m, &paths, prometheus))
@@ -818,6 +822,9 @@ pub trait ClientResponseExt {
     fn string_body(&self) -> impl Future<Output = String>;
     fn json_body(&self) -> impl Future<Output = sonic_rs::Value>;
     fn json_body_string_pretty(&self) -> impl Future<Output = String>;
+    /// The difference from [`json_body_string_pretty`] is that this method uses a stable
+    /// pretty-printer that does not depend on the order of fields in the JSON object.
+    fn json_body_string_pretty_stable(&self) -> impl Future<Output = String>;
 }
 
 impl ClientResponseExt for ClientResponse {
@@ -836,5 +843,12 @@ impl ClientResponseExt for ClientResponse {
     async fn json_body_string_pretty(&self) -> String {
         sonic_rs::to_string_pretty(&self.json_body().await)
             .expect("failed to pretty print JSON body")
+    }
+
+    async fn json_body_string_pretty_stable(&self) -> String {
+        let body = self.body().await.expect("failed to read request body");
+        let stable_json: serde_json::Value =
+            sonic_rs::from_slice(&body).expect("failed to parse request body to JSON");
+        serde_json::to_string_pretty(&stable_json).expect("failed to pretty print canonical JSON")
     }
 }

@@ -1,4 +1,5 @@
 pub mod authorization;
+pub mod coprocessor;
 pub mod cors;
 pub mod csrf;
 mod env_overrides;
@@ -117,6 +118,10 @@ pub struct HiveRouterConfig {
     /// Configuration for custom plugins
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub plugins: HashMap<String, PluginConfig>,
+
+    /// Configuration for coprocessor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coprocessor: Option<coprocessor::CoprocessorConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

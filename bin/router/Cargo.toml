@@ -30,6 +30,7 @@ graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.3" }
 
 tokio = { workspace = true }
 futures = { workspace = true }
+bytes = { workspace = true }
 serde = { workspace = true }
 reqwest = { workspace = true }
 sonic-rs = { workspace = true }

@@ -1,20 +1,20 @@
-use std::iter::once;
-
 use crate::{
     execution::client_request_details::ClientRequestDetails,
     headers::{
         errors::HeaderRuleRuntimeError,
         expression::vrl_value_to_header_value,
         plan::{
-            HeaderAggregationStrategy, HeaderRulesPlan, ResponseHeaderAggregator,
-            ResponseHeaderRule, ResponseInsertExpression, ResponseInsertStatic,
-            ResponsePropagateNamed, ResponsePropagateRegex, ResponseRemoveNamed,
-            ResponseRemoveRegex,
+            HeaderAggregationStrategy, HeaderRulesPlan, ResponseHeaderRule,
+            ResponseInsertExpression, ResponseInsertStatic, ResponsePropagateNamed,
+            ResponsePropagateRegex, ResponseRemoveNamed, ResponseRemoveRegex,
         },
         sanitizer::is_denied_header,
     },
 };
+use ahash::HashMap;
 use hive_router_internal::expressions::ExecutableProgram;
+use ntex::http::HeaderMap as NtexHeaderMap;
+use std::iter::once;
 
 use super::sanitizer::is_never_join_header;
 use http::{header::InvalidHeaderValue, HeaderMap, HeaderName, HeaderValue};
@@ -97,8 +97,7 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
 
             if let Some(header_value) = ctx.subgraph_headers.get(header_name) {
                 matched = true;
-                write_agg(
-                    accumulator,
+                accumulator.write(
                     self.rename.as_ref().unwrap_or(header_name),
                     header_value,
                     self.strategy,
@@ -114,7 +113,7 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
                     return Ok(());
                 }
 
-                write_agg(accumulator, destination_name, default_value, self.strategy);
+                accumulator.write(destination_name, default_value, self.strategy);
             }
         }
 
@@ -151,7 +150,7 @@ impl ApplyResponseHeader for ResponsePropagateRegex {
                 continue;
             }
 
-            write_agg(accumulator, header_name, header_value, self.strategy);
+            accumulator.write(header_name, header_value, self.strategy);
         }
 
         Ok(())
@@ -174,7 +173,7 @@ impl ApplyResponseHeader for ResponseInsertStatic {
             self.strategy
         };
 
-        write_agg(accumulator, &self.name, &self.value, strategy);
+        accumulator.write(&self.name, &self.value, strategy);
 
         Ok(())
     }
@@ -199,7 +198,7 @@ impl ApplyResponseHeader for ResponseInsertExpression {
                 self.strategy
             };
 
-            write_agg(accumulator, &self.name, &header_value, strategy);
+            accumulator.write(&self.name, &header_value, strategy);
         }
 
         Ok(())
@@ -243,42 +242,6 @@ impl ApplyResponseHeader for ResponseRemoveRegex {
     }
 }
 
-/// Write a header to the aggregator according to the specified strategy.
-fn write_agg(
-    agg: &mut ResponseHeaderAggregator,
-    name: &HeaderName,
-    value: &HeaderValue,
-    strategy: HeaderAggregationStrategy,
-) {
-    let strategy = if is_never_join_header(name) {
-        HeaderAggregationStrategy::Append
-    } else {
-        strategy
-    };
-
-    if !agg.entries.contains_key(name) {
-        agg.entries
-            .insert(name.clone(), (strategy, once(value.clone()).collect()));
-        return;
-    }
-
-    // The `expect` is safe because we just inserted the entry if it didn't exist
-    let (strategy, values) = agg.entries.get_mut(name).expect("Expected entry to exist");
-
-    match (strategy, values.len()) {
-        (HeaderAggregationStrategy::First, 0) => {
-            values.push(value.clone());
-        }
-        (HeaderAggregationStrategy::Last, _) => {
-            values.clear();
-            values.push(value.clone());
-        }
-        (HeaderAggregationStrategy::Append, _) => {
-            values.push(value.clone());
-        }
-        (_, _) => {}
-    }
-}
 impl ResponseHeaderAggregator {
     /// Modify the outgoing client response headers based on the aggregated headers from subgraphs.
     #[inline]
@@ -336,4 +299,80 @@ fn join_with_comma(values: &[HeaderValue]) -> Result<HeaderValue, InvalidHeaderV
         buf.extend_from_slice(value.as_bytes());
     }
     HeaderValue::from_bytes(&buf)
+}
+
+type AggregatedHeader = (HeaderAggregationStrategy, Vec<HeaderValue>);
+
+#[derive(Default)]
+pub struct ResponseHeaderAggregator {
+    pub entries: HashMap<HeaderName, AggregatedHeader>,
+}
+
+impl ResponseHeaderAggregator {
+    pub fn none_if_empty(self) -> Option<Self> {
+        if self.entries.is_empty() {
+            None
+        } else {
+            Some(self)
+        }
+    }
+
+    /// Write a header to the aggregator according to the specified strategy.
+    pub fn write(
+        &mut self,
+        name: &HeaderName,
+        value: &HeaderValue,
+        strategy: HeaderAggregationStrategy,
+    ) {
+        let strategy = if is_never_join_header(name) {
+            HeaderAggregationStrategy::Append
+        } else {
+            strategy
+        };
+
+        if !self.entries.contains_key(name) {
+            self.entries
+                .insert(name.clone(), (strategy, once(value.clone()).collect()));
+            return;
+        }
+
+        // The `expect` is safe because we just inserted the entry if it didn't exist
+        let (strategy, values) = self.entries.get_mut(name).expect("Expected entry to exist");
+
+        match (strategy, values.len()) {
+            (HeaderAggregationStrategy::First, 0) => {
+                values.push(value.clone());
+            }
+            (HeaderAggregationStrategy::Last, _) => {
+                values.clear();
+                values.push(value.clone());
+            }
+            (HeaderAggregationStrategy::Append, _) => {
+                values.push(value.clone());
+            }
+            (_, _) => {}
+        }
+    }
+
+    // I deliberately chose to have a dedicated funtion over From<T>
+    // to convert headers from "early return responses" (from coprocessor and plugins),
+    // to prevent us from accidentally using First, Last or Append strategies,
+    // when converting from ntex's HeaderMap to the ResponseHeaderAggregator.
+    pub fn from_early_response(headers: &NtexHeaderMap) -> Self {
+        let mut aggregator = Self::default();
+        for (name, value) in headers.iter() {
+            aggregator.write(
+                name,
+                // SAFETY: Awkward but since ntex's HeaderValue was built,
+                // then the http's HeaderValue should be safe to convert to.
+                &HeaderValue::from_bytes(value.as_bytes()).expect("Failed to convert header value"),
+                // Why Last and not First or Append?
+                // Coprocessors return headers in `{<name>: [<value1>,<value2>] | <value1> }` format,
+                // meaning there's always a single entry, and when it has multiple values,
+                // it's handled already by ntex's HeaderMap.
+                HeaderAggregationStrategy::Last,
+            );
+        }
+        aggregator
+    }
 }

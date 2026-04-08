@@ -11,6 +11,7 @@ mod supergraph;
 pub mod telemetry;
 mod utils;
 
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use crate::{
@@ -27,7 +28,7 @@ use crate::{
         header::ResponseMode,
         request_extensions::{
             read_graphql_operation_metric_identity, read_graphql_response_metric_status,
-            read_request_body_size, write_graphql_response_metric_status,
+            write_graphql_response_metric_status,
         },
         timeout::handle_timeout,
         usage_reporting::init_hive_usage_agent,
@@ -51,12 +52,14 @@ use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use hive_router_config::humantime_serde;
 use hive_router_config::{load_config, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
-use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::{
     otel::tracing_opentelemetry::OpenTelemetrySpanExt,
     traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
 };
 pub use hive_router_internal::BoxError;
+use hive_router_internal::{
+    http::read_request_body_size, telemetry::metrics::catalog::values::GraphQLResponseStatus,
+};
 pub use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 pub use hive_router_plan_executor::executors::http::SubgraphHttpResponse;
 pub use hive_router_plan_executor::response::graphql_error::GraphQLError;
@@ -153,6 +156,35 @@ async fn graphql_endpoint_dispatch(
             cors.set_headers(request, response.headers_mut());
         }
 
+        // TODO: coprocessor.on_graphql_response should be handled here
+        if let Some(coprocessor_runtime) = app_state.coprocessor.as_ref() {
+            let graphql_sdl = if coprocessor_runtime.graphql_response_needs_sdl() {
+                schema_state
+                    .current_supergraph()
+                    .as_ref()
+                    .as_ref()
+                    .map(|supergraph| supergraph.public_schema.sdl.clone())
+            } else {
+                None
+            };
+
+            match coprocessor_runtime
+                .on_graphql_response(response, request, graphql_sdl.as_deref())
+                .await
+            {
+                Ok(
+                    ControlFlow::Break(updated_response) | ControlFlow::Continue(updated_response),
+                ) => {
+                    response = updated_response;
+                }
+                Err(error) => {
+                    warn!(%error, "coprocessor graphql.response stage failed");
+                    write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
+                    response = handle_pipeline_error(error.into(), &app_state, &response_mode);
+                }
+            }
+        }
+
         root_http_request_span.record_response(&response);
 
         response
@@ -191,8 +223,12 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let maybe_error = web::HttpServer::new(async move || {
         let landing_page_path = graphql_path.clone();
         let prometheus = prometheus.clone();
+        let paths_for_plugin = paths.clone();
         web::App::new()
-            .middleware(PluginService)
+            .middleware(PluginService::new(
+                paths_for_plugin,
+                prometheus.as_ref().map(|p| p.endpoint.clone()),
+            ))
             .state(shared_state.clone())
             .state(schema_state.clone())
             .configure(|m| configure_ntex_app(m, &paths, prometheus))
@@ -291,9 +327,9 @@ pub async fn configure_app_from_config(
 
 #[derive(Clone)]
 pub struct RouterPaths {
-    graphql: String,
-    health: String,
-    readiness: String,
+    pub graphql: String,
+    pub health: String,
+    pub readiness: String,
 }
 
 impl RouterPaths {

@@ -6,6 +6,7 @@ use hive_router_plan_executor::hooks::on_graphql_params::{
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{EndControlFlow, StartControlFlow};
 use http::{header::CONTENT_TYPE, Method};
+use ntex::http::HeaderMap;
 use ntex::util::Bytes;
 use ntex::web::types::Query;
 use ntex::web::HttpRequest;
@@ -78,6 +79,7 @@ pub enum DeserializationResult {
 #[inline]
 pub async fn deserialize_graphql_params(
     req: &HttpRequest,
+    request_headers: &HeaderMap,
     body: Bytes,
     plugin_req_state: &Option<PluginRequestState<'_>>,
 ) -> Result<DeserializationResult, PipelineError> {
@@ -132,7 +134,7 @@ pub async fn deserialize_graphql_params(
                 Method::POST => {
                     trace!("Processing POST GraphQL request");
 
-                    match req.headers().get(CONTENT_TYPE) {
+                    match request_headers.get(CONTENT_TYPE) {
                         Some(value) => {
                             let content_type_str = value
                                 .to_str()

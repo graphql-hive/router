@@ -1,35 +1,41 @@
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
+    ops::ControlFlow,
     sync::Arc,
     time::Instant,
 };
 use tracing::{error, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 
-use hive_router_internal::telemetry::traces::spans::{
-    graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+use hive_router_internal::{
+    http::read_body_stream,
+    telemetry::traces::spans::{
+        graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+    },
 };
 use hive_router_plan_executor::{
+    coprocessor::runtime::MutableRequestState,
     execution::{
         client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
         plan::PlanExecutionOutput,
     },
-    hooks::on_graphql_params::GraphQLParams,
-    hooks::on_supergraph_load::SupergraphData,
+    headers::response::ResponseHeaderAggregator,
+    hooks::{on_graphql_params::GraphQLParams, on_supergraph_load::SupergraphData},
     plugin_context::{PluginContext, PluginRequestState},
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
 use http::{header::CONTENT_TYPE, Method};
+use ntex::http::body::{Body, ResponseBody};
+use ntex::http::HeaderMap;
 use ntex::web::{self, HttpRequest};
 use sonic_rs::{JsonContainerTrait, JsonType, JsonValueTrait, Value};
 
 use crate::{
     pipeline::{
         authorization::enforce_operation_authorization,
-        body_read::read_body_stream,
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
         error::PipelineError,
@@ -43,7 +49,6 @@ use crate::{
         query_plan::{plan_operation_with_cache, QueryPlanResult},
         request_extensions::{
             write_graphql_operation_metric_identity, write_graphql_response_metric_status,
-            write_request_body_size,
         },
         validation::validate_operation_with_cache,
     },
@@ -55,7 +60,6 @@ use crate::{
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 
 pub mod authorization;
-pub mod body_read;
 pub mod coerce_variables;
 pub mod cors;
 pub mod csrf_prevention;
@@ -110,6 +114,7 @@ pub async fn graphql_request_handler(
     async {
         perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
+        // TODO: We need to read, limit and cache.
         let body_bytes = read_body_stream(
             req,
             body_stream,
@@ -121,8 +126,11 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
-        write_request_body_size(req, body_bytes.len() as u64);
         http_server_request_span.record_body_size(body_bytes.len());
+
+        // TODO: we clone
+        // TODO: double check if mutated headers should affect other components, like request deduplication, header propagation etc
+        let mut request_headers = req.headers().clone();
 
         let mut plugin_req_state = None;
 
@@ -137,10 +145,15 @@ pub async fn graphql_request_handler(
             });
         }
 
-        let deserialization_result =
-            deserialize_graphql_params(req, body_bytes, &plugin_req_state).await?;
+        let deserialization_result = deserialize_graphql_params(
+            req,
+            &request_headers,
+            body_bytes.clone(),
+            &plugin_req_state,
+        )
+        .await?;
 
-        let graphql_params = match deserialization_result {
+        let mut graphql_params = match deserialization_result {
             DeserializationResult::GraphQLParams(params) => params,
             DeserializationResult::EarlyResponse(response) => {
                 return Ok(response);
@@ -173,7 +186,7 @@ pub async fn graphql_request_handler(
         let parser_result =
             parse_operation_with_cache(shared_state, &graphql_params, &plugin_req_state).await?;
 
-        let parser_payload = match parser_result {
+        let mut parser_payload = match parser_result {
             ParseResult::Payload(payload) => payload,
             ParseResult::EarlyResponse(response) => {
                 return Ok(response);
@@ -202,6 +215,44 @@ pub async fn graphql_request_handler(
         .await?
         {
             return Ok(response);
+        }
+
+        if let Some(coprocessor_runtime) = shared_state.coprocessor.as_ref() {
+            let graphql_sdl = if coprocessor_runtime.graphql_request_needs_sdl() {
+                schema_state
+                    .current_supergraph()
+                    .as_ref()
+                    .as_ref()
+                    .map(|supergraph| supergraph.public_schema.sdl.clone())
+            } else {
+                None
+            };
+
+            let performed_mutations = match coprocessor_runtime
+                .on_graphql_request(
+                    req,
+                    &mut request_headers,
+                    &mut graphql_params,
+                    graphql_sdl.as_deref()
+                )
+                .await?
+            {
+                ControlFlow::Break(response) => return Ok(response),
+                ControlFlow::Continue(performed_mutations) => performed_mutations
+            };
+
+            if performed_mutations.body {
+              let parser_result =
+                  parse_operation_with_cache(shared_state, &graphql_params, &plugin_req_state).await?;
+
+              // Coprocessor changed the body, so we need to parse the operation.
+              parser_payload = match parser_result {
+                  ParseResult::Payload(payload) => payload,
+                  ParseResult::EarlyResponse(response) => {
+                      return Ok(response);
+                  }
+              };
+            }
         }
 
         let normalize_payload = normalize_request_with_cache(
@@ -260,12 +311,14 @@ pub async fn graphql_request_handler(
 
             let schema_checksum = supergraph.schema_checksum();
             let fingerprint = inbound_request_fingerprint(
-                req,
+                req.method(),
+                req.path(),
                 &shared_state.in_flight_requests_header_policy,
                 schema_checksum,
                 normalize_payload.normalized_operation_hash,
                 variables_hash,
                 extensions_hash,
+                &request_headers,
             );
             let (shared_response, _role) = shared_state
                 .in_flight_requests
@@ -281,6 +334,7 @@ pub async fn graphql_request_handler(
                         &operation_span,
                         &plugin_req_state,
                         single_content_type,
+                        request_headers.clone(),
                     )
                     .await
                 })
@@ -298,9 +352,12 @@ pub async fn graphql_request_handler(
                 &operation_span,
                 &plugin_req_state,
                 single_content_type,
+                request_headers.clone(),
             )
             .await?
         };
+
+        let shared_response = shared_response;
 
         if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
             usage_reporting::collect_usage_report(
@@ -360,10 +417,11 @@ async fn execute_planned_request<'exec>(
     operation_span: &'exec GraphQLOperationSpan,
     plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
     single_content_type: &'exec SingleContentType,
+    request_headers: HeaderMap,
 ) -> Result<SharedRouterResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
-            .validate_headers(req.headers(), &shared_state.jwt_claims_cache)
+            .validate_headers(&request_headers, &shared_state.jwt_claims_cache)
             .await?
         {
             Some(jwt_context) => JwtRequestDetails::Authenticated {
@@ -383,7 +441,7 @@ async fn execute_planned_request<'exec>(
     let client_request_details = ClientRequestDetails {
         method: req.method(),
         url: req.uri(),
-        headers: req.headers(),
+        headers: request_headers,
         operation: OperationDetails {
             name: normalize_payload.operation_for_plan.name.as_deref(),
             kind: match normalize_payload.operation_for_plan.operation_kind {
@@ -398,7 +456,8 @@ async fn execute_planned_request<'exec>(
     };
 
     let pipeline_result = execute_pipeline(
-        &client_request_details,
+        client_request_details,
+        &graphql_params,
         normalize_payload,
         &variable_payload,
         supergraph,
@@ -434,7 +493,8 @@ async fn execute_planned_request<'exec>(
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_pipeline<'exec>(
-    client_request_details: &ClientRequestDetails<'exec>,
+    mut client_request_details: ClientRequestDetails<'exec>,
+    graphql_params: &GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     variable_payload: &CoerceVariablesPayload,
     supergraph: &SupergraphData,
@@ -444,7 +504,7 @@ pub async fn execute_pipeline<'exec>(
     plugin_req_state: &Option<PluginRequestState<'exec>>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     if normalize_payload.operation_for_introspection.is_some() {
-        handle_introspection_policy(&shared_state.introspection_policy, client_request_details)?;
+        handle_introspection_policy(&shared_state.introspection_policy, &client_request_details)?;
     }
 
     let cancellation_token =
@@ -452,7 +512,7 @@ pub async fn execute_pipeline<'exec>(
 
     let progressive_override_ctx = request_override_context(
         &shared_state.override_labels_evaluator,
-        client_request_details,
+        &client_request_details,
     )?;
 
     let (normalize_payload, authorization_errors) = enforce_operation_authorization(
@@ -463,6 +523,52 @@ pub async fn execute_pipeline<'exec>(
         variable_payload,
         &client_request_details.jwt,
     )?;
+
+    if let Some(coprocessor_runtime) = shared_state.coprocessor.as_ref() {
+        let graphql_sdl = if coprocessor_runtime.graphql_analysis_needs_sdl() {
+            schema_state
+                .current_supergraph()
+                .as_ref()
+                .as_ref()
+                // TODO: change it to public SDL
+                .map(|supergraph| supergraph.public_schema.sdl.clone())
+        } else {
+            None
+        };
+
+        match coprocessor_runtime
+            .on_graphql_analysis(
+                MutableRequestState {
+                    method: client_request_details.method,
+                    uri: client_request_details.url,
+                    headers: &mut client_request_details.headers,
+                },
+                graphql_params,
+                graphql_sdl.as_deref(),
+            )
+            .await?
+        {
+            ControlFlow::Continue(_) => {}
+            ControlFlow::Break(response) => {
+                let body = match response.body() {
+                    ResponseBody::Body(Body::Bytes(bytes)) => bytes.to_vec(),
+                    _ => Vec::new(),
+                };
+
+                return Ok(PlanExecutionOutput {
+                    body,
+                    // It's an early return, so the headers from the coprocessor response
+                    // should all be applied to the final response.
+                    // No header propagation rules should be applied.
+                    response_headers_aggregator: Some(
+                        ResponseHeaderAggregator::from_early_response(response.headers()),
+                    ),
+                    error_count: 0,
+                    status_code: response.status(),
+                });
+            }
+        }
+    }
 
     let query_plan_result = plan_operation_with_cache(
         supergraph,
@@ -485,7 +591,7 @@ pub async fn execute_pipeline<'exec>(
         normalized_payload: &normalize_payload,
         query_plan_payload: &query_plan_payload,
         variable_payload,
-        client_request_details,
+        client_request_details: &client_request_details,
         authorization_errors,
         plugin_req_state,
     };
@@ -494,17 +600,18 @@ pub async fn execute_pipeline<'exec>(
 }
 
 fn inbound_request_fingerprint(
-    req: &HttpRequest,
+    method: &Method,
+    path: &str,
     dedupe_header_policy: &RouterRequestDedupeHeaderPolicy,
     schema_checksum: u64,
     normalized_operation_hash: u64,
     variables_hash: u64,
     extensions_hash: u64,
+    request_headers: &HeaderMap,
 ) -> u64 {
     let mut hasher = Xxh3::new();
 
-    let mut headers: Vec<(&str, &str)> = req
-        .headers()
+    let mut headers: Vec<(&str, &str)> = request_headers
         .iter()
         .filter(|(name, _)| dedupe_header_policy.should_include(name.as_str()))
         .filter_map(|(name, value)| value.to_str().ok().map(|v_str| (name.as_str(), v_str)))
@@ -515,8 +622,8 @@ fn inbound_request_fingerprint(
             .then_with(|| left_value.cmp(right_value))
     });
 
-    req.method().hash(&mut hasher);
-    req.path().hash(&mut hasher);
+    method.hash(&mut hasher);
+    path.hash(&mut hasher);
     headers.hash(&mut hasher);
     schema_checksum.hash(&mut hasher);
     normalized_operation_hash.hash(&mut hasher);

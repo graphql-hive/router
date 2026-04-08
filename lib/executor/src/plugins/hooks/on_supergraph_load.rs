@@ -11,6 +11,13 @@ use crate::{
     SubgraphExecutorMap,
 };
 
+pub struct PublicSchema {
+    /// The AST of the public schema document exposed by the router.
+    pub document: Arc<Document>,
+    /// The SDL string of the public schema document exposed by the router.
+    pub sdl: Arc<str>,
+}
+
 pub struct SupergraphData {
     /// The metadata of the supergraph schema,
     /// which includes the list of subgraphs, their relationships, and other relevant information about the supergraph.
@@ -23,6 +30,9 @@ pub struct SupergraphData {
     pub subgraph_executor_map: SubgraphExecutorMap,
     /// The AST of the supergraph schema document that was loaded and parsed by the router.
     pub supergraph_schema: Arc<Document>,
+    /// The public schema exposed by the router.
+    /// It is generated from the supergraph schema and stripped from federation internals.
+    pub public_schema: PublicSchema,
 }
 
 impl SupergraphData {

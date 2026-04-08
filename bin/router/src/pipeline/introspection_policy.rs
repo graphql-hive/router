@@ -15,9 +15,12 @@ pub fn compile_introspection_policy(
 ) -> Result<BooleanOrProgram, ExpressionCompileError> {
     match introspection_policy_cfg {
         Some(IntrospectionPermissionConfig::Boolean(b)) => Ok(BooleanOrProgram::Value(*b)),
-        Some(IntrospectionPermissionConfig::Expression { expression }) => expression
-            .compile_expression(None)
-            .map(|program| BooleanOrProgram::Program(Box::new(program))),
+        Some(IntrospectionPermissionConfig::Expression { expression }) => {
+            expression.compile_expression(None).map(|program| {
+                let hints = hive_router_internal::expressions::ProgramHints::from_program(&program);
+                BooleanOrProgram::Program(Box::new(program), hints)
+            })
+        }
         None => Ok(BooleanOrProgram::Value(true)),
     }
 }

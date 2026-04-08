@@ -1,7 +1,9 @@
 use std::{sync::Arc, vec};
 
 use graphql_tools::validation::utils::ValidationError;
+use hive_router_internal::http::ReadBodyStreamError;
 use hive_router_plan_executor::{
+    coprocessor::CoprocessorError,
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
     headers::errors::HeaderRuleRuntimeError,
     hooks::on_graphql_error::handle_graphql_errors_with_plugins,
@@ -21,7 +23,7 @@ use strum::IntoStaticStr;
 use crate::{
     jwt::errors::JwtError,
     pipeline::{
-        authorization::AuthorizationError, body_read::ReadBodyStreamError, header::ResponseMode,
+        authorization::AuthorizationError, header::ResponseMode,
         progressive_override::LabelEvaluationError,
     },
     RouterSharedState,
@@ -143,6 +145,10 @@ pub enum PipelineError {
     #[error("No supergraph available yet, unable to process request")]
     #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
     NoSupergraphAvailable,
+
+    #[error(transparent)]
+    #[strum(serialize = "COPROCESSOR_FAILURE")]
+    CoprocessorError(#[from] CoprocessorError),
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -226,6 +232,7 @@ impl PipelineError {
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
+            (Self::CoprocessorError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
