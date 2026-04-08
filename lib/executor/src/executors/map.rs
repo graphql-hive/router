@@ -5,6 +5,8 @@ use std::{
 };
 
 use dashmap::DashMap;
+use futures::TryFutureExt;
+use hive_console_sdk::circuit_breaker::CircuitBreakerBuilder;
 use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
     HiveRouterConfig,
@@ -21,6 +23,7 @@ use hyper_util::{
     client::legacy::{connect::HttpConnector, Client},
     rt::{TokioExecutor, TokioTimer},
 };
+use recloser::AsyncRecloser;
 use tokio::sync::Semaphore;
 
 use crate::{
@@ -45,6 +48,7 @@ type ExecutorsBySubgraphMap =
 type StaticEndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
 type ExpressionEndpointsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
 type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
+type CircuitBreakersBySubgraph = DashMap<SubgraphName, AsyncRecloser>;
 
 struct ResolvedSubgraphConfig<'a> {
     client: Arc<HttpClient>,
@@ -63,6 +67,7 @@ pub struct SubgraphExecutorMap {
     /// Only contains subgraphs with expression-based endpoint overrides
     expression_endpoints_by_subgraph: ExpressionEndpointsBySubgraphMap,
     timeouts_by_subgraph: TimeoutsBySubgraph,
+    circuit_breakers_by_subgraph: CircuitBreakersBySubgraph,
     global_timeout: DurationOrProgram,
     config: Arc<HiveRouterConfig>,
     client: Arc<HttpClient>,
@@ -103,6 +108,7 @@ impl SubgraphExecutorMap {
             max_connections_per_host,
             in_flight_requests: InFlightMap::default(),
             timeouts_by_subgraph: Default::default(),
+            circuit_breakers_by_subgraph: Default::default(),
             global_timeout,
             telemetry_context,
         })
@@ -141,6 +147,7 @@ impl SubgraphExecutorMap {
             subgraph_executor_map.register_static_endpoint(subgraph_name, &endpoint_str);
             subgraph_executor_map.register_executor(subgraph_name, &endpoint_str)?;
             subgraph_executor_map.register_subgraph_timeout(subgraph_name)?;
+            subgraph_executor_map.register_circuit_breaker(subgraph_name)?;
         }
 
         Ok(subgraph_executor_map)
@@ -200,9 +207,28 @@ impl SubgraphExecutorMap {
         let mut execution_result = match execution_result {
             Some(execution_result) => execution_result,
             None => {
-                executor
-                    .execute(execution_request, timeout, plugin_req_state)
-                    .await?
+                let exec_fut = executor.execute(execution_request, timeout, plugin_req_state);
+                let circuit_breaker = self.circuit_breakers_by_subgraph.get(subgraph_name);
+                match circuit_breaker {
+                    Some(circuit_breaker) => {
+                        circuit_breaker
+                            .value()
+                            .call(exec_fut)
+                            .map_err(|e| match e {
+                                recloser::Error::Inner(e) => e,
+                                recloser::Error::Rejected => {
+                                    // Record circuit breaker rejection in metrics
+                                    self.telemetry_context
+                                        .metrics
+                                        .circuit_breaker
+                                        .record_rejected_request(subgraph_name);
+                                    SubgraphExecutorError::CircuitBreakerRejected
+                                }
+                            })
+                            .await?
+                    }
+                    None => exec_fut.await?,
+                }
             }
         };
 
@@ -472,6 +498,57 @@ impl SubgraphExecutorMap {
         // Register the compiled timeout
         self.timeouts_by_subgraph
             .insert(subgraph_name.to_string(), timeout_prog);
+
+        Ok(())
+    }
+
+    /// Registers a circuit breaker for a specific subgraph.
+    /// If the subgraph already has a circuit breaker registered, it will do nothing.
+    fn register_circuit_breaker(&self, subgraph_name: &str) -> Result<(), SubgraphExecutorError> {
+        if self.circuit_breakers_by_subgraph.contains_key(subgraph_name) {
+            return Ok(());
+        }
+
+        let subgraph_config = self.config.traffic_shaping.subgraphs.get(subgraph_name);
+
+        let circuit_breaker_enabled = subgraph_config.and_then(|s| s.circuit_breaker.as_ref().map(|cb| cb.enabled))
+            .unwrap_or(self.config.traffic_shaping.all.circuit_breaker.as_ref().map(|cb| cb.enabled).unwrap_or(false));
+
+        if circuit_breaker_enabled {
+            let mut circuit_breaker = CircuitBreakerBuilder::default();
+            
+            if let Some(global_config) = self.config.traffic_shaping.all.circuit_breaker.as_ref() {
+                if let Some(et) = global_config.error_threshold {
+                    circuit_breaker = circuit_breaker.error_threshold(et);
+                }
+                if let Some(vt) = global_config.volume_threshold {
+                    circuit_breaker = circuit_breaker.volume_threshold(vt);
+                }
+                if let Some(rt) = global_config.reset_timeout {
+                    circuit_breaker = circuit_breaker.reset_timeout(rt);
+                }
+            }
+            if let Some(subgraph_config) = subgraph_config {
+                if let Some(cb_config) = subgraph_config.circuit_breaker.as_ref() {
+                    if let Some(et) = cb_config.error_threshold {
+                        circuit_breaker = circuit_breaker.error_threshold(et);
+                    }
+                    if let Some(vt) = cb_config.volume_threshold {
+                        circuit_breaker = circuit_breaker.volume_threshold(vt);
+                    }
+                    if let Some(rt) = cb_config.reset_timeout {
+                        circuit_breaker = circuit_breaker.reset_timeout(rt);
+                    }
+                }
+            }
+            
+            let circuit_breaker = circuit_breaker.build_async().map_err(|e| {
+                SubgraphExecutorError::CircuitBreakerCreationError(e, subgraph_name.to_string())
+            })?;
+
+            self.circuit_breakers_by_subgraph
+                .insert(subgraph_name.to_string(), circuit_breaker);
+        }
 
         Ok(())
     }

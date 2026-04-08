@@ -1,4 +1,5 @@
 pub mod cache_metrics;
+pub mod circuit_breaker_metrics;
 mod capture;
 pub mod catalog;
 pub mod graphql_metrics;
@@ -13,6 +14,7 @@ pub use setup::{build_meter_provider_from_config, MetricsSetup, PrometheusRuntim
 use opentelemetry::metrics::Meter;
 
 use crate::telemetry::metrics::cache_metrics::CacheMetrics;
+use crate::telemetry::metrics::circuit_breaker_metrics::CircuitBreakerMetrics;
 use crate::telemetry::metrics::graphql_metrics::GraphQLMetrics;
 use crate::telemetry::metrics::http_client_metrics::HttpClientMetrics;
 use crate::telemetry::metrics::http_server_metrics::HttpServerMetrics;
@@ -24,6 +26,7 @@ pub struct Metrics {
     pub graphql: GraphQLMetrics,
     pub supergraph: SupergraphMetrics,
     pub cache: CacheMetrics,
+    pub circuit_breaker: CircuitBreakerMetrics,
 }
 
 impl Metrics {
@@ -34,6 +37,7 @@ impl Metrics {
             graphql: GraphQLMetrics::new(meter),
             supergraph: SupergraphMetrics::new(meter),
             cache: CacheMetrics::new(meter),
+            circuit_breaker: CircuitBreakerMetrics::new(meter),
         }
     }
 }

@@ -1,3 +1,4 @@
+use hive_console_sdk::circuit_breaker::CircuitBreakerError;
 use http::uri::InvalidUri;
 use strum::IntoStaticStr;
 
@@ -53,6 +54,11 @@ pub enum SubgraphExecutorError {
     #[error("Failed to initialize or load native TLS root certificates: {0}")]
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     NativeTlsCertificatesError(std::io::Error),
+    #[error("Unable to create circuit breaker: {0} for subgraph \"{1}\"")]
+    CircuitBreakerCreationError(CircuitBreakerError, String),
+    #[error("Rejected by the circuit breaker")]
+    #[strum(serialize = "SUBGRAPH_CIRCUIT_BREAKER_REJECTED")]
+    CircuitBreakerRejected,
 }
 
 impl SubgraphExecutorError {
