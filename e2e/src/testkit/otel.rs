@@ -714,6 +714,38 @@ impl OtlpCollector {
         .expect("waiting for traces with count timed out")
     }
 
+    /// Waits for at least `count` traces where each has a span with the given hive.kind.
+    /// This is more robust than `wait_for_traces_count` because spans may arrive in
+    /// separate batches after the trace ID is first seen.
+    pub async fn wait_for_traces_with_span(
+        &self,
+        count: usize,
+        hive_kind: &str,
+    ) -> Vec<CollectedTrace> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let traces = self.traces().await;
+                let matching = traces
+                    .iter()
+                    .filter(|t| t.has_span_by_hive_kind(hive_kind))
+                    .count();
+
+                if matching >= count {
+                    return traces;
+                }
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "waiting for {} traces with hive.kind={} timed out",
+                count, hive_kind
+            )
+        })
+    }
+
     pub async fn wait_for_span_by_hive_kind_one(&self, hive_kind: &str) -> CollectedSpan {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {

@@ -753,7 +753,9 @@ async fn test_otlp_cache_hits() {
     assert!(res.status().is_success());
 
     // Wait for exports to be sent
-    otlp_collector.wait_for_traces_count(1).await;
+    otlp_collector
+        .wait_for_traces_with_span(1, "graphql.validate")
+        .await;
 
     // Should hit the caches
     let res = router
@@ -761,8 +763,10 @@ async fn test_otlp_cache_hits() {
         .await;
     assert!(res.status().is_success());
 
-    // Wait for exports to be sent
-    let all_traces = otlp_collector.wait_for_traces_count(2).await;
+    // Wait for both traces to have all expected spans
+    let all_traces = otlp_collector
+        .wait_for_traces_with_span(2, "graphql.validate")
+        .await;
     let first_trace = all_traces.first().unwrap();
     let second_trace = all_traces.get(1).unwrap();
 

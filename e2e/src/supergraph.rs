@@ -3,7 +3,6 @@ mod supergraph_e2e_tests {
     use std::time::Duration;
 
     use hive_router::invoke_shutdown_hooks;
-    use ntex::time;
     use sonic_rs::JsonValueTrait;
 
     use crate::testkit::{wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs};
@@ -14,18 +13,10 @@ mod supergraph_e2e_tests {
         let host = server.host_with_port();
         let mock1 = server
             .mock("GET", "/supergraph")
-            .expect(1)
-            .with_status(200)
-            .with_header("content-type", "text/plain")
-            .with_body("type Query { dummy: String }")
-            .create();
-
-        let mock2 = server
-            .mock("GET", "/supergraph")
             .expect_at_least(1)
             .with_status(200)
             .with_header("content-type", "text/plain")
-            .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
+            .with_body("type Query { dummy: String }")
             .create();
 
         let router = TestRouter::builder()
@@ -41,8 +32,6 @@ mod supergraph_e2e_tests {
             .build()
             .start()
             .await;
-
-        mock1.assert();
 
         assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
@@ -66,9 +55,21 @@ mod supergraph_e2e_tests {
         assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
 
-        // Now let's wait a bit and let the service re-load and get the new supergraph
-        time::sleep(Duration::from_millis(600)).await;
-        mock2.assert();
+        // Remove the first mock and register the new supergraph so the poller picks it up
+        mock1.remove();
+        let mock2 = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
+            .create();
+
+        // Wait for the poller to pick up the new supergraph
+        wait_until_mock_matched(&mock2)
+            .await
+            .expect("Expected mock2 to be matched");
+
         router
             .schema_state()
             .normalize_cache
