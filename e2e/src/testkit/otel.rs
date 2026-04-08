@@ -2,6 +2,7 @@ use hive_router_internal::telemetry::traces::spans::attributes::HIVE_KIND;
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Display;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{oneshot, Mutex};
@@ -93,19 +94,28 @@ impl<'a> TraceParent<'a> {
     }
 
     pub fn random_trace_id() -> String {
-        let random: u128 = std::time::SystemTime::now()
+        // combine a monotonic counter with wall clock nanos to guarantee
+        // uniqueness even when multiple calls land in the same nanosecond
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos();
-        format!("{:032x}", random)
+            .as_nanos() as u64;
+        let hi = nanos as u128;
+        let lo = seq as u128;
+        format!("{:016x}{:016x}", hi, lo)
     }
 
     pub fn random_span_id() -> String {
-        let random: u64 = std::time::SystemTime::now()
+        // same counter trick; span ids only need 8 bytes so xor the two halves
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_micros() as u64;
-        format!("{:016x}", random)
+            .as_nanos() as u64;
+        format!("{:016x}", nanos ^ seq.wrapping_add(1))
     }
 }
 
