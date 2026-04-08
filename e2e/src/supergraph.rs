@@ -212,7 +212,7 @@ mod supergraph_e2e_tests {
                   source: hive
                   endpoint: http://{host}/supergraph
                   key: dummy_key
-                  poll_interval: 300ms
+                  poll_interval: 100ms
                 "#,
             ))
             .build()
