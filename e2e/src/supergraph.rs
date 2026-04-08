@@ -6,9 +6,7 @@ mod supergraph_e2e_tests {
     use ntex::time;
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{
-        wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs,
-    };
+    use crate::testkit::{wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn should_clear_internal_caches_when_supergraph_changes() {
@@ -97,10 +95,7 @@ mod supergraph_e2e_tests {
     #[ntex::test]
     async fn should_not_change_supergraph_for_in_flight_requests() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|_request| {
-                std::thread::sleep(Duration::from_millis(500));
-                None
-            })
+            .with_delay(Duration::from_millis(500))
             .build()
             .start()
             .await;

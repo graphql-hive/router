@@ -33,7 +33,7 @@ async fn test_otlp_http_trace_context_propagation() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -147,7 +147,7 @@ async fn test_otlp_http_baggage_propagation() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -239,7 +239,7 @@ async fn test_otlp_http_b3_propagation() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -359,7 +359,7 @@ async fn test_otlp_http_jaeger_propagation() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)

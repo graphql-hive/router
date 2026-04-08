@@ -35,7 +35,7 @@ async fn test_otlp_http_export_with_graphql_request() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -292,7 +292,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
                   protocol: grpc
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -550,14 +550,14 @@ async fn test_otlp_disabled() {
                   enabled: false
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
                 - kind: otlp
                   endpoint: {otlp_http_endpoint}
                   enabled: false
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -613,7 +613,7 @@ async fn test_otlp_http_headers() {
                       custom-header: custom-value
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -677,7 +677,7 @@ async fn test_otlp_grpc_metadata() {
                       custom-header: custom-value
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -739,7 +739,7 @@ async fn test_otlp_cache_hits() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -834,7 +834,7 @@ async fn test_otlp_no_trace_id_collision() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
