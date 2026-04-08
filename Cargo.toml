@@ -10,6 +10,7 @@ members = [
   "bin/dev-cli",
   "bin/router",
   "e2e",
+  "bench/coprocessor",
   "bench/subgraphs",
   "plugin_examples/apollo_sandbox",
   "plugin_examples/apq",

@@ -7,6 +7,8 @@ mod body_limit;
 #[cfg(test)]
 mod conditional_directives;
 #[cfg(test)]
+mod coprocessor;
+#[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
 mod entity_batching;

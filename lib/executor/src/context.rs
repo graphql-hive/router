@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use hive_router_query_planner::planner::plan_nodes::FlattenNodePath;
 
 use crate::{
-    headers::plan::ResponseHeaderAggregator,
+    headers::response::ResponseHeaderAggregator,
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath},
         storage::ResponsesStorage,

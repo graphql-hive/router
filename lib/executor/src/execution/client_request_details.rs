@@ -14,7 +14,7 @@ pub struct OperationDetails<'exec> {
 pub struct ClientRequestDetails<'exec> {
     pub method: &'exec Method,
     pub url: &'exec http::Uri,
-    pub headers: &'exec NtexHeaderMap,
+    pub headers: Arc<NtexHeaderMap>,
     pub operation: OperationDetails<'exec>,
     pub jwt: Arc<JwtRequestDetails>,
 }
@@ -32,30 +32,10 @@ pub enum JwtRequestDetails {
 impl From<&ClientRequestDetails<'_>> for Value {
     fn from(details: &ClientRequestDetails) -> Self {
         // .request.headers
-        let headers_value = client_header_map_to_vrl_value(details.headers);
+        let headers_value = details.headers.to_vrl_value();
 
         // .request.url
-        let url_value = Self::Object(BTreeMap::from([
-            (
-                "host".into(),
-                details.url.host().unwrap_or("unknown").into(),
-            ),
-            ("path".into(), details.url.path().into()),
-            (
-                "port".into(),
-                details
-                    .url
-                    .port_u16()
-                    .unwrap_or_else(|| {
-                        if details.url.scheme() == Some(&http::uri::Scheme::HTTPS) {
-                            443
-                        } else {
-                            80
-                        }
-                    })
-                    .into(),
-            ),
-        ]));
+        let url_value = details.url.to_vrl_value();
 
         // .request.operation
         let operation_value = Self::Object(BTreeMap::from([
@@ -109,17 +89,4 @@ impl From<&ClientRequestDetails<'_>> for Value {
             ("jwt".into(), jwt_value),
         ]))
     }
-}
-
-fn client_header_map_to_vrl_value(headers: &ntex::http::HeaderMap) -> Value {
-    let mut obj = BTreeMap::new();
-    for (header_name, header_value) in headers.iter() {
-        if let Ok(value) = header_value.to_str() {
-            obj.insert(
-                header_name.as_str().into(),
-                Value::Bytes(Bytes::from(value.to_owned())),
-            );
-        }
-    }
-    Value::Object(obj)
 }

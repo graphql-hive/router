@@ -1,4 +1,5 @@
 pub mod authorization;
+pub mod coprocessor;
 pub mod cors;
 pub mod csrf;
 mod env_overrides;
@@ -132,6 +133,10 @@ pub struct HiveRouterConfig {
     /// Configuration for persisted documents extraction and resolution.
     #[serde(default)]
     pub persisted_documents: persisted_documents::PersistedDocumentsConfig,
+
+    /// Configuration for coprocessor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coprocessor: Option<coprocessor::CoprocessorConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

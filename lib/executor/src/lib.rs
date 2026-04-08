@@ -1,4 +1,5 @@
 pub mod context;
+pub mod coprocessor;
 pub mod execution;
 pub mod executors;
 pub mod headers;

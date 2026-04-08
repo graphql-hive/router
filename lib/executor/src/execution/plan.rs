@@ -41,9 +41,9 @@ use crate::{
     },
     executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     headers::{
-        plan::{HeaderRulesPlan, ResponseHeaderAggregator},
+        plan::HeaderRulesPlan,
         request::modify_subgraph_request_headers,
-        response::apply_subgraph_response_headers,
+        response::{apply_subgraph_response_headers, ResponseHeaderAggregator},
     },
     hooks::{
         on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
@@ -284,7 +284,7 @@ pub async fn execute_query_plan<'exec>(
                     client_request: ClientRequestDetails {
                         method: &client_method,
                         url: &client_url,
-                        headers: &client_headers,
+                        headers: client_headers.clone(),
                         operation: OperationDetails {
                             query: &client_operation_query,
                             name: client_operation_name.as_deref(),
@@ -350,6 +350,7 @@ async fn execute_query_plan_with_data<'exec>(
 
     let mut on_end_callbacks = vec![];
 
+    // TODO: coprocessor.on_execution_request
     if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
@@ -422,6 +423,7 @@ async fn execute_query_plan_with_data<'exec>(
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
+    // TODO: coprocessor.on_execution_response
     if !on_end_callbacks.is_empty() {
         let mut end_payload = OnExecuteEndHookPayload {
             data,
@@ -1565,7 +1567,7 @@ mod tests {
             client_request: &ClientRequestDetails {
                 method: &http::Method::POST,
                 url: &"http://example.com".parse().unwrap(),
-                headers: &HeaderMap::new(),
+                headers: HeaderMap::new().into(),
                 operation: OperationDetails {
                     name: None,
                     query: "{ products { upc } }",
@@ -1677,7 +1679,7 @@ mod tests {
             client_request: &ClientRequestDetails {
                 method: &http::Method::POST,
                 url: &"http://example.com".parse().unwrap(),
-                headers: &HeaderMap::new(),
+                headers: HeaderMap::new().into(),
                 operation: OperationDetails {
                     name: None,
                     query: "{ from_a from_b }",

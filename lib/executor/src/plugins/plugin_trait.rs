@@ -1,6 +1,7 @@
 use crate::{
     execution::plan::PlanExecutionOutput,
-    headers::plan::{HeaderAggregationStrategy, ResponseHeaderAggregator},
+    headers::plan::HeaderAggregationStrategy,
+    headers::response::ResponseHeaderAggregator,
     hooks::{
         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
         on_graphql_error::{OnGraphQLErrorHookPayload, OnGraphQLErrorHookResult},
@@ -94,7 +95,7 @@ where
     ///             StatusCode::UNAUTHORIZED,
     ///         );
     ///     }
-    ///  
+    ///
     ///     payload.proceed()
     /// }
     /// ```
@@ -197,7 +198,7 @@ where
     ///             StatusCode::UNAUTHORIZED,
     ///         );
     ///     }
-    ///  
+    ///
     ///     payload.proceed()
     /// }
     /// ```
