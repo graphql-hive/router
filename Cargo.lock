@@ -1429,6 +1429,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_more"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d751e9e49156b02b44f9c1815bcb94b984cdcc4396ecc32521c739452808b134"
+dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "rustc_version",
+ "syn 2.0.116",
+ "unicode-xid",
+]
+
+[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3566,12 +3588,13 @@ dependencies = [
 
 [[package]]
 name = "ntex"
-version = "3.7.1"
+version = "3.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e38a1499f9c9b75ec92c4f5cb700787e6a7146b375dc69f2f949f060b9cfd0db"
+checksum = "f4735978b410d8496a1d89bac416af3277f6d36e9ae56d1e3977b96b81ab8048"
 dependencies = [
  "base64",
  "bitflags 2.11.0",
+ "derive_more",
  "encoding_rs",
  "env_logger",
  "httparse",
@@ -3608,9 +3631,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-bytes"
-version = "1.5.2"
+version = "1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27496696418160466ceb3cb3a29cd23668202de08f328610cde991a36b704af4"
+checksum = "11f03e42e23f0ab33b86f4af78f19c39a0cc253b20c073e5e9b92408ba0e91ff"
 dependencies = [
  "bytes",
  "serde",
@@ -3642,9 +3665,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-error"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8093e08e8ce26f9157efc66027ed72bd23124153fb6afed4ef9c0e72935be167"
+checksum = "4ba4b4124a2b50218182d3420428ccf56ee95c4f28a15efba1be9e97cc271d9a"
 dependencies = [
  "backtrace",
  "foldhash 0.2.0",
@@ -3694,9 +3717,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-io"
-version = "3.9.1"
+version = "3.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "deab250591e7ce585c55c843e5c01df290cb464270f839ec82d176eff773609e"
+checksum = "e6c1d3d9a67a9abcad8981967bb1f3c59ec2c34e442771d16ed33acf663f0361"
 dependencies = [
  "bitflags 2.11.0",
  "log",
@@ -3732,9 +3755,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-net"
-version = "3.9.0"
+version = "3.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10ebb46cdc1665fb9005c162ed0d3df9ebe79f5a5e95a41919fcd3f1c164fdf0"
+checksum = "83c7c631404d704766913028124c60712457b1157923d85156aaf49fbd2551e9"
 dependencies = [
  "bitflags 2.11.0",
  "cfg-if",
