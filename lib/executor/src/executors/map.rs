@@ -521,46 +521,43 @@ impl SubgraphExecutorMap {
                     .traffic_shaping
                     .all
                     .circuit_breaker
-                    .as_ref()
-                    .map(|cb| cb.enabled)
-                    .unwrap_or(false),
-            );
+    fn register_circuit_breaker(&self, subgraph_name: &str) -> Result<(), SubgraphExecutorError> {
+        if self.circuit_breakers_by_subgraph.contains_key(subgraph_name) {
+            return Ok(());
+        }
+
+        let global_cb = self.config.traffic_shaping.all.circuit_breaker.as_ref();
+        let subgraph_cb = self.config.traffic_shaping.subgraphs.get(subgraph_name).and_then(|s| s.circuit_breaker.as_ref());
+
+        let circuit_breaker_enabled = subgraph_cb.map(|c| c.enabled)
+            .or_else(|| global_cb.map(|c| c.enabled))
+            .unwrap_or(false);
 
         if circuit_breaker_enabled {
-            let mut circuit_breaker = CircuitBreakerBuilder::default();
+            let mut builder = CircuitBreakerBuilder::default();
 
-            if let Some(global_config) = self.config.traffic_shaping.all.circuit_breaker.as_ref() {
-                if let Some(et) = global_config.error_threshold {
-                    circuit_breaker = circuit_breaker.error_threshold(et);
-                }
-                if let Some(vt) = global_config.volume_threshold {
-                    circuit_breaker = circuit_breaker.volume_threshold(vt);
-                }
-                if let Some(rt) = global_config.reset_timeout {
-                    circuit_breaker = circuit_breaker.reset_timeout(rt);
-                }
-            }
-            if let Some(subgraph_config) = subgraph_config {
-                if let Some(cb_config) = subgraph_config.circuit_breaker.as_ref() {
-                    if let Some(et) = cb_config.error_threshold {
-                        circuit_breaker = circuit_breaker.error_threshold(et);
-                    }
-                    if let Some(vt) = cb_config.volume_threshold {
-                        circuit_breaker = circuit_breaker.volume_threshold(vt);
-                    }
-                    if let Some(rt) = cb_config.reset_timeout {
-                        circuit_breaker = circuit_breaker.reset_timeout(rt);
-                    }
-                }
+            if let Some(et) = subgraph_cb.and_then(|c| c.error_threshold).or_else(|| global_cb.and_then(|c| c.error_threshold)) {
+                builder = builder.error_threshold(et);
             }
 
-            let circuit_breaker = circuit_breaker.build_async().map_err(|e| {
+            if let Some(vt) = subgraph_cb.and_then(|c| c.volume_threshold).or_else(|| global_cb.and_then(|c| c.volume_threshold)) {
+                builder = builder.volume_threshold(vt);
+            }
+
+            if let Some(rt) = subgraph_cb.and_then(|c| c.reset_timeout).or_else(|| global_cb.and_then(|c| c.reset_timeout)) {
+                builder = builder.reset_timeout(rt);
+            }
+            
+            let circuit_breaker = builder.build_async().map_err(|e| {
                 SubgraphExecutorError::CircuitBreakerCreationError(e, subgraph_name.to_string())
             })?;
 
             self.circuit_breakers_by_subgraph
                 .insert(subgraph_name.to_string(), circuit_breaker);
         }
+
+        Ok(())
+    }
 
         Ok(())
     }
