@@ -80,6 +80,7 @@ pub mod labels {
     pub const GRAPHQL_OPERATION_TYPE: &str = "graphql.operation.type";
     pub const GRAPHQL_OPERATION_NAME: &str = "graphql.operation.name";
     pub const GRAPHQL_RESPONSE_STATUS: &str = "graphql.response.status";
+    pub const COPROCESSOR_STAGE: &str = "coprocessor.stage";
 }
 
 pub mod names {
@@ -111,6 +112,9 @@ pub mod names {
         "hive.router.persisted_documents.storage.failures_total";
     pub const PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL: &str =
         "hive.router.persisted_documents.extract.missing_id_total";
+    pub const COPROCESSOR_REQUESTS_TOTAL: &str = "hive.router.coprocessor.requests_total";
+    pub const COPROCESSOR_DURATION: &str = "hive.router.coprocessor.duration";
+    pub const COPROCESSOR_ERRORS_TOTAL: &str = "hive.router.coprocessor.errors_total";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
@@ -240,6 +244,15 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (names::PLAN_CACHE_SIZE, &[]),
     (names::PERSISTED_DOCUMENTS_STORAGE_FAILURES_TOTAL, &[]),
     (names::PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL, &[]),
+    (
+        names::COPROCESSOR_REQUESTS_TOTAL,
+        &[labels::COPROCESSOR_STAGE],
+    ),
+    (names::COPROCESSOR_DURATION, &[labels::COPROCESSOR_STAGE]),
+    (
+        names::COPROCESSOR_ERRORS_TOTAL,
+        &[labels::COPROCESSOR_STAGE],
+    ),
 ];
 
 pub fn labels_for(metric_name: &str) -> Option<&'static [&'static str]> {

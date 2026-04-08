@@ -16,11 +16,13 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
 use crate::telemetry::metrics::Metrics;
+use crate::telemetry::propagation::HeaderMapInjector;
 use crate::telemetry::traces::build_trace_provider;
 
 pub mod error;
 pub mod metrics;
 pub mod otel;
+pub mod propagation;
 pub mod traces;
 pub mod utils;
 
@@ -103,6 +105,10 @@ impl TelemetryContext {
             let current_context = tracing::Span::current().context();
             propagator.inject_context(&current_context, injector);
         }
+    }
+
+    pub fn inject_context_into_http_headers(&self, headers: &mut http::HeaderMap) {
+        self.inject_context(&mut HeaderMapInjector::from(headers));
     }
 
     pub fn extract_context<E>(&self, extractor: &E) -> otel::opentelemetry::Context

@@ -13,8 +13,9 @@ mod tests {
             ClientRequestDetails, JwtRequestDetails, OperationDetails,
         },
         headers::{
-            compile::compile_headers_plan, plan::ResponseHeaderAggregator,
-            request::modify_subgraph_request_headers, response::apply_subgraph_response_headers,
+            compile::compile_headers_plan,
+            request::modify_subgraph_request_headers,
+            response::{apply_subgraph_response_headers, ResponseHeaderAggregator},
         },
     };
     use hive_router_config::parse_yaml_config;
@@ -90,7 +91,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -124,7 +125,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -171,7 +172,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -209,7 +210,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: Some("MyQuery"),
                 query: "{ __typename }",
@@ -243,7 +244,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -283,7 +284,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -327,7 +328,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -396,7 +397,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -464,7 +465,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -525,7 +526,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -587,7 +588,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -650,7 +651,7 @@ mod tests {
         let client_details = ClientRequestDetails {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            headers: client_headers.into(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",

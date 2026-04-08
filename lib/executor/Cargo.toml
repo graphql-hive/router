@@ -25,6 +25,9 @@ futures = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client"] }
+hyperlocal = "0.9.1"
+brotli = "8.0.2"
+flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] } # Use zlib-rs for performance
 serde = { workspace = true }
 sonic-rs = { workspace = true }
 tracing = { workspace = true }
@@ -57,6 +60,7 @@ sonic-simd = "0.1.2"
 async-stream = "0.3.6"
 futures-util = "0.3.31"
 ulid = "1.2.1"
+uuid = { version = "1.23.0", features = ["v4"] }
 
 [dev-dependencies]
 subgraphs = { path = "../../bench/subgraphs" }
@@ -68,4 +72,8 @@ rustls = { workspace = true }
 
 [[bench]]
 name = "executor_benches"
+harness = false
+
+[[bench]]
+name = "coprocessor_benches"
 harness = false
