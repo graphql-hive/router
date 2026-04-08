@@ -7,12 +7,14 @@ mod timeout_per_subgraph_e2e_tests {
 
     use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
 
+    const SUBGRAPH_DELAY: Duration = Duration::from_millis(300);
+
     #[ntex::test]
     async fn should_apply_static_subgraph_timeout_override() {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/accounts" {
-                    sleep(Duration::from_secs(3));
+                    sleep(SUBGRAPH_DELAY);
                 }
                 None
             })
