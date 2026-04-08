@@ -281,6 +281,8 @@ async fn handle_text_frame(
                     headers.insert(key.clone(), value.clone());
                 }
 
+                let headers = Arc::new(headers);
+
                 // store the merged headers back to init_payload if configured to do so
                 if config.headers.persist {
                     if let Some(ref mut init_payload) = state.borrow_mut().init_payload {
@@ -314,7 +316,7 @@ async fn handle_text_frame(
                             uri: ws_uri,
                             method: &Method::POST,
                             version: http::Version::HTTP_11,
-                            headers: &headers,
+                            headers: headers.as_ref(),
                             path: ws_uri.path(),
                             query_string: ws_uri.query().unwrap_or(""),
                             match_info: ws_path,
@@ -431,7 +433,7 @@ async fn handle_text_frame(
                     Some(inbound_request_fingerprint(
                         &Method::POST,
                         ws_uri.path(),
-                        &headers,
+                        headers.as_ref(),
                         &shared_state.in_flight_requests_header_policy,
                         supergraph.schema_checksum(),
                         normalize_payload.normalized_operation_hash,
@@ -450,7 +452,7 @@ async fn handle_text_frame(
                 let exec = |guard| execute_planned_request(
                     &Method::POST,
                     ws_uri,
-                    &headers,
+                    headers.clone(),
                     payload,
                     &normalize_payload,
                     supergraph,

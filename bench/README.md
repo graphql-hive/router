@@ -17,6 +17,13 @@ cargo build --release -p hive-router
 ./target/release/hive_router bench/supergraph.graphql
 ```
 
+## Coprocessor benchmark server (h2c over UDS)
+
+```
+cargo build -p bench-coprocessor --release
+./target/release/bench_coprocessor
+```
+
 ## Load test
 
 Defaults: 50 vus for 30s
