@@ -110,14 +110,44 @@ mod supergraph_e2e_tests {
         let supergraph1_sdl = subgraphs.supergraph(include_str!("../supergraph.graphql"));
         let mock1 = server
             .mock("GET", "/supergraph")
-            .expect(1)
+            .expect_at_least(1)
             .with_status(200)
             .with_header("content-type", "text/plain")
             .with_header("etag", "1")
             .with_body(supergraph1_sdl)
             .create();
 
-        // Second supergraph
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                  source: hive
+                  endpoint: http://{host}/supergraph
+                  key: dummy_key
+                  poll_interval: 100ms
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        mock1.assert();
+
+        let res = router
+            .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let body_json = res.json_body().await;
+
+        assert!(body_json["data"].is_object());
+        assert!(body_json["errors"].is_null());
+
+        mock1.remove();
+
+        // Second supergraph - only registered after the first request completes so the poller
+        // cannot swap the schema while the first request is in flight
         let supergraph2_sdl = subgraphs.supergraph(
             r#"schema
                   @link(url: "https://specs.apollo.dev/link/v1.0")
@@ -205,34 +235,9 @@ mod supergraph_e2e_tests {
             .with_body(supergraph2_sdl)
             .create();
 
-        let router = TestRouter::builder()
-            .inline_config(format!(
-                r#"
-                supergraph:
-                  source: hive
-                  endpoint: http://{host}/supergraph
-                  key: dummy_key
-                  poll_interval: 100ms
-                "#,
-            ))
-            .build()
-            .start()
-            .await;
-
-        mock1.assert();
-
-        let res = router
-            .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
-            .await;
-
-        assert!(res.status().is_success(), "Expected 200 OK");
-
-        let body_json = res.json_body().await;
-
-        assert!(body_json["data"].is_object());
-        assert!(body_json["errors"].is_null());
-
-        mock2.assert();
+        wait_until_mock_matched(&mock2)
+            .await
+            .expect("Expected mock2 to be matched");
 
         let res_new_supergraph = router
             .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
