@@ -1,10 +1,172 @@
 #[cfg(test)]
 mod circuit_breaker_e2e_tests {
-    use std::time::Duration;
+    use std::{thread::sleep, time::Duration};
 
     use hive_router_internal::telemetry::metrics::catalog::{labels, names};
 
-    use crate::testkit::{otel::OtlpCollector, ClientResponseExt, TestRouter};
+    use crate::testkit::{otel::OtlpCollector, ClientResponseExt, TestRouter, TestSubgraphs};
+
+    #[ntex::test]
+    async fn should_open_circuit_breaker_after_slow_subgraph_timeouts() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                if request.path == "/accounts" {
+                    sleep(Duration::from_millis(700));
+                }
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+          source: file
+          path: supergraph.graphql
+        traffic_shaping:
+          all:
+            request_timeout: 200ms
+            circuit_breaker:
+              enabled: true
+              error_threshold: 0.5
+              volume_threshold: 3
+              reset_timeout: 30s
+        "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=3 {
+            let _ = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+        }
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert_eq!(res.status(), ntex::http::StatusCode::OK);
+        insta::assert_snapshot!(
+            res.json_body_string_pretty().await,
+            @r###"{
+  "data": {
+    "users": null
+  },
+  "errors": [
+    {
+      "message": "Request to subgraph timed out after 200 milliseconds",
+      "extensions": {
+        "code": "SUBGRAPH_REQUEST_TIMEOUT",
+        "serviceName": "accounts"
+      }
+    }
+  ]
+}"###
+        );
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert_eq!(res.status(), ntex::http::StatusCode::OK);
+        insta::assert_snapshot!(
+            res.json_body_string_pretty().await,
+            @r###"{
+  "data": {
+    "users": null
+  },
+  "errors": [
+    {
+      "message": "Rejected by the circuit breaker",
+      "extensions": {
+        "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
+        "serviceName": "accounts"
+      }
+    }
+  ]
+}"###
+        );
+    }
+
+    #[ntex::test]
+    async fn should_not_open_circuit_breaker_when_subgraph_timeout_override_allows_request() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                if request.path == "/accounts" {
+                    sleep(Duration::from_millis(400));
+                }
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+          source: file
+          path: supergraph.graphql
+        traffic_shaping:
+          all:
+            request_timeout: 100ms
+            circuit_breaker:
+              enabled: true
+              error_threshold: 0.5
+              volume_threshold: 3
+              reset_timeout: 30s
+          subgraphs:
+            accounts:
+              request_timeout: 1s
+        "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=4 {
+            let res = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+            assert_eq!(res.status(), ntex::http::StatusCode::OK);
+        }
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert_eq!(res.status(), ntex::http::StatusCode::OK);
+        insta::assert_snapshot!(
+            res.json_body_string_pretty().await,
+            @r###"{
+  "data": {
+    "users": [
+      {
+        "id": "1"
+      },
+      {
+        "id": "2"
+      },
+      {
+        "id": "3"
+      },
+      {
+        "id": "4"
+      },
+      {
+        "id": "5"
+      },
+      {
+        "id": "6"
+      }
+    ]
+  }
+}"###
+        );
+    }
 
     #[ntex::test]
     async fn should_open_circuit_breaker_after_error_threshold() {
@@ -51,8 +213,8 @@ mod circuit_breaker_e2e_tests {
             .await;
 
         insta::assert_snapshot!(
-            &res.json_body_string_pretty().await,
-            @r###"{
+        &res.json_body_string_pretty().await,
+        @r###"{
   "data": {
     "users": null
   },
@@ -66,7 +228,7 @@ mod circuit_breaker_e2e_tests {
     }
   ]
 }"###
-                );
+            );
 
         error_mock.assert_async().await;
 
@@ -398,8 +560,8 @@ mod circuit_breaker_e2e_tests {
             .await;
 
         insta::assert_snapshot!(
-            &res.json_body_string_pretty().await,
-            @r###"{
+        &res.json_body_string_pretty().await,
+        @r###"{
   "data": {
     "users": null
   },
@@ -413,7 +575,7 @@ mod circuit_breaker_e2e_tests {
     }
   ]
 }"###
-                );
+            );
 
         error_mock.assert_async().await;
     }
@@ -528,14 +690,14 @@ mod circuit_breaker_e2e_tests {
             .await;
 
         insta::assert_snapshot!(
-            &res.json_body_string_pretty().await,
-            @r###"{
+        &res.json_body_string_pretty().await,
+        @r###"{
   "data": {
     "users": null
   },
   "errors": [
     {
-      "message": "Request to subgraph timed out after http://192.0.2.1:9999/accounts milliseconds",
+      "message": "Request to subgraph timed out after 500 milliseconds",
       "extensions": {
         "code": "SUBGRAPH_REQUEST_TIMEOUT",
         "serviceName": "accounts"
@@ -543,7 +705,7 @@ mod circuit_breaker_e2e_tests {
     }
   ]
 }"###
-                );
+            );
 
         let res = router
             .send_graphql_request("{ users { id } }", None, None)

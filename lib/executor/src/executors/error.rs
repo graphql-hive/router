@@ -41,7 +41,7 @@ pub enum SubgraphExecutorError {
     TimeoutExpressionResolution(String),
     #[error("Request to subgraph timed out after {0} milliseconds")]
     #[strum(serialize = "SUBGRAPH_REQUEST_TIMEOUT")]
-    RequestTimeout(String, u128),
+    RequestTimeout(u128),
     #[error("Failed to read response body from subgraph \"{0}\": {1}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_READ_FAILURE")]
     ResponseBodyReadFailure(String, String),

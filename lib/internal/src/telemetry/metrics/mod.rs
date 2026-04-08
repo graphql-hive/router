@@ -1,7 +1,7 @@
 pub mod cache_metrics;
-pub mod circuit_breaker_metrics;
 mod capture;
 pub mod catalog;
+pub mod circuit_breaker_metrics;
 pub mod graphql_metrics;
 pub mod http_client_metrics;
 pub mod http_server_metrics;

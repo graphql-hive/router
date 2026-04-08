@@ -505,18 +505,30 @@ impl SubgraphExecutorMap {
     /// Registers a circuit breaker for a specific subgraph.
     /// If the subgraph already has a circuit breaker registered, it will do nothing.
     fn register_circuit_breaker(&self, subgraph_name: &str) -> Result<(), SubgraphExecutorError> {
-        if self.circuit_breakers_by_subgraph.contains_key(subgraph_name) {
+        if self
+            .circuit_breakers_by_subgraph
+            .contains_key(subgraph_name)
+        {
             return Ok(());
         }
 
         let subgraph_config = self.config.traffic_shaping.subgraphs.get(subgraph_name);
 
-        let circuit_breaker_enabled = subgraph_config.and_then(|s| s.circuit_breaker.as_ref().map(|cb| cb.enabled))
-            .unwrap_or(self.config.traffic_shaping.all.circuit_breaker.as_ref().map(|cb| cb.enabled).unwrap_or(false));
+        let circuit_breaker_enabled = subgraph_config
+            .and_then(|s| s.circuit_breaker.as_ref().map(|cb| cb.enabled))
+            .unwrap_or(
+                self.config
+                    .traffic_shaping
+                    .all
+                    .circuit_breaker
+                    .as_ref()
+                    .map(|cb| cb.enabled)
+                    .unwrap_or(false),
+            );
 
         if circuit_breaker_enabled {
             let mut circuit_breaker = CircuitBreakerBuilder::default();
-            
+
             if let Some(global_config) = self.config.traffic_shaping.all.circuit_breaker.as_ref() {
                 if let Some(et) = global_config.error_threshold {
                     circuit_breaker = circuit_breaker.error_threshold(et);
@@ -541,7 +553,7 @@ impl SubgraphExecutorMap {
                     }
                 }
             }
-            
+
             let circuit_breaker = circuit_breaker.build_async().map_err(|e| {
                 SubgraphExecutorError::CircuitBreakerCreationError(e, subgraph_name.to_string())
             })?;

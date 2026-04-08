@@ -107,7 +107,8 @@ pub mod names {
     pub const PLAN_CACHE_REQUESTS_TOTAL: &str = "hive.router.plan_cache.requests_total";
     pub const PLAN_CACHE_DURATION: &str = "hive.router.plan_cache.duration";
     pub const PLAN_CACHE_SIZE: &str = "hive.router.plan_cache.size";
-    pub const CIRCUIT_BREAKER_REJECTED_REQUESTS: &str = "hive.router.circuit_breaker.rejected_requests";
+    pub const CIRCUIT_BREAKER_REJECTED_REQUESTS: &str =
+        "hive.router.circuit_breaker.rejected_requests";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[

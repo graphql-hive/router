@@ -16,9 +16,7 @@ impl CircuitBreakerMetrics {
                 .build()
         });
 
-        Self {
-            rejected_requests,
-        }
+        Self { rejected_requests }
     }
 
     /// Records a rejected request due to circuit breaker being open
