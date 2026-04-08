@@ -266,7 +266,8 @@ fn default_circuit_breaker_config() -> Option<TrafficShapingSubgraphCircuitBreak
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingSubgraphCircuitBreakerConfig {
-    // Enable or disable the circuit breaker for the subgraph.
+    /// Enable or disable the circuit breaker for the subgraph.
+    /// Default: false (circuit breaker is disabled)
     #[serde(default = "default_circuit_breaker_enabled")]
     pub enabled: bool,
     /// Percentage after what the circuit breaker should kick in.
