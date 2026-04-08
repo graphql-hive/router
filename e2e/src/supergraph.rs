@@ -42,6 +42,10 @@ mod supergraph_e2e_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
+        // Now it should have the record
+        assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
+        assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
+
         // Flush the caches
         router
             .schema_state()
@@ -50,10 +54,6 @@ mod supergraph_e2e_tests {
             .await;
         router.schema_state().plan_cache.run_pending_tasks().await;
         invoke_shutdown_hooks(router.shared_state()).await;
-
-        // Now it should have the record
-        assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
-        assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
 
         // Remove the first mock and register the new supergraph so the poller picks it up
         mock1.remove();
