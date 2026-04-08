@@ -5,6 +5,7 @@
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**authorization**](#authorization)|`object`|Default: `{"directives":{"enabled":true,"unauthorized":{"mode":"filter"}}}`<br/>|yes|
+|[**coprocessor**](#coprocessor)|`object`, `null`|Configuration for coprocessor.<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
@@ -276,6 +277,424 @@ unauthorized:
 
 ```yaml
 mode: filter
+
+```
+
+<a name="coprocessor"></a>
+## coprocessor: object,null
+
+Configuration for coprocessor.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**protocol**|`string`|Enum: `"http1"`, `"http2"`, `"h2c"`<br/>|yes|
+|[**stages**](#coprocessorstages)|`object`|Default: `{"execution":{},"graphql":{},"router":{},"subgraph":{}}`<br/>|no|
+|**timeout**|`string`|Default: `"1s"`<br/>|no|
+|**url**|`string`|Coprocessor endpoint URL. Supported forms: http://host[:port][/path], unix:///path/to/socket.sock, unix:///path/to/socket.sock?path=/api/v1<br/>|yes|
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstages"></a>
+### coprocessor\.stages: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**execution**](#coprocessorstagesexecution)|`object`|Default: `{}`<br/>||
+|[**graphql**](#coprocessorstagesgraphql)|`object`|Default: `{}`<br/>||
+|[**router**](#coprocessorstagesrouter)|`object`|Default: `{}`<br/>||
+|[**subgraph**](#coprocessorstagessubgraph)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+execution: {}
+graphql: {}
+router: {}
+subgraph: {}
+
+```
+
+<a name="coprocessorstagesexecution"></a>
+#### coprocessor\.stages\.execution: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**request**](#coprocessorstagesexecutionrequest)|`object`, `null`|||
+|[**response**](#coprocessorstagesexecutionresponse)|`object`, `null`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesexecutionrequest"></a>
+##### coprocessor\.stages\.execution\.request: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||||
+|[**include**](#coprocessorstagesexecutionrequestinclude)|`object`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesexecutionrequestinclude"></a>
+###### coprocessor\.stages\.execution\.request\.include: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Default: `false`<br/>||
+|**context**|`boolean`|Default: `false`<br/>||
+|**headers**|`boolean`|Default: `false`<br/>||
+|**method**|`boolean`|Default: `false`<br/>||
+|**path**|`boolean`|Default: `false`<br/>||
+|**sdl**|`boolean`|Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+sdl: false
+
+```
+
+<a name="coprocessorstagesexecutionresponse"></a>
+##### coprocessor\.stages\.execution\.response: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||||
+|[**include**](#coprocessorstagesexecutionresponseinclude)|`object`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesexecutionresponseinclude"></a>
+###### coprocessor\.stages\.execution\.response\.include: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Default: `false`<br/>||
+|**context**|`boolean`|Default: `false`<br/>||
+|**headers**|`boolean`|Default: `false`<br/>||
+|**sdl**|`boolean`|Default: `false`<br/>||
+|**status\_code**|`boolean`|Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+sdl: false
+status_code: false
+
+```
+
+<a name="coprocessorstagesgraphql"></a>
+#### coprocessor\.stages\.graphql: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**analysis**](#coprocessorstagesgraphqlanalysis)|`object`, `null`|||
+|[**request**](#coprocessorstagesgraphqlrequest)|`object`, `null`|||
+|[**response**](#coprocessorstagesgraphqlresponse)|`object`, `null`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlanalysis"></a>
+##### coprocessor\.stages\.graphql\.analysis: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||||
+|[**include**](#coprocessorstagesgraphqlanalysisinclude)|`object`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlanalysisinclude"></a>
+###### coprocessor\.stages\.graphql\.analysis\.include: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**||Default: `false`<br/>||
+|**context**|`boolean`|Default: `false`<br/>||
+|**headers**|`boolean`|Default: `false`<br/>||
+|**method**|`boolean`|Default: `false`<br/>||
+|**path**|`boolean`|Default: `false`<br/>||
+|**sdl**|`boolean`|Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+sdl: false
+
+```
+
+<a name="coprocessorstagesgraphqlrequest"></a>
+##### coprocessor\.stages\.graphql\.request: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||||
+|[**include**](#coprocessorstagesgraphqlrequestinclude)|`object`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlrequestinclude"></a>
+###### coprocessor\.stages\.graphql\.request\.include: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**||Default: `false`<br/>||
+|**context**|`boolean`|Default: `false`<br/>||
+|**headers**|`boolean`|Default: `false`<br/>||
+|**method**|`boolean`|Default: `false`<br/>||
+|**path**|`boolean`|Default: `false`<br/>||
+|**sdl**|`boolean`|Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+sdl: false
+
+```
+
+<a name="coprocessorstagesgraphqlresponse"></a>
+##### coprocessor\.stages\.graphql\.response: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||||
+|[**include**](#coprocessorstagesgraphqlresponseinclude)|`object`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlresponseinclude"></a>
+###### coprocessor\.stages\.graphql\.response\.include: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Default: `false`<br/>||
+|**context**|`boolean`|Default: `false`<br/>||
+|**headers**|`boolean`|Default: `false`<br/>||
+|**sdl**|`boolean`|Default: `false`<br/>||
+|**status\_code**|`boolean`|Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+sdl: false
+status_code: false
+
+```
+
+<a name="coprocessorstagesrouter"></a>
+#### coprocessor\.stages\.router: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**request**](#coprocessorstagesrouterrequest)|`object`, `null`|||
+|[**response**](#coprocessorstagesrouterresponse)|`object`, `null`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterrequest"></a>
+##### coprocessor\.stages\.router\.request: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||||
+|[**include**](#coprocessorstagesrouterrequestinclude)|`object`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterrequestinclude"></a>
+###### coprocessor\.stages\.router\.request\.include: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Default: `false`<br/>||
+|**context**|`boolean`|Default: `false`<br/>||
+|**headers**|`boolean`|Default: `false`<br/>||
+|**method**|`boolean`|Default: `false`<br/>||
+|**path**|`boolean`|Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+
+```
+
+<a name="coprocessorstagesrouterresponse"></a>
+##### coprocessor\.stages\.router\.response: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||||
+|[**include**](#coprocessorstagesrouterresponseinclude)|`object`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterresponseinclude"></a>
+###### coprocessor\.stages\.router\.response\.include: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Default: `false`<br/>||
+|**context**|`boolean`|Default: `false`<br/>||
+|**headers**|`boolean`|Default: `false`<br/>||
+|**status\_code**|`boolean`|Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+status_code: false
+
+```
+
+<a name="coprocessorstagessubgraph"></a>
+#### coprocessor\.stages\.subgraph: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**request**](#coprocessorstagessubgraphrequest)|`object`, `null`|||
+|[**response**](#coprocessorstagessubgraphresponse)|`object`, `null`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagessubgraphrequest"></a>
+##### coprocessor\.stages\.subgraph\.request: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||||
+|[**include**](#coprocessorstagessubgraphrequestinclude)|`object`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagessubgraphrequestinclude"></a>
+###### coprocessor\.stages\.subgraph\.request\.include: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Default: `false`<br/>||
+|**context**|`boolean`|Default: `false`<br/>||
+|**headers**|`boolean`|Default: `false`<br/>||
+|**method**|`boolean`|Default: `false`<br/>||
+|**sdl**|`boolean`|Default: `false`<br/>||
+|**service\_name**|`boolean`|Default: `false`<br/>||
+|**uri**|`boolean`|Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+sdl: false
+service_name: false
+uri: false
+
+```
+
+<a name="coprocessorstagessubgraphresponse"></a>
+##### coprocessor\.stages\.subgraph\.response: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||||
+|[**include**](#coprocessorstagessubgraphresponseinclude)|`object`|||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagessubgraphresponseinclude"></a>
+###### coprocessor\.stages\.subgraph\.response\.include: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Default: `false`<br/>||
+|**context**|`boolean`|Default: `false`<br/>||
+|**headers**|`boolean`|Default: `false`<br/>||
+|**sdl**|`boolean`|Default: `false`<br/>||
+|**service\_name**|`boolean`|Default: `false`<br/>||
+|**status\_code**|`boolean`|Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+sdl: false
+service_name: false
+status_code: false
 
 ```
 
@@ -769,7 +1188,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -991,7 +1410,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1244,7 +1663,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1466,7 +1885,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
