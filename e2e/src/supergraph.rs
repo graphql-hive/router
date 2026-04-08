@@ -7,7 +7,7 @@ mod supergraph_e2e_tests {
     use sonic_rs::JsonValueTrait;
 
     use crate::testkit::{
-        wait_until_mock_matched, ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs,
+        wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs,
     };
 
     #[ntex::test]
@@ -96,12 +96,14 @@ mod supergraph_e2e_tests {
     /// 6. New request should use the new supergraph and new state, so running the same query should fail now with a validation error.
     #[ntex::test]
     async fn should_not_change_supergraph_for_in_flight_requests() {
-        let _delay_guard = EnvVarsGuard::new()
-            .set("SUBGRAPH_DELAY_MS", "500")
-            .apply()
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|_request| {
+                std::thread::sleep(Duration::from_millis(500));
+                None
+            })
+            .build()
+            .start()
             .await;
-
-        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
