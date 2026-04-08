@@ -56,7 +56,7 @@ mod timeout_per_subgraph_e2e_tests {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/accounts" {
-                    sleep(Duration::from_secs(3));
+                    sleep(SUBGRAPH_DELAY);
                 }
                 None
             })
@@ -127,7 +127,7 @@ mod timeout_per_subgraph_e2e_tests {
                   },
                   "errors": [
                     {
-                      "message": "Request to subgraph timed out after 2000 milliseconds",
+                      "message": "Request to subgraph timed out after 200 milliseconds",
                       "extensions": {
                         "code": "SUBGRAPH_REQUEST_TIMEOUT",
                         "serviceName": "accounts"
