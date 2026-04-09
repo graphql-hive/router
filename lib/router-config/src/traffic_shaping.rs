@@ -279,7 +279,7 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     /// Default: 5
     #[serde(default)]
     pub volume_threshold: Option<usize>,
-    /// he duration after which the circuit breaker will attempt to retry sending requests to the subgraph.
+    /// The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.
     /// Default: 30s
     #[serde(
         default,
