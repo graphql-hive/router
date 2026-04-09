@@ -2969,8 +2969,8 @@ request_timeout: 30s
 #### traffic\_shaping\.all\.circuit\_breaker: object,null
 
 Circuit Breaker configuration for all subgraphs.
-When the circuit breaker is open, requests to the subgraph will be short-cir
-cuited and an error will be returned to the client.
+When the circuit breaker is open, requests to the subgraph will be
+short-circuited and an error will be returned to the client.
 The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
 
 
