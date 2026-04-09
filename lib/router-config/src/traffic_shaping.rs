@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Duration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{primitives::http_header::HttpHeaderName, usage_reporting::Percentage};
+use crate::primitives::{http_header::HttpHeaderName, percentage::Percentage};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
