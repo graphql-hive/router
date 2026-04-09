@@ -1,3 +1,4 @@
+use hive_console_sdk::circuit_breaker::CircuitBreakerError;
 use http::uri::InvalidUri;
 use strum::IntoStaticStr;
 
@@ -38,9 +39,9 @@ pub enum SubgraphExecutorError {
     #[error("Failed to resolve VRL expression for timeout for subgraph. Runtime error: {0}")]
     #[strum(serialize = "SUBGRAPH_TIMEOUT_EXPRESSION_RESOLUTION_FAILURE")]
     TimeoutExpressionResolution(String),
-    #[error("Request to subgraph timed out after {0} milliseconds")]
+    #[error("Request to subgraph timed out")]
     #[strum(serialize = "SUBGRAPH_REQUEST_TIMEOUT")]
-    RequestTimeout(String, u128),
+    RequestTimeout(#[from] tokio::time::error::Elapsed),
     #[error("Failed to read response body from subgraph \"{0}\": {1}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_READ_FAILURE")]
     ResponseBodyReadFailure(String, String),
@@ -53,6 +54,12 @@ pub enum SubgraphExecutorError {
     #[error("Failed to initialize or load native TLS root certificates: {0}")]
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     NativeTlsCertificatesError(std::io::Error),
+    #[error("Unable to create circuit breaker: {0} for subgraph \"{1}\"")]
+    #[strum(serialize = "SUBGRAPH_CIRCUIT_BREAKER_CREATION_FAILURE")]
+    CircuitBreakerCreationError(CircuitBreakerError, String),
+    #[error("Rejected by the circuit breaker")]
+    #[strum(serialize = "SUBGRAPH_CIRCUIT_BREAKER_REJECTED")]
+    CircuitBreakerRejected,
 }
 
 impl SubgraphExecutorError {

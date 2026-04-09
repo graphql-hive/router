@@ -20,7 +20,7 @@
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"request_timeout":"1m"}}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"circuit_breaker":null,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"request_timeout":"1m"}}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -190,6 +190,7 @@ telemetry:
       trace_context: true
 traffic_shaping:
   all:
+    circuit_breaker: null
     dedupe_enabled: true
     pool_idle_timeout: 50s
     request_timeout: 30s
@@ -2915,7 +2916,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
+|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"circuit_breaker":null,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"dedupe":{"enabled":false,"headers":"all"},"request_timeout":"1m"}`<br/>||
 |[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
@@ -2925,6 +2926,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 
 ```yaml
 all:
+  circuit_breaker: null
   dedupe_enabled: true
   pool_idle_timeout: 50s
   request_timeout: 30s
@@ -2947,6 +2949,7 @@ The default configuration that will be applied to all subgraphs, unless overridd
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**circuit\_breaker**](#traffic_shapingallcircuit_breaker)|`object`, `null`|Circuit Breaker configuration for all subgraphs.<br/>||
 |**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
 |**pool\_idle\_timeout**|`string`|Timeout for idle sockets being kept-alive.<br/>Default: `"50s"`<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>Default: `"30s"`<br/>||
@@ -2955,12 +2958,32 @@ The default configuration that will be applied to all subgraphs, unless overridd
 **Example**
 
 ```yaml
+circuit_breaker: null
 dedupe_enabled: true
 pool_idle_timeout: 50s
 request_timeout: 30s
 
 ```
 
+<a name="traffic_shapingallcircuit_breaker"></a>
+#### traffic\_shaping\.all\.circuit\_breaker: object,null
+
+Circuit Breaker configuration for all subgraphs.
+When the circuit breaker is open, requests to the subgraph will be
+short-circuited and an error will be returned to the client.
+The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/>Default: `false`<br/>||
+|**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
+|**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
+|**volume\_threshold**|`integer`, `null`|Count of requests before starting evaluating.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+
+**Additional Properties:** not allowed  
 <a name="traffic_shapingrouter"></a>
 ### traffic\_shaping\.router: object
 
@@ -3023,9 +3046,28 @@ Optional per-subgraph configurations that will override the default configuratio
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**circuit\_breaker**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breaker)|`object`, `null`|Circuit Breaker configuration for the subgraph.<br/>||
 |**dedupe\_enabled**|`boolean`, `null`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>||
 |**pool\_idle\_timeout**|`string`, `null`|Timeout for idle sockets being kept-alive.<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
+
+**Additional Properties:** not allowed  
+<a name="traffic_shapingsubgraphsadditionalpropertiescircuit_breaker"></a>
+##### traffic\_shaping\.subgraphs\.additionalProperties\.circuit\_breaker: object,null
+
+Circuit Breaker configuration for the subgraph.
+When the circuit breaker is open, requests to the subgraph will be short-circuited and an error will be returned to the client.
+The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/>Default: `false`<br/>||
+|**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
+|**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
+|**volume\_threshold**|`integer`, `null`|Count of requests before starting evaluating.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Additional Properties:** not allowed  
 
