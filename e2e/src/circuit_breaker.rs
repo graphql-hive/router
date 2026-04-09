@@ -31,7 +31,7 @@ mod circuit_breaker_e2e_tests {
             request_timeout: 200ms
             circuit_breaker:
               enabled: true
-              error_threshold: 0.5
+              error_threshold: 50%
               volume_threshold: 3
               reset_timeout: 30s
         "#,
@@ -116,7 +116,7 @@ mod circuit_breaker_e2e_tests {
             request_timeout: 100ms
             circuit_breaker:
               enabled: true
-              error_threshold: 0.5
+              error_threshold: 50%
               volume_threshold: 3
               reset_timeout: 30s
           subgraphs:
@@ -190,7 +190,7 @@ mod circuit_breaker_e2e_tests {
                     all:
                         circuit_breaker:
                             enabled: true
-                            error_threshold: 0.5
+                            error_threshold: 50%
                             volume_threshold: 3
                             reset_timeout: 30s
                 override_subgraph_urls:
@@ -279,7 +279,7 @@ mod circuit_breaker_e2e_tests {
                     all:
                         circuit_breaker:
                             enabled: true
-                            error_threshold: 0.5
+                            error_threshold: 50%
                             volume_threshold: 3
                             reset_timeout: 2s
                 override_subgraph_urls:
@@ -387,7 +387,7 @@ mod circuit_breaker_e2e_tests {
                         accounts:
                             circuit_breaker:
                                 enabled: true
-                                error_threshold: 0.5
+                                error_threshold: 50%
                                 volume_threshold: 2
                                 reset_timeout: 30s
                 override_subgraph_urls:
@@ -473,7 +473,7 @@ mod circuit_breaker_e2e_tests {
                     all:
                         circuit_breaker:
                             enabled: true
-                            error_threshold: 0.9
+                            error_threshold: 90%
                             volume_threshold: 10
                             reset_timeout: 30s
                 override_subgraph_urls:
@@ -602,7 +602,7 @@ mod circuit_breaker_e2e_tests {
                     all:
                         circuit_breaker:
                             enabled: true
-                            error_threshold: 0.5
+                            error_threshold: 50%
                             volume_threshold: 3
                             reset_timeout: 30s
                     subgraphs:
@@ -667,7 +667,7 @@ mod circuit_breaker_e2e_tests {
                         request_timeout: 500ms
                         circuit_breaker:
                             enabled: true
-                            error_threshold: 0.5
+                            error_threshold: 50%
                             volume_threshold: 3
                             reset_timeout: 30s
                 override_subgraph_urls:
@@ -758,7 +758,7 @@ mod circuit_breaker_e2e_tests {
                         request_timeout: 500ms
                         circuit_breaker:
                             enabled: true
-                            error_threshold: 0.5
+                            error_threshold: 50%
                             volume_threshold: 3
                             reset_timeout: 30s
                 override_subgraph_urls:

@@ -11,12 +11,12 @@ traffic_shaping:
     accounts:
       circuit_breaker:
         enabled: true
-        error_threshold: 0.6
+        error_threshold: 60%
         volume_threshold: 3
         reset_timeout: 10s
     products:
       circuit_breaker:
         enabled: true
-        error_threshold: 0.7
+        error_threshold: 70%
         volume_threshold: 4
         reset_timeout: 15s

@@ -6,7 +6,7 @@ use std::{
 
 use dashmap::DashMap;
 use futures::TryFutureExt;
-use hive_console_sdk::circuit_breaker::CircuitBreakerBuilder;
+use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerError};
 use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
     HiveRouterConfig,
@@ -532,6 +532,13 @@ impl SubgraphExecutorMap {
                 .and_then(|c| c.error_threshold)
                 .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.error_threshold))
             {
+                let error_threshold = error_threshold.as_f64() as f32;
+                if !error_threshold.is_finite() {
+                    return Err(SubgraphExecutorError::CircuitBreakerCreationError(
+                        CircuitBreakerError::InvalidErrorThreshold(error_threshold),
+                        subgraph_name.to_string(),
+                    ));
+                }
                 builder = builder.error_threshold(error_threshold);
             }
 

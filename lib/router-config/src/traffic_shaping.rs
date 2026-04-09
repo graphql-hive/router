@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Duration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::http_header::HttpHeaderName;
+use crate::{primitives::http_header::HttpHeaderName, usage_reporting::Percentage};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
@@ -271,14 +271,15 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     #[serde(default = "default_circuit_breaker_enabled")]
     pub enabled: bool,
     /// Percentage after what the circuit breaker should kick in.
-    /// Default: .5
+    /// Default: 50%
     #[serde(default)]
-    pub error_threshold: Option<f32>,
+    #[schemars(with = "String")]
+    pub error_threshold: Option<Percentage>,
     /// Count of requests before starting evaluating.
     /// Default: 5
     #[serde(default)]
     pub volume_threshold: Option<usize>,
-    /// After what time the circuit breaker is attempting to retry sending requests in a certain duration.
+    /// he duration after which the circuit breaker will attempt to retry sending requests to the subgraph.
     /// Default: 30s
     #[serde(
         default,
