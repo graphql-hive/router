@@ -125,7 +125,7 @@ mod timeout_per_subgraph_e2e_tests {
                   },
                   "errors": [
                     {
-                      "message": "Request to subgraph timed out after 2000 milliseconds",
+                      "message": "Request to subgraph timed out",
                       "extensions": {
                         "code": "SUBGRAPH_REQUEST_TIMEOUT",
                         "serviceName": "accounts"

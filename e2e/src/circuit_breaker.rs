@@ -58,7 +58,7 @@ mod circuit_breaker_e2e_tests {
   },
   "errors": [
     {
-      "message": "Request to subgraph timed out after 200 milliseconds",
+      "message": "Request to subgraph timed out",
       "extensions": {
         "code": "SUBGRAPH_REQUEST_TIMEOUT",
         "serviceName": "accounts"
@@ -697,7 +697,7 @@ mod circuit_breaker_e2e_tests {
   },
   "errors": [
     {
-      "message": "Request to subgraph timed out after 500 milliseconds",
+      "message": "Request to subgraph timed out",
       "extensions": {
         "code": "SUBGRAPH_REQUEST_TIMEOUT",
         "serviceName": "accounts"
