@@ -2979,8 +2979,8 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/>Default: `false`<br/>||
-|**error\_threshold**|`number`, `null`|Percentage after what the circuit breaker should kick in.<br/>Default: .5<br/>Format: `"float"`<br/>||
-|**reset\_timeout**|`string`|After what time the circuit breaker is attempting to retry sending requests in a certain duration.<br/>Default: 30s<br/>||
+|**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
+|**reset\_timeout**|`string`|he duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Count of requests before starting evaluating.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Additional Properties:** not allowed  
@@ -3065,8 +3065,8 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/>Default: `false`<br/>||
-|**error\_threshold**|`number`, `null`|Percentage after what the circuit breaker should kick in.<br/>Default: .5<br/>Format: `"float"`<br/>||
-|**reset\_timeout**|`string`|After what time the circuit breaker is attempting to retry sending requests in a certain duration.<br/>Default: 30s<br/>||
+|**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
+|**reset\_timeout**|`string`|he duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Count of requests before starting evaluating.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Additional Properties:** not allowed  
