@@ -2980,7 +2980,7 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/>Default: `false`<br/>||
 |**error\_threshold**|`number`, `null`|Percentage after what the circuit breaker should kick in.<br/>Default: .5<br/>Format: `"float"`<br/>||
-|**reset\_timeout**|`string`|After what time the circuit breaker is attempting to retry sending requests in milliseconds.<br/>Default: 30s<br/>||
+|**reset\_timeout**|`string`|After what duration the circuit breaker attempts to retry sending requests.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Count of requests before starting evaluating.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Additional Properties:** not allowed  
