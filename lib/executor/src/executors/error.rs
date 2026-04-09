@@ -40,9 +40,7 @@ pub enum SubgraphExecutorError {
     TimeoutExpressionResolution(String),
     #[error("Request to subgraph timed out")]
     #[strum(serialize = "SUBGRAPH_REQUEST_TIMEOUT")]
-    RequestTimeout {
-        timeout_duration: std::time::Duration,
-    },
+    RequestTimeout(#[from] tokio::time::error::Elapsed),
     #[error("Failed to read response body from subgraph \"{0}\": {1}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_READ_FAILURE")]
     ResponseBodyReadFailure(String, String),
