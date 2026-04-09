@@ -136,8 +136,8 @@ pub struct TrafficShapingExecutorGlobalConfig {
     pub request_timeout: DurationOrExpression,
 
     /// Circuit Breaker configuration for all subgraphs.
-    /// When the circuit breaker is open, requests to the subgraph will be short-cir
-    /// cuited and an error will be returned to the client.
+    /// When the circuit breaker is open, requests to the subgraph will be
+    /// short-circuited and an error will be returned to the client.
     /// The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
     pub circuit_breaker: Option<TrafficShapingSubgraphCircuitBreakerConfig>,
 }
