@@ -55,6 +55,7 @@ pub enum SubgraphExecutorError {
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     NativeTlsCertificatesError(std::io::Error),
     #[error("Unable to create circuit breaker: {0} for subgraph \"{1}\"")]
+    #[strum(serialize = "SUBGRAPH_CIRCUIT_BREAKER_CREATION_FAILURE")]
     CircuitBreakerCreationError(CircuitBreakerError, String),
     #[error("Rejected by the circuit breaker")]
     #[strum(serialize = "SUBGRAPH_CIRCUIT_BREAKER_REJECTED")]
