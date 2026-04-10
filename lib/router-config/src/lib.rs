@@ -1,6 +1,7 @@
 pub mod authorization;
 pub mod cors;
 pub mod csrf;
+pub mod demand_control;
 mod env_overrides;
 pub mod headers;
 pub mod http_server;
@@ -17,7 +18,6 @@ pub mod supergraph;
 pub mod telemetry;
 pub mod traffic_shaping;
 pub mod usage_reporting;
-pub mod demand_control;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;

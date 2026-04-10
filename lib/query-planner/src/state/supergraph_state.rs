@@ -9,10 +9,14 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::{
-    federation_spec::directives::{
-        AuthenticatedDirective, FederationDirective, InaccessibleDirective, JoinEnumValueDirective,
-        JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
-        JoinUnionMemberDirective, RequiresScopesDirective,
+    federation_spec::{
+        demand_control::{CostDirective, ListSizeDirective},
+        directives::{
+            AuthenticatedDirective, FederationDirective, InaccessibleDirective,
+            JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective,
+            JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective,
+            RequiresScopesDirective,
+        },
     },
     graph::edge::{OverrideLabel, Percentage},
 };
@@ -137,6 +141,24 @@ impl LinkedSpecifications {
         } else {
             Default::default()
         }
+    }
+
+    fn extract_cost_directive(
+        &self,
+        directives: &[Directive<'static, String>],
+    ) -> Option<CostDirective> {
+        SupergraphState::extract_directives::<CostDirective>(directives)
+            .into_iter()
+            .next()
+    }
+
+    fn extract_list_size_directive(
+        &self,
+        directives: &[Directive<'static, String>],
+    ) -> Option<ListSizeDirective> {
+        SupergraphState::extract_directives::<ListSizeDirective>(directives)
+            .into_iter()
+            .next()
     }
 }
 
@@ -415,6 +437,7 @@ impl SupergraphState {
             authenticated: linked_specs.extract_authenticated_directives(&scalar_type.directives),
             requires_scopes: linked_specs
                 .extract_requires_scopes_directives(&scalar_type.directives),
+            cost: linked_specs.extract_cost_directive(&scalar_type.directives),
         }
     }
 
@@ -450,6 +473,7 @@ impl SupergraphState {
                     ),
                 })
                 .collect(),
+            cost: linked_specs.extract_cost_directive(&enum_type.directives),
         }
     }
 
@@ -477,6 +501,18 @@ impl SupergraphState {
                             &field.directives,
                         )
                         .is_empty(),
+                        cost: linked_specs.extract_cost_directive(&field.directives),
+                        list_size: linked_specs.extract_list_size_directive(&field.directives),
+                        cost_by_arguments: field
+                            .arguments
+                            .iter()
+                            .filter_map(|arg| {
+                                let cost_directive =
+                                    linked_specs.extract_cost_directive(&arg.directives);
+
+                                cost_directive.map(|cost| (arg.name.to_string(), cost))
+                            })
+                            .collect(),
                     },
                 )
             })
@@ -504,6 +540,11 @@ impl SupergraphState {
                             &field.directives,
                         )
                         .is_empty(),
+                        cost: Self::extract_directives::<CostDirective>(&field.directives)
+                            .into_iter()
+                            .next(),
+                        list_size: None,
+                        cost_by_arguments: Default::default(),
                     },
                 )
             })
@@ -571,6 +612,7 @@ impl SupergraphState {
             authenticated: linked_specs.extract_authenticated_directives(&object_type.directives),
             requires_scopes: linked_specs
                 .extract_requires_scopes_directives(&object_type.directives),
+            cost: linked_specs.extract_cost_directive(&object_type.directives),
         }
     }
 
@@ -651,6 +693,7 @@ pub struct SupergraphObjectType {
     pub used_in_subgraphs: HashSet<String>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
+    pub cost: Option<CostDirective>,
 }
 
 impl SupergraphObjectType {
@@ -734,6 +777,7 @@ pub struct SupergraphScalarType {
     pub join_type: Vec<JoinTypeDirective>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
+    pub cost: Option<CostDirective>,
 }
 
 #[derive(Debug)]
@@ -743,6 +787,7 @@ pub struct SupergraphEnumType {
     pub join_type: Vec<JoinTypeDirective>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
+    pub cost: Option<CostDirective>,
 }
 
 impl SupergraphEnumType {
@@ -890,6 +935,9 @@ pub struct SupergraphField {
     pub join_field: Vec<JoinFieldDirective>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
+    pub cost: Option<CostDirective>,
+    pub list_size: Option<ListSizeDirective>,
+    pub cost_by_arguments: HashMap<String, CostDirective>,
 }
 
 impl SupergraphField {
