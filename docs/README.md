@@ -510,9 +510,9 @@ A valid HTTP header name, according to RFC 7230.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Setting this `true` to measure operation costs, or enforce the cost limits for the operation<br/>|yes|
-|**include\_extension\_metadata**|`boolean`, `null`||no|
-|**list\_size**|`integer`, `null`|Format: `"uint"`<br/>Minimum: `0`<br/>|no|
-|**max\_cost**|`integer`, `null`|Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
+|**include\_extension\_metadata**|`boolean`, `null`|Whether to include the calculated cost in the response extensions.<br/>|no|
+|**list\_size**|`integer`, `null`|The assumed maximum size of a list for fields that return lists.<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|no|
+|**max\_cost**|`integer`, `null`|If you want to enforce the cost limit, set the maximum allowed cost.<br/>If the cost of an operation exceeds this limit, the router will reject the request<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
 |[**subgraph**](#demand_controlsubgraph)|`object`, `null`|Subgraph-level demand control configuration.<br/>|yes|
 
 **Additional Properties:** not allowed  
@@ -544,8 +544,8 @@ When a subgraph-specific cost limit is exceeded,
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**list\_size**|`integer`, `null`|Format: `"uint"`<br/>Minimum: `0`<br/>||
-|**max\_cost**|`integer`, `null`|Format: `"uint64"`<br/>Minimum: `0`<br/>||
+|**list\_size**|`integer`, `null`|The assumed maximum size of a list for fields that return lists.<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**max\_cost**|`integer`, `null`|If you want to enforce the cost limit, set the maximum allowed cost.<br/>If the cost of an operation exceeds this limit, the router will reject the request<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>||
 
 <a name="demand_controlsubgraphsubgraphs"></a>
 #### demand\_control\.subgraph\.subgraphs: object
@@ -563,8 +563,8 @@ When a subgraph-specific cost limit is exceeded,
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**list\_size**|`integer`, `null`|Format: `"uint"`<br/>Minimum: `0`<br/>||
-|**max\_cost**|`integer`, `null`|Format: `"uint64"`<br/>Minimum: `0`<br/>||
+|**list\_size**|`integer`, `null`|The assumed maximum size of a list for fields that return lists.<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**max\_cost**|`integer`, `null`|If you want to enforce the cost limit, set the maximum allowed cost.<br/>If the cost of an operation exceeds this limit, the router will reject the request<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>||
 
 <a name="headers"></a>
 ## headers: object
