@@ -17,6 +17,7 @@ pub mod supergraph;
 pub mod telemetry;
 pub mod traffic_shaping;
 pub mod usage_reporting;
+pub mod demand_control;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
@@ -113,6 +114,9 @@ pub struct HiveRouterConfig {
 
     #[serde(default)]
     pub telemetry: telemetry::TelemetryConfig,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demand_control: Option<demand_control::DemandControlConfig>,
 
     /// Configuration for custom plugins
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
