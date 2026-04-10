@@ -16,6 +16,7 @@ pub(crate) mod definitions;
 pub(crate) mod directives;
 
 pub mod authorization;
+pub mod demand_control;
 pub(crate) mod directive_trait;
 pub(crate) mod inacessible;
 pub(crate) mod join_directive;

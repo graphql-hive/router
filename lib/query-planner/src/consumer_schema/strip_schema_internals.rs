@@ -7,6 +7,7 @@ use crate::{
             CorePurposesEnum, JoinDirectiveArgumentsScalar, JoinFieldSetScalar, JoinGraphEnum,
             LinkImportScalar, LinkPurposeEnum, RequiresScopesScopeScalar,
         },
+        demand_control::{CostDirective, ListSizeDirective},
         directives::{
             AuthenticatedDirective, CoreDirective, InaccessibleDirective, JoinEnumValueDirective,
             JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
@@ -21,7 +22,7 @@ use crate::{
 // directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ENUM | ENUM_VALUE | SCALAR | INPUT_OBJECT | INPUT_FIELD_DEFINITION | ARGUMENT_DEFINITION
 pub(crate) struct StripSchemaInternals;
 
-static DIRECTIVES_TO_STRIP: [&str; 14] = [
+static DIRECTIVES_TO_STRIP: [&str; 16] = [
     JoinTypeDirective::NAME,
     JoinEnumValueDirective::NAME,
     JoinFieldDirective::NAME,
@@ -36,6 +37,8 @@ static DIRECTIVES_TO_STRIP: [&str; 14] = [
     CoreDirective::NAME,
     AuthenticatedDirective::NAME,
     RequiresScopesDirective::NAME,
+    CostDirective::NAME,
+    ListSizeDirective::NAME,
 ];
 
 static DEFINITIONS_TO_STRIP: [&str; 7] = [
