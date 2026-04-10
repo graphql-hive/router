@@ -7,6 +7,7 @@
 |[**authorization**](#authorization)|`object`|Default: `{"directives":{"enabled":true,"unauthorized":{"mode":"filter"}}}`<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
+|[**demand\_control**](#demand_control)|`object`, `null`||yes|
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
@@ -501,6 +502,70 @@ A valid HTTP header name, according to RFC 7230.
 
 **Item Type:** `string`  
 **Item Pattern:** `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`  
+<a name="demand_control"></a>
+## demand\_control: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Setting this `true` to measure operation costs, or enforce the cost limits for the operation<br/>|yes|
+|**include\_extension\_metadata**|`boolean`, `null`||no|
+|**list\_size**|`integer`, `null`|Format: `"uint"`<br/>Minimum: `0`<br/>|no|
+|**max\_cost**|`integer`, `null`|Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
+|[**subgraph**](#demand_controlsubgraph)|`object`, `null`|Subgraph-level demand control configuration.<br/>|yes|
+
+**Additional Properties:** not allowed  
+<a name="demand_controlsubgraph"></a>
+### demand\_control\.subgraph: object,null
+
+Subgraph-level demand control configuration.
+In addition to the existing global cost limit for the whole supergraph.
+This helps you to protect individual subgraphs from expensive operations,
+and to get more fine-grained control over the costs of operations.
+
+When a subgraph-specific cost limit is exceeded,
+- The router will continue running the rest of the query plan, including other subgraphs within the limits
+- Skips calls to the specific subgraph that exceeded the cost limit, and returns an error for that subgraph
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**all**](#demand_controlsubgraphall)|`object`, `null`||no|
+|[**subgraphs**](#demand_controlsubgraphsubgraphs)|`object`||yes|
+
+**Additional Properties:** not allowed  
+<a name="demand_controlsubgraphall"></a>
+#### demand\_control\.subgraph\.all: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**list\_size**|`integer`, `null`|Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**max\_cost**|`integer`, `null`|Format: `"uint64"`<br/>Minimum: `0`<br/>||
+
+<a name="demand_controlsubgraphsubgraphs"></a>
+#### demand\_control\.subgraph\.subgraphs: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**Additional Properties**](#demand_controlsubgraphsubgraphsadditionalproperties)|`object`|||
+
+<a name="demand_controlsubgraphsubgraphsadditionalproperties"></a>
+##### demand\_control\.subgraph\.subgraphs\.additionalProperties: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**list\_size**|`integer`, `null`|Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**max\_cost**|`integer`, `null`|Format: `"uint64"`<br/>Minimum: `0`<br/>||
+
 <a name="headers"></a>
 ## headers: object
 
