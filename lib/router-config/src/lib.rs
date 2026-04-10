@@ -1,6 +1,7 @@
 pub mod authorization;
 pub mod cors;
 pub mod csrf;
+pub mod demand_control;
 mod env_overrides;
 pub mod headers;
 pub mod http_server;
@@ -113,6 +114,9 @@ pub struct HiveRouterConfig {
 
     #[serde(default)]
     pub telemetry: telemetry::TelemetryConfig,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demand_control: Option<demand_control::DemandControlConfig>,
 
     /// Configuration for custom plugins
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
