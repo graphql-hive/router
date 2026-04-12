@@ -38,9 +38,9 @@ pub enum SubgraphExecutorError {
     #[error("Failed to resolve VRL expression for timeout for subgraph. Runtime error: {0}")]
     #[strum(serialize = "SUBGRAPH_TIMEOUT_EXPRESSION_RESOLUTION_FAILURE")]
     TimeoutExpressionResolution(String),
-    #[error("Request to subgraph timed out after {0} milliseconds")]
+    #[error("Request to subgraph timed out")]
     #[strum(serialize = "SUBGRAPH_REQUEST_TIMEOUT")]
-    RequestTimeout(String, u128),
+    RequestTimeout(#[from] tokio::time::error::Elapsed),
     #[error("Failed to read response body from subgraph \"{0}\": {1}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_READ_FAILURE")]
     ResponseBodyReadFailure(String, String),

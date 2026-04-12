@@ -223,14 +223,7 @@ async fn send_request<'a>(
         let res_fut = http_client.request(req);
 
         let res = if let Some(timeout_duration) = timeout {
-            tokio::time::timeout(timeout_duration, res_fut)
-                .await
-                .map_err(|_| {
-                    SubgraphExecutorError::RequestTimeout(
-                        endpoint.to_string(),
-                        timeout_duration.as_millis(),
-                    )
-                })?
+            tokio::time::timeout(timeout_duration, res_fut).await?
         } else {
             res_fut.await
         }?;
