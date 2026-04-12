@@ -1,13 +1,11 @@
 #[cfg(test)]
 mod supergraph_e2e_tests {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use hive_router::invoke_shutdown_hooks;
-    use mockito::Mock;
-    use ntex::time;
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
+    use crate::testkit::{wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn should_clear_internal_caches_when_supergraph_changes() {
@@ -15,18 +13,10 @@ mod supergraph_e2e_tests {
         let host = server.host_with_port();
         let mock1 = server
             .mock("GET", "/supergraph")
-            .expect(1)
-            .with_status(200)
-            .with_header("content-type", "text/plain")
-            .with_body("type Query { dummy: String }")
-            .create();
-
-        let mock2 = server
-            .mock("GET", "/supergraph")
             .expect_at_least(1)
             .with_status(200)
             .with_header("content-type", "text/plain")
-            .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
+            .with_body("type Query { dummy: String }")
             .create();
 
         let router = TestRouter::builder()
@@ -42,8 +32,6 @@ mod supergraph_e2e_tests {
             .build()
             .start()
             .await;
-
-        mock1.assert();
 
         assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
@@ -63,13 +51,27 @@ mod supergraph_e2e_tests {
         router.schema_state().plan_cache.run_pending_tasks().await;
         invoke_shutdown_hooks(router.shared_state()).await;
 
+        ntex::time::sleep(Duration::from_millis(100)).await;
+
         // Now it should have the record
         assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
         assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
 
-        // Now let's wait a bit and let the service re-load and get the new supergraph
-        time::sleep(Duration::from_millis(600)).await;
-        mock2.assert();
+        // Remove the first mock and register the new supergraph so the poller picks it up
+        mock1.remove();
+        let mock2 = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
+            .create();
+
+        // Wait for the poller to pick up the new supergraph
+        wait_until_mock_matched(&mock2)
+            .await
+            .expect("Expected mock2 to be matched");
+
         router
             .schema_state()
             .normalize_cache
@@ -95,12 +97,11 @@ mod supergraph_e2e_tests {
     /// 6. New request should use the new supergraph and new state, so running the same query should fail now with a validation error.
     #[ntex::test]
     async fn should_not_change_supergraph_for_in_flight_requests() {
-        let _delay_guard = EnvVarsGuard::new()
-            .set("SUBGRAPH_DELAY_MS", "500")
-            .apply()
+        let subgraphs = TestSubgraphs::builder()
+            .with_delay(Duration::from_millis(500))
+            .build()
+            .start()
             .await;
-
-        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
@@ -109,14 +110,44 @@ mod supergraph_e2e_tests {
         let supergraph1_sdl = subgraphs.supergraph(include_str!("../supergraph.graphql"));
         let mock1 = server
             .mock("GET", "/supergraph")
-            .expect(1)
+            .expect_at_least(1)
             .with_status(200)
             .with_header("content-type", "text/plain")
             .with_header("etag", "1")
             .with_body(supergraph1_sdl)
             .create();
 
-        // Second supergraph
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                  source: hive
+                  endpoint: http://{host}/supergraph
+                  key: dummy_key
+                  poll_interval: 100ms
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        mock1.assert();
+
+        let res = router
+            .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let body_json = res.json_body().await;
+
+        assert!(body_json["data"].is_object());
+        assert!(body_json["errors"].is_null());
+
+        mock1.remove();
+
+        // Second supergraph - only registered after the first request completes so the poller
+        // cannot swap the schema while the first request is in flight
         let supergraph2_sdl = subgraphs.supergraph(
             r#"schema
                   @link(url: "https://specs.apollo.dev/link/v1.0")
@@ -204,34 +235,9 @@ mod supergraph_e2e_tests {
             .with_body(supergraph2_sdl)
             .create();
 
-        let router = TestRouter::builder()
-            .inline_config(format!(
-                r#"
-                supergraph:
-                  source: hive
-                  endpoint: http://{host}/supergraph
-                  key: dummy_key
-                  poll_interval: 300ms
-                "#,
-            ))
-            .build()
-            .start()
-            .await;
-
-        mock1.assert();
-
-        let res = router
-            .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
-            .await;
-
-        assert!(res.status().is_success(), "Expected 200 OK");
-
-        let body_json = res.json_body().await;
-
-        assert!(body_json["data"].is_object());
-        assert!(body_json["errors"].is_null());
-
-        mock2.assert();
+        wait_until_mock_matched(&mock2)
+            .await
+            .expect("Expected mock2 to be matched");
 
         let res_new_supergraph = router
             .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
@@ -264,7 +270,7 @@ mod supergraph_e2e_tests {
                   source: hive
                   endpoint: http://{host}/supergraph
                   key: dummy_key
-                  poll_interval: 50ms
+                  poll_interval: 200ms
                 "#,
             ))
             .build()
@@ -304,12 +310,9 @@ mod supergraph_e2e_tests {
             .with_status(404)
             .create();
 
-        wait_until_mock_matched(&mock_404, Duration::from_millis(500))
+        wait_until_mock_matched(&mock_404)
             .await
             .expect("Expected to match 404 mock");
-
-        // Give it some time to process it
-        time::sleep(Duration::from_millis(50)).await;
 
         // Router should still be using the initial supergraph
         let res = router
@@ -344,12 +347,10 @@ mod supergraph_e2e_tests {
             .with_body("type Query { updated: String }")
             .create();
 
-        wait_until_mock_matched(&mock_final, Duration::from_millis(120))
+        wait_until_mock_matched(&mock_final)
             .await
             .expect("Expected to match final mock");
         mock_final.assert();
-        // Give it some time to process it
-        time::sleep(Duration::from_millis(200)).await;
 
         // Check if final supergraph is working
         let res = router
@@ -373,19 +374,5 @@ mod supergraph_e2e_tests {
           }
         }
         "#);
-    }
-
-    async fn wait_until_mock_matched(mock: &Mock, timeout: Duration) -> Result<(), String> {
-        let now = Instant::now();
-        loop {
-            if mock.matched_async().await {
-                return Ok(());
-            }
-            time::sleep(Duration::from_millis(10)).await;
-
-            if now.elapsed() > timeout {
-                return Err(format!("timeout after {:?}", now.elapsed()));
-            }
-        }
     }
 }

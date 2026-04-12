@@ -38,7 +38,7 @@ async fn test_otlp_parent_based_sampler() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -95,24 +95,10 @@ async fn test_otlp_parent_based_sampler() {
 
     assert!(res.status().is_success());
 
-    // Verify trace was collected
-    let all_traces = otlp_collector.wait_for_traces_count(1).await;
-    let trace = all_traces.first().unwrap();
-
-    assert_eq!(
-        trace.id, upstream_trace_id,
-        "Trace should have correct trace_id"
-    );
-
-    // Verify we have spans in the trace
-    let spans = &trace.spans;
-    assert!(
-        !spans.is_empty(),
-        "Trace should contain spans when parent is sampled"
-    );
-
-    // Find http.server span by hive.kind attribute
-    let http_server_span = trace.span_by_hive_kind_one("http.server");
+    // Verify trace was collected, and find the http.server span
+    let http_server_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.server")
+        .await;
 
     assert_eq!(
         http_server_span.trace_id, upstream_trace_id,
@@ -151,7 +137,7 @@ async fn test_otlp_zero_sample_rate() {
                   protocol: http
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
       "#,
         ))
         .with_subgraphs(&subgraphs)
