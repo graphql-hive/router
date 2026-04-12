@@ -983,6 +983,8 @@ impl Graph {
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
+                    self.upsert_edge(tail, tail, Edge::Selfie(return_type_name.to_string()));
+
                     trace!(
                         "Creating viewed (#{}) field edge for '{}.{}' (type: {})",
                         view_id,
@@ -1041,6 +1043,8 @@ impl Graph {
                         state.is_interface_object_in_subgraph(type_name_from_cond, graph_id),
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
+
+                    self.upsert_edge(tail, tail, Edge::Selfie(type_name_from_cond.to_string()));
 
                     // because it's abstract -> object move, add an abstract move edge
                     self.upsert_edge(
@@ -1119,6 +1123,12 @@ impl Graph {
                                     ),
                                     SubgraphTypeSpecialization::Provides(view_id),
                                 ));
+
+                                self.upsert_edge(
+                                    tail,
+                                    tail,
+                                    Edge::Selfie(return_type_name.to_string()),
+                                );
 
                                 trace!(
                                     "Creating viewed (#{}) link for provided field '{}.{}/{:?}' (type: {})",
