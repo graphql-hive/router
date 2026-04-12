@@ -1145,6 +1145,113 @@ mod tests {
         ",
         );
     }
+
+    #[test]
+    fn directive_only_inline_fragment_on_abstract_parent_include() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/requires-with-fragments.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($guest: Boolean!) {
+                          userFromA {
+                            profile {
+                              ... @include(if: $guest) {
+                                displayName
+                                ... on Account {
+                                  accountType
+                                }
+                              }
+                            }
+                          }
+                        }
+                      "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+        query($guest: Boolean!) {
+          userFromA {
+            profile {
+              ... on AdminAccount @include(if: $guest) {
+                displayName
+                accountType
+              }
+              ... on GuestAccount @include(if: $guest) {
+                displayName
+                accountType
+              }
+            }
+          }
+        }
+        "
+        );
+    }
+
+    #[test]
+    fn directive_only_inline_fragment_on_abstract_parent_skip() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/requires-with-fragments.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($guest: Boolean!) {
+                          userFromA {
+                            profile {
+                              ... @skip(if: $guest) {
+                                displayName
+                                ... on Account {
+                                  accountType
+                                }
+                              }
+                            }
+                          }
+                        }
+                      "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+        query($guest: Boolean!) {
+          userFromA {
+            profile {
+              ... on AdminAccount @skip(if: $guest) {
+                displayName
+                accountType
+              }
+              ... on GuestAccount @skip(if: $guest) {
+                displayName
+                accountType
+              }
+            }
+          }
+        }
+        "
+        );
+    }
+
     #[test]
     fn nested_fragment_spreads_1() {
         let schema_str =
