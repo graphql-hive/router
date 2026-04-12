@@ -40,11 +40,15 @@ mod probes_e2e_tests {
 
         // At the point, if supergraph is not loaded yet, health should be OK 200
         let res = router.serv().post("/health").send().await.unwrap();
-        assert!(res.status().is_success());
+        assert_eq!(res.status(), 200);
 
         // And readiness should be 500 with server error
         let res = router.serv().post("/readiness").send().await.unwrap();
-        assert!(res.status().is_server_error());
+        assert!(
+            res.status().is_server_error(),
+            "Expected response status to be 5XX, but got {}",
+            res.status()
+        );
 
         router.wait_for_ready(None).await;
 

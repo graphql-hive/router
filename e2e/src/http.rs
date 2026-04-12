@@ -7,26 +7,12 @@ mod http_tests {
 
     use futures::{stream::FuturesUnordered, StreamExt};
     use hive_router::pipeline::execution::EXPOSE_QUERY_PLAN_HEADER;
-    use mockito::Mock;
     use ntex::time;
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
-
-    async fn wait_until_mock_matched(mock: &Mock, timeout: Duration) -> Result<(), String> {
-        let started = Instant::now();
-        loop {
-            if mock.matched_async().await {
-                return Ok(());
-            }
-
-            time::sleep(Duration::from_millis(10)).await;
-
-            if started.elapsed() > timeout {
-                return Err(format!("timeout after {:?}", started.elapsed()));
-            }
-        }
-    }
+    use crate::testkit::{
+        some_header_map, wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     async fn should_allow_to_customize_graphql_endpoint() {
@@ -511,7 +497,7 @@ mod http_tests {
                 .with_body(changed_supergraph)
                 .create();
 
-            wait_until_mock_matched(&mock_changed, Duration::from_secs(2))
+            wait_until_mock_matched(&mock_changed)
                 .await
                 .expect("expected schema reload poll to fetch changed supergraph");
 
