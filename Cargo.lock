@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.46"
+version = "0.0.47"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2475,7 +2475,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "6.9.2"
+version = "6.9.3"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2515,7 +2515,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-query-planner"
-version = "2.5.1"
+version = "2.5.2"
 dependencies = [
  "bitflags 2.11.0",
  "criterion",
@@ -3534,7 +3534,7 @@ dependencies = [
 
 [[package]]
 name = "node-addon"
-version = "0.0.17"
+version = "0.0.18"
 dependencies = [
  "graphql-tools",
  "hive-router-query-planner",

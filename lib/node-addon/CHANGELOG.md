@@ -1,4 +1,14 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.18 (2026-04-12)
+
+### Fixes
+
+#### Fix planning for conditional inline fragments and field conditions
+
+Fixed a query-planner bug where directive-only inline fragments (using `@include`/`@skip` without an explicit type condition) could fail during normalization/planning for deeply nested operations.
+
+This update improves planner handling for conditional selections and adds regression tests to prevent these failures in the future.
+
 ## 0.0.17 (2026-04-01)
 
 ### Fixes

@@ -116,6 +116,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.47 (2026-04-12)
+
+### Fixes
+
+- correct timeout error message (#901)
+
+#### Fix timeout error message to include the timeout duration instead of the endpoint URL
+
+Previously by mistake, the error message for subgraph request timeouts included the endpoint URL instead of the timeout duration like `Request to subgraph timed out after http://ACCOUNT_ENDPOINT:PORT/accounts milliseconds`. This change simplifies the error message like `Request to subgraph timed out`.
+
+#### Fix planning for conditional inline fragments and field conditions
+
+Fixed a query-planner bug where directive-only inline fragments (using `@include`/`@skip` without an explicit type condition) could fail during normalization/planning for deeply nested operations.
+
+This update improves planner handling for conditional selections and adds regression tests to prevent these failures in the future.
+
 ## 0.0.46 (2026-04-12)
 
 ### Fixes

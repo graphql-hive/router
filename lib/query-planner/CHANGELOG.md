@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.5.2 (2026-04-12)
+
+### Fixes
+
+- planning for conditional inline fragments and field conditions (#894)
+
+#### Fix planning for conditional inline fragments and field conditions
+
+Fixed a query-planner bug where directive-only inline fragments (using `@include`/`@skip` without an explicit type condition) could fail during normalization/planning for deeply nested operations.
+
+This update improves planner handling for conditional selections and adds regression tests to prevent these failures in the future.
+
 ## 2.5.1 (2026-03-31)
 
 ### Fixes
