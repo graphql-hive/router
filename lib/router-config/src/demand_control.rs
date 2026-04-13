@@ -53,7 +53,8 @@ pub enum DemandControlActualCostMode {
 #[serde(deny_unknown_fields)]
 pub struct SubgraphLevelDemandControlConfig {
     pub all: Option<DemandControlSubgraphConfig>,
-    pub subgraphs: Map<String, DemandControlSubgraphConfig>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub subgraphs: HashMap<String, DemandControlSubgraphConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
