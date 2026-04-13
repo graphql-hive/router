@@ -484,6 +484,7 @@ fn estimate_selection_set_cost<'exec>(
     total_cost
 }
 
+#[allow(clippy::too_many_arguments)]
 fn estimate_field_selection_cost<'exec>(
     field: &'exec FieldSelection,
     parent_type_name: &'exec str,
@@ -796,9 +797,7 @@ fn resolve_integer_value(
             resolve_integer_from_json_value(value, path)
         }
         AstValue::Object(object) => {
-            let Some((head, tail)) = path.split_first() else {
-                return None;
-            };
+            let (head, tail) = path.split_first()?;
 
             let nested_value = object.get(*head)?;
             resolve_integer_value(nested_value, tail, variable_payload)
