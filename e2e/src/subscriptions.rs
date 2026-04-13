@@ -7,8 +7,7 @@ mod subscriptions_e2e_tests {
     use sonic_rs::json;
 
     use crate::testkit::{
-        get_available_port, some_header_map, ClientResponseExt, ResponseLike, TestRouter,
-        TestSubgraphs,
+        some_header_map, ClientResponseExt, ResponseLike, TestRouter, TestSubgraphs,
     };
 
     #[ntex::test]

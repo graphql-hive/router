@@ -1,7 +1,5 @@
 #[cfg(test)]
 mod http_callback_e2e_tests {
-    use std::net::TcpListener;
-
     use futures::StreamExt;
     use ntex::http;
     use sonic_rs::{json, JsonValueTrait};
@@ -14,7 +12,12 @@ mod http_callback_e2e_tests {
     async fn listen_on_different_port() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let callback_port = get_available_port();
+        // on slow systems when running tests concurrently, the available
+        // port might become unavailable by the time the router starts and binds
+        // the callback handler to it, causing the test to fail. in order to avoid
+        // we use a fixed high port that is unlikely to be used by other processes
+        // and cause conflicts, or get allocated (OS starts with 50000)
+        let callback_port = 61000;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             // .with_port() router is on a different port than the callback listener anyways
