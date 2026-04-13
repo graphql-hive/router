@@ -70,45 +70,6 @@ mod demand_control_e2e_tests {
         );
     }
 
-    // Coverage matrix for demand control behavior reviewed against external docs/RFC.
-    // Estimated cost core model:
-    // estimator_no_customization_cost_is_4, estimator_mutation_base_cost_is_10,
-    // estimator_fragments_and_inline_fragments_cost_is_8, minimal_query_cost_is_one.
-    // @cost directives:
-    // estimator_type_cost_directive_cost_is_8, field_level_cost_directive_cost_is_3,
-    // argument_level_cost_directive_affects_list_calculation, field_cost_on_root_query_field.
-    // @listSize and pagination paths:
-    // estimator_list_assumed_size_cost_is_40, estimator_single_slicing_argument_cost_is_24,
-    // estimator_multiple_slicing_arguments_take_max_cost_is_40,
-    // estimator_sized_fields_cursor_style_cost_is_41,
-    // deeply_nested_slicing_arguments_path_cost_is_24,
-    // deeply_nested_sized_fields_path_cost_is_41,
-    // requires_one_slicing_argument_true_with_multiple_args,
-    // large_list_size_uses_saturating_arithmetic.
-    // Conditional directives:
-    // estimator_conditional_inclusion_uses_variable_value,
-    // skip_with_false_condition_includes_field_cost,
-    // skip_with_true_condition_excludes_field_cost,
-    // combined_include_and_skip_conditions_on_same_field,
-    // conditional_with_undefined_variable_excludes_field.
-    // Runtime enforcement and metadata:
-    // rejects_request_when_estimated_cost_exceeds_max,
-    // rejects_when_actual_by_subgraph_cost_exceeds_max,
-    // per_subgraph_max_cost_limit_enforced,
-    // skips_only_over_budget_subgraph_and_continues_query,
-    // includes_cost_metadata_in_response_extensions_when_enabled,
-    // includes_actual_and_negative_delta_for_response_shape_mode,
-    // computes_by_subgraph_actual_from_responses_not_estimates,
-    // negative_delta_when_actual_smaller_than_estimated,
-    // error_extension_includes_max_cost_value.
-    // Telemetry metrics labels:
-    // emits_estimated_metric_for_rejected_operation,
-    // emits_actual_and_delta_metrics_for_executed_operation,
-    // emits_actual_and_delta_metrics_for_actual_too_expensive_operation.
-    // Known behavior note:
-    // enum_cost_directive_in_query documents current behavior where enum value cost
-    // directives are not included in estimated cost.
-
     // No directives/custom list size: baseline query should estimate to 4.
     #[ntex::test]
     async fn estimator_no_customization_cost_is_4() {
