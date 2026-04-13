@@ -688,7 +688,9 @@ mod http_tests {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
+                    // long enough for both concurrent requests to arrive before
+                    // the first one completes, even under load with multiple test threads
+                    sleep(Duration::from_millis(300));
                 }
                 None
             })
