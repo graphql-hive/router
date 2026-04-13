@@ -23,6 +23,8 @@ use crate::{
     shared_state::RouterSharedState,
 };
 
+type InheritedSizedPath = (usize, usize, usize);
+
 pub fn evaluate_demand_control<'exec>(
     app_state: &'exec RouterSharedState,
     supergraph: &'exec SupergraphData,
@@ -407,6 +409,8 @@ fn estimate_operation_cost<'exec>(
         OperationKind::Query | OperationKind::Subscription => 0,
     };
 
+    let mut sized_path_store = Vec::<Vec<String>>::new();
+
     operation_base.saturating_add(estimate_selection_set_cost(
         &operation.selection_set,
         root_type_name,
@@ -416,6 +420,7 @@ fn estimate_operation_cost<'exec>(
         fragments_cache,
         &mut HashSet::new(),
         &[],
+        &mut sized_path_store,
     ))
 }
 
@@ -428,7 +433,8 @@ fn estimate_selection_set_cost<'exec>(
     default_list_size: usize,
     fragments_cache: &'exec HashMap<&'exec str, &'exec FragmentDefinition>,
     visited_fragments: &mut HashSet<&'exec str>,
-    inherited_sized_paths: &[(Vec<String>, usize)],
+    inherited_sized_paths: &[InheritedSizedPath],
+    sized_path_store: &mut Vec<Vec<String>>,
 ) -> u64 {
     let mut total_cost = 0_u64;
 
@@ -444,6 +450,7 @@ fn estimate_selection_set_cost<'exec>(
                     fragments_cache,
                     visited_fragments,
                     inherited_sized_paths,
+                    sized_path_store,
                 ));
             }
             SelectionItem::InlineFragment(fragment) => {
@@ -456,6 +463,7 @@ fn estimate_selection_set_cost<'exec>(
                     fragments_cache,
                     visited_fragments,
                     inherited_sized_paths,
+                    sized_path_store,
                 ));
             }
             SelectionItem::FragmentSpread(fragment_name) => {
@@ -477,6 +485,7 @@ fn estimate_selection_set_cost<'exec>(
                     fragments_cache,
                     visited_fragments,
                     inherited_sized_paths,
+                    sized_path_store,
                 ));
                 visited_fragments.remove(fragment_name.as_str());
             }
@@ -495,7 +504,8 @@ fn estimate_field_selection_cost<'exec>(
     default_list_size: usize,
     fragments_cache: &'exec HashMap<&'exec str, &'exec FragmentDefinition>,
     visited_fragments: &mut HashSet<&'exec str>,
-    inherited_sized_paths: &[(Vec<String>, usize)],
+    inherited_sized_paths: &[InheritedSizedPath],
+    sized_path_store: &mut Vec<Vec<String>>,
 ) -> u64 {
     if !is_conditionally_included(field, variable_payload) {
         return 0;
@@ -547,17 +557,21 @@ fn estimate_field_selection_cost<'exec>(
 
     let return_type_cost = type_cost(supergraph_state, return_type_name);
 
-    let mut inherited_for_children = Vec::<(Vec<String>, usize)>::new();
+    let mut inherited_for_children = Vec::<InheritedSizedPath>::new();
     let mut inherited_size_for_current = None;
-    for (path, size) in inherited_sized_paths {
-        if path.first().is_none_or(|segment| segment != &field.name) {
+    for (path_index, size, offset) in inherited_sized_paths {
+        let path = &sized_path_store[*path_index];
+        if path
+            .get(*offset)
+            .is_none_or(|segment| segment != &field.name)
+        {
             continue;
         }
 
-        if path.len() == 1 {
+        if path.len() == offset.saturating_add(1) {
             inherited_size_for_current = Some(inherited_size_for_current.unwrap_or(0).max(*size));
         } else {
-            inherited_for_children.push((path[1..].to_vec(), *size));
+            inherited_for_children.push((*path_index, *size, offset.saturating_add(1)));
         }
     }
 
@@ -576,7 +590,12 @@ fn estimate_field_selection_cost<'exec>(
                 for path in sized_fields {
                     let parsed_path = parse_sized_field_path(path);
                     if !parsed_path.is_empty() {
-                        inherited_for_children.push((parsed_path, configured_size));
+                        sized_path_store.push(parsed_path);
+                        inherited_for_children.push((
+                            sized_path_store.len().saturating_sub(1),
+                            configured_size,
+                            0,
+                        ));
                     }
                 }
             } else if field_type.is_list() {
@@ -598,6 +617,7 @@ fn estimate_field_selection_cost<'exec>(
         fragments_cache,
         visited_fragments,
         &inherited_for_children,
+        sized_path_store,
     );
 
     if let Some(list_size) = explicit_list_size {
@@ -834,8 +854,7 @@ fn parse_sized_field_path(path: &str) -> Vec<String> {
         if ch.is_ascii_alphanumeric() || ch == '_' {
             current.push(ch);
         } else if !current.is_empty() {
-            out.push(current.clone());
-            current.clear();
+            out.push(std::mem::take(&mut current));
         }
     }
 
