@@ -1,9 +1,6 @@
 #[cfg(test)]
 mod http_tests {
-    use std::{
-        thread::sleep,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
 
     use futures::{stream::FuturesUnordered, StreamExt};
     use hive_router::pipeline::execution::EXPOSE_QUERY_PLAN_HEADER;
@@ -218,12 +215,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_not_dedupe_inflight_router_requests_by_default() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -283,12 +275,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_dedupe_inflight_router_requests_when_enabled() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -351,12 +338,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_not_dedupe_inflight_router_mutation_requests() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -415,12 +397,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_not_share_inflight_dedupe_entry_across_schema_reload() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(1500));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -529,12 +506,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_use_all_headers_in_router_dedupe_key_by_default() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -607,12 +579,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_ignore_headers_in_router_dedupe_key_when_headers_is_empty() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -686,12 +653,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_use_case_insensitive_header_allowlist_in_router_dedupe_key() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;

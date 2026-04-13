@@ -382,10 +382,6 @@ impl TestSubgraphs<Built> {
         let middleware_state = Arc::new(TestSubgraphsMiddlewareState {
             request_log: DashMap::new(),
         });
-        app = app.layer(axum::middleware::from_fn_with_state(
-            middleware_state.clone(),
-            record_requests,
-        ));
         if let Some(on_request) = self.on_request.clone() {
             app = app.layer(axum::middleware::from_fn_with_state(
                 on_request,
@@ -400,6 +396,11 @@ impl TestSubgraphs<Built> {
                 },
             ));
         }
+        // record_requests must be outermost so it logs the request before any blocking on_request handler runs
+        app = app.layer(axum::middleware::from_fn_with_state(
+            middleware_state.clone(),
+            record_requests,
+        ));
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         tokio::spawn(async move {
