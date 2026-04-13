@@ -8,7 +8,9 @@ mod hive_cdn_supergraph_e2e_tests {
     use sonic_rs::{JsonContainerTrait, JsonValueTrait};
     use tokio::time::sleep;
 
-    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        wait_until_mock_matched, ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     async fn should_load_supergraph_from_endpoint() {
@@ -183,20 +185,11 @@ mod hive_cdn_supergraph_e2e_tests {
 
         let mock1 = server
             .mock("GET", "/supergraph")
-            .expect(1)
-            .match_header("x-hive-cdn-key", "dummy_key")
-            .with_status(200)
-            .with_header("content-type", "text/plain")
-            .with_body("type Query { dummy: String }")
-            .create();
-
-        let mock2 = server
-            .mock("GET", "/supergraph")
             .expect_at_least(1)
             .match_header("x-hive-cdn-key", "dummy_key")
             .with_status(200)
             .with_header("content-type", "text/plain")
-            .with_body(include_str!("../supergraph.graphql"))
+            .with_body("type Query { dummy: String }")
             .create();
 
         let router = TestRouter::builder()
@@ -206,14 +199,12 @@ mod hive_cdn_supergraph_e2e_tests {
                     source: hive
                     endpoint: http://{host}/supergraph
                     key: dummy_key
-                    poll_interval: 800ms
+                    poll_interval: 500ms
                 "#,
             ))
             .build()
             .start()
             .await;
-
-        mock1.assert();
 
         let res = router
             .send_graphql_request("{ __schema { types { name } } }", None, None)
@@ -233,9 +224,21 @@ mod hive_cdn_supergraph_e2e_tests {
             .unwrap();
         assert_eq!(types_arr.len(), 14);
 
-        // Now wait for the schema to be reloaded and updated
-        sleep(Duration::from_millis(900)).await;
-        mock2.assert();
+        // Remove first mock and register the new supergraph mock
+        mock1.remove();
+        let mock2 = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .match_header("x-hive-cdn-key", "dummy_key")
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body(include_str!("../supergraph.graphql"))
+            .create();
+
+        // Wait for the poller to pick up the new supergraph
+        wait_until_mock_matched(&mock2)
+            .await
+            .expect("Expected mock2 to be matched");
 
         let res = router
             .send_graphql_request("{ __schema { types { name } } }", None, None)

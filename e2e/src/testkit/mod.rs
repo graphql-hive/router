@@ -5,6 +5,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use hive_router_plan_executor::plugin_trait::RouterPlugin;
 use lazy_static::lazy_static;
+use mockito::Mock;
 use ntex::{
     client::ClientResponse,
     io::Sealed,
@@ -14,13 +15,19 @@ use ntex::{
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
 use std::{
-    any::Any, future::Future, marker::PhantomData, net::SocketAddr, path::PathBuf, sync::Arc,
-    time::Duration,
+    any::Any,
+    future::Future,
+    marker::PhantomData,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use tempfile::{NamedTempFile, TempPath};
 use tokio::{
     net::TcpListener,
     sync::{oneshot, Semaphore},
+    time,
 };
 use tracing::{info, warn};
 
@@ -253,12 +260,14 @@ type OnRequest = dyn Fn(RequestLike) -> Option<ResponseLike> + Send + Sync;
 pub struct TestSubgraphsBuilder {
     subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
     on_request: Option<Arc<OnRequest>>,
+    delay: Option<Duration>,
 }
 
 impl TestSubgraphsBuilder {
     pub fn new() -> Self {
         Self {
             on_request: None,
+            delay: None,
             subscriptions_protocol: HTTPStreamingSubscriptionProtocol::default(),
         }
     }
@@ -279,9 +288,20 @@ impl TestSubgraphsBuilder {
         self
     }
 
+    /// Adds a cooperative async delay to every subgraph request.
+    /// Unlike `with_on_request` with `std::thread::sleep`, this yields
+    /// back to the tokio runtime, allowing other tasks (like schema
+    /// pollers) to make progress during the delay.
+    #[allow(unused)]
+    pub fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = Some(delay);
+        self
+    }
+
     pub fn build(self) -> TestSubgraphs<Built> {
         TestSubgraphs {
             on_request: self.on_request,
+            delay: self.delay,
             subscriptions_protocol: self.subscriptions_protocol,
             handle: None,
             _state: PhantomData,
@@ -304,6 +324,7 @@ struct TestSubgraphsHandle {
 pub struct TestSubgraphs<State> {
     subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
     on_request: Option<Arc<OnRequest>>,
+    delay: Option<Duration>,
     handle: Option<TestSubgraphsHandle>,
     _state: PhantomData<State>,
 }
@@ -400,6 +421,14 @@ impl TestSubgraphs<Built> {
                 handle_on_request,
             ));
         }
+        if let Some(delay) = self.delay {
+            app = app.layer(axum::middleware::from_fn(
+                move |req, next: axum::middleware::Next| async move {
+                    tokio::time::sleep(delay).await;
+                    next.run(req).await
+                },
+            ));
+        }
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         tokio::spawn(async move {
@@ -413,6 +442,7 @@ impl TestSubgraphs<Built> {
 
         TestSubgraphs {
             on_request: self.on_request,
+            delay: self.delay,
             subscriptions_protocol: self.subscriptions_protocol,
             handle: Some(TestSubgraphsHandle {
                 shutdown_tx: Some(shutdown_tx),
@@ -951,5 +981,22 @@ impl ClientResponseExt for ClientResponse {
     async fn json_body_string_pretty(&self) -> String {
         sonic_rs::to_string_pretty(&self.json_body().await)
             .expect("failed to pretty print JSON body")
+    }
+}
+
+pub async fn wait_until_mock_matched(mock: &Mock) -> Result<(), String> {
+    let now = Instant::now();
+    let timeout = Duration::from_secs(5); // always a sane default
+    loop {
+        if mock.matched_async().await {
+            return Ok(());
+        }
+
+        // anything less will congest the router, keep the interval chill
+        time::sleep(Duration::from_millis(100)).await;
+
+        if now.elapsed() > timeout {
+            return Err(format!("timeout after {:?}", now.elapsed()));
+        }
     }
 }
