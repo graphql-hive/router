@@ -108,7 +108,7 @@ mod http_callback_e2e_tests {
                 subscription {
                     reviewAdded(
                         # emitted messages do not count as heartbeats
-                        intervalInMs: 100
+                        intervalInMs: 300
                     ) {
                         id
                         product {
