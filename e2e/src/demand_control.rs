@@ -185,6 +185,47 @@ r#"query NewestAdditions {
         .await;
     }
 
+    // Negative literal slicing argument should be clamped to 0, not cast into a huge u64.
+    #[ntex::test]
+    async fn estimator_negative_literal_slicing_argument_is_clamped() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph_demand_control.graphql
+                demand_control:
+                    enabled: true
+                    max_cost: 1
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                query {
+                  newestAdditions(limit: -1) {
+                    title
+                  }
+                }
+                "#,
+                None,
+                None,
+            )
+            .await;
+
+        let json = res.json_body().await;
+        assert!(
+            !json.get("errors").is_some(),
+            "negative literal slicing arg must not overflow estimated cost"
+        );
+    }
+
     // Multiple slicing arguments use max(first, last) when requireOneSlicingArgument=false.
     #[ntex::test]
     async fn estimator_multiple_slicing_arguments_take_max_cost_is_40() {

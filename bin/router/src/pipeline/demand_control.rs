@@ -783,7 +783,7 @@ fn resolve_integer_value(
     match value {
         AstValue::Int(v) => {
             if path.is_empty() {
-                Some(*v as u64)
+                Some((*v).max(0) as u64)
             } else {
                 None
             }
