@@ -1,3 +1,4 @@
+use futures::Stream;
 use graphql_tools::validation::validate::ValidationPlan;
 use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::traffic_shaping::{
@@ -6,8 +7,9 @@ use hive_router_config::traffic_shaping::{
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::ExpressionCompileError;
-use hive_router_internal::inflight::InFlightMap;
+use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
 use hive_router_internal::telemetry::TelemetryContext;
+use hive_router_plan_executor::execution::plan::FailedExecutionResult;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
@@ -17,16 +19,25 @@ use moka::future::Cache;
 use moka::Expiry;
 use ntex::web;
 use ntex::{http::HeaderMap, util::Bytes};
+use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, sync::Arc};
+use tracing::trace;
 
 use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
+use crate::pipeline::active_subscriptions::{ActiveSubscriptions, SubscriptionEvent};
 use crate::pipeline::cors::{CORSConfigError, Cors};
+use crate::pipeline::error::PipelineError;
+use crate::pipeline::header::{ResponseMode, StreamContentType};
 use crate::pipeline::introspection_policy::compile_introspection_policy;
+use crate::pipeline::multipart_subscribe::{
+    self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
+};
 use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
+use crate::pipeline::sse;
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
 pub type RouterInflightRequestsMap = InFlightMap<u64, SharedRouterResponse>;
@@ -74,24 +85,145 @@ impl From<&TrafficShapingRouterDedupeHeadersConfig> for RouterRequestDedupeHeade
     }
 }
 
+pub type SharedRouterResponseGuard = InFlightCleanupGuard<u64, SharedRouterResponse>;
+
 #[derive(Clone)]
-pub struct SharedRouterResponse {
+pub enum SharedRouterResponse {
+    Single(SharedRouterSingleResponse),
+    Stream(SharedRouterStreamResponse),
+}
+
+impl SharedRouterResponse {
+    pub fn error_count(&self) -> usize {
+        match self {
+            SharedRouterResponse::Single(resp) => resp.error_count,
+            SharedRouterResponse::Stream(resp) => resp.error_count,
+        }
+    }
+    pub fn into_response(
+        self,
+        response_mode: &ResponseMode,
+    ) -> Result<web::HttpResponse, PipelineError> {
+        match self {
+            SharedRouterResponse::Single(single) => Ok(single.into()),
+            SharedRouterResponse::Stream(stream) => {
+                let stream_content_type = response_mode
+                    .stream_content_type()
+                    .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
+                Ok(stream.into_response(stream_content_type))
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SharedRouterSingleResponse {
     pub body: Bytes,
     pub headers: Arc<HeaderMap>,
     pub status: StatusCode,
     pub error_count: usize,
 }
 
-impl From<SharedRouterResponse> for web::HttpResponse {
-    fn from(shared_response: SharedRouterResponse) -> Self {
+impl From<SharedRouterSingleResponse> for web::HttpResponse {
+    fn from(shared_response: SharedRouterSingleResponse) -> Self {
         let mut response = web::HttpResponse::Ok();
         response.status(shared_response.status);
-
         for (header_name, header_value) in shared_response.headers.iter() {
             response.set_header(header_name, header_value);
         }
-
         response.body(shared_response.body)
+    }
+}
+
+// status is always 200 for streaming responses, errors are sent through the stream.
+// stream content type is not included because we can deduplicate subscriptions across
+// different content types, the response format is decided when converting to response
+pub struct SharedRouterStreamResponse {
+    pub body: tokio::sync::broadcast::Sender<SubscriptionEvent>,
+    pub headers: Arc<HeaderMap>,
+    pub error_count: usize,
+    // the leader gets the receiver that was subscribed before the pump was spawned, so
+    // there is no window where the channel has zero receivers and events can be lost.
+    // joiners get None and subscribe via body.subscribe() when consumed.
+    pub receiver: Option<tokio::sync::broadcast::Receiver<SubscriptionEvent>>,
+}
+
+impl Clone for SharedRouterStreamResponse {
+    fn clone(&self) -> Self {
+        Self {
+            body: self.body.clone(),
+            headers: self.headers.clone(),
+            error_count: self.error_count,
+            receiver: None,
+        }
+    }
+}
+
+impl SharedRouterStreamResponse {
+    pub fn into_response(self, stream_content_type: &StreamContentType) -> web::HttpResponse {
+        // leader already has a pre-subscribed receiver to avoid missing
+        // any potential events emitted. joiners, on the other hand, subscribe
+        let mut receiver = self.receiver.unwrap_or_else(|| self.body.subscribe());
+
+        let stream = Box::pin(async_stream::stream! {
+            loop {
+                match receiver.recv().await {
+                    Ok(SubscriptionEvent::Raw(data)) => {
+                        yield data.to_vec();
+                    }
+                    Ok(SubscriptionEvent::Error(errors)) => {
+                        yield FailedExecutionResult { errors }.serialize();
+                        break;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        trace!(lagged = n, "broadcast receiver lagged, skipping missed messages");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let content_type_header = match stream_content_type {
+            StreamContentType::IncrementalDelivery => {
+                http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE)
+            }
+            StreamContentType::SSE => http::HeaderValue::from_static("text/event-stream"),
+            StreamContentType::ApolloMultipartHTTP => {
+                http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE)
+            }
+        };
+
+        let body: std::pin::Pin<
+            Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
+        > = match stream_content_type {
+            StreamContentType::IncrementalDelivery => Box::pin(
+                multipart_subscribe::create_incremental_delivery_stream(stream),
+            ),
+            StreamContentType::SSE => Box::pin(sse::create_stream(
+                stream,
+                std::time::Duration::from_secs(10),
+            )),
+            StreamContentType::ApolloMultipartHTTP => {
+                Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
+                    stream,
+                    std::time::Duration::from_secs(10),
+                ))
+            }
+        };
+
+        let mut response = web::HttpResponse::Ok();
+
+        for (header_name, header_value) in self.headers.iter() {
+            response.set_header(header_name, header_value);
+        }
+
+        // we set content type after so that we can override the shared header
+        response.content_type(content_type_header);
+
+        response.streaming(body)
     }
 }
 
@@ -153,9 +285,14 @@ pub struct RouterSharedState {
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     pub in_flight_requests: RouterInflightRequestsMap,
     pub in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy,
+    /// Tracks the number of active long-lived clients (websockets + http streams)
+    pub long_lived_client_count: Arc<AtomicUsize>,
+    /// Tracks all active subscriptions from clients to the router.
+    pub active_subscriptions: ActiveSubscriptions,
 }
 
 impl RouterSharedState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
@@ -164,6 +301,7 @@ impl RouterSharedState {
         telemetry_context: Arc<TelemetryContext>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         cache_state: Arc<CacheState>,
+        active_subscriptions: ActiveSubscriptions,
     ) -> Result<Self, SharedStateError> {
         let parse_cache = cache_state.parse_cache.clone();
         Ok(Self {
@@ -195,6 +333,8 @@ impl RouterSharedState {
                 .dedupe
                 .headers)
                 .into(),
+            long_lived_client_count: Arc::new(AtomicUsize::new(0)),
+            active_subscriptions,
         })
     }
 }

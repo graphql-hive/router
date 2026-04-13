@@ -1394,4 +1394,436 @@ mod subscriptions_e2e_tests {
         event: complete
         "#);
     }
+
+    #[ntex::test]
+    async fn active_subscriptions_deduplication() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        dedupe:
+                            enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                    product {
+                        name
+                    }
+                }
+            }
+        "#;
+        let headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+
+        let (sub1, sub2, sub3) = tokio::join!(
+            router.send_graphql_request(query, None, headers.clone()),
+            router.send_graphql_request(query, None, headers.clone()),
+            router.send_graphql_request(query, None, headers.clone()),
+        );
+
+        for sub in [&sub1, &sub2, &sub3] {
+            let body = sub.string_body().await;
+            assert!(
+                body.contains("event: next") && body.contains("event: complete"),
+                "Expected subscription to receive events and complete"
+            );
+        }
+
+        let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(
+            reviews_requests.len(),
+            1,
+            "Expected requests to reviews subgraph to be deduplicated"
+        );
+    }
+
+    #[ntex::test]
+    async fn active_subscriptions_deduplication_promotion() {
+        use futures::StreamExt;
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        dedupe:
+                            enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                }
+            }
+        "#;
+        let headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+
+        let mut sub1 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+
+        assert!(sub1.status().is_success(), "Expected 200 OK");
+
+        // consume 2 events from sub1 to let the source stream advance
+        let chunk = sub1.next().await.unwrap().unwrap();
+        assert!(
+            std::str::from_utf8(&chunk).unwrap().contains(r#""id":"1""#),
+            "Expected first event to be id=1"
+        );
+        let chunk = sub1.next().await.unwrap().unwrap();
+        assert!(
+            std::str::from_utf8(&chunk).unwrap().contains(r#""id":"2""#),
+            "Expected second event to be id=2"
+        );
+        let chunk = sub1.next().await.unwrap().unwrap();
+        assert!(
+            std::str::from_utf8(&chunk).unwrap().contains(r#""id":"3""#),
+            "Expected third event to be id=3"
+        );
+
+        // subscribe again with the same query - dedup promotes sub2 onto the live source
+        let sub2 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+
+        assert!(sub2.status().is_success(), "Expected 200 OK");
+
+        // drop sub1 now that sub2 is connected; sub2 must become the active subscriber
+        drop(sub1);
+
+        // sub2 should receive the remainder of the stream from where the source left off
+        let body = sub2.string_body().await;
+        assert!(
+            body.contains("event: next") && body.contains("event: complete"),
+            "Expected sub2 to receive remaining events and complete, got: {body}"
+        );
+
+        // sub2 must not have received the first 3 events that were already consumed by sub1
+        assert!(
+            !body.contains(r#""id":"1""#)
+                && !body.contains(r#""id":"2""#)
+                && !body.contains(r#""id":"3""#),
+            "Expected sub2 to not replay events already consumed by sub1, got: {body}"
+        );
+
+        // only one subgraph request should have been made
+        let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(
+            reviews_requests.len(),
+            1,
+            "Expected requests to reviews subgraph to be deduplicated"
+        );
+    }
+
+    #[ntex::test]
+    async fn active_across_transports_subscriptions_deduplication() {
+        use futures::StreamExt;
+        use hive_router_plan_executor::executors::{
+            graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
+        };
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                websocket:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        dedupe:
+                            enabled: true
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                    product {
+                        name
+                    }
+                }
+            }
+        "#;
+
+        let sse_headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+        let multipart_headers = some_header_map! {
+            http::header::ACCEPT => "multipart/mixed;subscriptionSpec=1.0"
+        };
+
+        let wsconn = router.ws().await;
+        let mut ws_client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+        let ws_payload = SubscribePayload {
+            query: query.into(),
+            ..Default::default()
+        };
+        let mut ws_stream = ws_client.subscribe(ws_payload).await;
+
+        let (sub_sse, sub_multipart) = tokio::join!(
+            router.send_graphql_request(query, None, sse_headers),
+            router.send_graphql_request(query, None, multipart_headers),
+        );
+
+        let sse_body = sub_sse.string_body().await;
+        assert!(
+            sse_body.contains("event: next") && sse_body.contains("event: complete"),
+            "Expected SSE subscription to receive events and complete"
+        );
+
+        let multipart_body = sub_multipart.string_body().await;
+        assert!(
+            multipart_body.contains("--graphql") && multipart_body.contains("--graphql--"),
+            "Expected multipart subscription to receive events and complete"
+        );
+
+        let mut ws_received = 0;
+        while let Some(response) = ws_stream.next().await {
+            assert!(
+                response.errors.is_none(),
+                "Expected no errors from WS subscription"
+            );
+            assert!(
+                !response.data.is_null(),
+                "Expected data from WS subscription"
+            );
+            ws_received += 1;
+        }
+        assert!(
+            ws_received > 0,
+            "Expected WS subscription to receive at least one event"
+        );
+
+        let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(
+            reviews_requests.len(),
+            1,
+            "Expected requests to reviews subgraph to be deduplicated across transports"
+        );
+    }
+
+    #[ntex::test]
+    async fn active_across_transports_subscriptions_deduplication_promotion() {
+        use futures::StreamExt;
+        use hive_router_plan_executor::executors::{
+            graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
+        };
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                websocket:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        dedupe:
+                            enabled: true
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                }
+            }
+        "#;
+
+        let wsconn = router.ws().await;
+        let mut ws_client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+        let ws_payload = SubscribePayload {
+            query: query.into(),
+            ..Default::default()
+        };
+        let mut ws_stream = ws_client.subscribe(ws_payload).await;
+
+        // consume 3 events from sub1 to let the source stream advance
+        let response = ws_stream.next().await.unwrap();
+        assert!(
+            response.data.to_string().contains(r#""id": "1""#),
+            "Expected first event to be id=1"
+        );
+        let response = ws_stream.next().await.unwrap();
+        assert!(
+            response.data.to_string().contains(r#""id": "2""#),
+            "Expected second event to be id=2"
+        );
+        let response = ws_stream.next().await.unwrap();
+        assert!(
+            response.data.to_string().contains(r#""id": "3""#),
+            "Expected third event to be id=3"
+        );
+
+        // subscribe again with SSE - dedup promotes sub2 onto the live source
+        let sse_headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+        let sub2 = router.send_graphql_request(query, None, sse_headers).await;
+
+        assert!(sub2.status().is_success(), "Expected 200 OK");
+
+        // drop the WS sub now that sub2 is connected; sub2 must become the active subscriber
+        drop(ws_stream);
+        drop(ws_client);
+
+        // sub2 should receive the remainder of the stream from where the source left off
+        let body = sub2.string_body().await;
+        assert!(
+            body.contains("event: next") && body.contains("event: complete"),
+            "Expected sub2 to receive remaining events and complete, got: {body}"
+        );
+
+        // sub2 must not have received the first 3 events already consumed by the WS sub
+        assert!(
+            !body.contains(r#""id":"1""#)
+                && !body.contains(r#""id":"2""#)
+                && !body.contains(r#""id":"3""#),
+            "Expected sub2 to not replay events already consumed by the WS sub, got: {body}"
+        );
+
+        // only one subgraph request should have been made
+        let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(
+            reviews_requests.len(),
+            1,
+            "Expected requests to reviews subgraph to be deduplicated across transports"
+        );
+    }
+
+    #[ntex::test]
+    async fn max_long_lived_clients_rejects_over_limit() {
+        use futures::StreamExt;
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        max_long_lived_clients: 2
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 200) {
+                    id
+                }
+            }
+        "#;
+        let headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+
+        // open two subscriptions and keep them alive by reading the first event
+        let mut sub1 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert!(sub1.status().is_success(), "sub1 should be accepted");
+        let _ = sub1.next().await;
+
+        let mut sub2 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert!(sub2.status().is_success(), "sub2 should be accepted");
+        let _ = sub2.next().await;
+
+        // the third subscriber exceeds the limit and must be rejected
+        let sub3 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert_eq!(
+            sub3.status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            "sub3 should be rejected with 503 when the limit is reached"
+        );
+        let retry_after = sub3.header("retry-after");
+        assert!(
+            retry_after.is_some(),
+            "rejected response should include a Retry-After header"
+        );
+        let body = sub3.string_body().await;
+        assert_eq!(body, "Too many long-lived clients");
+
+        // release the two held subscriptions
+        drop(sub1);
+        drop(sub2);
+
+        // wait briefly for the slots to be freed
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // a new subscriber should now be accepted again
+        let sub4 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert!(
+            sub4.status().is_success(),
+            "sub4 should be accepted after the previous slots were freed"
+        );
+    }
 }
