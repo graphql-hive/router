@@ -220,7 +220,7 @@ mod http_tests {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(500));
+                    sleep(Duration::from_millis(100));
                 }
                 None
             })
@@ -285,7 +285,7 @@ mod http_tests {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(500));
+                    sleep(Duration::from_millis(100));
                 }
                 None
             })
@@ -353,7 +353,7 @@ mod http_tests {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(500));
+                    sleep(Duration::from_millis(100));
                 }
                 None
             })
@@ -531,7 +531,7 @@ mod http_tests {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(500));
+                    sleep(Duration::from_millis(100));
                 }
                 None
             })
@@ -609,7 +609,7 @@ mod http_tests {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|request| {
                 if request.path == "/products" {
-                    sleep(Duration::from_millis(500));
+                    sleep(Duration::from_millis(100));
                 }
                 None
             })
