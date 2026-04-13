@@ -1,4 +1,5 @@
-use config::Map;
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
