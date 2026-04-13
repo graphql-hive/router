@@ -185,7 +185,7 @@ mod timeout_per_subgraph_e2e_tests {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .file_config("configs/timeout_per_subgraph_dynamic.router.yaml")
+            .file_config("configs/timeout_per_subgraph_dynamic_deadlock.router.yaml")
             .build()
             .start()
             .await;
