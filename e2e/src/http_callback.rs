@@ -58,8 +58,13 @@ mod http_callback_e2e_tests {
 
         let body = res.string_body().await;
 
-        assert!(body
-            .contains(r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#));
+        assert!(
+            body.contains(
+                r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
+            ),
+            "Expected at least one emitted event, got: {}",
+            body
+        );
         assert!(body.contains("event: complete"));
     }
 
@@ -122,8 +127,13 @@ mod http_callback_e2e_tests {
         let body = res.string_body().await;
 
         // emitted at least one event
-        assert!(body
-            .contains(r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#));
+        assert!(
+            body.contains(
+                r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
+            ),
+            "Expected at least one emitted event, got: {}",
+            body
+        );
 
         // kicked off client, eventually
         assert!(body.contains(r#"{"data":null,"errors":[{"message":"Subgraph gone due to heartbeat timeout","extensions":{"code":"SUBGRAPH_GONE"}}]}"#));

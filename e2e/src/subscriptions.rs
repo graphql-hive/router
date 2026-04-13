@@ -1357,12 +1357,12 @@ mod subscriptions_e2e_tests {
             .start()
             .await;
 
-        // NOTE: we add a 10ms interval because providing 0 will end the connection while the buffer is still being written to leading to a different error
+        // NOTE: we add a 100ms interval because providing 0 will end the connection while the buffer is still being written to leading to a different error
         let res = router
             .send_graphql_request(
                 r#"
                 subscription {
-                    reviewAdded(intervalInMs: 10) {
+                    reviewAdded(intervalInMs: 100) {
                         id
                     }
                 }
