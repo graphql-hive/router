@@ -251,6 +251,11 @@ mod supergraph_e2e_tests {
             .await
             .expect("Expected mock2 to be matched");
 
+        // wait for the router to finish applying the new supergraph state before asserting;
+        // the mock being matched only means the poller fetched the sdl, not that the router
+        // has finished rebuilding its query planner
+        router.wait_for_ready(None).await;
+
         let res_new_supergraph = router
             .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
             .await;
