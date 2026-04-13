@@ -9,6 +9,7 @@ authors = ["The Guild"]
 repository = "https://github.com/graphql-hive/router"
 homepage = "https://github.com/graphql-hive/router"
 readme = "README.crate.md"
+exclude = ["node_modules"]
 
 [lib]
 
