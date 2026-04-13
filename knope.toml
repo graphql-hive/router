@@ -1,6 +1,9 @@
 [changes]
 ignore_conventional_commits = true
 
+[bot.checks]
+skip_labels = ["chore", "internal"]
+
 [bot.releases]
 enabled = true
 pull_request.title = "chore(release): router crates and artifacts"
