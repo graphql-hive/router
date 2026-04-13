@@ -25,7 +25,7 @@ mod supergraph_e2e_tests {
                   source: hive
                   endpoint: http://{host}/supergraph
                   key: dummy_key
-                  poll_interval: 300ms
+                  poll_interval: 500ms
                 "#,
             ))
             .build()
@@ -57,7 +57,7 @@ mod supergraph_e2e_tests {
                 router.schema_state().plan_cache.entry_count(),
                 router.schema_state().normalize_cache.entry_count()
             );
-            ntex::time::sleep(Duration::from_millis(100)).await;
+            ntex::time::sleep(Duration::from_millis(50)).await;
         }
 
         mock1.remove();
@@ -96,7 +96,7 @@ mod supergraph_e2e_tests {
                 router.schema_state().plan_cache.entry_count(),
                 router.schema_state().normalize_cache.entry_count()
             );
-            ntex::time::sleep(Duration::from_millis(100)).await;
+            ntex::time::sleep(Duration::from_millis(50)).await;
         }
     }
 
