@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod timeout_per_subgraph_e2e_tests {
-    use std::{thread::sleep, time::Duration};
+    use std::time::Duration;
 
     use ntex::http::StatusCode;
     use sonic_rs::json;
@@ -12,12 +12,7 @@ mod timeout_per_subgraph_e2e_tests {
     #[ntex::test]
     async fn should_apply_static_subgraph_timeout_override() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/accounts" {
-                    sleep(SUBGRAPH_DELAY);
-                }
-                None
-            })
+            .with_delay(SUBGRAPH_DELAY)
             .build()
             .start()
             .await;
@@ -54,12 +49,7 @@ mod timeout_per_subgraph_e2e_tests {
     #[ntex::test]
     async fn should_apply_dynamic_subgraph_timeout_override_and_fallback_to_default() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/accounts" {
-                    sleep(SUBGRAPH_DELAY);
-                }
-                None
-            })
+            .with_delay(SUBGRAPH_DELAY)
             .build()
             .start()
             .await;
