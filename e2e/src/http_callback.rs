@@ -4,9 +4,7 @@ mod http_callback_e2e_tests {
     use ntex::http;
     use sonic_rs::{json, JsonValueTrait};
 
-    use crate::testkit::{
-        get_available_port, some_header_map, ClientResponseExt, TestRouter, TestSubgraphs,
-    };
+    use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn listen_on_different_port() {
