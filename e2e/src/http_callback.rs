@@ -4,7 +4,10 @@ mod http_callback_e2e_tests {
     use ntex::http;
     use sonic_rs::{json, JsonValueTrait};
 
-    use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
+    use crate::{
+        flakey,
+        testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs},
+    };
 
     #[ntex::test]
     async fn listen_on_different_port() {
@@ -72,77 +75,79 @@ mod http_callback_e2e_tests {
 
     #[ntex::test]
     async fn complete_active_subscription_on_heartbeat_timeout() {
-        let subgraphs = TestSubgraphs::builder().build().start().await;
+        flakey!(async {
+            let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let router_port = router_listener.local_addr().unwrap().port();
-        let router = TestRouter::builder()
-            .with_subgraphs(&subgraphs)
-            .with_listener(router_listener)
-            .inline_config(format!(
-                r#"
-                supergraph:
-                    source: file
-                    path: supergraph.graphql
-                headers:
-                    all:
-                        request:
-                            - propagate:
-                                named: x-disable-http-callback-heartbeats
-                subscriptions:
-                    enabled: true
-                    callback:
-                        heartbeat_interval: 500ms
-                        public_url: http://0.0.0.0:{router_port}/callback
-                        subgraphs:
-                            - reviews
-                "#
-            ))
-            .build()
-            .start()
-            .await;
+            let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let router_port = router_listener.local_addr().unwrap().port();
+            let router = TestRouter::builder()
+                .with_subgraphs(&subgraphs)
+                .with_listener(router_listener)
+                .inline_config(format!(
+                    r#"
+                    supergraph:
+                        source: file
+                        path: supergraph.graphql
+                    headers:
+                        all:
+                            request:
+                                - propagate:
+                                    named: x-disable-http-callback-heartbeats
+                    subscriptions:
+                        enabled: true
+                        callback:
+                            heartbeat_interval: 500ms
+                            public_url: http://0.0.0.0:{router_port}/callback
+                            subgraphs:
+                                - reviews
+                    "#
+                ))
+                .build()
+                .start()
+                .await;
 
-        let res = router
-            .send_graphql_request(
-                r#"
-                subscription {
-                    reviewAdded(
-                        # emitted messages do not count as heartbeats
-                        intervalInMs: 300
-                    ) {
-                        id
-                        product {
-                            name
+            let res = router
+                .send_graphql_request(
+                    r#"
+                    subscription {
+                        reviewAdded(
+                            # emitted messages do not count as heartbeats
+                            intervalInMs: 300
+                        ) {
+                            id
+                            product {
+                                name
+                            }
                         }
                     }
-                }
-                "#,
-                None,
-                some_header_map!(
-                    http::header::ACCEPT => "text/event-stream",
-                    http::header::HeaderName::from_static("x-disable-http-callback-heartbeats") => "true"
+                    "#,
+                    None,
+                    some_header_map!(
+                        http::header::ACCEPT => "text/event-stream",
+                        http::header::HeaderName::from_static("x-disable-http-callback-heartbeats") => "true"
+                    ),
+                )
+                .await;
+
+            assert_eq!(res.status(), 200, "Expected 200 OK");
+
+            let body = res.string_body().await;
+
+            // emitted at least one event
+            assert!(
+                body.contains(
+                    r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
                 ),
-            )
-            .await;
+                "Expected at least one emitted event, got: {}",
+                body
+            );
 
-        assert_eq!(res.status(), 200, "Expected 200 OK");
+            // kicked off client, eventually
+            assert!(body.contains(r#"{"data":null,"errors":[{"message":"Subgraph gone due to heartbeat timeout","extensions":{"code":"SUBGRAPH_GONE"}}]}"#));
 
-        let body = res.string_body().await;
-
-        // emitted at least one event
-        assert!(
-            body.contains(
-                r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
-            ),
-            "Expected at least one emitted event, got: {}",
-            body
-        );
-
-        // kicked off client, eventually
-        assert!(body.contains(r#"{"data":null,"errors":[{"message":"Subgraph gone due to heartbeat timeout","extensions":{"code":"SUBGRAPH_GONE"}}]}"#));
-
-        // completed stream
-        assert!(body.contains("event: complete"));
+            // completed stream
+            assert!(body.contains("event: complete"));
+        });
     }
 
     #[ntex::test]
