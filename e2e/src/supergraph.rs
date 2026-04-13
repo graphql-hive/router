@@ -51,11 +51,29 @@ mod supergraph_e2e_tests {
         router.schema_state().plan_cache.run_pending_tasks().await;
         invoke_shutdown_hooks(router.shared_state()).await;
 
-        ntex::time::sleep(Duration::from_millis(100)).await;
-
-        // Now it should have the record
-        assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
-        assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
+        // wait until both caches report exactly 1 entry
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            router
+                .schema_state()
+                .normalize_cache
+                .run_pending_tasks()
+                .await;
+            router.schema_state().plan_cache.run_pending_tasks().await;
+            invoke_shutdown_hooks(router.shared_state()).await;
+            if router.schema_state().plan_cache.entry_count() == 1
+                && router.schema_state().normalize_cache.entry_count() == 1
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for caches to populate: plan={}, normalize={}",
+                router.schema_state().plan_cache.entry_count(),
+                router.schema_state().normalize_cache.entry_count()
+            );
+            ntex::time::sleep(Duration::from_millis(100)).await;
+        }
 
         // Remove the first mock and register the new supergraph so the poller picks it up
         mock1.remove();
