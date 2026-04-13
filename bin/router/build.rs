@@ -6,11 +6,21 @@ use std::{
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    println!("build script using workspace root: {:?}", manifest_dir);
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("missing OUT_DIR"));
     let output_file = out_dir.join("laboratory.html");
     let product_logo = manifest_dir.join("static/product_logo.svg");
-    let node_modules_dist = manifest_dir.join("node_modules/@graphql-hive/laboratory/dist");
+    let node_modules_dist = out_dir.join("node_modules/@graphql-hive/laboratory/dist");
+
+    fs::copy(
+        manifest_dir.join("package.json"),
+        out_dir.join("package.json"),
+    )
+    .expect("Failed to copy package.json");
+    fs::copy(
+        manifest_dir.join("package-lock.json"),
+        out_dir.join("package-lock.json"),
+    )
+    .expect("Failed to copy package-lock.json");
 
     println!("cargo:rerun-if-changed={}", product_logo.display());
     println!(
@@ -19,13 +29,20 @@ fn main() {
     );
     println!(
         "cargo:rerun-if-changed={}",
+        manifest_dir.join("node_modules").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
         manifest_dir.join("package-lock.json").display()
     );
 
     if !node_modules_dist.exists() {
         let status = Command::new("npm")
-            .args(["install", "--include=dev"]) // NODE_ENV=production will skip dev deps - make sure they're in
-            .current_dir(manifest_dir)
+            .args([
+                "install",
+                "--include=dev", // NODE_ENV=production will skip dev deps - make sure they're in
+            ])
+            .current_dir(out_dir)
             .status()
             .expect("Failed to execute npm install");
 
@@ -33,35 +50,6 @@ fn main() {
             panic!("npm install failed");
         }
     }
-
-    println!(
-        "cargo:rerun-if-changed={}",
-        node_modules_dist.join("hive-laboratory.umd.js").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        node_modules_dist
-            .join("monacoeditorwork/editor.worker.bundle.js")
-            .display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        node_modules_dist
-            .join("monacoeditorwork/graphql.worker.bundle.js")
-            .display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        node_modules_dist
-            .join("monacoeditorwork/json.worker.bundle.js")
-            .display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        node_modules_dist
-            .join("monacoeditorwork/ts.worker.bundle.js")
-            .display()
-    );
 
     let html = build_inline_laboratory_html(&node_modules_dist, &product_logo);
 
