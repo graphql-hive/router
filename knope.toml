@@ -1,3 +1,6 @@
+[changes]
+ignore_conventional_commits = true
+
 [bot.releases]
 enabled = true
 pull_request.title = "chore(release): router crates and artifacts"
@@ -43,7 +46,6 @@ changelog = "lib/node-addon/CHANGELOG.md"
 name = "release"
   [[workflows.steps]]
   type = "PrepareRelease"
-  ignore_conventional_commits = true
   [[workflows.steps]]
   type = "Command"
   command = 'git commit -m "chore: prepare releases"'
