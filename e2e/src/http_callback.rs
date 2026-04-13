@@ -27,7 +27,6 @@ mod http_callback_e2e_tests {
                 subscriptions:
                     enabled: true
                     callback:
-                        heartbeat_interval: 200ms
                         listen: 0.0.0.0:{callback_port}
                         public_url: http://0.0.0.0:{callback_port}/callback
                         subgraphs:
@@ -93,7 +92,7 @@ mod http_callback_e2e_tests {
                 subscriptions:
                     enabled: true
                     callback:
-                        heartbeat_interval: 200ms
+                        heartbeat_interval: 500ms
                         public_url: http://0.0.0.0:{router_port}/callback
                         subgraphs:
                             - reviews
