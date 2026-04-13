@@ -38,7 +38,7 @@ mod supergraph_e2e_tests {
         assert!(res.status().is_success(), "Expected 200 OK");
 
         // wait for caches to populate
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             router
                 .schema_state()
@@ -61,6 +61,16 @@ mod supergraph_e2e_tests {
         }
 
         mock1.remove();
+
+        // capture the checksum before the new schema is fetched
+        let old_checksum = {
+            let guard = router.schema_state().current_supergraph();
+            let Some(ref data) = **guard else {
+                panic!("expected supergraph data to be present");
+            };
+            data.schema_checksum()
+        };
+
         let mock2 = server
             .mock("GET", "/supergraph")
             .expect_at_least(1)
@@ -73,11 +83,31 @@ mod supergraph_e2e_tests {
             .await
             .expect("Expected mock2 to be matched");
 
-        // wait for the router to finish rebuilding with the new supergraph
-        router.wait_for_ready(None).await;
+        // wait for the router to actually swap to the new supergraph by checking
+        // schema_checksum changes. wait_for_ready is not sufficient because the
+        // router is already ready with the old schema. we must not send queries
+        // here because that would repopulate the caches we want to assert are empty.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let current = {
+                let guard = router.schema_state().current_supergraph();
+                match **guard {
+                    Some(ref data) => Some(data.schema_checksum()),
+                    None => None,
+                }
+            };
+            if current.is_some() && current != Some(old_checksum) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for new supergraph to be active"
+            );
+            ntex::time::sleep(Duration::from_millis(50)).await;
+        }
 
         // wait for cache invalidation to be reflected (moka invalidate_all is lazy)
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             router
                 .schema_state()
