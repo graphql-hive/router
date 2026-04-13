@@ -84,7 +84,7 @@ pub async fn execute_plan(
             extensions.insert(
                 "queryPlan".into(),
                 sonic_rs::to_value(&planned_request.query_plan_payload)
-                    .map_err(|e| PipelineError::ExtensionSerializationFailed("query plan", e))?,
+                    .map_err(PipelineError::QueryPlanSerializationFailed)?,
             );
         }
 
@@ -92,7 +92,7 @@ pub async fn execute_plan(
             let body = sonic_rs::to_vec(&json!({
                 "extensions": extensions,
             }))
-            .map_err(|e| PipelineError::ExtensionSerializationFailed("query plan", e))?;
+            .map_err(PipelineError::QueryPlanSerializationFailed)?;
 
             return Ok(PlanExecutionOutput {
                 body,

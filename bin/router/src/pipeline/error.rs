@@ -136,9 +136,9 @@ pub enum PipelineError {
     #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
     HeaderPropagation(#[from] HeaderRuleRuntimeError),
 
-    #[error("Failed to serialize the extension of {0}: {1}")]
-    #[strum(serialize = "EXTENSION_SERIALIZATION_FAILED")]
-    ExtensionSerializationFailed(&'static str, sonic_rs::Error),
+    #[error("Failed to serialize the query plan: {0}")]
+    #[strum(serialize = "QUERY_PLAN_SERIALIZATION_FAILED")]
+    QueryPlanSerializationFailed(sonic_rs::Error),
 
     #[error("No supergraph available yet, unable to process request")]
     #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
@@ -231,7 +231,7 @@ impl PipelineError {
             (Self::ReadBodyStreamError(err), _) => err.status_code(),
             (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
-            (Self::ExtensionSerializationFailed(_, _), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
