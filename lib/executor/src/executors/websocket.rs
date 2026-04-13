@@ -60,6 +60,11 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
 
+        // spawn_with is deprecated in favor of Handle::spawn, but Handle::spawn requires
+        // F: Future + Send, and the futures here capture non-Send ntex types (Rc, RefCell).
+        // spawn_with sends a Send closure to the arbiter thread which creates the future
+        // locally, so Send is never required on the future itself. no equivalent exists.
+        #[allow(deprecated)]
         let result = self
             .arbiter
             .spawn_with(async move || {
@@ -132,6 +137,8 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // no await intentionally. the arbiter runs the subscription in the background
         // and sends responses through the channel. The returned future would only resolve
         // when the subscription completes, but we want to return the stream immediately
+        // same as above - spawn_with needed for non-Send futures
+        #[allow(deprecated)]
         drop(self.arbiter.spawn_with(move || async move {
             let connection = match connect(&endpoint).await {
                 Ok(conn) => conn,
