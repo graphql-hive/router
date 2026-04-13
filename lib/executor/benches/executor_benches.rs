@@ -6,7 +6,6 @@ use hive_router_plan_executor::projection::response::project_by_operation;
 use hive_router_plan_executor::response::value::Value;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::utils::parsing::{parse_operation, parse_schema};
-use std::collections::HashMap;
 use std::hint::black_box;
 pub mod raw_result;
 
