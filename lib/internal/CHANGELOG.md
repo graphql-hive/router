@@ -1,3 +1,9 @@
+## 0.0.16 (2026-04-13)
+
+### Fixes
+
+- Version bump to fix release issues
+
 ## 0.0.15 (2026-03-26)
 
 ### Features
