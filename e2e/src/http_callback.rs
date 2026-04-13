@@ -75,16 +75,15 @@ mod http_callback_e2e_tests {
 
     #[ntex::test]
     async fn complete_active_subscription_on_heartbeat_timeout() {
-        flakey!(async {
-            let subgraphs = TestSubgraphs::builder().build().start().await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
-            let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let router_port = router_listener.local_addr().unwrap().port();
-            let router = TestRouter::builder()
-                .with_subgraphs(&subgraphs)
-                .with_listener(router_listener)
-                .inline_config(format!(
-                    r#"
+        let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let router_port = router_listener.local_addr().unwrap().port();
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .with_listener(router_listener)
+            .inline_config(format!(
+                r#"
                     supergraph:
                         source: file
                         path: supergraph.graphql
@@ -101,12 +100,12 @@ mod http_callback_e2e_tests {
                             subgraphs:
                                 - reviews
                     "#
-                ))
-                .build()
-                .start()
-                .await;
+            ))
+            .build()
+            .start()
+            .await;
 
-            let res = router
+        let res = router
                 .send_graphql_request(
                     r#"
                     subscription {
@@ -129,25 +128,24 @@ mod http_callback_e2e_tests {
                 )
                 .await;
 
-            assert_eq!(res.status(), 200, "Expected 200 OK");
+        assert_eq!(res.status(), 200, "Expected 200 OK");
 
-            let body = res.string_body().await;
+        let body = res.string_body().await;
 
-            // emitted at least one event
-            assert!(
-                body.contains(
-                    r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
-                ),
-                "Expected at least one emitted event, got: {}",
-                body
-            );
+        // emitted at least one event
+        assert!(
+            body.contains(
+                r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
+            ),
+            "Expected at least one emitted event, got: {}",
+            body
+        );
 
-            // kicked off client, eventually
-            assert!(body.contains(r#"{"data":null,"errors":[{"message":"Subgraph gone due to heartbeat timeout","extensions":{"code":"SUBGRAPH_GONE"}}]}"#));
+        // kicked off client, eventually
+        assert!(body.contains(r#"{"data":null,"errors":[{"message":"Subgraph gone due to heartbeat timeout","extensions":{"code":"SUBGRAPH_GONE"}}]}"#));
 
-            // completed stream
-            assert!(body.contains("event: complete"));
-        });
+        // completed stream
+        assert!(body.contains("event: complete"));
     }
 
     #[ntex::test]
