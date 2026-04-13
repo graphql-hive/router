@@ -27,6 +27,26 @@ pub struct DemandControlConfig {
 
     /// Whether to include the calculated cost in the response extensions.
     pub include_extension_metadata: Option<bool>,
+
+    /// Optional actual cost calculation configuration.
+    ///
+    /// When enabled, the response extension metadata will include
+    /// `cost.actual` and `cost.delta` in addition to the estimated cost.
+    pub actual_cost: Option<DemandControlActualCostConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DemandControlActualCostConfig {
+    pub mode: DemandControlActualCostMode,
+}
+
+#[derive(Default, Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum DemandControlActualCostMode {
+    BySubgraph,
+    #[default]
+    ByResponseShape,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

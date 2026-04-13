@@ -61,7 +61,7 @@ fn authorization_benchmark(c: &mut Criterion) {
             operation_for_introspection: partitioned_operation
                 .introspection_operation
                 .map(Arc::new),
-            operation_indentity: OperationIdentity {
+            operation_identity: OperationIdentity {
                 name: None,
                 operation_type: "query",
                 client_document_hash: "".to_string(),

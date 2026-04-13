@@ -134,7 +134,7 @@ pub fn enforce_operation_authorization(
                     normalized_operation_hash: hashes.combined_operation_hash,
                     root_type_name: normalized_payload.root_type_name,
                     projection_plan: Arc::new(new_projection_plan),
-                    operation_indentity: normalized_payload.operation_indentity.clone(),
+                    operation_identity: normalized_payload.operation_identity.clone(),
                 }),
                 errors,
             )

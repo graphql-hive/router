@@ -6,11 +6,13 @@ use ahash::{HashMap as AHashMap, HashMapExt};
 use bytes::BufMut;
 use futures::TryFutureExt;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use hive_router_config::demand_control::DemandControlActualCostMode;
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
 use hive_router_query_planner::ast::operation::SubgraphFetchOperation;
+use hive_router_query_planner::state::supergraph_state::SupergraphState;
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
@@ -23,6 +25,10 @@ use http::{HeaderMap, StatusCode};
 use sonic_rs::ValueRef;
 use tracing::Instrument;
 
+use crate::execution::demand_control::{
+    demand_control_actual_cost, estimate_actual_subgraph_response_cost_from_response_shape,
+    DemandControlExecutionContext, DemandControlResponseExtensions,
+};
 use crate::{
     context::ExecutionContext,
     execution::{
@@ -75,9 +81,11 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: Option<JwtAuthForwardingPlan>,
     pub graphql_error_recorder: Option<GraphQLErrorMetricsRecorder>,
+    pub demand_control: Option<DemandControlExecutionContext<'exec>>,
     pub initial_errors: Vec<GraphQLError>,
     pub span: &'exec GraphQLOperationSpan,
     pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
+    pub supergraph_state: &'exec SupergraphState,
 }
 
 #[derive(Default)]
@@ -154,7 +162,9 @@ pub async fn execute_query_plan<'exec>(
         headers_plan: opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
+        demand_control: opts.demand_control.as_ref(),
         plugin_req_state: opts.plugin_req_state,
+        supergraph_state: opts.supergraph_state,
     };
 
     if let Some(node) = &query_plan.node {
@@ -181,6 +191,66 @@ pub async fn execute_query_plan<'exec>(
     let mut data = exec_ctx.data;
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
+
+    if let Some(demand_control) = opts.demand_control.as_ref() {
+        let actual_cost_result = demand_control_actual_cost(
+            demand_control,
+            opts.supergraph_state,
+            opts.operation_for_plan,
+            opts.operation_type_name,
+            &data,
+            opts.variable_values,
+            &exec_ctx.actual_cost_by_subgraph,
+        );
+        if let Some(actual_cost_result) = &actual_cost_result {
+            let result: &'static str = (&actual_cost_result.result_code).into();
+            opts.span.record_demand_control(
+                demand_control.evaluation.estimated_cost,
+                Some(actual_cost_result.actual),
+                Some(actual_cost_result.delta),
+                result,
+            );
+        }
+        if let Some(actual_cost_result) = &actual_cost_result {
+            if let Some(max_cost) = actual_cost_result.max_cost_exceeded {
+                let mut error = GraphQLError::from_message_and_code(
+                    format!(
+                        "Operation actual cost {} exceeds configured max cost {}",
+                        actual_cost_result.actual, max_cost
+                    ),
+                    "COST_ACTUAL_TOO_EXPENSIVE",
+                );
+                // Add maxCost to error extensions
+                if let Ok(max_cost_value) = sonic_rs::to_value(&max_cost) {
+                    error
+                        .extensions
+                        .extensions
+                        .insert("maxCost".into(), max_cost_value);
+                }
+                errors.push(error);
+            }
+        }
+        if demand_control.include_extension_metadata {
+            let cost_extensions = DemandControlResponseExtensions {
+                estimated: demand_control.evaluation.estimated_cost,
+                result: actual_cost_result
+                    .as_ref()
+                    .map(|actual_cost_result| &actual_cost_result.result_code)
+                    .unwrap_or(&demand_control.result_code),
+                by_subgraph: &demand_control.evaluation.per_subgraph,
+                blocked_subgraphs: &demand_control.blocked_subgraphs,
+                actual: actual_cost_result.as_ref().map(|r| r.actual),
+                delta: actual_cost_result.as_ref().map(|r| r.delta),
+                actual_by_subgraph: actual_cost_result
+                    .as_ref()
+                    .and_then(|r| r.actual_by_subgraph),
+                max_cost: demand_control.max_cost,
+            };
+            if let Ok(cost_extensions_value) = sonic_rs::to_value(&cost_extensions) {
+                extensions.insert("cost".into(), cost_extensions_value);
+            }
+        }
+    }
 
     if !on_end_callbacks.is_empty() {
         let mut end_payload = OnExecuteEndHookPayload {
@@ -254,17 +324,21 @@ pub struct Executor<'exec> {
     pub headers_plan: &'exec HeaderRulesPlan,
     pub jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
     pub dedupe_subgraph_requests: bool,
+    pub demand_control: Option<&'exec DemandControlExecutionContext<'exec>>,
     pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
+    pub supergraph_state: &'exec SupergraphState,
 }
 
 enum ExecutionJob<'exec> {
     Fetch {
         subgraph_name: &'exec str,
+        operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         output_rewrites: Option<&'exec [FetchRewrite]>,
     },
     FlattenFetch {
         subgraph_name: &'exec str,
+        operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         flatten_node_path: &'exec FlattenNodePath,
         representation_hashes: Vec<u64>,
@@ -273,6 +347,7 @@ enum ExecutionJob<'exec> {
     },
     BatchFetch {
         subgraph_name: &'exec str,
+        operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         aliases: Vec<AliasBatchState<'exec>>,
     },
@@ -318,6 +393,14 @@ impl<'exec> ExecutionJob<'exec> {
             ExecutionJob::Fetch { subgraph_name, .. } => subgraph_name,
             ExecutionJob::FlattenFetch { subgraph_name, .. } => subgraph_name,
             ExecutionJob::BatchFetch { subgraph_name, .. } => subgraph_name,
+        }
+    }
+
+    fn operation(&self) -> &'exec SubgraphFetchOperation {
+        match self {
+            ExecutionJob::Fetch { operation, .. } => operation,
+            ExecutionJob::FlattenFetch { operation, .. } => operation,
+            ExecutionJob::BatchFetch { operation, .. } => operation,
         }
     }
     fn affected_path(&self) -> Option<&'exec FlattenNodePath> {
@@ -449,6 +532,7 @@ impl<'exec> Executor<'exec> {
                         affected_path: None,
                     })
                     .map_ok(|fetch_job| ExecutionJob::BatchFetch {
+                        operation: fetch_job.operation(),
                         subgraph_name: fetch_job.subgraph_name(),
                         response: fetch_job.response(),
                         aliases,
@@ -539,6 +623,7 @@ impl<'exec> Executor<'exec> {
                         affected_path: Some(&flatten_node.path),
                     })
                     .map_ok(|fetch_job| ExecutionJob::FlattenFetch {
+                        operation: fetch_job.operation(),
                         flatten_node_path: &flatten_node.path,
                         response: fetch_job.response(),
                         subgraph_name: fetch_node.service_name.as_str(),
@@ -575,6 +660,25 @@ impl<'exec> Executor<'exec> {
             Ok(job) => {
                 let subgraph_name = job.subgraph_name();
                 let affected_path = job.affected_path();
+
+                if let Some(demand_control) = self.demand_control {
+                    if let Some(DemandControlActualCostMode::BySubgraph) =
+                        demand_control.actual_cost_mode
+                    {
+                        let actual_for_response =
+                            estimate_actual_subgraph_response_cost_from_response_shape(
+                                job.operation(),
+                                &job.response_ref().data,
+                                self.supergraph_state,
+                                self.variable_values,
+                            );
+                        ctx.actual_cost_by_subgraph
+                            .entry(subgraph_name)
+                            .and_modify(|cost| *cost = cost.saturating_add(actual_for_response))
+                            .or_insert(actual_for_response);
+                    }
+                }
+
                 if let Some(ref subgraph_headers) = job.response_ref().headers {
                     if let Err(err) = apply_subgraph_response_headers(
                         self.headers_plan,
@@ -1086,6 +1190,7 @@ impl<'exec> Executor<'exec> {
                     subgraph_request,
                     self.client_request,
                     self.plugin_req_state,
+                    self.demand_control,
                 )
                 .await
                 .with_plan_context(LazyPlanContext {
@@ -1103,6 +1208,7 @@ impl<'exec> Executor<'exec> {
 
             Ok(ExecutionJob::Fetch {
                 subgraph_name: opts.subgraph_name,
+                operation: opts.operation,
                 response,
                 output_rewrites: opts.output_rewrites,
             })
@@ -1171,6 +1277,7 @@ mod tests {
             selection_set::SelectionSet,
         },
         planner::plan_nodes::{EntityBatch, EntityBatchAlias, FetchNode, ParallelNode, PlanNode},
+        state::supergraph_state::SupergraphState,
         utils::parsing::parse_operation,
     };
     use ntex::http::HeaderMap;
@@ -1334,7 +1441,9 @@ mod tests {
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
+            demand_control: None,
             plugin_req_state: &None,
+            supergraph_state: &SupergraphState::default(),
         };
 
         let data: ResponseValue = sonic_rs::from_str(
@@ -1445,7 +1554,9 @@ mod tests {
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
+            demand_control: None,
             plugin_req_state: &None,
+            supergraph_state: &SupergraphState::default(),
         };
 
         let mock_a = subgraph_a

@@ -53,6 +53,10 @@ pub enum SubgraphExecutorError {
     #[error("Failed to initialize or load native TLS root certificates: {0}")]
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     NativeTlsCertificatesError(std::io::Error),
+
+    #[error("Skipped execution of subgraph '{estimated_cost}' because the estimated cost of executing the subgraph exceeds the maximum allowed cost.")]
+    #[strum(serialize = "SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE")]
+    CostEstimatedTooExpensive { estimated_cost: u64 },
 }
 
 impl SubgraphExecutorError {

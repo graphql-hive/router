@@ -5,6 +5,8 @@ mod authorization_directives_reject;
 #[cfg(test)]
 mod body_limit;
 #[cfg(test)]
+mod demand_control;
+#[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
 mod entity_batching;

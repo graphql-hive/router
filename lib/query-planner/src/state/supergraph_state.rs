@@ -162,7 +162,7 @@ impl LinkedSpecifications {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SupergraphState {
     /// A map all of definitions (def_name, def) that exists in the schema.
     pub definitions: DefinitionMap,
@@ -513,6 +513,11 @@ impl SupergraphState {
                                 cost_directive.map(|cost| (arg.name.to_string(), cost))
                             })
                             .collect(),
+                        argument_types: field
+                            .arguments
+                            .iter()
+                            .map(|arg| (arg.name.to_string(), (&arg.value_type).into()))
+                            .collect(),
                     },
                 )
             })
@@ -545,6 +550,7 @@ impl SupergraphState {
                             .next(),
                         list_size: None,
                         cost_by_arguments: Default::default(),
+                        argument_types: Default::default(),
                     },
                 )
             })
@@ -938,6 +944,7 @@ pub struct SupergraphField {
     pub cost: Option<CostDirective>,
     pub list_size: Option<ListSizeDirective>,
     pub cost_by_arguments: HashMap<String, CostDirective>,
+    pub argument_types: HashMap<String, TypeNode>,
 }
 
 impl SupergraphField {

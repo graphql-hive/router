@@ -7,6 +7,7 @@ use std::{
 use tracing::{error, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 
+use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use hive_router_internal::telemetry::traces::spans::{
     graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
 };
@@ -32,6 +33,7 @@ use crate::{
         body_read::read_body_stream,
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
+        demand_control::evaluate_demand_control,
         error::PipelineError,
         execution::{execute_plan, PlannedRequest},
         execution_request::{deserialize_graphql_params, DeserializationResult, GetQueryStr},
@@ -59,6 +61,7 @@ pub mod body_read;
 pub mod coerce_variables;
 pub mod cors;
 pub mod csrf_prevention;
+pub mod demand_control;
 pub mod error;
 pub mod execution;
 pub mod execution_request;
@@ -214,8 +217,8 @@ pub async fn graphql_request_handler(
 
         write_graphql_operation_metric_identity(
             req,
-            normalize_payload.operation_indentity.name.clone(),
-            Some(normalize_payload.operation_indentity.operation_type),
+            normalize_payload.operation_identity.name.clone(),
+            Some(normalize_payload.operation_identity.operation_type),
         );
 
         if req.method() == Method::GET {
@@ -481,12 +484,40 @@ pub async fn execute_pipeline<'exec>(
         }
     };
 
+    let operation_name = normalize_payload.operation_identity.name.as_deref();
+    let demand_control_execution_context = match evaluate_demand_control(
+        shared_state,
+        supergraph,
+        variable_payload,
+        &query_plan_payload,
+        operation_name,
+    ) {
+        Ok(context) => context,
+        Err(err @ PipelineError::CostEstimatedTooExpensive { estimated_cost, .. }) => {
+            let result: &'static str = (&DemandControlResultCode::CostEstimatedTooExpensive).into();
+            operation_span.record_demand_control(estimated_cost, None, None, result);
+            return Err(err);
+        }
+        Err(err) => return Err(err),
+    };
+
+    if let Some(demand_control) = demand_control_execution_context.as_ref() {
+        let result: &'static str = (&demand_control.result_code).into();
+        operation_span.record_demand_control(
+            demand_control.evaluation.estimated_cost,
+            None,
+            None,
+            result,
+        );
+    }
+
     let planned_request = PlannedRequest {
         normalized_payload: &normalize_payload,
         query_plan_payload: &query_plan_payload,
         variable_payload,
         client_request_details,
         authorization_errors,
+        demand_control_execution_context,
         plugin_req_state,
     };
 

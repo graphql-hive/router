@@ -9,6 +9,7 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLExecuteSpan, GraphQLOperationSpan,
 };
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
+use hive_router_plan_executor::execution::demand_control::DemandControlExecutionContext;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{
     execute_query_plan, PlanExecutionOutput, QueryPlanExecutionOpts,
@@ -36,6 +37,7 @@ pub struct PlannedRequest<'req> {
     pub variable_payload: &'req CoerceVariablesPayload,
     pub client_request_details: &'req ClientRequestDetails<'req>,
     pub authorization_errors: Vec<AuthorizationError>,
+    pub demand_control_execution_context: Option<DemandControlExecutionContext<'req>>,
     pub plugin_req_state: &'req Option<PluginRequestState<'req>>,
 }
 
@@ -82,7 +84,7 @@ pub async fn execute_plan(
             extensions.insert(
                 "queryPlan".into(),
                 sonic_rs::to_value(&planned_request.query_plan_payload)
-                    .map_err(PipelineError::QueryPlanSerializationFailed)?,
+                    .map_err(|e| PipelineError::ExtensionSerializationFailed("query plan", e))?,
             );
         }
 
@@ -90,7 +92,7 @@ pub async fn execute_plan(
             let body = sonic_rs::to_vec(&json!({
                 "extensions": extensions,
             }))
-            .map_err(PipelineError::QueryPlanSerializationFailed)?;
+            .map_err(|e| PipelineError::ExtensionSerializationFailed("query plan", e))?;
 
             return Ok(PlanExecutionOutput {
                 body,
@@ -129,6 +131,7 @@ pub async fn execute_plan(
             operation_type_name: planned_request.normalized_payload.root_type_name,
             jwt_auth_forwarding,
             graphql_error_recorder: app_state.telemetry_context.metrics.graphql.error_recorder(),
+            demand_control: planned_request.demand_control_execution_context,
             executors: &supergraph.subgraph_executor_map,
             initial_errors: planned_request
                 .authorization_errors
@@ -137,6 +140,7 @@ pub async fn execute_plan(
                 .collect(),
             span,
             plugin_req_state: planned_request.plugin_req_state,
+            supergraph_state: &supergraph.planner.supergraph,
         })
         .await?;
 

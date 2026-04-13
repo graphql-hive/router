@@ -501,6 +501,12 @@ fn test_graphql_operation_span() {
         layer.assert_recorded_value(&span, attributes::HIVE_GRAPHQL_OPERATION_HASH, "op-hash");
         layer.assert_recorded_value(&span, attributes::HIVE_CLIENT_NAME, "client");
         layer.assert_recorded_value(&span, attributes::HIVE_CLIENT_VERSION, "1.0.0");
+
+        span.record_demand_control(11, Some(3), Some(-8), "COST_OK");
+        layer.assert_recorded_value(&span, attributes::COST_ESTIMATED, "11");
+        layer.assert_recorded_value(&span, attributes::COST_ACTUAL, "3");
+        layer.assert_recorded_value(&span, attributes::COST_DELTA, "-8");
+        layer.assert_recorded_value(&span, attributes::COST_RESULT, "COST_OK");
     });
 }
 

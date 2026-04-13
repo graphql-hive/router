@@ -29,7 +29,7 @@ pub struct GraphQLNormalizationPayload {
     pub normalized_operation_hash: u64,
     pub root_type_name: &'static str,
     pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
-    pub operation_indentity: OperationIdentity,
+    pub operation_identity: OperationIdentity,
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +137,7 @@ pub async fn normalize_request_with_cache(
                     operation_for_introspection,
                     operation_for_introspection_hash: hashes.operation_for_introspection_hash,
                     normalized_operation_hash: hashes.combined_operation_hash,
-                    operation_indentity: OperationIdentity {
+                    operation_identity: OperationIdentity {
                         name: doc.operation_name.clone(),
                         operation_type: parser_payload.operation_type,
                         client_document_hash: parser_payload.cache_key_string.clone(),

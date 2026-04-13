@@ -2,7 +2,7 @@ use crate::federation_spec::directives::FederationDirective;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CostDirective {
-    pub weight: i64,
+    pub weight: u64,
 }
 
 impl CostDirective {
@@ -29,7 +29,9 @@ impl FederationDirective for CostDirective {
         }
 
         if let Some(weight) = weight {
-            Self { weight }
+            Self {
+                weight: weight as u64,
+            }
         } else {
             panic!(
                 "'cost' directive is missing required 'weight' argument or it is not an integer"
@@ -52,7 +54,7 @@ impl PartialOrd for CostDirective {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ListSizeDirective {
-    pub assumed_size: Option<i64>,
+    pub assumed_size: Option<usize>,
     pub slicing_arguments: Option<Vec<String>>,
     pub sized_fields: Option<Vec<String>>,
     pub require_one_slicing_argument: bool,
@@ -80,7 +82,7 @@ impl FederationDirective for ListSizeDirective {
             match arg_name.as_str() {
                 "assumedSize" => {
                     if let graphql_tools::parser::schema::Value::Int(int_value) = arg_value {
-                        assumed_size = int_value.as_i64();
+                        assumed_size = int_value.as_i64().map(|v| v as usize);
                     }
                 }
                 "slicingArguments" => {

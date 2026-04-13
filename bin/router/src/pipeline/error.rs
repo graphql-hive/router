@@ -136,13 +136,18 @@ pub enum PipelineError {
     #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
     HeaderPropagation(#[from] HeaderRuleRuntimeError),
 
-    #[error("Failed to serialize the query plan: {0}")]
-    #[strum(serialize = "QUERY_PLAN_SERIALIZATION_FAILED")]
-    QueryPlanSerializationFailed(sonic_rs::Error),
+    #[error("Failed to serialize the extension of {0}: {1}")]
+    #[strum(serialize = "EXTENSION_SERIALIZATION_FAILED")]
+    ExtensionSerializationFailed(&'static str, sonic_rs::Error),
 
     #[error("No supergraph available yet, unable to process request")]
     #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
     NoSupergraphAvailable,
+
+    // Demand Control
+    #[error("Operation estimated cost {estimated_cost} exceeds configured max cost {max_cost}")]
+    #[strum(serialize = "COST_ESTIMATED_TOO_EXPENSIVE")]
+    CostEstimatedTooExpensive { estimated_cost: u64, max_cost: u64 },
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -210,6 +215,8 @@ impl PipelineError {
             (Self::MutationNotAllowedOverHttpGet, _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::ValidationErrors(_), true) => StatusCode::OK,
             (Self::ValidationErrors(_), false) => StatusCode::BAD_REQUEST,
+            (Self::CostEstimatedTooExpensive { .. }, true) => StatusCode::OK,
+            (Self::CostEstimatedTooExpensive { .. }, false) => StatusCode::BAD_REQUEST,
             (Self::AuthorizationFailed(_), _) => StatusCode::FORBIDDEN,
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -224,7 +231,7 @@ impl PipelineError {
             (Self::ReadBodyStreamError(err), _) => err.status_code(),
             (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
-            (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::ExtensionSerializationFailed(_, _), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
