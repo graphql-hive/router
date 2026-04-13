@@ -12,7 +12,7 @@ traffic_shaping:
       request_timeout:
         expression: |
           if (.request.headers."x-timeout" == "short") {
-            "1s"
+            "5s"
           } else {
             .default
           }
