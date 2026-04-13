@@ -3,29 +3,29 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-use workspace_root::get_workspace_root;
 
 fn main() {
-    let workspace_root_dir: PathBuf = get_workspace_root();
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    println!("build script using workspace root: {:?}", manifest_dir);
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("missing OUT_DIR"));
     let output_file = out_dir.join("laboratory.html");
-    let product_logo = workspace_root_dir.join("bin/router/static/product_logo.svg");
-    let node_modules_dist = workspace_root_dir.join("node_modules/@graphql-hive/laboratory/dist");
+    let product_logo = manifest_dir.join("static/product_logo.svg");
+    let node_modules_dist = manifest_dir.join("node_modules/@graphql-hive/laboratory/dist");
 
     println!("cargo:rerun-if-changed={}", product_logo.display());
     println!(
         "cargo:rerun-if-changed={}",
-        workspace_root_dir.join("package.json").display()
+        manifest_dir.join("package.json").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
-        workspace_root_dir.join("package-lock.json").display()
+        manifest_dir.join("package-lock.json").display()
     );
 
     if !node_modules_dist.exists() {
         let status = Command::new("npm")
             .args(["install", "--include=dev"]) // NODE_ENV=production will skip dev deps - make sure they're in
-            .current_dir(workspace_root_dir)
+            .current_dir(manifest_dir)
             .status()
             .expect("Failed to execute npm install");
 
