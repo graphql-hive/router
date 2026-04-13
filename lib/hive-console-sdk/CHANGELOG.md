@@ -1,3 +1,9 @@
+## 0.3.9 (2026-04-13)
+
+### Fixes
+
+- release issues with build.rs
+
 ## 0.3.8 (2026-03-16)
 
 ### Fixes

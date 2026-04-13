@@ -1,4 +1,10 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.19 (2026-04-13)
+
+### Fixes
+
+- release issues with build.rs
+
 ## 0.0.18 (2026-04-13)
 
 ### Fixes

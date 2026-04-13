@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.5.3 (2026-04-13)
+
+### Fixes
+
+- release issues with build.rs
+
 ## 2.5.2 (2026-04-13)
 
 ### Fixes
