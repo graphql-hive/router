@@ -161,28 +161,6 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         // TODO: do we thererefore need to buffer at all?
         let (tx, mut rx) = mpsc::channel::<CallbackMessage>(16);
 
-        self.active_subscriptions.insert(
-            subscription_id.clone(),
-            CallbackSubscription {
-                verifier,
-                sender: tx,
-                // initialize last_heartbeat to now + heartbeat_interval so the enforcer
-                // won't evict the subscription before the subgraph's initial check arrives.
-                // the initial check from the subgraph can take up to heartbeat_interval to
-                // arrive (due to network latency), and without this head start the enforcer
-                // would evict the subscription before the first heartbeat is recorded.
-                last_heartbeat: Arc::new(Mutex::new(
-                    Instant::now() + Duration::from_millis(self.heartbeat_interval_ms),
-                )),
-            },
-        );
-
-        // guard removes the entry from `active_subscriptions` when dropped
-        let guard = CallbackSubscriptionGuard {
-            subscription_id: subscription_id.clone(),
-            callback_subscriptions: self.active_subscriptions.clone(),
-        };
-
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
@@ -220,6 +198,23 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             self.endpoint.to_string(),
             res.status()
         );
+
+        // only register the subscription after the subgraph confirms it started, so the
+        // heartbeat enforcer never sees a subscription that the subgraph hasn't acknowledged yet
+        self.active_subscriptions.insert(
+            subscription_id.clone(),
+            CallbackSubscription {
+                verifier,
+                sender: tx,
+                last_heartbeat: Arc::new(Mutex::new(Instant::now())),
+            },
+        );
+
+        // guard removes the entry from `active_subscriptions` when dropped
+        let guard = CallbackSubscriptionGuard {
+            subscription_id: subscription_id.clone(),
+            callback_subscriptions: self.active_subscriptions.clone(),
+        };
 
         if !res.status().is_success() {
             let status = res.status();
