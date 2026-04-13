@@ -686,14 +686,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_use_case_insensitive_header_allowlist_in_router_dedupe_key() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    // long enough for both concurrent requests to arrive before
-                    // the first one completes, even under load with multiple test threads
-                    sleep(Duration::from_millis(300));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
