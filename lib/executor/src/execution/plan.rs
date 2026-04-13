@@ -7,6 +7,7 @@ use bytes::BufMut;
 use futures::TryFutureExt;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use hive_router_config::demand_control::DemandControlActualCostMode;
+use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
@@ -22,6 +23,7 @@ use hive_router_query_planner::{
     state::supergraph_state::OperationKind,
 };
 use http::{HeaderMap, StatusCode};
+use serde::Serialize;
 use sonic_rs::ValueRef;
 use tracing::Instrument;
 
@@ -68,13 +70,31 @@ use crate::{
     },
 };
 
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionResultExtensions<'exec> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost: Option<DemandControlResponseExtensions<'exec>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_plan: Option<&'exec QueryPlan>,
+
+    #[serde(flatten)]
+    pub extensions: HashMap<String, sonic_rs::Value>,
+}
+
+impl ExecutionResultExtensions<'_> {
+    pub fn is_empty(&self) -> bool {
+        self.cost.is_none() && self.query_plan.is_none() && self.extensions.is_empty()
+    }
+}
+
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub operation_for_plan: &'exec OperationDefinition,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
-    pub extensions: HashMap<String, sonic_rs::Value>,
+    pub extensions: ExecutionResultExtensions<'exec>,
     pub client_request: &'exec ClientRequestDetails<'exec>,
     pub introspection_context: &'exec IntrospectionContext<'exec>,
     pub operation_type_name: &'exec str,
@@ -97,7 +117,7 @@ pub struct PlanExecutionOutput {
 }
 
 pub async fn execute_query_plan<'exec>(
-    opts: QueryPlanExecutionOpts<'exec>,
+    mut opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let mut data = if let Some(introspection_query) = opts.introspection_context.query {
         resolve_introspection(introspection_query, opts.introspection_context)
@@ -108,8 +128,6 @@ pub async fn execute_query_plan<'exec>(
     };
 
     let mut errors = opts.initial_errors;
-
-    let mut extensions = opts.extensions;
 
     let mut query_plan = opts.query_plan;
 
@@ -125,7 +143,7 @@ pub async fn execute_query_plan<'exec>(
             operation_for_plan: opts.operation_for_plan,
             data,
             errors,
-            extensions,
+            extensions: opts.extensions.extensions,
             variable_values: opts.variable_values,
             dedupe_subgraph_requests,
         };
@@ -148,7 +166,7 @@ pub async fn execute_query_plan<'exec>(
         query_plan = start_payload.query_plan;
         data = start_payload.data;
         errors = start_payload.errors;
-        extensions = start_payload.extensions;
+        opts.extensions.extensions = start_payload.extensions;
     }
 
     let mut exec_ctx = ExecutionContext::new(data, errors);
@@ -162,7 +180,7 @@ pub async fn execute_query_plan<'exec>(
         headers_plan: opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
-        demand_control: opts.demand_control.as_ref(),
+        demand_control: opts.demand_control,
         plugin_req_state: opts.plugin_req_state,
         supergraph_state: opts.supergraph_state,
     };
@@ -192,15 +210,15 @@ pub async fn execute_query_plan<'exec>(
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
-    if let Some(demand_control) = opts.demand_control.as_ref() {
+    if let Some(demand_control) = executor.demand_control {
         let actual_cost_result = demand_control_actual_cost(
-            demand_control,
+            &demand_control,
             opts.supergraph_state,
             opts.operation_for_plan,
             opts.operation_type_name,
             &data,
             opts.variable_values,
-            &exec_ctx.actual_cost_by_subgraph,
+            exec_ctx.actual_cost_by_subgraph,
         );
         if let Some(actual_cost_result) = &actual_cost_result {
             let result: &'static str = (&actual_cost_result.result_code).into();
@@ -210,8 +228,7 @@ pub async fn execute_query_plan<'exec>(
                 Some(actual_cost_result.delta),
                 result,
             );
-        }
-        if let Some(actual_cost_result) = &actual_cost_result {
+
             if let Some(max_cost) = actual_cost_result.max_cost_exceeded {
                 let mut error = GraphQLError::from_message_and_code(
                     format!(
@@ -231,24 +248,28 @@ pub async fn execute_query_plan<'exec>(
             }
         }
         if demand_control.include_extension_metadata {
-            let cost_extensions = DemandControlResponseExtensions {
-                estimated: demand_control.evaluation.estimated_cost,
-                result: actual_cost_result
-                    .as_ref()
-                    .map(|actual_cost_result| &actual_cost_result.result_code)
-                    .unwrap_or(&demand_control.result_code),
-                by_subgraph: &demand_control.evaluation.per_subgraph,
-                blocked_subgraphs: &demand_control.blocked_subgraphs,
-                actual: actual_cost_result.as_ref().map(|r| r.actual),
-                delta: actual_cost_result.as_ref().map(|r| r.delta),
-                actual_by_subgraph: actual_cost_result
-                    .as_ref()
-                    .and_then(|r| r.actual_by_subgraph),
-                max_cost: demand_control.max_cost,
-            };
-            if let Ok(cost_extensions_value) = sonic_rs::to_value(&cost_extensions) {
-                extensions.insert("cost".into(), cost_extensions_value);
+            let result: DemandControlResultCode;
+            let mut actual = None;
+            let mut delta = None;
+            let mut actual_by_subgraph = None;
+            if let Some(actual_cost_result) = actual_cost_result {
+                result = actual_cost_result.result_code;
+                actual = Some(actual_cost_result.actual);
+                delta = Some(actual_cost_result.delta);
+                actual_by_subgraph = actual_cost_result.actual_by_subgraph;
+            } else {
+                result = demand_control.result_code;
             }
+            opts.extensions.cost = Some(DemandControlResponseExtensions {
+                estimated: demand_control.evaluation.estimated_cost,
+                result,
+                by_subgraph: demand_control.evaluation.per_subgraph,
+                blocked_subgraphs: demand_control.blocked_subgraphs,
+                actual,
+                delta,
+                actual_by_subgraph,
+                max_cost: demand_control.max_cost,
+            });
         }
     }
 
@@ -256,7 +277,7 @@ pub async fn execute_query_plan<'exec>(
         let mut end_payload = OnExecuteEndHookPayload {
             data,
             errors,
-            extensions,
+            extensions: opts.extensions.extensions,
             response_size_estimate,
         };
 
@@ -274,7 +295,7 @@ pub async fn execute_query_plan<'exec>(
         // Give the ownership back to variables
         data = end_payload.data;
         errors = end_payload.errors;
-        extensions = end_payload.extensions;
+        opts.extensions.extensions = end_payload.extensions;
         response_size_estimate = end_payload.response_size_estimate;
     }
 
@@ -296,7 +317,7 @@ pub async fn execute_query_plan<'exec>(
     let body = project_by_operation(
         &data,
         errors,
-        &extensions,
+        &opts.extensions,
         opts.operation_type_name,
         opts.projection_plan,
         opts.variable_values,
@@ -324,7 +345,7 @@ pub struct Executor<'exec> {
     pub headers_plan: &'exec HeaderRulesPlan,
     pub jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
     pub dedupe_subgraph_requests: bool,
-    pub demand_control: Option<&'exec DemandControlExecutionContext<'exec>>,
+    pub demand_control: Option<DemandControlExecutionContext<'exec>>,
     pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
     pub supergraph_state: &'exec SupergraphState,
 }
@@ -661,7 +682,7 @@ impl<'exec> Executor<'exec> {
                 let subgraph_name = job.subgraph_name();
                 let affected_path = job.affected_path();
 
-                if let Some(demand_control) = self.demand_control {
+                if let Some(demand_control) = &self.demand_control {
                     if let Some(DemandControlActualCostMode::BySubgraph) =
                         demand_control.actual_cost_mode
                     {
@@ -1190,7 +1211,7 @@ impl<'exec> Executor<'exec> {
                     subgraph_request,
                     self.client_request,
                     self.plugin_req_state,
-                    self.demand_control,
+                    self.demand_control.as_ref(),
                 )
                 .await
                 .with_plan_context(LazyPlanContext {

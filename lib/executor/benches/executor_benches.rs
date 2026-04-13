@@ -43,7 +43,7 @@ fn project_data_by_operation_test(c: &mut Criterion) {
                 let result = project_by_operation(
                     &data,
                     vec![],
-                    &HashMap::new(),
+                    &Default::default(),
                     bb_root_type_name,
                     &bb_projection_plan,
                     &None,

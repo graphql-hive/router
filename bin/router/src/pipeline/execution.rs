@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::PipelineError;
@@ -12,7 +10,7 @@ use hive_router_plan_executor::execution::client_request_details::ClientRequestD
 use hive_router_plan_executor::execution::demand_control::DemandControlExecutionContext;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{
-    execute_query_plan, PlanExecutionOutput, QueryPlanExecutionOpts,
+    execute_query_plan, ExecutionResultExtensions, PlanExecutionOutput, QueryPlanExecutionOpts,
 };
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
@@ -59,7 +57,7 @@ pub async fn execute_plan(
             metadata: &supergraph.metadata,
         };
 
-        let mut extensions = HashMap::new();
+        let mut extensions = ExecutionResultExtensions::default();
 
         let mut expose_query_plan = ExposeQueryPlanMode::No;
         if app_state.router_config.query_planner.allow_expose {
@@ -81,11 +79,7 @@ pub async fn execute_plan(
             expose_query_plan,
             ExposeQueryPlanMode::Yes | ExposeQueryPlanMode::DryRun
         ) {
-            extensions.insert(
-                "queryPlan".into(),
-                sonic_rs::to_value(&planned_request.query_plan_payload)
-                    .map_err(PipelineError::QueryPlanSerializationFailed)?,
-            );
+            extensions.query_plan = Some(planned_request.query_plan_payload);
         }
 
         if matches!(expose_query_plan, ExposeQueryPlanMode::DryRun) {

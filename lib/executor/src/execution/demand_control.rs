@@ -21,15 +21,15 @@ use crate::response::value::Value;
 #[serde(rename_all = "camelCase")]
 pub struct DemandControlResponseExtensions<'exec> {
     pub estimated: u64,
-    pub result: &'exec DemandControlResultCode,
-    pub by_subgraph: &'exec HashMap<&'exec str, u64>,
-    pub blocked_subgraphs: &'exec HashSet<&'exec str>,
+    pub result: DemandControlResultCode,
+    pub by_subgraph: HashMap<&'exec str, u64>,
+    pub blocked_subgraphs: HashSet<&'exec str>,
 
     pub max_cost: Option<u64>,
 
     pub actual: Option<u64>,
     pub delta: Option<i64>,
-    pub actual_by_subgraph: Option<&'exec HashMap<&'exec str, u64>>,
+    pub actual_by_subgraph: Option<HashMap<&'exec str, u64>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -51,13 +51,13 @@ pub struct DemandControlExecutionContext<'exec> {
 }
 
 pub fn demand_control_actual_cost<'exec>(
-    demand_control: &DemandControlExecutionContext<'exec>,
+    demand_control: &DemandControlExecutionContext<'_>,
     supergraph_state: &'exec SupergraphState,
     operation: &OperationDefinition,
     root_type_name: &str,
     data: &Value<'_>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    actual_cost_by_subgraph_from_responses: &'exec HashMap<&'exec str, u64>,
+    actual_cost_by_subgraph_from_responses: HashMap<&'exec str, u64>,
 ) -> Option<DemandControlActualCostResult<'exec>> {
     let mut actual_by_subgraph = None;
     let actual = match demand_control.actual_cost_mode? {
@@ -108,7 +108,7 @@ pub struct DemandControlActualCostResult<'exec> {
     pub actual: u64,
     pub delta: i64,
     pub max_cost_exceeded: Option<u64>,
-    pub actual_by_subgraph: Option<&'exec HashMap<&'exec str, u64>>,
+    pub actual_by_subgraph: Option<HashMap<&'exec str, u64>>,
     pub result_code: DemandControlResultCode,
 }
 
