@@ -42,6 +42,22 @@ mod supergraph_e2e_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if router.schema_state().plan_cache.entry_count() == 1
+                && router.schema_state().normalize_cache.entry_count() == 1
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for caches to populate: plan={}, normalize={}",
+                router.schema_state().plan_cache.entry_count(),
+                router.schema_state().normalize_cache.entry_count()
+            );
+            ntex::time::sleep(Duration::from_millis(100)).await;
+        }
+
         // Flush the caches
         router
             .schema_state()
@@ -51,24 +67,15 @@ mod supergraph_e2e_tests {
         router.schema_state().plan_cache.run_pending_tasks().await;
         invoke_shutdown_hooks(router.shared_state()).await;
 
-        // wait until both caches report exactly 1 entry
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
-            router
-                .schema_state()
-                .normalize_cache
-                .run_pending_tasks()
-                .await;
-            router.schema_state().plan_cache.run_pending_tasks().await;
-            invoke_shutdown_hooks(router.shared_state()).await;
-            if router.schema_state().plan_cache.entry_count() == 1
-                && router.schema_state().normalize_cache.entry_count() == 1
+            if router.schema_state().plan_cache.entry_count() == 0
+                && router.schema_state().normalize_cache.entry_count() == 0
             {
                 break;
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "timed out waiting for caches to populate: plan={}, normalize={}",
+                "timed out waiting for caches to flush: plan={}, normalize={}",
                 router.schema_state().plan_cache.entry_count(),
                 router.schema_state().normalize_cache.entry_count()
             );
