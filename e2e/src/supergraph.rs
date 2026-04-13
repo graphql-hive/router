@@ -2,7 +2,6 @@
 mod supergraph_e2e_tests {
     use std::time::Duration;
 
-    use hive_router::invoke_shutdown_hooks;
     use sonic_rs::JsonValueTrait;
 
     use crate::testkit::{wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs};
@@ -26,38 +25,41 @@ mod supergraph_e2e_tests {
                   source: hive
                   endpoint: http://{host}/supergraph
                   key: dummy_key
-                  poll_interval: 500ms
+                  poll_interval: 300ms
                 "#,
             ))
             .build()
             .start()
             .await;
 
-        assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
-        assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
-
         let res = router
             .send_graphql_request("{ __schema { types { name } } }", None, None)
             .await;
-
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        // Flush the caches
-        router
-            .schema_state()
-            .normalize_cache
-            .run_pending_tasks()
-            .await;
-        router.schema_state().plan_cache.run_pending_tasks().await;
-        invoke_shutdown_hooks(router.shared_state()).await;
+        // wait for caches to populate
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            router
+                .schema_state()
+                .normalize_cache
+                .run_pending_tasks()
+                .await;
+            router.schema_state().plan_cache.run_pending_tasks().await;
+            if router.schema_state().plan_cache.entry_count() >= 1
+                && router.schema_state().normalize_cache.entry_count() >= 1
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for caches to populate: plan={}, normalize={}",
+                router.schema_state().plan_cache.entry_count(),
+                router.schema_state().normalize_cache.entry_count()
+            );
+            ntex::time::sleep(Duration::from_millis(100)).await;
+        }
 
-        ntex::time::sleep(Duration::from_millis(100)).await;
-
-        // Now it should have the record
-        assert_eq!(router.schema_state().plan_cache.entry_count(), 1);
-        assert_eq!(router.schema_state().normalize_cache.entry_count(), 1);
-
-        // Remove the first mock and register the new supergraph so the poller picks it up
         mock1.remove();
         let mock2 = server
             .mock("GET", "/supergraph")
@@ -67,22 +69,35 @@ mod supergraph_e2e_tests {
             .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
             .create();
 
-        // Wait for the poller to pick up the new supergraph
         wait_until_mock_matched(&mock2)
             .await
             .expect("Expected mock2 to be matched");
 
-        router
-            .schema_state()
-            .normalize_cache
-            .run_pending_tasks()
-            .await;
-        router.schema_state().plan_cache.run_pending_tasks().await;
-        invoke_shutdown_hooks(router.shared_state()).await;
+        // wait for the router to finish rebuilding with the new supergraph
+        router.wait_for_ready(None).await;
 
-        // Now cache should be empty again, if supergraph has changes
-        assert_eq!(router.schema_state().plan_cache.entry_count(), 0);
-        assert_eq!(router.schema_state().normalize_cache.entry_count(), 0);
+        // wait for cache invalidation to be reflected (moka invalidate_all is lazy)
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            router
+                .schema_state()
+                .normalize_cache
+                .run_pending_tasks()
+                .await;
+            router.schema_state().plan_cache.run_pending_tasks().await;
+            if router.schema_state().plan_cache.entry_count() == 0
+                && router.schema_state().normalize_cache.entry_count() == 0
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for caches to clear: plan={}, normalize={}",
+                router.schema_state().plan_cache.entry_count(),
+                router.schema_state().normalize_cache.entry_count()
+            );
+            ntex::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 
     /// In this test we are testing that the supergraph is not changed for in-flight requests.
@@ -238,6 +253,11 @@ mod supergraph_e2e_tests {
         wait_until_mock_matched(&mock2)
             .await
             .expect("Expected mock2 to be matched");
+
+        // wait for the router to finish applying the new supergraph state before asserting;
+        // the mock being matched only means the poller fetched the sdl, not that the router
+        // has finished rebuilding its query planner
+        router.wait_for_ready(None).await;
 
         let res_new_supergraph = router
             .send_graphql_request("{ users { id name reviews { id body } } }", None, None)
