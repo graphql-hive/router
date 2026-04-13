@@ -25,7 +25,6 @@ use std::{
 };
 use tempfile::{NamedTempFile, TempPath};
 use tokio::{
-    net::TcpListener,
     sync::{oneshot, Semaphore},
     time,
 };
@@ -401,7 +400,7 @@ impl TestSubgraphs<Built> {
     }
 
     pub async fn start(self) -> TestSubgraphs<Started> {
-        let listener = TcpListener::bind("127.0.0.1:0")
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("failed to bind tcp listener");
         let addr = listener.local_addr().expect("failed to get local address");
@@ -502,6 +501,7 @@ pub struct TestRouterBuilder {
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     subgraphs_addr: Option<SocketAddr>,
     port: u16,
+    listener: Option<std::net::TcpListener>,
 }
 
 impl TestRouterBuilder {
@@ -513,6 +513,7 @@ impl TestRouterBuilder {
             plugins: vec![],
             subgraphs_addr: None,
             port: 0,
+            listener: None,
         }
     }
 
@@ -544,6 +545,11 @@ impl TestRouterBuilder {
 
     pub fn with_port(mut self, port: u16) -> Self {
         self.port = port;
+        self
+    }
+
+    pub fn with_listener(mut self, listener: std::net::TcpListener) -> Self {
+        self.listener = Some(listener);
         self
     }
 
@@ -605,6 +611,7 @@ impl TestRouterBuilder {
             websocket_path: config.websocket_path().map(|s| s.to_string()),
             callback_conf: config.callback_conf().cloned(),
             port: self.port,
+            listener: self.listener,
             config: Some(config),
             plugins: self.plugins,
             handle: None,
@@ -695,6 +702,7 @@ pub struct TestRouter<State> {
     websocket_path: Option<String>,
     callback_conf: Option<CallbackConfig>,
     port: u16,
+    listener: Option<std::net::TcpListener>,
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     handle: Option<TestRouterHandle>,
@@ -785,10 +793,18 @@ impl TestRouter<Built> {
             .detect_conflicts(&prometheus)
             .expect("failed to detect endpoint conflicts");
 
+        let serv_listener = self.listener.unwrap_or(
+            std::net::TcpListener::bind(format!("127.0.0.1:{}", self.port))
+                .expect("failed to bind tcp listener for test server"),
+        );
+        let serv_port = serv_listener
+            .local_addr()
+            .expect("failed to get local address of test server")
+            .port();
         let serv_paths = paths.clone();
         let serv_prometheus = prometheus.clone();
         let long_lived_limit = LongLivedClientLimitService::new(&shared_state.router_config);
-        let serv = test::server_with(test::config().port(self.port), move || {
+        let serv = test::server_with(test::config().listener(serv_listener), move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
             let paths = serv_paths.clone();
@@ -827,7 +843,8 @@ impl TestRouter<Built> {
         let mut hold_until_drop = self._hold_until_drop;
         hold_until_drop.push(Box::new(subscription_guard));
         let started = TestRouter {
-            port: self.port,
+            port: serv_port,
+            listener: None,
             wait_for_healthy_on_start: self.wait_for_healthy_on_start,
             wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: self.graphql_path,

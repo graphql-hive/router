@@ -731,10 +731,11 @@ mod subscriptions_e2e_tests {
     async fn subscription_yes_entity_resolution_http_callback_subgraph() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router_port = get_available_port();
+        let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let router_port = router_listener.local_addr().unwrap().port();
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .with_port(router_port)
+            .with_listener(router_listener)
             .inline_config(format!(
                 r#"
                 supergraph:

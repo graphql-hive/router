@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod http_callback_e2e_tests {
+    use std::net::TcpListener;
+
     use futures::StreamExt;
     use ntex::http;
     use sonic_rs::{json, JsonValueTrait};
@@ -15,7 +17,7 @@ mod http_callback_e2e_tests {
         let callback_port = get_available_port();
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            // .with_port(callback_port) router is on a different port than the callback listener
+            // .with_port() router is on a different port than the callback listener anyways
             .inline_config(format!(
                 r#"
                 supergraph:
@@ -72,10 +74,11 @@ mod http_callback_e2e_tests {
     async fn complete_active_subscription_on_heartbeat_timeout() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router_port = get_available_port();
+        let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let router_port = router_listener.local_addr().unwrap().port();
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .with_port(router_port)
+            .with_listener(router_listener)
             .inline_config(format!(
                 r#"
                 supergraph:
@@ -146,10 +149,11 @@ mod http_callback_e2e_tests {
     async fn client_disconnect_removes_subscription() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router_port = get_available_port();
+        let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let router_port = router_listener.local_addr().unwrap().port();
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .with_port(router_port)
+            .with_listener(router_listener)
             .inline_config(format!(
                 r#"
                 supergraph:
@@ -245,10 +249,11 @@ mod http_callback_e2e_tests {
     async fn invalid_verifier_is_rejected() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
-        let router_port = get_available_port();
+        let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let router_port = router_listener.local_addr().unwrap().port();
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .with_port(router_port)
+            .with_listener(router_listener)
             .inline_config(format!(
                 r#"
                 supergraph:
