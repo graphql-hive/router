@@ -387,6 +387,7 @@ fn root_type_name_for_operation_kind<'a>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn estimate_operation_cost<'exec>(
     operation: &'exec OperationDefinition,
     operation_fragments: &'exec [FragmentDefinition],
@@ -418,6 +419,7 @@ fn estimate_operation_cost<'exec>(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn estimate_selection_set_cost<'exec>(
     selection_set: &'exec SelectionSet,
     parent_type_name: &'exec str,
