@@ -161,6 +161,29 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         // TODO: do we thererefore need to buffer at all?
         let (tx, mut rx) = mpsc::channel::<CallbackMessage>(16);
 
+        self.active_subscriptions.insert(
+            subscription_id.clone(),
+            CallbackSubscription {
+                verifier,
+                sender: tx,
+                // the subgraph sends a check before responding to the subscription POST,
+                // so the check arrives and updates last_heartbeat before we even see the response.
+                // the enforcer evicts when now - last_heartbeat > heartbeat_interval + 500ms grace.
+                // we initialize last_heartbeat to now + 2 * heartbeat_interval so that even a
+                // delayed enforcer tick (which can arrive up to ~2x the interval late under load)
+                // won't evict the subscription before the subgraph's initial check is recorded.
+                last_heartbeat: Arc::new(Mutex::new(
+                    Instant::now() + 2 * Duration::from_millis(self.heartbeat_interval_ms),
+                )),
+            },
+        );
+
+        // guard removes the entry from `active_subscriptions` when dropped
+        let guard = CallbackSubscriptionGuard {
+            subscription_id: subscription_id.clone(),
+            callback_subscriptions: self.active_subscriptions.clone(),
+        };
+
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
@@ -198,23 +221,6 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             self.endpoint.to_string(),
             res.status()
         );
-
-        // only register the subscription after the subgraph confirms it started, so the
-        // heartbeat enforcer never sees a subscription that the subgraph hasn't acknowledged yet
-        self.active_subscriptions.insert(
-            subscription_id.clone(),
-            CallbackSubscription {
-                verifier,
-                sender: tx,
-                last_heartbeat: Arc::new(Mutex::new(Instant::now())),
-            },
-        );
-
-        // guard removes the entry from `active_subscriptions` when dropped
-        let guard = CallbackSubscriptionGuard {
-            subscription_id: subscription_id.clone(),
-            callback_subscriptions: self.active_subscriptions.clone(),
-        };
 
         if !res.status().is_success() {
             let status = res.status();
