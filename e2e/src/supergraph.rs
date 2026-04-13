@@ -4,10 +4,7 @@ mod supergraph_e2e_tests {
 
     use sonic_rs::JsonValueTrait;
 
-    use crate::{
-        flakey,
-        testkit::{wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs},
-    };
+    use crate::testkit::{wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn should_clear_internal_caches_when_supergraph_changes() {
