@@ -206,13 +206,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         let req_fut = self.http_client.request(req);
         let res = if let Some(timeout_duration) = timeout {
             tokio::time::timeout(timeout_duration, req_fut)
-                .await
-                .map_err(|_| {
-                    SubgraphExecutorError::RequestTimeout(
-                        self.endpoint.to_string(),
-                        timeout_duration.as_millis(),
-                    )
-                })?
+                .await?
                 .map_err(SubgraphExecutorError::RequestFailure)?
         } else {
             req_fut
