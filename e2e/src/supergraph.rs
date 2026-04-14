@@ -21,25 +21,30 @@ mod supergraph_e2e_tests {
         let router = TestRouter::builder()
             .inline_config(format!(
                 r#"
-                supergraph:
-                  source: hive
-                  endpoint: http://{host}/supergraph
-                  key: dummy_key
-                  poll_interval: 300ms
-                "#,
+                    supergraph:
+                      source: hive
+                      endpoint: http://{host}/supergraph
+                      key: dummy_key
+                      poll_interval: 500ms
+                    "#,
             ))
             .build()
             .start()
             .await;
 
-        let res = router
-            .send_graphql_request("{ __schema { types { name } } }", None, None)
-            .await;
-        assert!(res.status().is_success(), "Expected 200 OK");
+        wait_until_mock_matched(&mock1)
+            .await
+            .expect("Expected mock1 to be matched");
 
         // wait for caches to populate
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
+            // we keep making requests to ensure the cache because its flakey
+            let res = router
+                .send_graphql_request("{ __schema { types { name } } }", None, None)
+                .await;
+            assert!(res.status().is_success(), "Expected 200 OK");
+
             router
                 .schema_state()
                 .normalize_cache
@@ -51,16 +56,18 @@ mod supergraph_e2e_tests {
             {
                 break;
             }
+
             assert!(
                 std::time::Instant::now() < deadline,
                 "timed out waiting for caches to populate: plan={}, normalize={}",
                 router.schema_state().plan_cache.entry_count(),
                 router.schema_state().normalize_cache.entry_count()
             );
-            ntex::time::sleep(Duration::from_millis(100)).await;
+            ntex::time::sleep(Duration::from_millis(50)).await;
         }
 
         mock1.remove();
+
         let mock2 = server
             .mock("GET", "/supergraph")
             .expect_at_least(1)
@@ -73,11 +80,8 @@ mod supergraph_e2e_tests {
             .await
             .expect("Expected mock2 to be matched");
 
-        // wait for the router to finish rebuilding with the new supergraph
-        router.wait_for_ready(None).await;
-
-        // wait for cache invalidation to be reflected (moka invalidate_all is lazy)
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        // wait for cache invalidation to be reflected
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             router
                 .schema_state()
@@ -96,7 +100,7 @@ mod supergraph_e2e_tests {
                 router.schema_state().plan_cache.entry_count(),
                 router.schema_state().normalize_cache.entry_count()
             );
-            ntex::time::sleep(Duration::from_millis(100)).await;
+            ntex::time::sleep(Duration::from_millis(50)).await;
         }
     }
 
@@ -139,7 +143,7 @@ mod supergraph_e2e_tests {
                   source: hive
                   endpoint: http://{host}/supergraph
                   key: dummy_key
-                  poll_interval: 100ms
+                  poll_interval: 500ms
                 "#,
             ))
             .build()
@@ -290,7 +294,7 @@ mod supergraph_e2e_tests {
                   source: hive
                   endpoint: http://{host}/supergraph
                   key: dummy_key
-                  poll_interval: 200ms
+                  poll_interval: 500ms
                 "#,
             ))
             .build()

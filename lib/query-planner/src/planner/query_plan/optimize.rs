@@ -479,9 +479,8 @@ impl PlanOptimizer<'_> {
                 self.optimize_optional_child(&mut condition_node.else_clause)?;
                 Ok(PlanNode::Condition(condition_node))
             }
-            PlanNode::Subscription(mut subscription_node) => {
-                subscription_node.primary =
-                    Box::new(self.optimize_node(*subscription_node.primary)?);
+            PlanNode::Subscription(subscription_node) => {
+                // self.optimize_node on a FetchNode returns itself, no need to optimize
                 Ok(PlanNode::Subscription(subscription_node))
             }
             PlanNode::Defer(mut defer_node) => {

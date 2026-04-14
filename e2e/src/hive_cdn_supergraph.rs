@@ -255,7 +255,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .unwrap()
             .as_array()
             .unwrap();
-        assert_eq!(types_arr.len(), 21);
+        assert_eq!(types_arr.len(), 22);
     }
 
     #[ntex::test]
@@ -277,7 +277,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body("type Query { dummy: String }")
             .create();
 
-        let router = TestRouter::builder()
+        let _router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:
@@ -289,12 +289,9 @@ mod hive_cdn_supergraph_e2e_tests {
                         max_retries: 10
                 "#,
             ))
-            .skip_wait_for_ready_on_start() // this one will time out after 3 seconds, we need more
             .build()
             .start()
             .await;
-
-        router.wait_for_ready(Some(Duration::from_secs(7))).await;
 
         one.assert();
         two.assert();

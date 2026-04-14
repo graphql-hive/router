@@ -996,6 +996,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-str"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18f12cc9948ed9604230cdddc7c86e270f9401ccbe3c2e98a4378c5e7632212f"
+
+[[package]]
 name = "context-data-plugin-example"
 version = "0.0.1"
 dependencies = [
@@ -2355,12 +2361,17 @@ dependencies = [
  "ahash",
  "anyhow",
  "arc-swap",
+ "async-stream",
  "async-trait",
+ "bytes",
  "combine",
+ "const-str",
  "cookie",
  "criterion",
  "dashmap",
  "futures",
+ "futures-timer",
+ "futures-util",
  "graphql-tools",
  "headers-accept",
  "hive-console-sdk",
@@ -2424,6 +2435,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tonic",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2471,12 +2483,14 @@ name = "hive-router-plan-executor"
 version = "6.9.3"
 dependencies = [
  "ahash",
+ "async-stream",
  "async-trait",
  "bumpalo",
  "bytes",
  "criterion",
  "dashmap",
  "futures",
+ "futures-util",
  "graphql-tools",
  "hive-router-config",
  "hive-router-internal",
@@ -2503,6 +2517,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "ulid",
  "xxhash-rust",
 ]
 
@@ -3620,6 +3635,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "regex",
+ "rustls",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -3627,6 +3643,7 @@ dependencies = [
  "thiserror 2.0.18",
  "uuid",
  "variadics_please",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -3874,6 +3891,7 @@ dependencies = [
  "ntex-net",
  "ntex-service",
  "ntex-util",
+ "rustls",
 ]
 
 [[package]]
@@ -5678,6 +5696,7 @@ dependencies = [
  "schemars_derive 1.2.1",
  "serde",
  "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -6297,10 +6316,21 @@ version = "0.0.1"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
+ "async-stream",
  "axum",
+ "bytes",
+ "futures",
+ "futures-timer",
+ "futures-util",
+ "hive-router",
+ "http",
  "lazy_static",
  "rand 0.10.1",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
+ "tower-service",
 ]
 
 [[package]]
@@ -7064,6 +7094,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
