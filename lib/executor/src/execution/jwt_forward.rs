@@ -2,7 +2,7 @@ use sonic_rs::Value;
 
 use crate::execution::client_request_details::JwtRequestDetails;
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct JwtAuthForwardingPlan {
     pub extension_field_name: String,
     pub extension_field_value: Value,

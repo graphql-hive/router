@@ -81,7 +81,7 @@ impl SingleContentType {
 // IMPORTANT: make sure that the serialized string representations are valid because
 //            there is an unwrap in the StreamContentType::media_types() method.
 /// Streamable content types for GraphQL responses.
-#[derive(PartialEq, Default, Debug, IntoStaticStr, EnumString, AsRefStr, EnumIter, Clone)]
+#[derive(PartialEq, Default, Debug, IntoStaticStr, EnumString, AsRefStr, EnumIter)]
 pub enum StreamContentType {
     // The order of the variants here matters for negotiation with `Accept: */*`.
     /// Incremental Delivery over HTTP (`multipart/mixed`)
