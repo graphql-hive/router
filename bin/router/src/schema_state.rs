@@ -376,11 +376,11 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
             for entry in self.callback_subscriptions.iter() {
                 let last = *entry.value().last_heartbeat.lock().unwrap();
                 // heartbeat interval and some grace period to account for potential network delays
-                #[cfg(not(test))]
+                #[cfg(not(any(test, feature = "testing")))]
                 let grace_period = std::time::Duration::from_millis(1000);
                 // when dealing with tests that run in parallel in the CI, we need to increase the
                 // grace period to avoid flaky tests due to timing issues with runner under pressure
-                #[cfg(test)]
+                #[cfg(any(test, feature = "testing"))]
                 let grace_period = std::time::Duration::from_millis(5000);
                 let deadline = self.heartbeat_interval + grace_period;
                 let elapsed = match last {
