@@ -379,7 +379,7 @@ mod tests {
 
 #[derive(Debug, Clone, Default)]
 pub struct ValueObject<'a> {
-    pub entries: Vec<(&'a str, Value<'a>)>,
+    pub(crate) entries: Vec<(&'a str, Value<'a>)>,
 }
 
 impl<'a> From<&'a Object> for ValueObject<'a> {
