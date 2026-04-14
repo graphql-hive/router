@@ -98,6 +98,13 @@ fn inline_fragment_condition(fragment: &InlineFragmentSelection) -> Option<Condi
     }
 }
 
+/// Attempts to lift a common condition from the top-level inline fragments for
+/// `type_name` into the wrapper `... on Type` fragment we build in `From`.
+///
+/// Lifting is valid when every top-level item is an inline fragment on the same
+/// type and they all share the same condition. That condition may be
+/// `@include`, `@skip`, or both directives together
+/// (`Condition::SkipAndInclude`).
 fn try_lift_condition(
     type_name: &str,
     selections: &SelectionSet,
