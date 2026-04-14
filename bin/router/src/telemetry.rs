@@ -284,7 +284,7 @@ fn create_prometheus_runtime(
     };
 
     let registry = prometheus_config.registry.clone();
-    let router_port = config.http.port();
+    let router_port = config.port();
     let port = prometheus_config.port.unwrap_or(router_port);
     let same_listener = router_port == port;
 
@@ -301,7 +301,7 @@ fn create_prometheus_runtime(
     let registry_for_result = registry.clone();
     let path_for_result = path.clone();
 
-    let listen_address = (config.http.host(), port);
+    let listen_address = (config.host(), port);
     let server = HttpServer::new(move || {
         let registry = registry.clone();
         let path = path.clone();

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use bytes::Bytes;
 use hive_router_internal::expressions::{lib::ToVrlValue, vrl::core::Value};
@@ -16,7 +16,7 @@ pub struct ClientRequestDetails<'exec> {
     pub url: &'exec http::Uri,
     pub headers: &'exec NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
-    pub jwt: JwtRequestDetails,
+    pub jwt: Arc<JwtRequestDetails>,
 }
 
 pub enum JwtRequestDetails {
@@ -65,7 +65,7 @@ impl From<&ClientRequestDetails<'_>> for Value {
         ]));
 
         // .request.jwt
-        let jwt_value = match &details.jwt {
+        let jwt_value = match details.jwt.as_ref() {
             JwtRequestDetails::Authenticated {
                 token,
                 prefix,

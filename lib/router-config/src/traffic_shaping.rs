@@ -180,15 +180,53 @@ pub struct TrafficShapingRouterConfig {
     )]
     #[schemars(with = "String")]
     pub request_timeout: Duration,
+
+    /// Maximum number of concurrent long-lived clients (WebSocket connections and HTTP streaming responses).
+    /// Regular non-streaming requests are not counted toward this limit.
+    /// When the limit is reached, new WebSocket and streaming HTTP requests are rejected with 503.
+    /// If both WebSockets and Subscriptions are disabled, this setting has no effect.
+    #[serde(default = "default_max_long_lived_clients")]
+    pub max_long_lived_clients: usize,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingRouterDedupeConfig {
-    /// Enables/disables in-flight request deduplication at the router endpoint level.
+    /// Enables/disables in-flight request and active subscriptions deduplication at the router level.
     ///
-    /// When enabled, identical incoming GraphQL query requests that are processed at the same time
-    /// share the same in-flight execution result.
+    /// When enabled, the router deduplicates both queries and subscriptions using the same
+    /// fingerprint key (method, path, selected headers, schema checksum, normalized operation
+    /// hash, variables, and extensions). The `headers` configuration below controls which
+    /// headers participate in that key for all operation types.
+    ///
+    /// For queries, concurrent HTTP requests that produce the same fingerprint share a single
+    /// in-flight execution - only the first one runs, and the rest wait for and receive the
+    /// same result.
+    ///
+    /// For subscriptions, the mechanism is broadcast-based rather than request-sharing. The
+    /// first client with a given fingerprint becomes the leader: it runs the upstream subscription
+    /// and its events are fanned out through a broadcast channel backed by an active subscriptions
+    /// registry. Any subsequent client that arrives with an identical fingerprint while that subscription
+    /// is still active joins as a listener on the same broadcast channel instead of starting a new upstream
+    /// connection. When all listeners have dropped and the leader finishes, the entry is removed from the
+    /// registry.
+    ///
+    /// WebSocket connections participate in the same deduplication space as HTTP. Each
+    /// subscribe message is processed with a synthetic request assembled from the WebSocket
+    /// path and the headers derived from the `websocket.headers` config. The fingerprint is computed
+    /// from those synthetic headers using the same header policy, so a subscription started over HTTP
+    /// and an identical one started over WebSocket will deduplicate against each other.
+    ///
+    /// The deduplication is transport agnostic. A query over WebSocket would get deduplicated with an
+    /// identical query over HTTP if they arrive at the same time and have the same fingerprint.
+    ///
+    /// Note: `content-type` is part of the fingerprint when `headers` includes it (e.g. `all`).
+    /// Since HTTP streaming clients send different `accept` headers than WebSocket clients,
+    /// cross-transport deduplication for subscriptions only applies when `content-type` (and
+    /// transport-specific headers) are excluded from the key. Configure `headers: none` or
+    /// `headers: { include: [] }` (or exclude the relevant headers) to enable true cross-transport
+    /// deduplication, where a WebSocket subscription and an SSE subscription with the same operation
+    /// share a single upstream connection and the events are fanned out to both.
     #[serde(default = "default_router_dedupe_enabled")]
     pub enabled: bool,
 
@@ -238,11 +276,16 @@ fn default_router_request_timeout() -> Duration {
     Duration::from_secs(60)
 }
 
+fn default_max_long_lived_clients() -> usize {
+    128
+}
+
 impl Default for TrafficShapingRouterConfig {
     fn default() -> Self {
         Self {
             dedupe: Default::default(),
             request_timeout: default_router_request_timeout(),
+            max_long_lived_clients: default_max_long_lived_clients(),
         }
     }
 }

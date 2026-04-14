@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
@@ -11,7 +12,7 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{
-    execute_query_plan, PlanExecutionOutput, QueryPlanExecutionOpts,
+    execute_query_plan, PlanExecutionOutput, QueryPlanExecutionOpts, QueryPlanExecutionResult,
 };
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
@@ -31,32 +32,31 @@ pub enum ExposeQueryPlanMode {
 }
 
 pub struct PlannedRequest<'req> {
-    pub normalized_payload: &'req GraphQLNormalizationPayload,
+    pub normalized_payload: Arc<GraphQLNormalizationPayload>,
     pub query_plan_payload: &'req QueryPlan,
-    pub variable_payload: &'req CoerceVariablesPayload,
-    pub client_request_details: &'req ClientRequestDetails<'req>,
+    pub variable_payload: CoerceVariablesPayload,
+    pub client_request_details: Arc<ClientRequestDetails<'req>>,
     pub authorization_errors: Vec<AuthorizationError>,
-    pub plugin_req_state: &'req Option<PluginRequestState<'req>>,
+    pub plugin_req_state: Option<PluginRequestState<'req>>,
 }
 
 #[inline]
-pub async fn execute_plan(
+pub async fn execute_plan<'exec>(
     supergraph: &SupergraphData,
     app_state: &RouterSharedState,
-    planned_request: PlannedRequest<'_>,
-    span: &GraphQLOperationSpan,
-) -> Result<PlanExecutionOutput, PipelineError> {
+    planned_request: PlannedRequest<'exec>,
+    span: GraphQLOperationSpan,
+) -> Result<QueryPlanExecutionResult, PipelineError> {
     let execute_span = GraphQLExecuteSpan::new();
+    let introspection_context = IntrospectionContext {
+        query: planned_request
+            .normalized_payload
+            .operation_for_introspection
+            .clone(),
+        schema: Arc::clone(&supergraph.planner.consumer_schema.document),
+        metadata: Arc::clone(&supergraph.metadata),
+    };
     async {
-        let introspection_context = IntrospectionContext {
-            query: planned_request
-                .normalized_payload
-                .operation_for_introspection
-                .as_deref(),
-            schema: &supergraph.planner.consumer_schema.document,
-            metadata: &supergraph.metadata,
-        };
-
         let mut extensions = HashMap::new();
 
         let mut expose_query_plan = ExposeQueryPlanMode::No;
@@ -92,10 +92,10 @@ pub async fn execute_plan(
             }))
             .map_err(PipelineError::QueryPlanSerializationFailed)?;
 
-            return Ok(PlanExecutionOutput {
+            return Ok(QueryPlanExecutionResult::Single(PlanExecutionOutput {
                 body,
                 ..Default::default()
-            });
+            }));
         }
 
         let jwt_auth_forwarding: Option<JwtAuthForwardingPlan> = if app_state
@@ -119,17 +119,20 @@ pub async fn execute_plan(
 
         let result = execute_query_plan(QueryPlanExecutionOpts {
             query_plan: planned_request.query_plan_payload,
-            operation_for_plan: &planned_request.normalized_payload.operation_for_plan,
-            projection_plan: &planned_request.normalized_payload.projection_plan,
-            headers_plan: &app_state.headers_plan,
-            variable_values: &planned_request.variable_payload.variables_map,
+            operation_for_plan: planned_request
+                .normalized_payload
+                .operation_for_plan
+                .clone(),
+            projection_plan: planned_request.normalized_payload.projection_plan.clone(),
+            headers_plan: app_state.headers_plan.clone(),
+            variable_values: Arc::new(planned_request.variable_payload.variables_map),
             extensions,
             client_request: planned_request.client_request_details,
-            introspection_context: &introspection_context,
+            introspection_context: introspection_context.into(),
             operation_type_name: planned_request.normalized_payload.root_type_name,
-            jwt_auth_forwarding,
+            jwt_auth_forwarding: jwt_auth_forwarding.map(|j| j.into()),
             graphql_error_recorder: app_state.telemetry_context.metrics.graphql.error_recorder(),
-            executors: &supergraph.subgraph_executor_map,
+            executors: Arc::clone(&supergraph.subgraph_executor_map),
             initial_errors: planned_request
                 .authorization_errors
                 .iter()
