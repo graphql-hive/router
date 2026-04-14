@@ -1925,7 +1925,7 @@ r#"query NewestAdditionsByCursor {
 
     // Named subgraph max_cost override (higher) allows queries that all.max_cost would reject.
     // accounts has specific max_cost=100; products inherits all.max_cost=1.
-    // Combined query hits both subgraphs — only products (over-budget) is blocked.
+    // Combined query hits both subgraphs only products (over-budget) is blocked.
     #[ntex::test]
     async fn named_subgraph_max_allows_where_all_would_reject() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
@@ -2059,7 +2059,7 @@ r#"query NewestAdditionsByCursor {
     #[ntex::test]
     #[ignore = "subscription cost testing requires dedicated subscription endpoint support in TestRouter"]
     async fn subscription_cost_is_zero() {
-        // A subscription should cost the same as an equivalent query with the same selection set —
+        // A subscription should cost the same as an equivalent query with the same selection set
         // the operation base cost is 0 for subscriptions (vs 10 for mutations).
         // This test is deferred until the E2E harness supports subscription endpoints.
         todo!()
