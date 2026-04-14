@@ -309,8 +309,8 @@ impl serde::Serialize for Value<'_> {
                 seq.end()
             }
             Value::Object(obj) => {
-                let mut map = serializer.serialize_map(Some(obj.entries.len()))?;
-                for (k, v) in &obj.entries {
+                let mut map = serializer.serialize_map(Some(obj.len()))?;
+                for (k, v) in obj.iter() {
                     map.serialize_entry(k, &v)?;
                 }
                 map.end()
@@ -491,9 +491,6 @@ impl<'a> ValueObject<'a> {
     }
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&'a str, &mut Value<'a>)> {
         self.entries.iter_mut().map(|(k, v)| (*k, v))
-    }
-    pub fn into_iter(self) -> impl Iterator<Item = (&'a str, Value<'a>)> {
-        self.entries.into_iter()
     }
 }
 
