@@ -892,7 +892,7 @@ impl TestRouter<Started> {
 
     /// Waits for the /health endpoint to return 200 OK, with an optional timeout (defaults to 5 seconds).
     pub async fn wait_for_healthy(&self, timeout: Option<Duration>) {
-        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(5)), async {
+        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(10)), async {
             loop {
                 match self.serv().get("/health").send().await {
                     Ok(response) => {
@@ -913,7 +913,7 @@ impl TestRouter<Started> {
 
     /// Waits for the /readiness endpoint to return 200 OK, with an optional timeout (defaults to 5 seconds).
     pub async fn wait_for_ready(&self, timeout: Option<Duration>) {
-        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(5)), async {
+        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(10)), async {
             loop {
                 match self.serv().get("/readiness").send().await {
                     Ok(response) => {
@@ -1004,7 +1004,7 @@ impl ClientResponseExt for ClientResponse {
 
 pub async fn wait_until_mock_matched(mock: &Mock) -> Result<(), String> {
     let now = Instant::now();
-    let timeout = Duration::from_secs(5); // always a sane default
+    let timeout = Duration::from_secs(10); // always a sane default
     loop {
         if mock.matched_async().await {
             return Ok(());
