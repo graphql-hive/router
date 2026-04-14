@@ -277,7 +277,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body("type Query { dummy: String }")
             .create();
 
-        let router = TestRouter::builder()
+        let _router = TestRouter::builder()
             .inline_config(&format!(
                 r#"
                 supergraph:
