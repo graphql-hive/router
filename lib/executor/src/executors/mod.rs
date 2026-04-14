@@ -1,5 +1,12 @@
 pub mod common;
 pub mod dedupe;
 pub mod error;
+pub mod graphql_transport_ws;
 pub mod http;
+pub mod http_callback;
 pub mod map;
+pub mod multipart_subscribe;
+pub mod sse;
+pub mod websocket;
+pub mod websocket_client;
+pub mod websocket_common;

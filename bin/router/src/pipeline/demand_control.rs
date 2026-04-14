@@ -4,6 +4,7 @@ use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandCont
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLDemandControlSpan, GraphQLSpanOperationIdentity,
 };
+use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
 use hive_router_plan_executor::{
     execution::demand_control::{
         ActualCostPlanField, ActualCostPlanNode, DemandControlEvaluation,
@@ -28,18 +29,20 @@ use std::{fmt, sync::Arc, time::Instant};
 use tracing::Instrument;
 
 use crate::{
-    pipeline::{coerce_variables::CoerceVariablesPayload, error::PipelineError},
+    cache_state::{CacheHitMiss, EntryValueHitMissExt},
+    pipeline::error::PipelineError,
+    schema_state::SchemaState,
     shared_state::RouterSharedState,
 };
 
-// ── CostExpr — mathematical formula for estimated cost ───────────────────────
+// ── CostExpr compilation as a mathematical formula for estimated cost ───────────────────────
 
 /// Size overrides threaded from a parent @listSize(sizedFields:[…]) down to children.
 /// Each entry is (remaining path from the current selection, size expression).
 type SizeOverrides = Vec<(Vec<String>, CostExpr)>;
 
 /// A mathematical cost expression compiled once per query shape.
-/// Evaluated with only variable lookups — no schema traversal at request time.
+/// Evaluated with only variable lookups, so no schema traversal at request time.
 #[derive(Clone, Debug)]
 enum CostExpr {
     /// Compile-time constant.
@@ -147,13 +150,11 @@ impl fmt::Display for CostExpr {
 
 // ── Compiled plan types ──────────────────────────────────────────────────────
 
-#[derive(Clone)]
-pub(crate) struct DemandControlFormulaPlan {
+pub struct DemandControlFormulaPlan {
     root: FormulaPlanNode,
-    formula_by_subgraph: AHashMap<String, String>,
+    formula_by_subgraph: Arc<AHashMap<String, String>>,
 }
 
-#[derive(Clone)]
 enum FormulaPlanNode {
     Empty,
     Fetch(FormulaFetchNode),
@@ -171,7 +172,6 @@ enum FormulaPlanNode {
     },
 }
 
-#[derive(Clone)]
 struct FormulaFetchNode {
     service_name: String,
     /// Mathematical formula: pure arithmetic on variable lookups.
@@ -182,13 +182,13 @@ struct FormulaFetchNode {
 
 pub async fn evaluate_demand_control<'exec>(
     app_state: &'exec RouterSharedState,
+    schema_state: &'exec SchemaState,
     supergraph: &'exec SupergraphData,
     variable_payload: &'exec CoerceVariablesPayload,
     query_plan: &'exec QueryPlan,
     normalized_operation_hash: u64,
     operation_identity: GraphQLSpanOperationIdentity<'exec>,
-    operation_name: Option<&'exec str>,
-) -> Result<Option<DemandControlExecutionContext<'exec>>, PipelineError> {
+) -> Result<Option<DemandControlExecutionContext>, PipelineError> {
     let Some(config) = &app_state.router_config.demand_control else {
         return Ok(None);
     };
@@ -198,41 +198,43 @@ pub async fn evaluate_demand_control<'exec>(
     }
 
     let demand_control_span = GraphQLDemandControlSpan::new();
+    let operation_name = operation_identity.name;
     demand_control_span.record_operation_identity(operation_identity);
     async {
-        let compile_started_at = Instant::now();
-        let (compiled_plan, formula_cache_hit) = if let Some(cached) = app_state
-            .demand_control_formula_cache
-            .get(&normalized_operation_hash)
-            .await
-        {
-            (cached, true)
-        } else {
-            let compiled = Arc::new(compile_demand_control_plan(
-                query_plan,
-                &supergraph.planner.supergraph,
-                config,
-            ));
-            app_state
-                .demand_control_formula_cache
-                .insert(normalized_operation_hash, compiled.clone())
-                .await;
-            (compiled, false)
-        };
-        demand_control_span.record_cache_hit(formula_cache_hit);
-        if !formula_cache_hit {
-            demand_control_span
-                .record_compile_ms(compile_started_at.elapsed().as_secs_f64() * 1000.0);
-        }
+        let metrics = &app_state.telemetry_context.metrics;
+        let formula_cache_capture = metrics.cache.demand_control_formula.capture_request();
+        let mut formula_cache_hit = true;
 
-        app_state
-            .telemetry_context
-            .metrics
-            .demand_control
-            .record_formula_cache_result(formula_cache_hit, operation_name);
+        let compiled_plan = schema_state
+            .demand_control_formula_cache
+            .entry(normalized_operation_hash)
+            .or_insert_with(async {
+                let compile_started_at = Instant::now();
+                let compiled = Arc::new(compile_demand_control_plan(
+                    query_plan,
+                    &supergraph.planner.supergraph,
+                    config,
+                ));
+                demand_control_span
+                    .record_compile_ms(compile_started_at.elapsed().as_secs_f64() * 1000.0);
+                compiled
+            })
+            .await
+            .into_value_with_hit_miss(|hit_miss| match hit_miss {
+                CacheHitMiss::Hit => {
+                    formula_cache_hit = true;
+                    demand_control_span.record_cache_hit(true);
+                    formula_cache_capture.finish_hit();
+                }
+                CacheHitMiss::Miss | CacheHitMiss::Error => {
+                    formula_cache_hit = false;
+                    demand_control_span.record_cache_hit(false);
+                    formula_cache_capture.finish_miss();
+                }
+            });
 
         let eval_started_at = Instant::now();
-        let evaluation: DemandControlEvaluation = evaluate_compiled_plan(
+        let estimation = evaluate_compiled_plan(
             compiled_plan.as_ref(),
             &supergraph.planner.supergraph,
             variable_payload,
@@ -240,40 +242,37 @@ pub async fn evaluate_demand_control<'exec>(
         demand_control_span.record_eval_ms(eval_started_at.elapsed().as_secs_f64() * 1000.0);
 
         if let Some(max_cost) = config.max_cost {
-            if evaluation.estimated_cost > max_cost {
-                app_state
-                    .telemetry_context
-                    .metrics
-                    .demand_control
-                    .record_estimated_cost(
-                        evaluation.estimated_cost,
-                        &DemandControlResultCode::CostEstimatedTooExpensive,
-                        operation_name,
-                    );
+            if estimation.estimated_cost > max_cost {
+                metrics.demand_control.record_estimated_cost(
+                    estimation.estimated_cost,
+                    &DemandControlResultCode::CostEstimatedTooExpensive,
+                    operation_name,
+                );
                 return Err(PipelineError::CostEstimatedTooExpensive {
-                    estimated_cost: evaluation.estimated_cost,
+                    estimated_cost: estimation.estimated_cost,
                     max_cost,
                 });
             }
         }
 
-        let blocked_subgraphs = blocked_subgraphs(config, &evaluation);
+        let blocked_subgraphs = blocked_subgraphs(config, &estimation);
+
         let estimated_result = if blocked_subgraphs.is_empty() {
             DemandControlResultCode::CostOk
         } else {
             DemandControlResultCode::CostEstimatedTooExpensive
         };
 
-        app_state
-            .telemetry_context
-            .metrics
-            .demand_control
-            .record_estimated_cost(evaluation.estimated_cost, &estimated_result, operation_name);
-        let estimated_result_str: &'static str = (&estimated_result).into();
+        metrics.demand_control.record_estimated_cost(
+            estimation.estimated_cost,
+            &estimated_result,
+            operation_name,
+        );
+
         demand_control_span.record_result(
-            evaluation.estimated_cost,
+            estimation.estimated_cost,
             blocked_subgraphs.len(),
-            estimated_result_str,
+            &estimated_result,
         );
 
         // Compile per-service actual-cost formulas for BySubgraph mode
@@ -287,6 +286,7 @@ pub async fn evaluate_demand_control<'exec>(
                 )
             })
             .unwrap_or(false);
+
         let actual_cost_plan_by_service = if is_by_subgraph {
             let mut by_service: AHashMap<String, Arc<Vec<ActualCostPlanNode>>> = AHashMap::new();
             collect_actual_cost_plan_nodes(&compiled_plan.root, &mut by_service);
@@ -294,27 +294,17 @@ pub async fn evaluate_demand_control<'exec>(
         } else {
             None
         };
-        let estimated_formula_by_subgraph = if config.include_extension_metadata.unwrap_or(false) {
-            Some(compiled_plan.formula_by_subgraph.clone())
-        } else {
-            None
-        };
 
         Ok(Some(DemandControlExecutionContext {
             max_cost: config.max_cost,
-            evaluation,
+            evaluation: estimation,
             blocked_subgraphs,
-            operation_name,
             actual_cost_mode: config.actual_cost.as_ref().map(|actual| actual.mode),
             result_code: estimated_result,
-            metrics_recorder: app_state
-                .telemetry_context
-                .metrics
-                .demand_control
-                .recorder(),
+            metrics_recorder: metrics.demand_control.recorder(),
             include_extension_metadata: config.include_extension_metadata.unwrap_or(false),
             formula_cache_hit,
-            estimated_formula_by_subgraph,
+            estimated_formula_by_subgraph: compiled_plan.formula_by_subgraph.clone(),
             actual_cost_plan_by_service,
         }))
     }
@@ -461,14 +451,14 @@ fn compile_demand_control_plan(
         .unwrap_or(FormulaPlanNode::Empty);
     let mut expr_by_subgraph = AHashMap::new();
     collect_estimated_formulas(&root, &mut expr_by_subgraph);
-    let formula_by_subgraph = expr_by_subgraph
+    let formula_by_subgraph: AHashMap<String, String> = expr_by_subgraph
         .into_iter()
         .map(|(service, expr)| (service, expr.to_string()))
         .collect();
 
     DemandControlFormulaPlan {
         root,
-        formula_by_subgraph,
+        formula_by_subgraph: Arc::new(formula_by_subgraph),
     }
 }
 
@@ -547,9 +537,33 @@ fn compile_plan_node(
                 .as_ref()
                 .map(|node| Box::new(compile_plan_node(node, supergraph_state, config))),
         },
-        PlanNode::Subscription(subscription) => FormulaPlanNode::Subscription(Box::new(
-            compile_plan_node(&subscription.primary, supergraph_state, config),
-        )),
+        PlanNode::Subscription(subscription) => {
+            let default_list_size =
+                default_list_size_for_subgraph(config, &subscription.primary.service_name);
+            let root_type =
+                supergraph_state.root_type_name(subscription.primary.operation_kind.as_ref());
+            FormulaPlanNode::Subscription(Box::new(FormulaPlanNode::Fetch(FormulaFetchNode {
+                service_name: subscription.primary.service_name.clone(),
+                estimated_expr: compile_operation_expr(
+                    &subscription.primary.operation.document.operation,
+                    &subscription.primary.operation.document.fragments,
+                    root_type,
+                    subscription.primary.operation_kind.as_ref(),
+                    supergraph_state,
+                    default_list_size,
+                ),
+                actual_nodes: Arc::new(compile_actual_cost_plan_nodes(
+                    &subscription
+                        .primary
+                        .operation
+                        .document
+                        .operation
+                        .selection_set,
+                    root_type,
+                    supergraph_state,
+                )),
+            })))
+        }
         PlanNode::Defer(defer) => FormulaPlanNode::Defer {
             primary: defer
                 .primary
@@ -642,7 +656,7 @@ fn evaluate_compiled_plan_node(
 // ── Evaluate phase: CostExpr ─────────────────────────────────────────────────
 
 /// Evaluate a CostExpr to a u64 cost.
-/// Pure arithmetic + variable lookups only — zero schema traversal at request time.
+/// Pure arithmetic + variable lookups only, so zero schema traversal at request time.
 fn eval_cost_expr(
     expr: &CostExpr,
     supergraph_state: &SupergraphState,
@@ -726,6 +740,7 @@ fn compile_operation_expr(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_selection_set_expr<'exec>(
     selection_set: &'exec SelectionSet,
     operation_fragments: &'exec [FragmentDefinition],
@@ -804,6 +819,7 @@ fn compile_selection_set_expr<'exec>(
     CostExpr::add_nonzero(field_exprs)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_field_expr<'exec>(
     field: &'exec FieldSelection,
     operation_fragments: &'exec [FragmentDefinition],

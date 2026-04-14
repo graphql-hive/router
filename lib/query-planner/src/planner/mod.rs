@@ -30,7 +30,7 @@ pub mod walker;
 
 pub struct Planner {
     graph: Graph,
-    pub supergraph: SupergraphState,
+    pub supergraph: Arc<SupergraphState>,
     pub consumer_schema: Arc<ConsumerSchema>,
 }
 
@@ -103,7 +103,7 @@ impl Planner {
         Ok(Planner {
             graph,
             consumer_schema: Arc::new(consumer_schema),
-            supergraph: supergraph_state,
+            supergraph: Arc::new(supergraph_state),
         })
     }
 

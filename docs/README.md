@@ -19,9 +19,11 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
+|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"request_timeout":"1m"}}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
+|[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -120,6 +122,9 @@ plugins: {}
 query_planner:
   allow_expose: false
   timeout: 10s
+subscriptions:
+  broadcast_capacity: 0
+  enabled: false
 supergraph: {}
 telemetry:
   client_identification:
@@ -199,7 +204,14 @@ traffic_shaping:
     dedupe:
       enabled: false
       headers: all
+    max_long_lived_clients: 128
     request_timeout: 1m
+websocket:
+  enabled: false
+  headers:
+    persist: false
+    source: connection
+  path: null
 
 ```
 
@@ -2011,6 +2023,119 @@ timeout: 10s
 
 ```
 
+<a name="subscriptions"></a>
+## subscriptions: object
+
+Configuration for subscriptions.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**broadcast\_capacity**|`integer`|The capacity of the broadcast channel used to fan out subscription events to all active listeners.<br/><br/>Each active subscription has its own broadcast channel. This value controls how many events<br/>can be buffered in that channel before slow consumers start lagging. If a consumer falls too<br/>far behind and the buffer is full, it will skip the missed messages and continue from the<br/>latest available event.<br/><br/>Subscription events are typically low-frequency, so the default of 32 is sufficient for most<br/>use cases. Increase this value if you expect bursts of events or have slow consumers that<br/>need more headroom to catch up.<br/><br/>Defaults to 32.<br/>Default: `32`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|[**callback**](#subscriptionscallback)|`object`, `null`|Configuration for subgraphs using the HTTP Callback protocol.<br/>|yes|
+|**enabled**|`boolean`|Enables/disables subscriptions. By default, the subscriptions are disabled.<br/><br/>You can override this setting by setting the `SUBSCRIPTIONS_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
+|[**websocket**](#subscriptionswebsocket)|`object`, `null`|Configuration for subgraphs using WebSocket protocol.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+broadcast_capacity: 0
+enabled: false
+
+```
+
+<a name="subscriptionscallback"></a>
+### subscriptions\.callback: object,null
+
+Configuration for subgraphs using the HTTP Callback protocol.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**heartbeat\_interval**|`string`|The interval at which the subgraph must send heartbeat messages.<br/>If set to 0, heartbeats are disabled. Defaults to 5 seconds.<br/>Default: `"5s"`<br/>|no|
+|**listen**|`string`, `null`|The IP address and port the router will listen on for subscription callbacks.<br/>When set, the router will start a dedicated HTTP server bound to this address<br/>for receiving callback messages from subgraphs, separate from the main GraphQL server.<br/>When not set, the callback handler is registered on the main server.<br/><br/>Example: `0.0.0.0:4001`<br/>|no|
+|**path**|`string`|The path of the router's callback endpoint.<br/>Must be an absolute path starting with `/`. Defaults to `/callback`.<br/>Default: `"/callback"`<br/>Pattern: `^/`<br/>|no|
+|**public\_url**|`string`|The public URL that subgraphs will use to send callback messages to this router.<br/><br/>Your public_url must match the server address combined with the router's path.<br/>Meaning, if your server is `http://localhost:4000` and the path is `/callback`,<br/>your `public_url` should be `http://localhost:4000/callback`.<br/><br/>Example: `https://example.com:4000/callback`<br/>Format: `"uri"`<br/>|yes|
+|[**subgraphs**](#subscriptionscallbacksubgraphs)|`string[]`|The list of subgraph names that use the HTTP callback protocol.<br/>Default: <br/>|no|
+
+**Additional Properties:** not allowed  
+<a name="subscriptionscallbacksubgraphs"></a>
+#### subscriptions\.callback\.subgraphs\[\]: array
+
+The list of subgraph names that use the HTTP callback protocol.
+
+
+**Items**
+
+**Item Type:** `string`  
+**Unique Items:** yes  
+<a name="subscriptionswebsocket"></a>
+### subscriptions\.websocket: object,null
+
+Configuration for subgraphs using WebSocket protocol.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**all**](#subscriptionswebsocketall)|`object`, `null`|The default configuration that will be applied to all subgraphs using<br/>||
+|[**subgraphs**](#subscriptionswebsocketsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="subscriptionswebsocketall"></a>
+#### subscriptions\.websocket\.all: object,null
+
+The default configuration that will be applied to all subgraphs using
+WebSocket protocol, unless overridden by a specific subgraph configuration.
+
+When specified, all subgraphs (not claimed by `callback`) will use the WebSocket protocol.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>Pattern: `^/`<br/>||
+
+**Additional Properties:** not allowed  
+<a name="subscriptionswebsocketsubgraphs"></a>
+#### subscriptions\.websocket\.subgraphs: object
+
+Optional per-subgraph configurations that will override the default configuration for specific subgraphs.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**Additional Properties**](#subscriptionswebsocketsubgraphsadditionalproperties)|`object`|WebSocket configuration for a specific subgraph or the default for all subgraphs.<br/>||
+
+<a name="subscriptionswebsocketsubgraphsadditionalproperties"></a>
+##### subscriptions\.websocket\.subgraphs\.additionalProperties: object
+
+WebSocket configuration for a specific subgraph or the default for all subgraphs.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>Pattern: `^/`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+path: null
+
+```
+
 <a name="supergraph"></a>
 ## supergraph: object
 
@@ -2999,7 +3124,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 |----|----|-----------|--------|
 |[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
-|[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"dedupe":{"enabled":false,"headers":"all"},"request_timeout":"1m"}`<br/>||
+|[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}`<br/>||
 |[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
 
 **Additional Properties:** not allowed  
@@ -3015,6 +3140,7 @@ router:
   dedupe:
     enabled: false
     headers: all
+  max_long_lived_clients: 128
   request_timeout: 1m
 
 ```
@@ -3054,6 +3180,7 @@ Configuration for the router itself, e.g., for handling incoming requests, or ot
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**dedupe**](#traffic_shapingrouterdedupe)|`object`|Default: `{"enabled":false,"headers":"all"}`<br/>||
+|**max\_long\_lived\_clients**|`integer`|Maximum number of concurrent long-lived clients (WebSocket connections and HTTP streaming responses).<br/>Regular non-streaming requests are not counted toward this limit.<br/>When the limit is reached, new WebSocket and streaming HTTP requests are rejected with 503.<br/>If both WebSockets and Subscriptions are disabled, this setting has no effect.<br/>Default: `128`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |**request\_timeout**|`string`|Optional timeout configuration for incoming requests to the router.<br/>It starts from the moment the request is received by the router,<br/>and includes the entire processing of the request (validation, execution, etc.) until a response is sent back to the client.<br/>If a request takes longer than the specified duration, it will be aborted and a timeout error will be returned to the client.<br/>Default: `"1m"`<br/>||
 
 **Additional Properties:** not allowed  
@@ -3063,6 +3190,7 @@ Configuration for the router itself, e.g., for handling incoming requests, or ot
 dedupe:
   enabled: false
   headers: all
+max_long_lived_clients: 128
 request_timeout: 1m
 
 ```
@@ -3074,7 +3202,7 @@ request_timeout: 1m
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**enabled**|`boolean`|Enables/disables in-flight request deduplication at the router endpoint level.<br/><br/>When enabled, identical incoming GraphQL query requests that are processed at the same time<br/>share the same in-flight execution result.<br/>Default: `false`<br/>||
+|**enabled**|`boolean`|Enables/disables in-flight request and active subscriptions deduplication at the router level.<br/><br/>When enabled, the router deduplicates both queries and subscriptions using the same<br/>fingerprint key (method, path, selected headers, schema checksum, normalized operation<br/>hash, variables, and extensions). The `headers` configuration below controls which<br/>headers participate in that key for all operation types.<br/><br/>For queries, concurrent HTTP requests that produce the same fingerprint share a single<br/>in-flight execution - only the first one runs, and the rest wait for and receive the<br/>same result.<br/><br/>For subscriptions, the mechanism is broadcast-based rather than request-sharing. The<br/>first client with a given fingerprint becomes the leader: it runs the upstream subscription<br/>and its events are fanned out through a broadcast channel backed by an active subscriptions<br/>registry. Any subsequent client that arrives with an identical fingerprint while that subscription<br/>is still active joins as a listener on the same broadcast channel instead of starting a new upstream<br/>connection. When all listeners have dropped and the leader finishes, the entry is removed from the<br/>registry.<br/><br/>WebSocket connections participate in the same deduplication space as HTTP. Each<br/>subscribe message is processed with a synthetic request assembled from the WebSocket<br/>path and the headers derived from the `websocket.headers` config. The fingerprint is computed<br/>from those synthetic headers using the same header policy, so a subscription started over HTTP<br/>and an identical one started over WebSocket will deduplicate against each other.<br/><br/>The deduplication is transport agnostic. A query over WebSocket would get deduplicated with an<br/>identical query over HTTP if they arrive at the same time and have the same fingerprint.<br/><br/>Note: `content-type` is part of the fingerprint when `headers` includes it (e.g. `all`).<br/>Since HTTP streaming clients send different `accept` headers than WebSocket clients,<br/>cross-transport deduplication for subscriptions only applies when `content-type` (and<br/>transport-specific headers) are excluded from the key. Configure `headers: none` or<br/>`headers: { include: [] }` (or exclude the relevant headers) to enable true cross-transport<br/>deduplication, where a WebSocket subscription and an SSE subscription with the same operation<br/>share a single upstream connection and the events are fanned out to both.<br/>Default: `false`<br/>||
 |**headers**||Header configuration participating in the dedupe key.<br/><br/>Accepted forms:<br/>- `all`<br/>- `none`<br/>- `{ include: ["authorization", "cookie"] }`<br/><br/>Header names are case-insensitive and validated as standard HTTP header names.<br/>Default: `"all"`<br/>||
 
 **Additional Properties:** not allowed  
@@ -3110,4 +3238,52 @@ Optional per-subgraph configurations that will override the default configuratio
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
 
 **Additional Properties:** not allowed  
+<a name="websocket"></a>
+## websocket: object
+
+Configuration of router's WebSocket server.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Enables/disables WebSocket connections.<br/><br/>By default, WebSockets are disabled.<br/><br/>You can override this setting by setting the `WEBSOCKET_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
+|[**headers**](#websocketheaders)|`object`|Configuration for handling headers for WebSocket connections.<br/>Default: `{"persist":false,"source":"connection"}`<br/>|yes|
+|**path**|`string`, `null`|The path to use for the WebSocket endpoint on the router.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>By default, the WebSocket endpoint will be available at the `http.graphql_endpoint` (defaults to `/graphql`)<br/>if no path is specified and the clients will connect using `ws://<router-url>/<graphql_endpoint>`.<br/>Pattern: `^/`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+enabled: false
+headers:
+  persist: false
+  source: connection
+path: null
+
+```
+
+<a name="websocketheaders"></a>
+### websocket\.headers: object
+
+Configuration for handling headers for WebSocket connections.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**persist**|`boolean`|Whether to persist merged headers for the duration of the WebSocket connection<br/>when using the `both` source (headers are accepted from multiple sources).<br/><br/>Only has effect when `source` is set to `both`.<br/><br/>This is useful when dealing with authentication using tokens that expire, where the<br/>initial connection might use one token, but subsequent operations might need to<br/>provide updated tokens in the operation extensions and then use that for further authentication.<br/><br/>For example:<br/><br/>1. Client connects with connection init payload containing an Authorization header with a token.<br/>2. Client sends a subscription operation with an updated Authorization header in the operation extensions.<br/>3. If `persist` is enabled, the updated Authorization header will be stored and used for subsequent operations.<br/>Default: `false`<br/>|no|
+|**source**||The source(s) from which to accept headers for WebSocket connections.<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+persist: false
+source: connection
+
+```
+
 

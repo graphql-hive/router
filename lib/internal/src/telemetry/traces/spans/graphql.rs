@@ -4,15 +4,18 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     graphql::ObservedError,
-    telemetry::traces::{
-        disabled_span, is_level_enabled,
-        spans::{
-            attributes::{
-                self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
-                HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND,
+    telemetry::{
+        metrics::demand_control_metrics::DemandControlResultCode,
+        traces::{
+            disabled_span, is_level_enabled,
+            spans::{
+                attributes::{
+                    self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
+                    HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND,
+                },
+                kind::{HiveEventKind, HiveSpanKind},
+                TARGET_NAME,
             },
-            kind::{HiveEventKind, HiveSpanKind},
-            TARGET_NAME,
         },
     },
 };
@@ -374,13 +377,19 @@ impl GraphQLDemandControlSpan {
         self.span.record(attributes::COST_FORMULA_EVAL_MS, ms);
     }
 
-    pub fn record_result(&self, estimated: u64, blocked_subgraph_count: usize, result: &str) {
+    pub fn record_result(
+        &self,
+        estimated: u64,
+        blocked_subgraph_count: usize,
+        result: &DemandControlResultCode,
+    ) {
         self.span.record(attributes::COST_ESTIMATED, estimated);
         self.span.record(
             attributes::COST_BLOCKED_SUBGRAPH_COUNT,
             blocked_subgraph_count as u64,
         );
-        self.span.record(attributes::COST_RESULT, result);
+        let result_code: &'static str = result.into();
+        self.span.record(attributes::COST_RESULT, result_code);
     }
 }
 

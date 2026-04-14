@@ -23,7 +23,6 @@ use crate::pipeline::authorization::rebuilder::{
     rebuild_authorized_operation, rebuild_authorized_projection_plan,
 };
 use crate::pipeline::authorization::tree::UnauthorizedPathTrie;
-use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::{hash_normalized_operation, GraphQLNormalizationPayload};
 
@@ -31,6 +30,7 @@ use hive_router_config::authorization::UnauthorizedMode;
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_plan_executor::execution::client_request_details::JwtRequestDetails;
+use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;

@@ -25,7 +25,7 @@ pub struct DemandControlResponseExtensions {
     pub by_subgraph: ahash::HashMap<String, u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub formula_cache_hit: Option<bool>,
-    pub estimated_formula_by_subgraph: Option<ahash::HashMap<String, String>>,
+    pub estimated_formula_by_subgraph: Arc<ahash::HashMap<String, String>>,
     pub blocked_subgraphs: ahash::HashSet<String>,
 
     pub max_cost: Option<u64>,
@@ -35,24 +35,23 @@ pub struct DemandControlResponseExtensions {
     pub actual_by_subgraph: Option<ahash::HashMap<String, u64>>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct DemandControlEvaluation {
     pub estimated_cost: u64,
     pub per_subgraph: ahash::HashMap<String, u64>,
 }
 
 #[derive(Debug)]
-pub struct DemandControlExecutionContext<'exec> {
+pub struct DemandControlExecutionContext {
     pub max_cost: Option<u64>,
     pub evaluation: DemandControlEvaluation,
     pub blocked_subgraphs: ahash::HashSet<String>,
-    pub operation_name: Option<&'exec str>,
     pub actual_cost_mode: Option<DemandControlActualCostMode>,
     pub result_code: DemandControlResultCode,
     pub metrics_recorder: Option<DemandControlMetricsRecorder>,
     pub include_extension_metadata: bool,
     pub formula_cache_hit: bool,
-    pub estimated_formula_by_subgraph: Option<ahash::HashMap<String, String>>,
+    pub estimated_formula_by_subgraph: Arc<ahash::HashMap<String, String>>,
     /// Pre-compiled actual-cost formulas per service name (BySubgraph mode).
     /// Eliminates schema lookups during response traversal.
     pub actual_cost_plan_by_service: Option<ahash::HashMap<String, Arc<Vec<ActualCostPlanNode>>>>,
@@ -164,7 +163,7 @@ fn actual_cost_plan_field_included(
 }
 
 pub fn demand_control_actual_cost<'exec>(
-    demand_control: &DemandControlExecutionContext<'_>,
+    demand_control: &DemandControlExecutionContext,
     supergraph_state: &'exec SupergraphState,
     operation: &OperationDefinition,
     root_type_name: &str,
@@ -215,8 +214,8 @@ pub fn demand_control_actual_cost<'exec>(
     };
 
     if let Some(metrics_recorder) = demand_control.metrics_recorder.as_ref() {
-        metrics_recorder.record_actual_cost(actual, &result_code, demand_control.operation_name);
-        metrics_recorder.record_delta(delta_i64, &result_code, demand_control.operation_name);
+        metrics_recorder.record_actual_cost(actual, &result_code, operation.name.as_deref());
+        metrics_recorder.record_delta(delta_i64, &result_code, operation.name.as_deref());
     }
 
     Some(DemandControlActualCostResult {

@@ -1,0 +1,480 @@
+#[cfg(test)]
+mod websocket_e2e_tests {
+    use futures::StreamExt;
+    use sonic_rs::json;
+    use std::collections::HashMap;
+
+    use crate::testkit::{TestRouter, TestSubgraphs};
+    use hive_router_plan_executor::executors::{
+        graphql_transport_ws::{ConnectionInitPayload, SubscribePayload},
+        websocket_client::WsClient,
+    };
+
+    #[ntex::test]
+    async fn query_over_websocket() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+
+        let execution_request = SubscribePayload {
+            query: r#"
+                query {
+                    topProducts {
+                        name
+                        upc
+                    }
+                }
+                "#
+            .into(),
+            ..Default::default()
+        };
+
+        let mut stream = client.subscribe(execution_request).await;
+
+        let response = stream.next().await.expect("Expected a response");
+
+        assert!(response.errors.is_none(), "Expected no errors");
+        assert!(!response.data.is_null(), "Expected data");
+
+        let next = stream.next().await;
+        assert!(next.is_none(), "Expected stream to complete after query");
+    }
+
+    #[ntex::test]
+    async fn subscription_over_websocket() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+
+        let subscribe_payload = SubscribePayload {
+            query: r#"
+                subscription {
+                    reviewAdded(step: 1, intervalInMs: 0) {
+                        id
+                        body
+                    }
+                }
+                "#
+            .into(),
+            ..Default::default()
+        };
+
+        let mut stream = client.subscribe(subscribe_payload).await;
+
+        let mut received_count = 0;
+        while let Some(response) = stream.next().await {
+            assert!(response.errors.is_none(), "Expected no errors");
+            assert!(!response.data.is_null(), "Expected data");
+            received_count += 1;
+        }
+
+        assert_eq!(
+            received_count, 11,
+            "Expected to receive 11 subscription events"
+        );
+    }
+
+    #[ntex::test]
+    async fn multiple_subscriptions_in_parallel() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+
+        let subscribe_payload1 = SubscribePayload {
+            query: r#"
+                subscription {
+                    reviewAdded(step: 1, intervalInMs: 0) {
+                        id
+                    }
+                }
+                "#
+            .into(),
+            ..Default::default()
+        };
+
+        let mut stream1 = client.subscribe(subscribe_payload1).await;
+
+        let subscribe_payload = SubscribePayload {
+            query: r#"
+                subscription {
+                    reviewAdded(step: 2, intervalInMs: 0) {
+                        id
+                    }
+                }
+                "#
+            .into(),
+            ..Default::default()
+        };
+
+        let mut stream2 = client.subscribe(subscribe_payload).await;
+
+        let mut count1 = 0;
+        let mut count2 = 0;
+        let mut done1 = false;
+        let mut done2 = false;
+
+        loop {
+            if done1 && done2 {
+                break;
+            }
+
+            tokio::select! {
+                maybe_response = stream1.next(), if !done1 => {
+                    match maybe_response {
+                        Some(response) => {
+                            assert!(response.errors.is_none(), "Expected no errors in stream1");
+                            count1 += 1;
+                        }
+                        None => {
+                            done1 = true;
+                        }
+                    }
+                }
+                maybe_response = stream2.next(), if !done2 => {
+                    match maybe_response {
+                        Some(response) => {
+                            assert!(response.errors.is_none(), "Expected no errors in stream2");
+                            count2 += 1;
+                        }
+                        None => {
+                            done2 = true;
+                        }
+                    }
+                }
+            }
+
+            if count1 > 0 && count2 > 0 {
+                break;
+            }
+        }
+
+        assert!(
+            count1 > 0,
+            "Expected to receive at least one event from stream1"
+        );
+        assert!(
+            count2 > 0,
+            "Expected to receive at least one event from stream2"
+        );
+    }
+
+    #[ntex::test]
+    async fn header_propagation_from_connection_init_payload() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                headers:
+                    all:
+                        request:
+                            - propagate:
+                                named: x-context
+                websocket:
+                    enabled: true
+                    # default headers.source: connection
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+
+        let mut client = WsClient::init(
+            wsconn,
+            Some(ConnectionInitPayload::new(HashMap::from([(
+                "x-context".to_string(),
+                json!("my-init_payload-value"),
+            )]))),
+        )
+        .await
+        .expect("Failed to init WsClient");
+
+        let subscribe_payload = SubscribePayload {
+            query: r#"
+                query {
+                    topProducts {
+                        name
+                        upc
+                    }
+                }
+                "#
+            .into(),
+            ..Default::default()
+        };
+
+        let mut stream = client.subscribe(subscribe_payload).await;
+
+        stream.next().await.expect("Expected a response");
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .expect("expected requests sent to products subgraph");
+        let last_products_request = products_requests
+            .last()
+            .expect("expected at least one request to products subgraph");
+        assert_eq!(
+            last_products_request
+                .headers
+                .get("x-context")
+                .expect("expected x-context header to be present"),
+            "my-init_payload-value",
+        )
+    }
+
+    #[ntex::test]
+    async fn header_propagation_from_operation_extensions() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                headers:
+                    all:
+                        request:
+                            - propagate:
+                                named: x-context
+                websocket:
+                    enabled: true
+                    headers:
+                        source: operation
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+
+        let subscribe_payload = SubscribePayload {
+            query: r#"
+                query {
+                    topProducts {
+                        name
+                        upc
+                    }
+                }
+                "#
+            .into(),
+            extensions: Some(HashMap::from([(
+                "headers".to_string(),
+                json!({"x-context": "my-extensions-value"}),
+            )])),
+            ..Default::default()
+        };
+
+        let mut stream = client.subscribe(subscribe_payload).await;
+
+        stream.next().await.expect("Expected a response");
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .expect("expected requests sent to products subgraph");
+        let last_products_request = products_requests
+            .last()
+            .expect("expected at least one request to products subgraph");
+        assert_eq!(
+            last_products_request
+                .headers
+                .get("x-context")
+                .expect("expected x-context header to be present"),
+            "my-extensions-value",
+        )
+    }
+
+    #[ntex::test]
+    async fn merged_header_propagation_from_both_connection_init_payload_and_operation_extensions()
+    {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                headers:
+                    all:
+                        request:
+                            - propagate:
+                                named: x-context
+                websocket:
+                    enabled: true
+                    headers:
+                        source: both
+                        persist: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+
+        let mut client = WsClient::init(
+            wsconn,
+            Some(ConnectionInitPayload::new(HashMap::from([(
+                "x-context".to_string(),
+                json!("my-init_payload-value"),
+            )]))),
+        )
+        .await
+        .expect("Failed to init WsClient");
+
+        let subscribe_payload = SubscribePayload {
+            query: r#"
+                query {
+                    topProducts {
+                        name
+                        upc
+                    }
+                }
+            "#
+            .into(),
+            extensions: Some(HashMap::from([(
+                "headers".to_string(),
+                json!({"x-context": "my-extensions-value"}),
+            )])),
+            ..Default::default()
+        };
+
+        // merging headers
+        let mut stream = client.subscribe(subscribe_payload).await;
+        stream.next().await.expect("Expected a response");
+
+        let subscribe_payload = SubscribePayload {
+            query: r#"
+                query {
+                    topProducts {
+                        name
+                        upc
+                    }
+                }
+            "#
+            .into(),
+            ..Default::default()
+        };
+
+        // missing headers in extensions, should've been merged
+        let mut stream = client.subscribe(subscribe_payload).await;
+        stream.next().await.expect("Expected a response");
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .expect("expected requests sent to products subgraph");
+        let last_products_request = products_requests
+            .last()
+            .expect("expected at least one request to products subgraph");
+        assert_eq!(
+            last_products_request
+                .headers
+                .get("x-context")
+                .expect("expected x-context header to be present"),
+            "my-extensions-value",
+        )
+    }
+
+    #[ntex::test]
+    async fn should_not_steal_non_upgrade_get_requests_on_same_graphql_path() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let req = router
+            .serv()
+            .get(router.graphql_path()) // same path as the websocket upgrade endpoint
+            .header(http::header::ACCEPT, "application/graphql-response+json")
+            .query(&[("query", "{ __typename }")])
+            .unwrap();
+
+        let res = req.send().await.unwrap();
+
+        assert_eq!(res.status(), http::StatusCode::OK);
+        assert_eq!(
+            res.header(http::header::CONTENT_TYPE)
+                .expect("expected content-type header to be present"),
+            "application/graphql-response+json"
+        );
+    }
+}

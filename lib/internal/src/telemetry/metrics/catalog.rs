@@ -86,8 +86,12 @@ pub mod labels {
 pub mod names {
     pub const GRAPHQL_ERRORS_TOTAL: &str = "hive.router.graphql.errors_total";
     pub const COST_ESTIMATED: &str = "cost.estimated";
-    pub const COST_FORMULA_CACHE_REQUESTS_TOTAL: &str =
+    pub const DEMAND_CONTROL_FORMULA_CACHE_REQUESTS_TOTAL: &str =
         "hive.router.demand_control.formula_cache.requests_total";
+    pub const DEMAND_CONTROL_FORMULA_CACHE_DURATION: &str =
+        "hive.router.demand_control.formula_cache.duration";
+    pub const DEMAND_CONTROL_FORMULA_CACHE_SIZE: &str =
+        "hive.router.demand_control.formula_cache.size";
     pub const COST_ACTUAL: &str = "cost.actual";
     pub const COST_DELTA: &str = "cost.delta";
     pub const SUPERGRAPH_POLL_TOTAL: &str = "hive.router.supergraph.poll.total";
@@ -122,9 +126,14 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
         &[labels::COST_RESULT, labels::GRAPHQL_OPERATION_NAME],
     ),
     (
-        names::COST_FORMULA_CACHE_REQUESTS_TOTAL,
-        &[labels::RESULT, labels::GRAPHQL_OPERATION_NAME],
+        names::DEMAND_CONTROL_FORMULA_CACHE_REQUESTS_TOTAL,
+        &[labels::RESULT],
     ),
+    (
+        names::DEMAND_CONTROL_FORMULA_CACHE_DURATION,
+        &[labels::RESULT],
+    ),
+    (names::DEMAND_CONTROL_FORMULA_CACHE_SIZE, &[]),
     (
         names::COST_ACTUAL,
         &[labels::COST_RESULT, labels::GRAPHQL_OPERATION_NAME],

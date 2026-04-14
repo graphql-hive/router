@@ -1,0 +1,1829 @@
+#[cfg(test)]
+mod subscriptions_e2e_tests {
+
+    use insta::assert_snapshot;
+    use ntex::http;
+    use reqwest::StatusCode;
+    use sonic_rs::json;
+
+    use crate::testkit::{
+        some_header_map, ClientResponseExt, ResponseLike, TestRouter, TestSubgraphs,
+    };
+
+    #[ntex::test]
+    async fn subscription_not_allowed_when_disabled() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                # disabled by default
+                # subscriptions:
+                #     enabled: false
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        product {
+                            upc
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        // even though subscriptions are disabled, we accept the stream
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"errors":[{"message":"Subscriptions are not supported","extensions":{"code":"SUBSCRIPTIONS_NOT_SUPPORTED"}}]}
+
+        event: complete
+        "#);
+    }
+
+    #[ntex::test]
+    async fn subscription_no_entity_resolution_sse_subgraph() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_http_streaming_subscriptions_protocol(
+                subgraphs::HTTPStreamingSubscriptionProtocol::SseOnly,
+            )
+            .build()
+            .start()
+            .await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        product {
+                            upc
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        let content_type_header = res
+            .header("content-type")
+            .expect("must have content-type header");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"3"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"4"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"4"}}}}
+
+        event: complete
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_no_entity_resolution_multipart_subgraph() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_http_streaming_subscriptions_protocol(
+                subgraphs::HTTPStreamingSubscriptionProtocol::MultipartOnly,
+            )
+            .build()
+            .start()
+            .await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        product {
+                            upc
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = res
+            .header("content-type")
+            .expect("must have content-type header");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"3"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"4"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"4"}}}}
+
+        event: complete
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_yes_entity_resolution() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = res
+            .header("content-type")
+            .expect("must have content-type header");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}
+
+        event: complete
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_yes_entity_resolution_multipart_client_unquoted_spec() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => r#"multipart/mixed;subscriptionSpec=1.0"#
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = res
+            .header("content-type")
+            .expect("must have content-type header");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}}
+        --graphql--
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header,
+            "multipart/mixed;boundary=\"graphql\";subscriptionSpec=1.0",
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_yes_entity_resolution_multipart_client_quoted_spec() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    // exactly as per https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol#executing-a-subscription
+                    http::header::ACCEPT => r#"multipart/mixed;subscriptionSpec="1.0", application/json"#
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = res
+            .header("content-type")
+            .expect("must have content-type header");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}}
+        --graphql--
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header,
+            "multipart/mixed;boundary=\"graphql\";subscriptionSpec=1.0",
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_yes_entity_resolution_incremental_delivery_client() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => r#"multipart/mixed"#
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = res
+            .header("content-type")
+            .expect("must have content-type header");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}
+        ---
+        Content-Type: application/json
+
+        {"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}
+        -----
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(content_type_header, "multipart/mixed;boundary=\"-\"",);
+    }
+
+    #[ntex::test]
+    async fn subscription_yes_entity_resolution_websocket_subgraph() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}
+
+        event: complete
+        "#);
+    }
+
+    #[ntex::test]
+    async fn subscription_yes_entity_resolution_http_callback_subgraph() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let router_port = router_listener.local_addr().unwrap().port();
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .with_listener(router_listener)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    callback:
+                        public_url: http://0.0.0.0:{router_port}/callback
+                        subgraphs:
+                            - reviews
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map!(
+                        http::header::ACCEPT => "text/event-stream"
+                ),
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        assert_snapshot!(res.string_body().await, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}
+
+        event: complete
+        "#);
+    }
+
+    #[ntex::test]
+    async fn subscription_entity_resolution_with_requires() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        product {
+                            name
+                            shippingEstimate
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = res
+            .header("content-type")
+            .expect("must have content-type header");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Table","shippingEstimate":50}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Table","shippingEstimate":50}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Table","shippingEstimate":50}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Table","shippingEstimate":50}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Couch","shippingEstimate":0}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Couch","shippingEstimate":0}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Couch","shippingEstimate":0}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Couch","shippingEstimate":0}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Glass","shippingEstimate":10}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Chair","shippingEstimate":50}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Chair","shippingEstimate":50}}}}
+
+        event: complete
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_with_variable_forwarding() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription ($upc: String!) {
+                    reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
+                        product {
+                            upc
+                            name
+                        }
+                    }
+                }
+                "#,
+                Some(json!({
+                    "upc": "2"
+                })),
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = res
+            .header("content-type")
+            .expect("must have content-type header");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"upc":"2","name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"upc":"2","name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"upc":"2","name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"upc":"2","name":"Couch"}}}}
+
+        event: complete
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_http_accept_multipart_and_sse() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription ($upc: String!) {
+                    reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
+                        product {
+                            upc
+                            name
+                        }
+                    }
+                }
+                "#,
+                Some(json!({
+                    "upc": "2"
+                })),
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let subgraph_request = subgraphs
+            .get_requests_log("reviews")
+            .expect("expected requests sent to reviews subgraph");
+
+        let Ok(accept_header) = subgraph_request
+            .get(0)
+            .expect("expected at least one request to reviews")
+            .headers
+            .get("accept")
+            .expect("expected accept header to be sent with the subgraph request")
+            .to_str()
+        else {
+            panic!("accept header could not be converted to string")
+        };
+
+        assert_snapshot!(accept_header, @r#"multipart/mixed;subscriptionSpec="1.0", text/event-stream"#);
+    }
+
+    #[ntex::test]
+    async fn subscription_stream_failed_source_subgraph_requests() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|_req| {
+                Some(ResponseLike::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    None,
+                    None,
+                ))
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert!(
+            body_str.contains("SUBGRAPH_STREAM_STATUS_CODE_NOT_OK"),
+            "Expected '{}' to contain the subgraph stream response not-ok failure error code",
+            body_str
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_stream_failed_entity_resolution_requests() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|req| {
+                if req.path.contains("products") {
+                    // entity resolution
+                    Some(ResponseLike::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Some(
+                            json!({
+                                "errors": [{"message": "Something Went Wrong!"}]
+                            })
+                            .to_string(),
+                        ),
+                        some_header_map! {
+                            http::header::CONTENT_TYPE => "application/json"
+                        },
+                    ))
+                } else {
+                    // subscription itself (on "reviews" subgraph)
+                    None
+                }
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription ($upc: String!) {
+                    reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                Some(json!({
+                    "upc": "2"
+                })),
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
+
+        event: complete
+        "#);
+    }
+
+    #[ntex::test]
+    async fn subscription_stream_client_cancelled() {
+        use futures::StreamExt;
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        // Use a longer interval so we have time to cancel
+        let mut res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 100) {
+                        id
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        // read first chunk
+        let chunk_bytes = res.next().await.unwrap().unwrap();
+        let chunk_str = std::str::from_utf8(&chunk_bytes).unwrap();
+
+        assert_snapshot!(chunk_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1"}}}
+        "#);
+
+        // read second chunk to ensure stream is flowing
+        let chunk_bytes = res.next().await.unwrap().unwrap();
+        let chunk_str = std::str::from_utf8(&chunk_bytes).unwrap();
+
+        assert_snapshot!(chunk_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2"}}}
+        "#);
+
+        // cancel
+        drop(res);
+
+        // TODO: check if propagated?
+    }
+
+    #[ntex::test]
+    async fn subscription_header_propagation_for_subscription() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/header_propagation.router.yaml")
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream",
+                    http::header::HeaderName::from_static("x-context") => "maybe-propagate"
+                },
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        // we have to consume the body to ensure the subscription is fully processed
+        let body = res.body().await.unwrap();
+        std::str::from_utf8(&body).unwrap();
+
+        let subgraph_requests = subgraphs
+            .get_requests_log("reviews")
+            .expect("expected requests sent to reviews subgraph");
+
+        let context_header = subgraph_requests[0]
+            .headers
+            .get("x-context")
+            .expect("expected x-context header to be present");
+
+        assert_eq!(
+            context_header, "maybe-propagate",
+            "expected x-context header to be propagated to subgraph"
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_header_propagation_for_entity_resolution() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/header_propagation.router.yaml")
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream",
+                    http::header::HeaderName::from_static("x-context") => "maybe-propagate"
+                },
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        // we have to consume the body to ensure all entity resolutions were made
+        let body = res.body().await.unwrap();
+        std::str::from_utf8(&body).unwrap();
+
+        let subgraph_requests = subgraphs
+            .get_requests_log("products")
+            .expect("expected requests sent to products subgraph");
+
+        // every entity resolution request must have the propagated header
+        for subgraph_request in subgraph_requests {
+            let context_header = subgraph_request
+                .headers
+                .get("x-context")
+                .expect("expected x-context header to be present");
+
+            assert_eq!(
+                context_header, "maybe-propagate",
+                "expected x-context header to be propagated to subgraph"
+            );
+        }
+    }
+
+    #[ntex::test]
+    async fn subscription_propagate_connection_termination_subgraph() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                headers:
+                    all:
+                        request:
+                            - propagate:
+                                named: x-break-after
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        // NOTE: we add a 100ms interval because providing 0 will end the connection while the buffer is still being written to leading to a different error
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 100) {
+                        id
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream",
+                    http::header::HeaderName::from_static("x-break-after") => "3"
+                },
+            )
+            .await;
+
+        let body = res.body().await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1"}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2"}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"3"}}}
+
+        event: next
+        data: {"errors":[{"message":"Error reading SSE subscription stream: Stream read error: error reading a body from connection","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_SSE_STREAM_ERROR","serviceName":"reviews"}}]}
+
+        event: complete
+        "#);
+    }
+
+    #[ntex::test]
+    async fn active_subscriptions_deduplication() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        dedupe:
+                            enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                    product {
+                        name
+                    }
+                }
+            }
+        "#;
+        let headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+
+        let (sub1, sub2, sub3) = tokio::join!(
+            router.send_graphql_request(query, None, headers.clone()),
+            router.send_graphql_request(query, None, headers.clone()),
+            router.send_graphql_request(query, None, headers.clone()),
+        );
+
+        for sub in [&sub1, &sub2, &sub3] {
+            let body = sub.string_body().await;
+            assert!(
+                body.contains("event: next") && body.contains("event: complete"),
+                "Expected subscription to receive events and complete"
+            );
+        }
+
+        let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(
+            reviews_requests.len(),
+            1,
+            "Expected requests to reviews subgraph to be deduplicated"
+        );
+    }
+
+    #[ntex::test]
+    async fn active_subscriptions_deduplication_promotion() {
+        use futures::StreamExt;
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        dedupe:
+                            enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                }
+            }
+        "#;
+        let headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+
+        let mut sub1 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+
+        assert!(sub1.status().is_success(), "Expected 200 OK");
+
+        // consume 2 events from sub1 to let the source stream advance
+        let chunk = sub1.next().await.unwrap().unwrap();
+        assert!(
+            std::str::from_utf8(&chunk).unwrap().contains(r#""id":"1""#),
+            "Expected first event to be id=1"
+        );
+        let chunk = sub1.next().await.unwrap().unwrap();
+        assert!(
+            std::str::from_utf8(&chunk).unwrap().contains(r#""id":"2""#),
+            "Expected second event to be id=2"
+        );
+        let chunk = sub1.next().await.unwrap().unwrap();
+        assert!(
+            std::str::from_utf8(&chunk).unwrap().contains(r#""id":"3""#),
+            "Expected third event to be id=3"
+        );
+
+        // subscribe again with the same query - dedup promotes sub2 onto the live source
+        let sub2 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+
+        assert!(sub2.status().is_success(), "Expected 200 OK");
+
+        // drop sub1 now that sub2 is connected; sub2 must become the active subscriber
+        drop(sub1);
+
+        // sub2 should receive the remainder of the stream from where the source left off
+        let body = sub2.string_body().await;
+        assert!(
+            body.contains("event: next") && body.contains("event: complete"),
+            "Expected sub2 to receive remaining events and complete, got: {body}"
+        );
+
+        // sub2 must not have received the first 3 events that were already consumed by sub1
+        assert!(
+            !body.contains(r#""id":"1""#)
+                && !body.contains(r#""id":"2""#)
+                && !body.contains(r#""id":"3""#),
+            "Expected sub2 to not replay events already consumed by sub1, got: {body}"
+        );
+
+        // only one subgraph request should have been made
+        let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(
+            reviews_requests.len(),
+            1,
+            "Expected requests to reviews subgraph to be deduplicated"
+        );
+    }
+
+    #[ntex::test]
+    async fn active_across_transports_subscriptions_deduplication() {
+        use futures::StreamExt;
+        use hive_router_plan_executor::executors::{
+            graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
+        };
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                websocket:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        dedupe:
+                            enabled: true
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                    product {
+                        name
+                    }
+                }
+            }
+        "#;
+
+        let sse_headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+        let multipart_headers = some_header_map! {
+            http::header::ACCEPT => "multipart/mixed;subscriptionSpec=1.0"
+        };
+
+        let wsconn = router.ws().await;
+        let mut ws_client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+        let ws_payload = SubscribePayload {
+            query: query.into(),
+            ..Default::default()
+        };
+        let mut ws_stream = ws_client.subscribe(ws_payload).await;
+
+        let (sub_sse, sub_multipart) = tokio::join!(
+            router.send_graphql_request(query, None, sse_headers),
+            router.send_graphql_request(query, None, multipart_headers),
+        );
+
+        let sse_body = sub_sse.string_body().await;
+        assert!(
+            sse_body.contains("event: next") && sse_body.contains("event: complete"),
+            "Expected SSE subscription to receive events and complete"
+        );
+
+        let multipart_body = sub_multipart.string_body().await;
+        assert!(
+            multipart_body.contains("--graphql") && multipart_body.contains("--graphql--"),
+            "Expected multipart subscription to receive events and complete"
+        );
+
+        let mut ws_received = 0;
+        while let Some(response) = ws_stream.next().await {
+            assert!(
+                response.errors.is_none(),
+                "Expected no errors from WS subscription"
+            );
+            assert!(
+                !response.data.is_null(),
+                "Expected data from WS subscription"
+            );
+            ws_received += 1;
+        }
+        assert!(
+            ws_received > 0,
+            "Expected WS subscription to receive at least one event"
+        );
+
+        let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(
+            reviews_requests.len(),
+            1,
+            "Expected requests to reviews subgraph to be deduplicated across transports"
+        );
+    }
+
+    #[ntex::test]
+    async fn active_across_transports_subscriptions_deduplication_promotion() {
+        use futures::StreamExt;
+        use hive_router_plan_executor::executors::{
+            graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
+        };
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                websocket:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        dedupe:
+                            enabled: true
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                }
+            }
+        "#;
+
+        let wsconn = router.ws().await;
+        let mut ws_client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+        let ws_payload = SubscribePayload {
+            query: query.into(),
+            ..Default::default()
+        };
+        let mut ws_stream = ws_client.subscribe(ws_payload).await;
+
+        // consume 3 events from sub1 to let the source stream advance
+        let response = ws_stream.next().await.unwrap();
+        assert!(
+            response.data.to_string().contains(r#""id": "1""#),
+            "Expected first event to be id=1"
+        );
+        let response = ws_stream.next().await.unwrap();
+        assert!(
+            response.data.to_string().contains(r#""id": "2""#),
+            "Expected second event to be id=2"
+        );
+        let response = ws_stream.next().await.unwrap();
+        assert!(
+            response.data.to_string().contains(r#""id": "3""#),
+            "Expected third event to be id=3"
+        );
+
+        // subscribe again with SSE - dedup promotes sub2 onto the live source
+        let sse_headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+        let sub2 = router.send_graphql_request(query, None, sse_headers).await;
+
+        assert!(sub2.status().is_success(), "Expected 200 OK");
+
+        // drop the WS sub now that sub2 is connected; sub2 must become the active subscriber
+        drop(ws_stream);
+        drop(ws_client);
+
+        // sub2 should receive the remainder of the stream from where the source left off
+        let body = sub2.string_body().await;
+        assert!(
+            body.contains("event: next") && body.contains("event: complete"),
+            "Expected sub2 to receive remaining events and complete, got: {body}"
+        );
+
+        // sub2 must not have received the first 3 events already consumed by the WS sub
+        assert!(
+            !body.contains(r#""id":"1""#)
+                && !body.contains(r#""id":"2""#)
+                && !body.contains(r#""id":"3""#),
+            "Expected sub2 to not replay events already consumed by the WS sub, got: {body}"
+        );
+
+        // only one subgraph request should have been made
+        let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(
+            reviews_requests.len(),
+            1,
+            "Expected requests to reviews subgraph to be deduplicated across transports"
+        );
+    }
+
+    #[ntex::test]
+    async fn max_long_lived_clients_rejects_over_limit() {
+        use futures::StreamExt;
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        max_long_lived_clients: 2
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            subscription {
+                reviewAdded(intervalInMs: 200) {
+                    id
+                }
+            }
+        "#;
+        let headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+
+        // open two subscriptions and keep them alive by reading the first event
+        let mut sub1 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert!(sub1.status().is_success(), "sub1 should be accepted");
+        let _ = sub1.next().await;
+
+        let mut sub2 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert!(sub2.status().is_success(), "sub2 should be accepted");
+        let _ = sub2.next().await;
+
+        // the third subscriber exceeds the limit and must be rejected
+        let sub3 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert_eq!(
+            sub3.status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            "sub3 should be rejected with 503 when the limit is reached"
+        );
+        let retry_after = sub3.header("retry-after");
+        assert!(
+            retry_after.is_some(),
+            "rejected response should include a Retry-After header"
+        );
+        let body = sub3.string_body().await;
+        assert_eq!(body, "Too many long-lived clients");
+
+        // release the two held subscriptions
+        drop(sub1);
+        drop(sub2);
+
+        // wait briefly for the slots to be freed
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // a new subscriber should now be accepted again
+        let sub4 = router
+            .send_graphql_request(query, None, headers.clone())
+            .await;
+        assert!(
+            sub4.status().is_success(),
+            "sub4 should be accepted after the previous slots were freed"
+        );
+    }
+}

@@ -1,11 +1,16 @@
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
+use std::vec;
 
 use ahash::{HashMap as AHashMap, HashMapExt};
 use bytes::BufMut;
 use futures::TryFutureExt;
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{
+    future::BoxFuture,
+    stream::{BoxStream, FuturesUnordered},
+    FutureExt, StreamExt,
+};
 use hive_router_config::demand_control::DemandControlActualCostMode;
 use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
@@ -13,20 +18,22 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
 use hive_router_query_planner::ast::operation::SubgraphFetchOperation;
+use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::state::supergraph_state::SupergraphState;
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
         ConditionNode, EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
-        QueryPlan,
+        QueryPlan, SequenceNode,
     },
     state::supergraph_state::OperationKind,
 };
 use http::{HeaderMap, StatusCode};
 use serde::Serialize;
-use sonic_rs::ValueRef;
+use sonic_rs::{JsonValueTrait, ValueRef};
 use tracing::Instrument;
 
+use crate::execution::client_request_details::OperationDetails;
 use crate::execution::demand_control::{
     demand_control_actual_cost, estimate_actual_subgraph_response_cost_from_response_shape,
     evaluate_actual_cost_plan_nodes, DemandControlExecutionContext,
@@ -89,24 +96,50 @@ impl ExecutionResultExtensions<'_> {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct CoerceVariablesPayload {
+    pub variables_map: Option<HashMap<String, sonic_rs::Value>>,
+}
+
+impl CoerceVariablesPayload {
+    pub fn variable_equals_true(&self, name: &str) -> bool {
+        self.variables_map
+            .as_ref()
+            .and_then(|vars| vars.get(name))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    }
+}
+
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
-    pub operation_for_plan: &'exec OperationDefinition,
-    pub projection_plan: &'exec Vec<FieldProjectionPlan>,
-    pub headers_plan: &'exec HeaderRulesPlan,
-    pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+    pub operation_for_plan: Arc<OperationDefinition>,
+    pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub headers_plan: Arc<HeaderRulesPlan>,
+    pub variable_values: Arc<CoerceVariablesPayload>,
     pub extensions: ExecutionResultExtensions<'exec>,
-    pub client_request: &'exec ClientRequestDetails<'exec>,
-    pub introspection_context: &'exec IntrospectionContext<'exec>,
-    pub operation_type_name: &'exec str,
-    pub executors: &'exec SubgraphExecutorMap,
-    pub jwt_auth_forwarding: Option<JwtAuthForwardingPlan>,
+    pub client_request: Arc<ClientRequestDetails<'exec>>,
+    pub introspection_context: Arc<IntrospectionContext>,
+    pub operation_type_name: &'static str,
+    pub executors: Arc<SubgraphExecutorMap>,
+    pub jwt_auth_forwarding: Option<Arc<JwtAuthForwardingPlan>>,
     pub graphql_error_recorder: Option<GraphQLErrorMetricsRecorder>,
-    pub demand_control: Option<DemandControlExecutionContext<'exec>>,
+    pub demand_control: Option<Arc<DemandControlExecutionContext>>,
     pub initial_errors: Vec<GraphQLError>,
-    pub span: &'exec GraphQLOperationSpan,
-    pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
-    pub supergraph_state: &'exec SupergraphState,
+    pub span: GraphQLOperationSpan,
+    pub plugin_req_state: Option<PluginRequestState<'exec>>,
+    pub supergraph_state: Arc<SupergraphState>,
+}
+
+pub struct PlanSubscriptionOutput {
+    pub body: BoxStream<'static, Vec<u8>>,
+    pub response_headers_aggregator: Option<ResponseHeaderAggregator>,
+    pub error_count: usize,
+}
+
+pub enum QueryPlanExecutionResult {
+    Single(PlanExecutionOutput),
+    Stream(PlanSubscriptionOutput),
 }
 
 #[derive(Default)]
@@ -117,20 +150,246 @@ pub struct PlanExecutionOutput {
     pub status_code: StatusCode,
 }
 
+#[derive(Serialize)]
+pub struct FailedExecutionResult {
+    pub errors: Vec<GraphQLError>,
+}
+
+impl FailedExecutionResult {
+    pub fn serialize(&self) -> Vec<u8> {
+        sonic_rs::to_vec(&self).unwrap_or_else(|err| {
+            // should never happen. result should always serialize - but hey, no unwraps
+            tracing::error!("Failed to serialize pipeline error to response: {}", err);
+            sonic_rs::to_vec(&FailedExecutionResult {
+                errors: vec![GraphQLError::from_message_and_code(
+                    "Failed to serialize error response",
+                    "INTERNAL_SERVER_ERROR",
+                )],
+            })
+            .unwrap()
+        })
+    }
+}
+
 pub async fn execute_query_plan<'exec>(
-    mut opts: QueryPlanExecutionOpts<'exec>,
-) -> Result<PlanExecutionOutput, PlanExecutionError> {
-    let mut data = if let Some(introspection_query) = opts.introspection_context.query {
-        resolve_introspection(introspection_query, opts.introspection_context)
+    opts: QueryPlanExecutionOpts<'exec>,
+) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
+    let (subscription_node, remaining_nodes) = match &opts.query_plan.node {
+        // a subscription to a subgraph that contains all data and doesn't need entity resolution
+        Some(PlanNode::Subscription(sub)) => (Some(sub), None),
+        // a subscription that needs entity resolution. after emitting, it needs to execute the
+        // remaining plan nodes in the sequence
+        Some(PlanNode::Sequence(seq)) => match seq.nodes.first() {
+            Some(PlanNode::Subscription(sub)) => {
+                let remaining = if seq.nodes.len() > 1 {
+                    // TODO: why to_vec()? is it wasteful? it's actually a slice, we dont need it as Vec
+                    Some(seq.nodes[1..].to_vec())
+                } else {
+                    None
+                };
+                (Some(sub), remaining)
+            }
+            _ => (None, None),
+        },
+        _ => (None, None),
+    };
+
+    // subscription
+    if let Some(sub) = subscription_node {
+        // subscription
+
+        // the primary (fetch node) of the subscription is the
+        // subscription destination, we execute it first and it
+        // would give us back a stream of results
+        let fetch_node = &sub.primary;
+
+        // we assemble a synthetic query plan for entity resolution from remaining nodes
+        // because we might need entity resolution after receiving each subscription event
+        let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan {
+            kind: QUERY_PLAN_KIND,
+            node: remaining_nodes.map(|nodes| {
+                if nodes.len() == 1 {
+                    nodes.into_iter().next().unwrap()
+                } else {
+                    PlanNode::Sequence(SequenceNode { nodes })
+                }
+            }),
+        });
+
+        // we perform a regular subgraph request to the subscription subgraph
+        // the only difference is that we get back a stream of results
+        let mut headers_map = HeaderMap::new();
+        modify_subgraph_request_headers(
+            &opts.headers_plan,
+            &fetch_node.service_name,
+            &opts.client_request,
+            &mut headers_map,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || Some(fetch_node.service_name.to_string()),
+            affected_path: || None,
+        })?;
+        let variable_refs = select_fetch_variables(
+            &opts.variable_values.variables_map,
+            fetch_node.variable_usages.as_ref(),
+        );
+
+        let mut subgraph_request = SubgraphExecutionRequest {
+            query: fetch_node.operation.document_str.as_str(),
+            dedupe: false,
+            operation_name: fetch_node.operation_name.as_deref(),
+            variables: variable_refs,
+            headers: headers_map,
+            raw_variable_values: None,
+            extensions: None,
+        };
+
+        // TODO: otel instrumentation and stuff
+        // let subgraph_operation_span = GraphQLSubgraphOperationSpan::new(
+        //     fetch_node.service_name.as_str(),
+        //     &fetch_node.operation.document_str,
+        // );
+        // subgraph_operation_span.record_operation_identity(GraphQLSpanOperationIdentity {
+        //     name: subgraph_request.operation_name,
+        //     operation_type: match fetch_node.operation_kind {
+        //         Some(OperationKind::Query) | None => "query",
+        //         Some(OperationKind::Mutation) => "mutation",
+        //         Some(OperationKind::Subscription) => "subscription",
+        //     },
+        //     client_document_hash: fetch_node.operation.hash.to_string().as_str(),
+        // });
+
+        if let Some(jwt_forwarding_plan) = &opts.jwt_auth_forwarding {
+            subgraph_request.add_request_extensions_field(
+                jwt_forwarding_plan.extension_field_name.clone(),
+                jwt_forwarding_plan.extension_field_value.clone(),
+            );
+        }
+
+        let mut response_stream = opts
+            .executors
+            .subscribe(
+                &fetch_node.service_name,
+                subgraph_request,
+                &opts.client_request,
+            )
+            .await
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: || Some(fetch_node.service_name.to_string()),
+                affected_path: || None,
+            })?;
+        // clone all necessary data from the context for usage in the stream.
+        // the stream will move all of these values inside its closure
+        let subgraph_name: String = fetch_node.service_name.clone();
+        let client_method = opts.client_request.method.clone();
+        let client_url = opts.client_request.url.clone();
+        let client_headers = opts.client_request.headers.clone();
+        let client_operation_name = opts.client_request.operation.name.map(|s| s.to_string());
+        let client_operation_query = opts.client_request.operation.query.to_string();
+        let client_operation_kind = opts.client_request.operation.kind;
+        let client_jwt = opts.client_request.jwt.clone();
+
+        let body_stream = Box::pin(async_stream::stream! {
+            while let Some(stream_result) = response_stream.next().await {
+                let response = match stream_result.with_plan_context(LazyPlanContext {
+                                subgraph_name: || Some(subgraph_name.to_string()),
+                                affected_path: || None,
+                            }) {
+                    Ok(response) => response,
+                    // NOTE: I thought about going one way up and having the
+                    // PlanSubscriptionOutput.body be a `Result<Vec<u8>, SubgraphExecutorError>`
+                    // but that would put the burden on the caller to handle errors that are
+                    // internal to the execution of the query plan (subgraph executor errors).
+                    // furthermore, we want to always act on those errors the same way (stream and stop,
+                    // read below) and not allow the caller to decide and potentially decide wrong
+                    Err(err) => {
+                        // not a fatal error, but stream it and stop.
+                        // it's not fatal because the subgraph might recover and send more
+                        // events if the subgraph error is a network error. but we fail and stop
+                        // just to be on the safe side and avoid infinite error streaming because
+                        // we cannot guarantee that the subgraph will recover and clients might
+                        // simply ignore errors wasting the router's resources
+                        yield FailedExecutionResult {
+                            errors: vec![err.into()],
+                        }.serialize();
+                        return;
+                    }
+                };
+                let mut initial_errors = opts.initial_errors.clone();
+                if let Some(new_errors) = response.errors {
+                    initial_errors.extend(new_errors);
+                }
+                let opts = QueryPlanExecutionOpts {
+                    query_plan: &query_plan,
+                    operation_for_plan: opts.operation_for_plan.clone(),
+                    projection_plan: opts.projection_plan.clone(),
+                    headers_plan: opts.headers_plan.clone(),
+                    variable_values: opts.variable_values.clone(),
+                    extensions: ExecutionResultExtensions::default(),
+                    client_request: ClientRequestDetails {
+                        method: &client_method,
+                        url: &client_url,
+                        headers: &client_headers,
+                        operation: OperationDetails {
+                            query: &client_operation_query,
+                            name: client_operation_name.as_deref(),
+                            kind: client_operation_kind,
+                        },
+                        jwt: client_jwt.clone(),
+                    }.into(),
+                    introspection_context: opts.introspection_context.clone(),
+                    operation_type_name: opts.operation_type_name,
+                    executors: opts.executors.clone(),
+                    jwt_auth_forwarding: opts.jwt_auth_forwarding.clone(),
+                    initial_errors,
+                    span: GraphQLOperationSpan { span: opts.span.clone() },
+                    // TODO: plugins for subscriptions are not yet supported
+                    plugin_req_state: None,
+                    graphql_error_recorder: None,
+                    demand_control: opts.demand_control.clone(),
+                    supergraph_state: opts.supergraph_state.clone(),
+                };
+                match execute_query_plan_with_data(response.data, opts).await {
+                    Ok(result) => yield result.body,
+                    Err(err) => {
+                        // fatal error, stream it and stop
+                        yield FailedExecutionResult {
+                            errors: vec![err.into()],
+                        }.serialize();
+                        return;
+                    }
+                }
+            }
+        });
+
+        return Ok(QueryPlanExecutionResult::Stream(PlanSubscriptionOutput {
+            body: body_stream,
+            response_headers_aggregator: None,
+            error_count: 0, // NOTE: errors can only happen before streaming started
+        }));
+    }
+
+    // query or mutation
+
+    let introspection_context_clone = Arc::clone(&opts.introspection_context);
+    let data = if let Some(introspection_query) = &introspection_context_clone.query {
+        resolve_introspection(introspection_query, &introspection_context_clone)
     } else if opts.projection_plan.is_empty() {
         Value::Null
     } else {
         Value::Object(Vec::new())
     };
 
-    let mut errors = opts.initial_errors;
+    let output = execute_query_plan_with_data(data, opts).await?;
 
-    let mut query_plan = opts.query_plan;
+    Ok(QueryPlanExecutionResult::Single(output))
+}
+
+async fn execute_query_plan_with_data<'exec>(
+    mut data: Value<'exec>,
+    mut opts: QueryPlanExecutionOpts<'exec>,
+) -> Result<PlanExecutionOutput, PlanExecutionError> {
+    let mut errors = opts.initial_errors;
 
     let dedupe_subgraph_requests = opts.operation_type_name == "Query";
 
@@ -140,12 +399,12 @@ pub async fn execute_query_plan<'exec>(
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
-            query_plan,
-            operation_for_plan: opts.operation_for_plan,
+            query_plan: opts.query_plan,
+            operation_for_plan: &opts.operation_for_plan,
             data,
             errors,
             extensions: opts.extensions.extensions,
-            variable_values: opts.variable_values,
+            variable_values: &opts.variable_values.variables_map,
             dedupe_subgraph_requests,
         };
 
@@ -164,7 +423,6 @@ pub async fn execute_query_plan<'exec>(
         }
 
         // Give the ownership back to variables
-        query_plan = start_payload.query_plan;
         data = start_payload.data;
         errors = start_payload.errors;
         opts.extensions.extensions = start_payload.extensions;
@@ -174,19 +432,19 @@ pub async fn execute_query_plan<'exec>(
     // No need for `new`, it has too many parameters
     // We can directly create `Executor` instance here
     let executor = Executor {
-        variable_values: opts.variable_values,
-        schema_metadata: opts.introspection_context.metadata,
-        executors: opts.executors,
-        client_request: opts.client_request,
-        headers_plan: opts.headers_plan,
+        variable_values: &opts.variable_values.variables_map,
+        schema_metadata: &opts.introspection_context.metadata,
+        executors: &opts.executors,
+        client_request: &opts.client_request,
+        headers_plan: &opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
         demand_control: opts.demand_control,
-        plugin_req_state: opts.plugin_req_state,
-        supergraph_state: opts.supergraph_state,
+        plugin_req_state: opts.plugin_req_state.as_ref(),
+        supergraph_state: opts.supergraph_state.as_ref(),
     };
 
-    if let Some(node) = &query_plan.node {
+    if let Some(node) = &opts.query_plan.node {
         executor.execute_plan_node(&mut exec_ctx, node).await;
     }
 
@@ -214,11 +472,11 @@ pub async fn execute_query_plan<'exec>(
     if let Some(demand_control) = executor.demand_control {
         let actual_cost_result = demand_control_actual_cost(
             &demand_control,
-            opts.supergraph_state,
-            opts.operation_for_plan,
+            &opts.supergraph_state,
+            &opts.operation_for_plan,
             opts.operation_type_name,
             &data,
-            opts.variable_values,
+            &opts.variable_values.variables_map,
             exec_ctx.actual_cost_by_subgraph,
         );
         if let Some(actual_cost_result) = &actual_cost_result {
@@ -260,15 +518,15 @@ pub async fn execute_query_plan<'exec>(
                 delta = Some(actual_cost_result.delta);
                 actual_by_subgraph = actual_cost_result.actual_by_subgraph;
             } else {
-                result = demand_control.result_code;
+                result = demand_control.result_code.clone();
             }
             opts.extensions.cost = Some(DemandControlResponseExtensions {
                 estimated: demand_control.evaluation.estimated_cost,
                 result,
-                by_subgraph: demand_control.evaluation.per_subgraph,
+                by_subgraph: demand_control.evaluation.per_subgraph.clone(),
                 formula_cache_hit: Some(demand_control.formula_cache_hit),
-                estimated_formula_by_subgraph: demand_control.estimated_formula_by_subgraph,
-                blocked_subgraphs: demand_control.blocked_subgraphs,
+                estimated_formula_by_subgraph: demand_control.estimated_formula_by_subgraph.clone(),
+                blocked_subgraphs: demand_control.blocked_subgraphs.clone(),
                 actual,
                 delta,
                 actual_by_subgraph,
@@ -323,10 +581,10 @@ pub async fn execute_query_plan<'exec>(
         errors,
         &opts.extensions,
         opts.operation_type_name,
-        opts.projection_plan,
-        opts.variable_values,
+        &opts.projection_plan,
+        &opts.variable_values.variables_map,
         response_size_estimate,
-        opts.introspection_context.metadata,
+        &opts.introspection_context.metadata,
     )
     .with_plan_context(LazyPlanContext {
         subgraph_name: || None,
@@ -347,10 +605,10 @@ pub struct Executor<'exec> {
     pub executors: &'exec SubgraphExecutorMap,
     pub client_request: &'exec ClientRequestDetails<'exec>,
     pub headers_plan: &'exec HeaderRulesPlan,
-    pub jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
+    pub jwt_forwarding_plan: Option<Arc<JwtAuthForwardingPlan>>,
     pub dedupe_subgraph_requests: bool,
-    pub demand_control: Option<DemandControlExecutionContext<'exec>>,
-    pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
+    pub demand_control: Option<Arc<DemandControlExecutionContext>>,
+    pub plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
     pub supergraph_state: &'exec SupergraphState,
 }
 
@@ -1227,7 +1485,7 @@ impl<'exec> Executor<'exec> {
                     subgraph_request,
                     self.client_request,
                     self.plugin_req_state,
-                    self.demand_control.as_ref(),
+                    self.demand_control.as_deref(),
                 )
                 .await
                 .with_plan_context(LazyPlanContext {
@@ -1304,6 +1562,7 @@ mod tests {
     };
 
     use super::select_fetch_variables;
+    use dashmap::DashMap;
     use graphql_tools::parser::query;
     use hive_router_config::HiveRouterConfig;
     use hive_router_internal::telemetry::TelemetryContext;
@@ -1457,6 +1716,7 @@ mod tests {
             Arc::new(TelemetryContext::from_propagation_config(
                 &Default::default(),
             )),
+            Arc::new(DashMap::new()),
         )
         .unwrap();
 
@@ -1473,13 +1733,13 @@ mod tests {
                     query: "{ products { upc } }",
                     kind: "query",
                 },
-                jwt: JwtRequestDetails::Unauthenticated,
+                jwt: JwtRequestDetails::Unauthenticated.into(),
             },
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
             demand_control: None,
-            plugin_req_state: &None,
+            plugin_req_state: None,
             supergraph_state: &SupergraphState::default(),
         };
 
@@ -1575,6 +1835,7 @@ mod tests {
                 Arc::new(TelemetryContext::from_propagation_config(
                     &Default::default(),
                 )),
+                Arc::new(DashMap::new()),
             )
             .unwrap(),
             client_request: &ClientRequestDetails {
@@ -1586,13 +1847,13 @@ mod tests {
                     query: "{ from_a from_b }",
                     kind: "query",
                 },
-                jwt: JwtRequestDetails::Unauthenticated,
+                jwt: JwtRequestDetails::Unauthenticated.into(),
             },
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
             demand_control: None,
-            plugin_req_state: &None,
+            plugin_req_state: None,
             supergraph_state: &SupergraphState::default(),
         };
 

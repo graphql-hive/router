@@ -6,6 +6,7 @@ use super::graphql::{
 };
 use super::http_request::{HttpClientRequestSpan, HttpInflightRequestSpan, HttpServerRequestSpan};
 use crate::graphql::ObservedError;
+use crate::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use bytes::Bytes;
 use http::header::{HOST, USER_AGENT};
 use http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
@@ -457,7 +458,7 @@ fn test_graphql_demand_control_span() {
         });
         span.record_compile_ms(0.12);
         span.record_eval_ms(0.07);
-        span.record_result(42, 1, "COST_OK");
+        span.record_result(42, 1, &DemandControlResultCode::CostOk);
 
         layer.assert_recorded_value(&span, attributes::CACHE_HIT, "false");
         layer.assert_recorded_value(

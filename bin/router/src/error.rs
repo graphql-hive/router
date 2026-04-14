@@ -14,6 +14,8 @@ pub enum RouterInitError {
     SupergraphManagerError(#[from] SupergraphManagerError),
     #[error("Failed to bind HTTP server to address: {0}. Error: {1}")]
     HttpServerBindError(String, std::io::Error),
+    #[error("Failed to bind HTTP callback server to address: {0}. Error: {1}")]
+    HttpCallbackServerBindError(String, std::io::Error),
     #[error("Failed to start HTTP server: {0}")]
     HttpServerStartError(std::io::Error),
     #[error(transparent)]

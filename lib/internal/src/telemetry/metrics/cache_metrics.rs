@@ -16,6 +16,7 @@ pub struct CacheMetrics {
     pub validate: CacheMetricSet,
     pub normalize: CacheMetricSet,
     pub plan: CacheMetricSet,
+    pub demand_control_formula: CacheMetricSet,
 }
 
 impl CacheMetrics {
@@ -48,6 +49,13 @@ impl CacheMetrics {
                 names::PLAN_CACHE_DURATION,
                 names::PLAN_CACHE_SIZE,
                 "Plan",
+            ),
+            demand_control_formula: CacheMetricSet::new(
+                meter,
+                names::DEMAND_CONTROL_FORMULA_CACHE_REQUESTS_TOTAL,
+                names::DEMAND_CONTROL_FORMULA_CACHE_DURATION,
+                names::DEMAND_CONTROL_FORMULA_CACHE_SIZE,
+                "Demand control formula",
             ),
         }
     }

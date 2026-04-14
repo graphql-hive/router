@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod demand_control_e2e_tests {
+    use futures::StreamExt;
     use std::time::Duration;
 
     use sonic_rs::{json, JsonContainerTrait, JsonValueTrait};
@@ -9,6 +10,9 @@ mod demand_control_e2e_tests {
         ClientResponseExt, TestRouter, TestSubgraphs,
     };
     use hive_router_internal::telemetry::metrics::catalog::{labels, names};
+    use hive_router_plan_executor::executors::{
+        graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
+    };
 
     async fn wait_for_metrics_export() {
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1009,13 +1013,13 @@ r#"query NewestAdditionsByCursor {
 
         assert_counter_at_least(
             &metrics,
-            names::COST_FORMULA_CACHE_REQUESTS_TOTAL,
+            names::DEMAND_CONTROL_FORMULA_CACHE_REQUESTS_TOTAL,
             &[(labels::RESULT, "miss")],
             1.0,
         );
         assert_counter_at_least(
             &metrics,
-            names::COST_FORMULA_CACHE_REQUESTS_TOTAL,
+            names::DEMAND_CONTROL_FORMULA_CACHE_REQUESTS_TOTAL,
             &[(labels::RESULT, "hit")],
             1.0,
         );
@@ -2418,15 +2422,68 @@ r#"query NewestAdditionsByCursor {
         .await;
     }
 
-    // Subscription operations have 0 base cost (same as queries, unlike mutations +10).
-    // Composite type and list costs still apply to the subscription selection set.
     #[ntex::test]
-    #[ignore = "subscription cost testing requires dedicated subscription endpoint support in TestRouter"]
-    async fn subscription_cost_is_zero() {
-        // A subscription should cost the same as an equivalent query with the same selection set
-        // the operation base cost is 0 for subscriptions (vs 10 for mutations).
-        // This test is deferred until the E2E harness supports subscription endpoints.
-        todo!()
+    async fn subscription_is_rejected_when_estimated_cost_exceeds_max() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                    supergraph:
+                        source: file
+                        path: supergraph.graphql
+                    websocket:
+                        enabled: true
+                    subscriptions:
+                        enabled: true
+                    demand_control:
+                        enabled: true
+                        max_cost: 0
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+
+        let subscribe_payload = SubscribePayload {
+            query: r#"
+                subscription {
+                    reviewAdded(step: 1, intervalInMs: 0) {
+                        id
+                        body
+                    }
+                }
+                "#
+            .into(),
+            ..Default::default()
+        };
+
+        let mut stream = client.subscribe(subscribe_payload).await;
+        let first = stream.next().await.expect("Expected a rejection response");
+        let errors = first
+            .errors
+            .expect("Expected errors for over-budget subscription");
+
+        assert_eq!(
+            errors[0].extensions.code.as_deref(),
+            Some("COST_ESTIMATED_TOO_EXPENSIVE")
+        );
+        assert!(
+            errors[0].message.contains("Operation estimated cost"),
+            "unexpected demand-control error message: {}",
+            errors[0].message
+        );
+
+        let next = stream.next().await;
+        assert!(
+            next.is_none(),
+            "Expected subscription stream to complete after demand-control rejection"
+        );
     }
 
     // @defer fragments must contribute to the total estimated cost. The estimator walks both

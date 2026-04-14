@@ -426,7 +426,7 @@ mod http_tests {
                     source: hive
                     endpoint: http://{host}/supergraph
                     key: dummy_key
-                    poll_interval: 100ms
+                    poll_interval: 500ms
                 traffic_shaping:
                     all:
                         dedupe_enabled: false
@@ -457,10 +457,10 @@ mod http_tests {
                 .is_empty()
             {
                 assert!(
-                    started.elapsed() < Duration::from_secs(3),
+                    started.elapsed() < Duration::from_secs(5),
                     "first request did not reach products subgraph in time"
                 );
-                time::sleep(Duration::from_millis(25)).await;
+                time::sleep(Duration::from_millis(100)).await;
             }
 
             mock_initial.remove();

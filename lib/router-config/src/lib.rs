@@ -14,10 +14,12 @@ pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
+pub mod subscriptions;
 pub mod supergraph;
 pub mod telemetry;
 pub mod traffic_shaping;
 pub mod usage_reporting;
+pub mod websocket;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
@@ -121,6 +123,14 @@ pub struct HiveRouterConfig {
     /// Configuration for custom plugins
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub plugins: HashMap<String, PluginConfig>,
+
+    /// Configuration for subscriptions.
+    #[serde(default)]
+    pub subscriptions: subscriptions::SubscriptionsConfig,
+
+    /// Configuration of router's WebSocket server.
+    #[serde(default)]
+    pub websocket: websocket::WebSocketConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -154,6 +164,38 @@ pub fn default_plugin_enabled() -> bool {
 
 pub fn default_plugin_warn_on_error() -> bool {
     false
+}
+
+impl HiveRouterConfig {
+    pub fn address(&self) -> String {
+        format!("{}:{}", self.http.host, self.http.port)
+    }
+
+    pub fn host(&self) -> String {
+        self.http.host.clone()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.http.port
+    }
+
+    pub fn graphql_path(&self) -> &str {
+        &self.http.graphql_endpoint
+    }
+
+    pub fn websocket_path(&self) -> Option<&str> {
+        self.websocket.enabled.then(|| {
+            self.websocket
+                .path
+                .as_ref()
+                .map(|p| p.as_str())
+                .unwrap_or_else(|| self.graphql_path())
+        })
+    }
+
+    pub fn callback_conf(&self) -> Option<&subscriptions::CallbackConfig> {
+        self.subscriptions.callback.as_ref()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
