@@ -5,19 +5,19 @@ on:
     branches:
       - main
     paths:
-      - 'apollo-router-workspace/**'
+      - "apollo-router-workspace/**"
   # For `main` changes, this pipeline will look for changes in Rust crates or plugin versioning, and
   # publish them only if changes are found and image does not exists in GH Packages.
   push:
     paths:
-      - 'apollo-router-workspace/**'
+      - "apollo-router-workspace/**"
     branches:
       - main
 
 defaults:
   run:
     working-directory: ./apollo-router-workspace
-  
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -77,7 +77,7 @@ jobs:
               echo "release_version=$image_tag_version" >> $GITHUB_OUTPUT
               echo "should_release=true" >> $GITHUB_OUTPUT
               echo "release_latest=true" >> $GITHUB_OUTPUT
-            else 
+            else
               echo "No changes found in version $image_tag_version"
             fi
           fi
@@ -93,12 +93,12 @@ jobs:
         include:
           - builder: ubuntu-22.04
             platform: linux/amd64
-            suffix: '-amd64'
+            suffix: "-amd64"
             cache_key: Linux
             rust_target: x86_64-unknown-linux-gnu
           - builder: hive-linux-arm64-ubuntu2204
             platform: linux/arm64
-            suffix: '-arm64'
+            suffix: "-arm64"
             rust_target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.builder }}
     permissions:
@@ -137,41 +137,40 @@ jobs:
             apollo-router-target-
 
       - name: Build
-        run:
-          cargo build --release --target ${{ matrix.rust_target }}
+        run: cargo build --release --target ${{ matrix.rust_target }}
 
       - name: Strip binary from debug symbols
         if: ${{ runner.os == 'Linux' }}
         run: strip ./target/${{ matrix.rust_target }}/release/router
-          
+
       - name: configure docker buildx
         uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
-          
+
       - name: login to docker registry
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          
+
       - uses: frabert/replace-string-action@b6828c5a4cb6371753ff873b0d1c4c4fbd9a63cb # v2.5
         id: branch_name_fix
         name: sanitize branch name
         with:
           pattern: '[+\/><@|-]'
-          flags: 'g'
+          flags: "g"
           string: ${{ github.head_ref || github.ref_name }}
-          replace-with: '_'
-          
+          replace-with: "_"
+
       - uses: frabert/replace-string-action@b6828c5a4cb6371753ff873b0d1c4c4fbd9a63cb # v2.5
         id: docker_cache_key
         name: build cache key
         with:
           pattern: '[\/,]'
-          flags: 'g'
+          flags: "g"
           string: ${{ github.ref }}-apollo-router-hive-build-${{ matrix.platform }}
-          replace-with: '_'
-          
+          replace-with: "_"
+
       - name: build docker images
         timeout-minutes: 60
         id: docker-bake
@@ -181,7 +180,7 @@ jobs:
           COMMIT_SHA: ${{ needs.find-changes.outputs.release_version }}
           RELEASE: ${{ needs.find-changes.outputs.release_version }}
           BRANCH_NAME: ${{ steps.branch_name_fix.outputs.replaced }}
-          BUILD_TYPE: 'publish'
+          BUILD_TYPE: "publish"
           PWD: ${{ github.workspace }}/apollo-router-workspace
           BUILD_STABLE: ${{ needs.find-changes.outputs.release_latest == 'true' && '1' || '' }}
           BUILD_PLATFORM: ${{ matrix.platform }}
@@ -216,7 +215,7 @@ jobs:
   # Test the Docker image, if it was published
   test-image:
     name: test apollo-router docker image
-    needs: 
+    needs:
       - find-changes
       - dockerize
     runs-on: ubuntu-22.04
@@ -307,7 +306,7 @@ jobs:
             apollo-router-target-${{ runner.os }}-test-
             apollo-router-target-${{ runner.os }}-
             apollo-router-target-
-      
+
       - name: Run tests
         run: cargo test
 
@@ -368,8 +367,7 @@ jobs:
             apollo-router-target-
 
       - name: Build
-        run:
-          cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Strip binary from debug symbols
         if: ${{ runner.os == 'Linux' }}
