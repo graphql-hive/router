@@ -409,7 +409,7 @@ fn estimate_operation_cost<'exec>(
         OperationKind::Query | OperationKind::Subscription => 0,
     };
 
-    let mut sized_path_store = Vec::<Vec<String>>::new();
+    let mut sized_path_store = Vec::<&Vec<String>>::new();
 
     operation_base.saturating_add(estimate_selection_set_cost(
         &operation.selection_set,
@@ -434,7 +434,7 @@ fn estimate_selection_set_cost<'exec>(
     fragments_cache: &'exec HashMap<&'exec str, &'exec FragmentDefinition>,
     visited_fragments: &mut HashSet<&'exec str>,
     inherited_sized_paths: &[InheritedSizedPath],
-    sized_path_store: &mut Vec<Vec<String>>,
+    sized_path_store: &mut Vec<&'exec Vec<String>>,
 ) -> u64 {
     let mut total_cost = 0_u64;
 
@@ -505,7 +505,7 @@ fn estimate_field_selection_cost<'exec>(
     fragments_cache: &'exec HashMap<&'exec str, &'exec FragmentDefinition>,
     visited_fragments: &mut HashSet<&'exec str>,
     inherited_sized_paths: &[InheritedSizedPath],
-    sized_path_store: &mut Vec<Vec<String>>,
+    sized_path_store: &mut Vec<&'exec Vec<String>>,
 ) -> u64 {
     if !is_conditionally_included(field, variable_payload) {
         return 0;
@@ -587,8 +587,7 @@ fn estimate_field_selection_cost<'exec>(
             );
 
             if let Some(sized_fields) = &list_size_directive.sized_fields {
-                for path in sized_fields {
-                    let parsed_path = parse_sized_field_path(path);
+                for parsed_path in sized_fields {
                     if !parsed_path.is_empty() {
                         sized_path_store.push(parsed_path);
                         inherited_for_children.push((
@@ -844,25 +843,6 @@ fn resolve_integer_from_json_value(value: &Value, path: &[&str]) -> Option<u64> 
     }
 
     None
-}
-
-fn parse_sized_field_path(path: &str) -> Vec<String> {
-    let mut current = String::new();
-    let mut out = Vec::new();
-
-    for ch in path.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' {
-            current.push(ch);
-        } else if !current.is_empty() {
-            out.push(std::mem::take(&mut current));
-        }
-    }
-
-    if !current.is_empty() {
-        out.push(current);
-    }
-
-    out
 }
 
 fn type_cost(supergraph_state: &SupergraphState, type_name: &str) -> u64 {

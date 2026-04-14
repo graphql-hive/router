@@ -56,7 +56,7 @@ impl PartialOrd for CostDirective {
 pub struct ListSizeDirective {
     pub assumed_size: Option<usize>,
     pub slicing_arguments: Option<Vec<String>>,
-    pub sized_fields: Option<Vec<String>>,
+    pub sized_fields: Option<Vec<Vec<String>>>,
     pub require_one_slicing_argument: bool,
 }
 
@@ -109,10 +109,23 @@ impl FederationDirective for ListSizeDirective {
                             list_value
                                 .iter()
                                 .filter_map(|item| {
-                                    if let graphql_tools::parser::schema::Value::String(str_value) =
-                                        item
+                                    if let graphql_tools::parser::schema::Value::String(path) = item
                                     {
-                                        Some(str_value.clone())
+                                        let mut current = String::new();
+                                        let mut parsed_path = Vec::new();
+
+                                        for ch in path.chars() {
+                                            if ch.is_ascii_alphanumeric() || ch == '_' {
+                                                current.push(ch);
+                                            } else if !current.is_empty() {
+                                                parsed_path.push(std::mem::take(&mut current));
+                                            }
+                                        }
+
+                                        if !current.is_empty() {
+                                            parsed_path.push(current);
+                                        }
+                                        Some(parsed_path)
                                     } else {
                                         None
                                     }
