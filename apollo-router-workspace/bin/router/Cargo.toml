@@ -1,12 +1,12 @@
 [package]
 name = "hive-apollo-router-plugin"
-authors = ["Kamil Kisiela <kamil.kisiela@gmail.com>"]
-repository = "https://github.com/graphql-hive/router/"
+authors = ["The Guild"]
+repository = "https://github.com/graphql-hive/router"
 edition = "2021"
 license = "MIT"
 publish = true
 version = "3.0.3"
-description = "Apollo-Router Plugin for Hive"
+description = "Apollo-Router Plugin for integrating with Hive Console"
 
 [[bin]]
 name = "router"

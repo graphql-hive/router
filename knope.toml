@@ -33,7 +33,7 @@ versioned_files = ["lib/graphql-tools/Cargo.toml", { path = "lib/executor/Cargo.
 changelog = "lib/graphql-tools/CHANGELOG.md"
 
 [packages.hive-console-sdk]
-versioned_files = ["lib/hive-console-sdk/Cargo.toml", { path = "bin/router/Cargo.toml", dependency = "hive-console-sdk" }, "Cargo.lock"]
+versioned_files = ["lib/hive-console-sdk/Cargo.toml", { path = "bin/router/Cargo.toml", dependency = "hive-console-sdk" }, "Cargo.lock", { path = "apollo-router-workspace/bin/router/Cargo.toml", dependency = "hive-console-sdk" }, { path = "apollo-router-workspace/Cargo.lock", dependency = "hive-console-sdk" }]
 changelog = "lib/hive-console-sdk/CHANGELOG.md"
 
 [packages.hive-router]
@@ -44,9 +44,8 @@ changelog = "bin/router/CHANGELOG.md"
 versioned_files = ["lib/node-addon/package.json", "lib/node-addon/Cargo.toml", "Cargo.lock"]
 changelog = "lib/node-addon/CHANGELOG.md"
 
-[packages.hive-apollo-router-plugin]
+[packages.apollo-router-hive-fork]
 versioned_files = ["apollo-router-workspace/bin/router/Cargo.toml", "apollo-router-workspace/Cargo.lock"]
-scopes = ["hive-apollo-router-plugin", "apollo-router", "graphql-tools", "hive-console-sdk"]
 
 # "release" pipeline that prepares the release and pushes a release PR
 [[workflows]]
