@@ -10,7 +10,7 @@ use hive_router_query_planner::{
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
     },
-    state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState, TypeNode},
+    state::supergraph_state::{SupergraphDefinition, SupergraphState, TypeNode},
 };
 use serde::Serialize;
 use sonic_rs::JsonValueTrait;
@@ -119,21 +119,7 @@ pub fn estimate_actual_subgraph_response_cost_from_response_shape(
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
 ) -> u64 {
     let operation_def = &operation.document.operation;
-    let root_type_name = match operation_def
-        .operation_kind
-        .as_ref()
-        .unwrap_or(&OperationKind::Query)
-    {
-        OperationKind::Query => supergraph_state.query_type.as_str(),
-        OperationKind::Mutation => supergraph_state
-            .mutation_type
-            .as_deref()
-            .unwrap_or("Mutation"),
-        OperationKind::Subscription => supergraph_state
-            .subscription_type
-            .as_deref()
-            .unwrap_or("Subscription"),
-    };
+    let root_type_name = supergraph_state.root_type_name(operation_def.operation_kind.as_ref());
 
     if operation.document.operation.selection_set.items.len() == 1 {
         if let SelectionItem::Field(field) = &operation.document.operation.selection_set.items[0] {

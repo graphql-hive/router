@@ -656,6 +656,17 @@ impl SupergraphState {
         result.sort();
         result
     }
+
+    pub fn root_type_name(&self, operation_kind: Option<&OperationKind>) -> &str {
+        match operation_kind {
+            Some(OperationKind::Query) => &self.query_type,
+            Some(OperationKind::Mutation) => self.mutation_type.as_deref().unwrap_or("Mutation"),
+            Some(OperationKind::Subscription) => {
+                self.subscription_type.as_deref().unwrap_or("Subscription")
+            }
+            None => &self.query_type,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

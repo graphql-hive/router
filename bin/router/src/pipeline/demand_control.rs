@@ -8,12 +8,12 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     ast::{
         fragment::FragmentDefinition,
-        operation::OperationDefinition,
+        operation::{OperationDefinition, SubgraphFetchOperation},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
         value::Value as AstValue,
     },
-    planner::plan_nodes::{BatchFetchNode, ConditionNode, FetchNode, PlanNode, QueryPlan},
+    planner::plan_nodes::{PlanNode, QueryPlan},
     state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState, TypeNode},
 };
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
@@ -90,12 +90,7 @@ pub fn evaluate_demand_control<'exec>(
             .metrics
             .demand_control
             .recorder(),
-        include_extension_metadata: app_state
-            .router_config
-            .demand_control
-            .as_ref()
-            .and_then(|config| config.include_extension_metadata)
-            .unwrap_or(false),
+        include_extension_metadata: config.include_extension_metadata.unwrap_or(false),
     }))
 }
 
@@ -148,12 +143,13 @@ fn blocked_subgraphs<'exec>(
         return blocked;
     };
 
+    let inherited_max = subgraph_config.all.as_ref().and_then(|cfg| cfg.max_cost);
+
     for (subgraph, estimated_cost) in &evaluation.per_subgraph {
         let specific_max = subgraph_config
             .subgraphs
             .get(*subgraph)
             .and_then(|cfg| cfg.max_cost);
-        let inherited_max = subgraph_config.all.as_ref().and_then(|cfg| cfg.max_cost);
         let max = specific_max.or(inherited_max);
 
         if let Some(limit) = max {
@@ -175,9 +171,11 @@ fn estimate_plan_node_cost<'exec>(
     out: &mut DemandControlEvaluation<'exec>,
 ) {
     match node {
-        PlanNode::Fetch(fetch) => {
+        PlanNode::Fetch(fetch_node) => {
             estimate_fetch_node_cost(
-                fetch,
+                &fetch_node.service_name,
+                fetch_node.operation_kind.as_ref(),
+                &fetch_node.operation,
                 supergraph_state,
                 variable_payload,
                 config,
@@ -185,9 +183,11 @@ fn estimate_plan_node_cost<'exec>(
                 out,
             );
         }
-        PlanNode::BatchFetch(fetch) => {
-            estimate_batch_fetch_node_cost(
-                fetch,
+        PlanNode::BatchFetch(batch_fetch_node) => {
+            estimate_fetch_node_cost(
+                &batch_fetch_node.service_name,
+                batch_fetch_node.operation_kind.as_ref(),
+                &batch_fetch_node.operation,
                 supergraph_state,
                 variable_payload,
                 config,
@@ -230,14 +230,29 @@ fn estimate_plan_node_cost<'exec>(
             }
         }
         PlanNode::Condition(condition) => {
-            estimate_condition_node_cost(
-                condition,
-                supergraph_state,
-                variable_payload,
-                config,
-                fragments,
-                out,
-            );
+            let condition_value = variable_payload.variable_equals_true(&condition.condition);
+
+            if condition_value {
+                if let Some(if_clause) = &condition.if_clause {
+                    estimate_plan_node_cost(
+                        if_clause,
+                        supergraph_state,
+                        variable_payload,
+                        config,
+                        fragments,
+                        out,
+                    );
+                }
+            } else if let Some(else_clause) = &condition.else_clause {
+                estimate_plan_node_cost(
+                    else_clause,
+                    supergraph_state,
+                    variable_payload,
+                    config,
+                    fragments,
+                    out,
+                );
+            }
         }
         PlanNode::Subscription(subscription) => {
             estimate_plan_node_cost(
@@ -277,57 +292,22 @@ fn estimate_plan_node_cost<'exec>(
     }
 }
 
-fn estimate_condition_node_cost<'exec>(
-    condition: &'exec ConditionNode,
-    supergraph_state: &'exec SupergraphState,
-    variable_payload: &'exec CoerceVariablesPayload,
-    config: &'exec hive_router_config::demand_control::DemandControlConfig,
-    fragments: &mut HashMap<&'exec str, &'exec FragmentDefinition>,
-    out: &mut DemandControlEvaluation<'exec>,
-) {
-    let condition_value = variable_payload.variable_equals_true(&condition.condition);
-
-    if condition_value {
-        if let Some(if_clause) = &condition.if_clause {
-            estimate_plan_node_cost(
-                if_clause,
-                supergraph_state,
-                variable_payload,
-                config,
-                fragments,
-                out,
-            );
-        }
-    } else if let Some(else_clause) = &condition.else_clause {
-        estimate_plan_node_cost(
-            else_clause,
-            supergraph_state,
-            variable_payload,
-            config,
-            fragments,
-            out,
-        );
-    }
-}
-
+#[inline]
 fn estimate_fetch_node_cost<'exec>(
-    fetch: &'exec FetchNode,
+    service_name: &'exec str,
+    operation_kind: Option<&'exec OperationKind>,
+    operation: &'exec SubgraphFetchOperation,
     supergraph_state: &'exec SupergraphState,
     variable_payload: &'exec CoerceVariablesPayload,
     config: &'exec hive_router_config::demand_control::DemandControlConfig,
     fragments: &mut HashMap<&'exec str, &'exec FragmentDefinition>,
     out: &mut DemandControlEvaluation<'exec>,
 ) {
-    let operation_kind = fetch
-        .operation_kind
-        .as_ref()
-        .unwrap_or(&OperationKind::Query);
-    let root_type_name = root_type_name_for_operation_kind(supergraph_state, operation_kind);
-    let operation = &fetch.operation.document.operation;
-    let default_list_size = default_list_size_for_subgraph(config, &fetch.service_name);
+    let root_type_name = supergraph_state.root_type_name(operation_kind);
+    let default_list_size = default_list_size_for_subgraph(config, service_name);
     let cost = estimate_operation_cost(
-        operation,
-        &fetch.operation.document.fragments,
+        &operation.document.operation,
+        &operation.document.fragments,
         root_type_name,
         operation_kind,
         supergraph_state,
@@ -337,56 +317,8 @@ fn estimate_fetch_node_cost<'exec>(
     );
 
     out.estimated_cost = out.estimated_cost.saturating_add(cost);
-    let subgraph_cost = out.per_subgraph.entry(&fetch.service_name).or_insert(0);
+    let subgraph_cost = out.per_subgraph.entry(service_name).or_insert(0);
     *subgraph_cost = subgraph_cost.saturating_add(cost);
-}
-
-fn estimate_batch_fetch_node_cost<'exec>(
-    fetch: &'exec BatchFetchNode,
-    supergraph_state: &'exec SupergraphState,
-    variable_payload: &'exec CoerceVariablesPayload,
-    config: &'exec hive_router_config::demand_control::DemandControlConfig,
-    fragments: &mut HashMap<&'exec str, &'exec FragmentDefinition>,
-    out: &mut DemandControlEvaluation<'exec>,
-) {
-    let operation_kind = fetch
-        .operation_kind
-        .as_ref()
-        .unwrap_or(&OperationKind::Query);
-    let root_type_name = root_type_name_for_operation_kind(supergraph_state, operation_kind);
-    let operation = &fetch.operation.document.operation;
-    let default_list_size = default_list_size_for_subgraph(config, &fetch.service_name);
-    let cost = estimate_operation_cost(
-        operation,
-        &fetch.operation.document.fragments,
-        root_type_name,
-        operation_kind,
-        supergraph_state,
-        variable_payload,
-        default_list_size,
-        fragments,
-    );
-
-    out.estimated_cost = out.estimated_cost.saturating_add(cost);
-    let subgraph_cost = out.per_subgraph.entry(&fetch.service_name).or_insert(0);
-    *subgraph_cost = subgraph_cost.saturating_add(cost);
-}
-
-fn root_type_name_for_operation_kind<'a>(
-    supergraph_state: &'a SupergraphState,
-    operation_kind: &OperationKind,
-) -> &'a str {
-    match operation_kind {
-        OperationKind::Query => supergraph_state.query_type.as_str(),
-        OperationKind::Mutation => supergraph_state
-            .mutation_type
-            .as_deref()
-            .unwrap_or(supergraph_state.query_type.as_str()),
-        OperationKind::Subscription => supergraph_state
-            .subscription_type
-            .as_deref()
-            .unwrap_or(supergraph_state.query_type.as_str()),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -394,7 +326,7 @@ fn estimate_operation_cost<'exec>(
     operation: &'exec OperationDefinition,
     operation_fragments: &'exec [FragmentDefinition],
     root_type_name: &'exec str,
-    operation_kind: &'exec OperationKind,
+    operation_kind: Option<&'exec OperationKind>,
     supergraph_state: &'exec SupergraphState,
     variable_payload: &'exec CoerceVariablesPayload,
     default_list_size: usize,
@@ -405,8 +337,8 @@ fn estimate_operation_cost<'exec>(
     }
 
     let operation_base: u64 = match operation_kind {
-        OperationKind::Mutation => 10,
-        OperationKind::Query | OperationKind::Subscription => 0,
+        Some(OperationKind::Mutation) => 10,
+        _ => 1,
     };
 
     let mut sized_path_store = Vec::<&Vec<String>>::new();
@@ -548,11 +480,7 @@ fn estimate_field_selection_cost<'exec>(
             base,
         )
     } else {
-        (
-            parent_type_name,
-            &TypeNode::Named(parent_type_name.to_string()),
-            0,
-        )
+        return 0;
     };
 
     let return_type_cost = type_cost(supergraph_state, return_type_name);
