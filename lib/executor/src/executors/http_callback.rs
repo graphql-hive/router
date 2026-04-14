@@ -27,12 +27,19 @@ pub const SUBSCRIPTION_PROTOCOL_HEADER: &str = "subscription-protocol";
 pub struct CallbackSubscription {
     pub verifier: String,
     pub sender: mpsc::Sender<CallbackMessage>,
-    pub last_heartbeat: Arc<Mutex<Instant>>,
+    // the subgraph sends an initial check before responding to the subscription POST, but under
+    // load this can be arbitrarily delayed. we track created_at so the enforcer can still evict
+    // subscriptions whose first check never arrives, using it as the reference point instead of
+    // last_heartbeat until the first check is recorded.
+    pub created_at: Instant,
+    // None until the first check is received. the enforcer measures elapsed time from created_at
+    // while this is None, and switches to this once the first check arrives.
+    pub last_heartbeat: Arc<Mutex<Option<Instant>>>,
 }
 
 impl CallbackSubscription {
     pub fn record_heartbeat(&self) {
-        *self.last_heartbeat.lock().unwrap() = Instant::now();
+        *self.last_heartbeat.lock().unwrap() = Some(Instant::now());
     }
 }
 
@@ -166,15 +173,8 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             CallbackSubscription {
                 verifier,
                 sender: tx,
-                // the subgraph sends a check before responding to the subscription POST,
-                // so the check arrives and updates last_heartbeat before we even see the response.
-                // the enforcer evicts when now - last_heartbeat > heartbeat_interval + 500ms grace.
-                // we initialize last_heartbeat to now + 2 * heartbeat_interval so that even a
-                // delayed enforcer tick (which can arrive up to ~2x the interval late under load)
-                // won't evict the subscription before the subgraph's initial check is recorded.
-                last_heartbeat: Arc::new(Mutex::new(
-                    Instant::now() + 2 * Duration::from_millis(self.heartbeat_interval_ms),
-                )),
+                created_at: Instant::now(),
+                last_heartbeat: Arc::new(Mutex::new(None)),
             },
         );
 

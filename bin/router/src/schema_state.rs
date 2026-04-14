@@ -375,11 +375,14 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
             let mut timed_out = Vec::new();
             for entry in self.callback_subscriptions.iter() {
                 let last = *entry.value().last_heartbeat.lock().unwrap();
-                if Instant::now().duration_since(last)
-                    > self.heartbeat_interval +
-                        // add a grace period if latency increases due to usage
-                        std::time::Duration::from_millis(500)
-                {
+                // heartbeat interval and some grace period to account for potential network delays
+                let deadline = self.heartbeat_interval + std::time::Duration::from_millis(1000);
+                let elapsed = match last {
+                    // first check hasn't arrived yet, measure from creation time instead
+                    None => Instant::now().duration_since(entry.value().created_at),
+                    Some(last) => Instant::now().duration_since(last),
+                };
+                if elapsed > deadline {
                     timed_out.push(entry.key().clone());
                 }
             }
