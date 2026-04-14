@@ -21,7 +21,7 @@ use hive_router_query_planner::utils::parsing::{
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
-use crate::pipeline::error::{ParserCacheError, PipelineError};
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::execution_request::GetQueryStr;
 use crate::shared_state::RouterSharedState;
 use tracing::{error, trace, Instrument};
@@ -31,35 +31,6 @@ pub struct ParseCacheEntry {
     document: Arc<Document<'static, String>>,
     document_minified_string: Arc<String>,
     hive_operation_hash: Arc<String>,
-}
-
-impl ParseCacheEntry {
-    #[inline]
-    pub fn try_new(
-        parsed_arc: Arc<Document<'static, String>>,
-        query_str: &str,
-    ) -> Result<Self, PipelineError> {
-        let minified_arc = {
-            Arc::new(minify_query(query_str).map_err(|err| {
-                error!("Failed to minify parsed GraphQL operation: {}", err);
-                PipelineError::FailedToMinifyParsedOperation(err.to_string())
-            })?)
-        };
-        let hive_normalized_operation = hive_sdk_normalize_operation(&parsed_arc);
-        let hive_minified =
-            minify_query(hive_normalized_operation.to_string().as_ref()).map_err(|err| {
-                error!(
-                    "Failed to minify GraphQL operation normalized for Hive SDK: {}",
-                    err
-                );
-                PipelineError::FailedToMinifyParsedOperation(err.to_string())
-            })?;
-        Ok(ParseCacheEntry {
-            document: parsed_arc,
-            document_minified_string: minified_arc,
-            hive_operation_hash: Arc::new(format!("{:x}", md5::compute(hive_minified))),
-        })
-    }
 }
 
 #[derive(Debug)]
@@ -136,7 +107,7 @@ pub async fn parse_operation_with_cache(
         let parse_cache_item = app_state
             .parse_cache
             .entry(cache_key)
-            .or_try_insert_with::<_, ParserCacheError>(async {
+            .or_try_insert_with(async {
                 let parsed = match app_state.router_config.limits.max_tokens.as_ref() {
                     Some(cfg) => safe_parse_operation_with_token_limit(query_str, cfg.n),
                     _ => safe_parse_operation(query_str),
@@ -146,7 +117,7 @@ pub async fn parse_operation_with_cache(
                         err.0.errors.first()
                     {
                         if *msg == "Token limit exceeded" {
-                            return ParserCacheError::ValidationErrors(
+                            return PipelineError::ValidationErrors(
                                 vec![ValidationError {
                                     locations: vec![err.0.position],
                                     message: "Token limit exceeded.".to_string(),
@@ -157,22 +128,20 @@ pub async fn parse_operation_with_cache(
                         }
                     }
                     error!("Failed to parse GraphQL operation: {}", err);
-                    ParserCacheError::ParseError(Arc::new(err))
+                    err.into()
                 })?;
                 trace!("successfully parsed GraphQL operation");
                 let parsed_arc = Arc::new(parsed);
-                let minified_arc = Arc::new(minify_query(query_str).map_err(|err| {
+                let minified_arc = Arc::new(minify_query(query_str).inspect_err(|err| {
                     error!("Failed to minify parsed GraphQL operation: {}", err);
-                    ParserCacheError::MinifyError(err.to_string())
                 })?);
                 let hive_normalized_operation = hive_sdk_normalize_operation(&parsed_arc);
                 let hive_minified = minify_query(hive_normalized_operation.to_string().as_ref())
-                    .map_err(|err| {
+                    .inspect_err(|err| {
                         error!(
                             "Failed to minify GraphQL operation normalized for Hive SDK: {}",
                             err
                         );
-                        ParserCacheError::MinifyError(err.to_string())
                     })?;
 
                 Ok(ParseCacheEntry {
@@ -182,7 +151,6 @@ pub async fn parse_operation_with_cache(
                 })
             })
             .await
-            .map_err(PipelineError::from)
             .into_result_with_hit_miss(|hit_miss| match hit_miss {
                 CacheHitMiss::Hit => {
                     parse_span.record_cache_hit(true);
