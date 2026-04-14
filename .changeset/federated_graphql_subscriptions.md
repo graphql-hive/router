@@ -2,7 +2,6 @@
 hive-router: minor
 hive-router-config: minor
 hive-router-plan-executor: minor
-hive-router-query-planner: minor
 ---
 
 # Federated GraphQL Subscriptions
