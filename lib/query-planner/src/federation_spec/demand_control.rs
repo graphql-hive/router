@@ -55,7 +55,7 @@ impl PartialOrd for CostDirective {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ListSizeDirective {
     pub assumed_size: Option<usize>,
-    pub slicing_arguments: Option<Vec<String>>,
+    pub slicing_arguments: Option<Vec<Vec<String>>>,
     pub sized_fields: Option<Vec<Vec<String>>>,
     pub require_one_slicing_argument: bool,
 }
@@ -87,51 +87,61 @@ impl FederationDirective for ListSizeDirective {
                 }
                 "slicingArguments" => {
                     if let graphql_tools::parser::schema::Value::List(list_value) = arg_value {
-                        slicing_arguments = Some(
-                            list_value
-                                .iter()
-                                .filter_map(|item| {
-                                    if let graphql_tools::parser::schema::Value::String(str_value) =
-                                        item
-                                    {
-                                        Some(str_value.clone())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect(),
-                        );
+                        let parsed_val: Vec<Vec<String>> = list_value
+                            .iter()
+                            .filter_map(|item| {
+                                if let graphql_tools::parser::schema::Value::String(str_value) =
+                                    item
+                                {
+                                    Some(
+                                        str_value
+                                            .split('.')
+                                            .map(|str| str.to_string())
+                                            .collect::<Vec<_>>(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if !parsed_val.is_empty() {
+                            slicing_arguments = Some(parsed_val);
+                        }
                     }
                 }
                 "sizedFields" => {
                     if let graphql_tools::parser::schema::Value::List(list_value) = arg_value {
-                        sized_fields = Some(
-                            list_value
-                                .iter()
-                                .filter_map(|item| {
-                                    if let graphql_tools::parser::schema::Value::String(path) = item
-                                    {
-                                        let mut current = String::new();
-                                        let mut parsed_path = Vec::new();
+                        let parsed_val: Vec<Vec<String>> = list_value
+                            .iter()
+                            .filter_map(|item| {
+                                if let graphql_tools::parser::schema::Value::String(path) = item {
+                                    let mut current = String::new();
+                                    let mut parsed_path = Vec::new();
 
-                                        for ch in path.chars() {
-                                            if ch.is_ascii_alphanumeric() || ch == '_' {
-                                                current.push(ch);
-                                            } else if !current.is_empty() {
-                                                parsed_path.push(std::mem::take(&mut current));
-                                            }
+                                    for ch in path.chars() {
+                                        if ch.is_ascii_alphanumeric() || ch == '_' {
+                                            current.push(ch);
+                                        } else if !current.is_empty() {
+                                            parsed_path.push(std::mem::take(&mut current));
                                         }
-
-                                        if !current.is_empty() {
-                                            parsed_path.push(current);
-                                        }
-                                        Some(parsed_path)
-                                    } else {
-                                        None
                                     }
-                                })
-                                .collect(),
-                        );
+
+                                    if !current.is_empty() {
+                                        parsed_path.push(current);
+                                    }
+                                    if parsed_path.is_empty() {
+                                        None
+                                    } else {
+                                        Some(parsed_path)
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if !parsed_val.is_empty() {
+                            sized_fields = Some(parsed_val);
+                        }
                     }
                 }
                 "requireOneSlicingArgument" => {

@@ -588,14 +588,12 @@ fn estimate_field_selection_cost<'exec>(
 
             if let Some(sized_fields) = &list_size_directive.sized_fields {
                 for parsed_path in sized_fields {
-                    if !parsed_path.is_empty() {
-                        sized_path_store.push(parsed_path);
-                        inherited_for_children.push((
-                            sized_path_store.len().saturating_sub(1),
-                            configured_size,
-                            0,
-                        ));
-                    }
+                    sized_path_store.push(parsed_path);
+                    inherited_for_children.push((
+                        sized_path_store.len().saturating_sub(1),
+                        configured_size,
+                        0,
+                    ));
                 }
             } else if field_type.is_list() {
                 explicit_list_size = Some(configured_size);
@@ -765,13 +763,8 @@ fn evaluate_list_size_directive(
 
     let mut values = vec![];
 
-    for slicing_arg in slicing_arguments {
-        let segments = slicing_arg.split('.').collect::<Vec<_>>();
-        if segments.is_empty() {
-            continue;
-        }
-
-        let Some(root_arg) = arguments.get_argument(segments[0]) else {
+    for segments in slicing_arguments {
+        let Some(root_arg) = arguments.get_argument(&segments[0]) else {
             continue;
         };
 
@@ -799,7 +792,7 @@ fn evaluate_list_size_directive(
 
 fn resolve_integer_value(
     value: &AstValue,
-    path: &[&str],
+    path: &[String],
     variable_payload: &CoerceVariablesPayload,
 ) -> Option<u64> {
     match value {
@@ -820,14 +813,14 @@ fn resolve_integer_value(
         AstValue::Object(object) => {
             let (head, tail) = path.split_first()?;
 
-            let nested_value = object.get(*head)?;
+            let nested_value = object.get(head)?;
             resolve_integer_value(nested_value, tail, variable_payload)
         }
         _ => None,
     }
 }
 
-fn resolve_integer_from_json_value(value: &Value, path: &[&str]) -> Option<u64> {
+fn resolve_integer_from_json_value(value: &Value, path: &[String]) -> Option<u64> {
     if let Some((head, tail)) = path.split_first() {
         let object = value.as_object()?;
         let nested = object.get(head)?;
