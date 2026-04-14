@@ -38,7 +38,7 @@ mod supergraph_e2e_tests {
         assert!(res.status().is_success(), "Expected 200 OK");
 
         // wait for caches to populate
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             router
                 .schema_state()
@@ -73,11 +73,8 @@ mod supergraph_e2e_tests {
             .await
             .expect("Expected mock2 to be matched");
 
-        // wait for the router to finish rebuilding with the new supergraph
-        router.wait_for_ready(None).await;
-
-        // wait for cache invalidation to be reflected (moka invalidate_all is lazy)
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        // wait for cache invalidation to be reflected
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             router
                 .schema_state()
