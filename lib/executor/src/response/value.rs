@@ -497,11 +497,12 @@ impl<'a> ValueObject<'a> {
     }
 }
 
-impl<'a> Iterator for ValueObject<'a> {
+impl<'a> IntoIterator for ValueObject<'a> {
     type Item = (&'a str, Value<'a>);
+    type IntoIter = std::vec::IntoIter<(&'a str, Value<'a>)>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.entries.pop()
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
     }
 }
 
