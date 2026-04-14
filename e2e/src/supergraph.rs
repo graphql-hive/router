@@ -32,14 +32,19 @@ mod supergraph_e2e_tests {
             .start()
             .await;
 
-        let res = router
-            .send_graphql_request("{ __schema { types { name } } }", None, None)
-            .await;
-        assert!(res.status().is_success(), "Expected 200 OK");
+        wait_until_mock_matched(&mock1)
+            .await
+            .expect("Expected mock1 to be matched");
 
         // wait for caches to populate
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
+            // we keep making requests to ensure the cache because its flakey
+            let res = router
+                .send_graphql_request("{ __schema { types { name } } }", None, None)
+                .await;
+            assert!(res.status().is_success(), "Expected 200 OK");
+
             router
                 .schema_state()
                 .normalize_cache
@@ -51,6 +56,7 @@ mod supergraph_e2e_tests {
             {
                 break;
             }
+
             assert!(
                 std::time::Instant::now() < deadline,
                 "timed out waiting for caches to populate: plan={}, normalize={}",
@@ -61,6 +67,7 @@ mod supergraph_e2e_tests {
         }
 
         mock1.remove();
+
         let mock2 = server
             .mock("GET", "/supergraph")
             .expect_at_least(1)
