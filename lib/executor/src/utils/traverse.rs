@@ -5,7 +5,6 @@ use hive_router_query_planner::planner::plan_nodes::FlattenNodePathSegment;
 use crate::{
     introspection::schema::{PossibleTypes, SchemaMetadata},
     response::{graphql_error::GraphQLErrorPath, value::Value},
-    utils::consts::TYPENAME_FIELD_NAME,
 };
 
 fn entity_satisfies_any_type_condition(
@@ -66,8 +65,7 @@ pub fn traverse_and_callback_mut<'a, Callback>(
         FlattenNodePathSegment::Field(field_name) => {
             // If the key is Field, we expect current_data to be an object
             if let Value::Object(map) = current_data {
-                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
-                    let (_, next_data) = map.get_mut(idx).unwrap();
+                if let Some(next_data) = map.get_mut(field_name) {
                     let rest_of_path = &remaining_path[1..];
                     let current_error_path_for_field =
                         current_error_path.map(|current_error_path| {
@@ -86,10 +84,7 @@ pub fn traverse_and_callback_mut<'a, Callback>(
         FlattenNodePathSegment::TypeCondition(type_condition) => {
             // If the key is Cast, we expect current_data to be an object or an array
             if let Value::Object(obj) = current_data {
-                let maybe_type_name = obj
-                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                    .ok()
-                    .and_then(|idx| obj[idx].1.as_str());
+                let maybe_type_name = obj.type_name();
 
                 if maybe_type_name.is_none_or(|type_name| {
                     entity_satisfies_any_type_condition(
@@ -156,8 +151,7 @@ pub fn traverse_and_callback<'a, Callback>(
         }
         FlattenNodePathSegment::Field(field_name) => {
             if let Value::Object(map) = current_data {
-                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
-                    let (_, next_data) = &map[idx];
+                if let Some(next_data) = map.get(field_name) {
                     let rest_of_path = &remaining_path[1..];
                     traverse_and_callback(next_data, rest_of_path, possible_types, callback);
                 }
@@ -165,10 +159,7 @@ pub fn traverse_and_callback<'a, Callback>(
         }
         FlattenNodePathSegment::TypeCondition(type_condition) => {
             if let Value::Object(obj) = current_data {
-                let maybe_type_name = obj
-                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                    .ok()
-                    .and_then(|idx| obj[idx].1.as_str());
+                let maybe_type_name = obj.type_name();
 
                 if maybe_type_name.is_none_or(|type_name| {
                     entity_satisfies_any_type_condition(possible_types, type_name, type_condition)
@@ -204,13 +195,16 @@ mod tests {
      * we should collect paths ["items", 0] and ["items", 1]
      */
     fn test_collect_error_paths_one_level() {
-        let mut data = Value::Object(vec![(
-            "items",
-            Value::Array(vec![
-                Value::Object(vec![("id", Value::String("1".into()))]),
-                Value::Object(vec![("id", Value::String("2".into()))]),
-            ]),
-        )]);
+        let mut data = Value::Object(
+            vec![(
+                "items",
+                Value::Array(vec![
+                    Value::Object(vec![("id", Value::String("1".into()))].into()),
+                    Value::Object(vec![("id", Value::String("2".into()))].into()),
+                ]),
+            )]
+            .into(),
+        );
         let path = vec![
             FlattenNodePathSegment::Field("items".into()),
             FlattenNodePathSegment::List,
@@ -249,28 +243,39 @@ mod tests {
      * we should collect paths ["users", 0, "posts", 0], ["users", 0, "posts", 1], and ["users", 1, "posts", 0]
      */
     fn test_collect_error_paths_two_levels() {
-        let mut data = Value::Object(vec![(
-            "users",
-            Value::Array(vec![
-                Value::Object(vec![
-                    ("id", Value::String("1".into())),
-                    (
-                        "posts",
-                        Value::Array(vec![
-                            Value::Object(vec![("id", Value::String("a".into()))]),
-                            Value::Object(vec![("id", Value::String("b".into()))]),
-                        ]),
+        let mut data = Value::Object(
+            vec![(
+                "users",
+                Value::Array(vec![
+                    Value::Object(
+                        vec![
+                            ("id", Value::String("1".into())),
+                            (
+                                "posts",
+                                Value::Array(vec![
+                                    Value::Object(vec![("id", Value::String("a".into()))].into()),
+                                    Value::Object(vec![("id", Value::String("b".into()))].into()),
+                                ]),
+                            ),
+                        ]
+                        .into(),
+                    ),
+                    Value::Object(
+                        vec![
+                            ("id", Value::String("2".into())),
+                            (
+                                "posts",
+                                Value::Array(vec![Value::Object(
+                                    vec![("id", Value::String("c".into()))].into(),
+                                )]),
+                            ),
+                        ]
+                        .into(),
                     ),
                 ]),
-                Value::Object(vec![
-                    ("id", Value::String("2".into())),
-                    (
-                        "posts",
-                        Value::Array(vec![Value::Object(vec![("id", Value::String("c".into()))])]),
-                    ),
-                ]),
-            ]),
-        )]);
+            )]
+            .into(),
+        );
         let path = vec![
             FlattenNodePathSegment::Field("users".into()),
             FlattenNodePathSegment::List,
@@ -319,7 +324,7 @@ mod tests {
 
     #[test]
     fn traverse_matches_multi_type_cast() {
-        let data = Value::Object(vec![("__typename", Value::String("Book".into()))]);
+        let data = Value::Object(vec![("__typename", Value::String("Book".into()))].into());
         let path = vec![FlattenNodePathSegment::TypeCondition(
             ["Book".to_string(), "User".to_string()]
                 .into_iter()
@@ -336,7 +341,7 @@ mod tests {
 
     #[test]
     fn traverse_rejects_non_matching_multi_type_cast() {
-        let data = Value::Object(vec![("__typename", Value::String("Magazine".into()))]);
+        let data = Value::Object(vec![("__typename", Value::String("Magazine".into()))].into());
         let path = vec![FlattenNodePathSegment::TypeCondition(
             ["Book".to_string(), "User".to_string()]
                 .into_iter()

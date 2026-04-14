@@ -4,7 +4,7 @@ use serde::{
     de::{self, Deserializer, MapAccess, SeqAccess, Visitor},
     ser::{SerializeMap, SerializeSeq},
 };
-use sonic_rs::{JsonNumberTrait, ValueRef};
+use sonic_rs::{JsonNumberTrait, Object, ValueRef};
 use std::{
     borrow::Cow,
     fmt::Display,
@@ -24,7 +24,7 @@ pub enum Value<'a> {
     Bool(bool),
     String(Cow<'a, str>),
     Array(Vec<Value<'a>>),
-    Object(Vec<(&'a str, Value<'a>)>),
+    Object(ValueObject<'a>),
 }
 
 impl Hash for Value<'_> {
@@ -50,10 +50,8 @@ impl<'a> Value<'a> {
     pub fn take_entities_by_key(&mut self, key: &str) -> Option<Vec<Value<'a>>> {
         match self {
             Value::Object(data) => {
-                if let Ok(entities_idx) = data.binary_search_by_key(&key, |(k, _)| *k) {
-                    if let Value::Array(arr) = data.remove(entities_idx).1 {
-                        return Some(arr);
-                    }
+                if let Some(Value::Array(arr)) = data.take(key) {
+                    return Some(arr);
                 }
                 None
             }
@@ -84,7 +82,7 @@ impl<'a> Value<'a> {
 
         match self {
             Value::Object(obj) => {
-                Value::hash_object_with_requires(state, obj, selection_items, possible_types);
+                obj.hash_object_with_requires(state, selection_items, possible_types)
             }
             Value::Array(arr) => {
                 for item in arr {
@@ -93,50 +91,6 @@ impl<'a> Value<'a> {
             }
             _ => {
                 self.hash(state);
-            }
-        }
-    }
-
-    fn hash_object_with_requires<H: Hasher>(
-        state: &mut H,
-        obj: &[(&'a str, Value<'a>)],
-        selection_items: &[SelectionItem],
-        possible_types: &PossibleTypes,
-    ) {
-        for item in selection_items {
-            match item {
-                SelectionItem::Field(field_selection) => {
-                    let field_name = &field_selection.name;
-                    if let Ok(idx) = obj.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
-                        let (key, value) = &obj[idx];
-                        key.hash(state);
-                        value.hash_with_requires(
-                            state,
-                            &field_selection.selections.items,
-                            possible_types,
-                        );
-                    }
-                }
-                SelectionItem::InlineFragment(inline_fragment) => {
-                    let type_condition = &inline_fragment.type_condition;
-                    let type_name = obj
-                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                        .ok()
-                        .and_then(|idx| obj[idx].1.as_str())
-                        .unwrap_or(type_condition);
-
-                    if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
-                        Value::hash_object_with_requires(
-                            state,
-                            obj,
-                            &inline_fragment.selections.items,
-                            possible_types,
-                        );
-                    }
-                }
-                SelectionItem::FragmentSpread(_) => {
-                    unreachable!("Fragment spreads should not exist in FetchNode::requires.")
-                }
             }
         }
     }
@@ -168,16 +122,11 @@ impl<'a> Value<'a> {
                 vec.extend(arr.iter().map(|v| Value::from(v.as_ref())));
                 Value::Array(vec)
             }
-            ValueRef::Object(obj) => {
-                let mut vec = Vec::with_capacity(obj.len());
-                vec.extend(obj.iter().map(|(k, v)| (k, Value::from(v.as_ref()))));
-                vec.sort_unstable_by_key(|(k, _)| *k);
-                Value::Object(vec)
-            }
+            ValueRef::Object(obj) => Value::Object(obj.into()),
         }
     }
 
-    pub fn as_object(&self) -> Option<&Vec<(&'a str, Value<'a>)>> {
+    pub fn as_object(&self) -> Option<&ValueObject<'a>> {
         match self {
             Value::Object(obj) => Some(obj),
             _ => None,
@@ -245,16 +194,7 @@ impl Display for Value<'_> {
                 }
                 write!(f, "]")
             }
-            Value::Object(obj) => {
-                write!(f, "{{")?;
-                for (i, (k, v)) in obj.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "\"{}\": {}", k, v)?;
-                }
-                write!(f, "}}")
-            }
+            Value::Object(obj) => obj.fmt(f),
         }
     }
 }
@@ -345,9 +285,7 @@ impl<'de> Visitor<'de> for ValueVisitor<'de> {
         while let Some((key, value)) = map.next_entry()? {
             entries.push((key, value));
         }
-        // IMPORTANT: We keep the sort for binary search compatibility.
-        entries.sort_unstable_by_key(|(k, _)| *k);
-        Ok(Value::Object(entries))
+        Ok(Value::Object(entries.into()))
     }
 }
 
@@ -372,8 +310,8 @@ impl serde::Serialize for Value<'_> {
             }
             Value::Object(obj) => {
                 let mut map = serializer.serialize_map(Some(obj.len()))?;
-                for (k, v) in obj {
-                    map.serialize_entry(k, v)?;
+                for (k, v) in obj.iter() {
+                    map.serialize_entry(k, &v)?;
                 }
                 map.end()
             }
@@ -399,7 +337,7 @@ mod tests {
             _ => panic!("Expected Value::Object"),
         };
 
-        let message_value = &obj.iter().find(|(k, _)| *k == "message").unwrap().1;
+        let message_value = &obj.get("message").unwrap();
 
         match message_value {
             Value::String(value) => {
@@ -424,7 +362,7 @@ mod tests {
             _ => panic!("Expected Value::Object"),
         };
 
-        let message_value = &obj.iter().find(|(k, _)| *k == "message").unwrap().1;
+        let message_value = &obj.get("message").unwrap();
 
         match message_value {
             Value::String(value) => {
@@ -436,5 +374,144 @@ mod tests {
             }
             _ => panic!("Expected Value::String"),
         }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ValueObject<'a> {
+    pub(crate) entries: Vec<(&'a str, Value<'a>)>,
+}
+
+impl<'a> From<&'a Object> for ValueObject<'a> {
+    fn from(obj: &'a Object) -> Self {
+        let mut entries = Vec::with_capacity(obj.len());
+        entries.extend(obj.iter().map(|(k, v)| (k, Value::from(v.as_ref()))));
+        entries.into()
+    }
+}
+
+impl<'a> Hash for ValueObject<'a> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.entries.hash(state)
+    }
+}
+
+impl<'a> Display for ValueObject<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        for (i, (k, v)) in self.entries.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "\"{}\": {}", k, v)?;
+        }
+        write!(f, "}}")
+    }
+}
+
+impl<'a> ValueObject<'a> {
+    pub fn get(&self, key: &str) -> Option<&Value<'a>> {
+        self.find_index(key).map(|idx| &self.entries[idx].1)
+    }
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value<'a>> {
+        self.find_index(key).map(|idx| &mut self.entries[idx].1)
+    }
+    pub fn take(&mut self, key: &str) -> Option<Value<'a>> {
+        self.find_index(key).map(|idx| self.entries.remove(idx).1)
+    }
+    pub fn entry(&mut self, key: &str) -> Option<&mut (&'a str, Value<'a>)> {
+        self.find_index(key).and_then(|i| self.entries.get_mut(i))
+    }
+    pub fn type_name(&self) -> Option<&str> {
+        self.get(TYPENAME_FIELD_NAME).and_then(|v| v.as_str())
+    }
+    fn find_index(&self, key: &str) -> Option<usize> {
+        self.entries.binary_search_by_key(&key, |(k, _)| *k).ok()
+    }
+    pub fn hash_object_with_requires<H: Hasher>(
+        &self,
+        state: &mut H,
+        selection_items: &[SelectionItem],
+        possible_types: &PossibleTypes,
+    ) {
+        for item in selection_items {
+            match item {
+                SelectionItem::Field(field_selection) => {
+                    let field_name = &field_selection.name;
+                    if let Some(value) = self.get(field_name) {
+                        field_name.hash(state);
+                        value.hash_with_requires(
+                            state,
+                            &field_selection.selections.items,
+                            possible_types,
+                        );
+                    }
+                }
+                SelectionItem::InlineFragment(inline_fragment) => {
+                    let type_condition = &inline_fragment.type_condition;
+                    let type_name = self.type_name().unwrap_or(type_condition);
+
+                    if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
+                        self.hash_object_with_requires(
+                            state,
+                            &inline_fragment.selections.items,
+                            possible_types,
+                        );
+                    }
+                }
+                SelectionItem::FragmentSpread(_) => {
+                    unreachable!("Fragment spreads should not exist in FetchNode::requires.")
+                }
+            }
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+    pub fn extend<I: IntoIterator<Item = (&'a str, Value<'a>)>>(&mut self, iter: I) {
+        self.entries.extend(iter);
+    }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn with_capacity(capacity: usize) -> Self {
+        ValueObject {
+            entries: Vec::with_capacity(capacity),
+        }
+    }
+    pub fn push(&mut self, entry: (&'a str, Value<'a>)) {
+        self.entries.push(entry);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&'a str, &Value<'a>)> {
+        self.entries.iter().map(|(k, v)| (*k, v))
+    }
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&'a str, &mut Value<'a>)> {
+        self.entries.iter_mut().map(|(k, v)| (*k, v))
+    }
+}
+
+impl<'a> IntoIterator for ValueObject<'a> {
+    type Item = (&'a str, Value<'a>);
+    type IntoIter = std::vec::IntoIter<(&'a str, Value<'a>)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
+impl<'a> From<Vec<(&'a str, Value<'a>)>> for ValueObject<'a> {
+    fn from(mut entries: Vec<(&'a str, Value<'a>)>) -> Self {
+        entries.sort_unstable_by_key(|(k, _)| *k);
+        ValueObject { entries }
+    }
+}
+
+impl<'a> From<ValueObject<'a>> for Value<'a> {
+    fn from(obj: ValueObject<'a>) -> Self {
+        Value::Object(obj)
     }
 }

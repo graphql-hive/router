@@ -84,9 +84,7 @@ fn resolve_input_value<'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
-    let mut iv_data = resolve_input_value_selections(iv, &selections.items, ctx);
-    iv_data.sort_by_key(|(k, _)| *k);
-    Value::Object(iv_data)
+    Value::Object(resolve_input_value_selections(iv, &selections.items, ctx).into())
 }
 
 fn resolve_input_value_selections<'exec>(
@@ -131,9 +129,7 @@ fn resolve_field<'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
-    let mut field_data = resolve_field_selections(f, &selections.items, ctx);
-    field_data.sort_by_key(|(k, _)| *k);
-    Value::Object(field_data)
+    Value::Object(resolve_field_selections(f, &selections.items, ctx).into())
 }
 
 fn resolve_field_selections<'exec>(
@@ -181,9 +177,7 @@ fn resolve_enum_value<'exec>(
     ev: &'exec EnumValue,
     selections: &'exec SelectionSet,
 ) -> Value<'exec> {
-    let mut ev_data = resolve_enum_value_selections(ev, &selections.items);
-    ev_data.sort_by_key(|(k, _)| *k);
-    Value::Object(ev_data)
+    Value::Object(resolve_enum_value_selections(ev, &selections.items).into())
 }
 
 fn resolve_enum_value_selections<'exec>(
@@ -222,9 +216,7 @@ fn resolve_type_definition<'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
-    let mut type_data = resolve_type_definition_selections(type_def, &selections.items, ctx);
-    type_data.sort_by_key(|(k, _)| *k);
-    Value::Object(type_data)
+    Value::Object(resolve_type_definition_selections(type_def, &selections.items, ctx).into())
 }
 
 fn resolve_type_definition_selections<'exec>(
@@ -392,9 +384,7 @@ fn resolve_wrapper_type<'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
-    let mut type_data = resolve_wrapper_type_selections(kind, inner_type, &selections.items, ctx);
-    type_data.sort_by_key(|(k, _)| *k);
-    Value::Object(type_data)
+    Value::Object(resolve_wrapper_type_selections(kind, inner_type, &selections.items, ctx).into())
 }
 
 fn resolve_wrapper_type_selections<'exec>(
@@ -451,9 +441,7 @@ fn resolve_directive<'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
-    let mut directive_data = resolve_directive_selections(d, &selections.items, ctx);
-    directive_data.sort_by_key(|(k, _)| *k);
-    Value::Object(directive_data)
+    Value::Object(resolve_directive_selections(d, &selections.items, ctx).into())
 }
 
 fn resolve_directive_selections<'exec>(
@@ -506,10 +494,7 @@ fn resolve_schema_field<'exec>(
     field: &'exec FieldSelection,
     ctx: &'exec IntrospectionContext<'exec>,
 ) -> Value<'exec> {
-    let mut schema_data = resolve_schema_selections(&field.selections.items, ctx);
-
-    schema_data.sort_by_key(|(k, _)| *k);
-    Value::Object(schema_data)
+    Value::Object(resolve_schema_selections(&field.selections.items, ctx).into())
 }
 
 fn resolve_schema_selections<'exec>(
@@ -599,11 +584,10 @@ pub fn resolve_introspection<'exec>(
         })
         .unwrap_or_else(|| ctx.schema.query_type_name());
 
-    let mut data =
-        resolve_root_introspection_selections(root_type_name, &root_selection_set.items, ctx);
-
-    data.sort_by_key(|(k, _)| *k);
-    Value::Object(data)
+    Value::Object(
+        resolve_root_introspection_selections(root_type_name, &root_selection_set.items, ctx)
+            .into(),
+    )
 }
 
 fn resolve_root_introspection_selections<'exec>(

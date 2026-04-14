@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::response::value::Value;
+use crate::response::value::{Value, ValueObject};
 
 pub fn deep_merge<'a>(target: &mut Value<'a>, source: Value<'a>) {
     deep_merge_internal(target, source)
@@ -14,8 +14,8 @@ fn deep_merge_internal<'a>(target: &mut Value<'a>, source: Value<'a>) {
         }
 
         // Both are Objects: merge them using the helper.
-        (Value::Object(target_vec), Value::Object(source_obj)) => {
-            deep_merge_objects(target_vec, source_obj);
+        (Value::Object(target_obj), Value::Object(source_obj)) => {
+            deep_merge_objects(target_obj, source_obj);
         }
 
         // Both are Arrays: merge them element-wise.
@@ -33,22 +33,19 @@ fn deep_merge_internal<'a>(target: &mut Value<'a>, source: Value<'a>) {
     }
 }
 
-fn deep_merge_objects<'a>(
-    target_vec: &mut Vec<(&'a str, Value<'a>)>,
-    source_obj: Vec<(&'a str, Value<'a>)>,
-) {
+fn deep_merge_objects<'a>(target_obj: &mut ValueObject<'a>, source_obj: ValueObject<'a>) {
     if source_obj.is_empty() {
         return;
     }
-    if target_vec.is_empty() {
-        target_vec.clear();
-        target_vec.extend(source_obj);
+    if target_obj.is_empty() {
+        target_obj.clear();
+        target_obj.extend(source_obj);
 
         return;
     }
 
-    let old_target = std::mem::take(target_vec);
-    let mut merged = Vec::with_capacity(old_target.len() + source_obj.len());
+    let old_target = std::mem::take(target_obj);
+    let mut merged = ValueObject::with_capacity(old_target.len() + source_obj.len());
 
     let mut target_iter = old_target.into_iter().peekable();
     let mut source_iter = source_obj.into_iter().peekable();
@@ -82,5 +79,5 @@ fn deep_merge_objects<'a>(
     merged.extend(source_iter);
 
     // Replace the original vector with the newly merged one.
-    *target_vec = merged;
+    *target_obj = merged;
 }

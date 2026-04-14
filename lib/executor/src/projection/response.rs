@@ -4,7 +4,7 @@ use crate::projection::plan::{
     ProjectionValueSource,
 };
 use crate::response::graphql_error::GraphQLError;
-use crate::response::value::Value;
+use crate::response::value::{Value, ValueObject};
 use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 use std::cell::OnceCell;
@@ -15,7 +15,7 @@ use crate::introspection::schema::SchemaMetadata;
 use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
 use crate::utils::consts::{
     CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET,
-    QUOTE, TRUE, TYPENAME_FIELD_NAME,
+    QUOTE, TRUE,
 };
 
 /// Represents a type's name that can be either already resolved or lazily computed.
@@ -264,7 +264,7 @@ fn project_selection_set<'a>(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map<'a>(
-    obj: &'a [(&str, Value)],
+    obj: &'a ValueObject<'a>,
     errors: &mut Vec<GraphQLError>,
     plans: &'a [FieldProjectionPlan],
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
@@ -282,10 +282,7 @@ fn project_selection_set_with_map<'a>(
             }
         }
 
-        let field_val = obj
-            .binary_search_by_key(&plan.response_key.as_str(), |(k, _)| *k)
-            .ok()
-            .map(|idx| &obj[idx].1);
+        let field_val = obj.get(&plan.response_key);
 
         let res = if let Some(conditions) = &plan.conditions {
             let field_type_name_cell = OnceCell::new();
@@ -511,11 +508,7 @@ fn resolve_type_name<'a>(
 
     let typename_field = field_val
         .and_then(|value| value.as_object())
-        .and_then(|obj| {
-            obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| *k)
-                .ok()
-                .and_then(|idx| obj[idx].1.as_str())
-        });
+        .and_then(|obj| obj.type_name());
 
     if let Some(typename) = typename_field {
         return Ok(typename);

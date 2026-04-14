@@ -5,7 +5,7 @@ use crate::{
     introspection::schema::PossibleTypes,
     json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
     projection::response::serialize_value_to_buffer,
-    response::value::Value,
+    response::value::{Value, ValueObject},
     utils::consts::{
         CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET, QUOTE,
         TRUE, TYPENAME, TYPENAME_FIELD_NAME,
@@ -114,7 +114,7 @@ pub fn project_requires(
 fn project_requires_map_mut(
     possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
-    entity_obj: &Vec<(&str, Value<'_>)>,
+    entity_obj: &ValueObject<'_>,
     buffer: &mut Vec<u8>,
     first: &mut bool,
     parent_response_key: Option<&str>,
@@ -130,20 +130,13 @@ fn project_requires_map_mut(
                     continue;
                 }
 
-                let original = entity_obj
-                    .binary_search_by_key(&field_name.as_str(), |(k, _)| k)
-                    .ok()
-                    .map(|idx| &entity_obj[idx].1)
-                    .or_else(|| {
-                        if response_key == TYPENAME_FIELD_NAME {
-                            None
-                        } else {
-                            entity_obj
-                                .binary_search_by_key(&response_key, |(k, _)| k)
-                                .ok()
-                                .map(|idx| &entity_obj[idx].1)
-                        }
-                    });
+                let original = entity_obj.get(field_name).or_else(|| {
+                    if response_key == TYPENAME_FIELD_NAME {
+                        None
+                    } else {
+                        entity_obj.get(response_key)
+                    }
+                });
 
                 let Some(original) = original else {
                     continue;
@@ -158,11 +151,7 @@ fn project_requires_map_mut(
                     write_response_key(parent_first, parent_response_key, buffer);
                     buffer.put(OPEN_BRACE);
                     // Write __typename only if the object has other fields
-                    if let Some(type_name) = entity_obj
-                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                        .ok()
-                        .and_then(|idx| entity_obj[idx].1.as_str())
-                    {
+                    if let Some(type_name) = entity_obj.type_name() {
                         buffer.put(QUOTE);
                         buffer.put(TYPENAME);
                         buffer.put(QUOTE);
@@ -202,11 +191,7 @@ fn project_requires_map_mut(
             SelectionItem::InlineFragment(requires_selection) => {
                 let type_condition = &requires_selection.type_condition;
 
-                let type_name = match entity_obj
-                    .iter()
-                    .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
-                    .and_then(|(_, val)| val.as_str())
-                {
+                let type_name = match entity_obj.type_name() {
                     Some(type_name) => type_name,
                     _ => type_condition,
                 };

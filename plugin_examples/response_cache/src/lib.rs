@@ -98,11 +98,7 @@ impl RouterPlugin for ResponseCachePlugin {
 
                     // Imagine this code is traversing the response data to find type names
                     if let Some(obj) = payload.data.as_object() {
-                        if let Some(typename) = obj
-                            .iter()
-                            .position(|(k, _)| k == &"__typename")
-                            .and_then(|idx| obj[idx].1.as_str())
-                        {
+                        if let Some(typename) = obj.type_name() {
                             if let Some(ttl) = ttl_per_type.get(typename) {
                                 max_ttl = max_ttl.max(*ttl);
                             }
