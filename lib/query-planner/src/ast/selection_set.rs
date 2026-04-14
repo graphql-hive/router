@@ -578,6 +578,10 @@ pub fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -
                 field.include_if.as_ref().is_some_and(|v| v == var_name)
             }
             Condition::Skip(var_name) => field.skip_if.as_ref().is_some_and(|v| v == var_name),
+            Condition::SkipAndInclude { skip, include } => {
+                field.skip_if.as_ref().is_some_and(|v| v == skip)
+                    && field.include_if.as_ref().is_some_and(|v| v == include)
+            }
         },
         None => field.include_if.is_none() && field.skip_if.is_none(),
     }
@@ -590,6 +594,10 @@ fn fragment_condition_equal(cond: &Option<Condition>, fragment: &InlineFragmentS
                 fragment.include_if.as_ref().is_some_and(|v| v == var_name)
             }
             Condition::Skip(var_name) => fragment.skip_if.as_ref().is_some_and(|v| v == var_name),
+            Condition::SkipAndInclude { skip, include } => {
+                fragment.skip_if.as_ref().is_some_and(|v| v == skip)
+                    && fragment.include_if.as_ref().is_some_and(|v| v == include)
+            }
         },
         None => fragment.include_if.is_none() && fragment.skip_if.is_none(),
     }

@@ -71,10 +71,12 @@ impl From<&FetchStepSelections<MultiTypeFetchStep>> for SelectionSet {
                         include_if: match &condition {
                             Condition::Include(var_name) => Some(var_name.clone()),
                             Condition::Skip(_) => None,
+                            Condition::SkipAndInclude { include, .. } => Some(include.clone()),
                         },
                         skip_if: match &condition {
                             Condition::Skip(var_name) => Some(var_name.clone()),
                             Condition::Include(_) => None,
+                            Condition::SkipAndInclude { skip, .. } => Some(skip.clone()),
                         },
                         selections: selections_for_wrapper,
                     })
@@ -85,14 +87,14 @@ impl From<&FetchStepSelections<MultiTypeFetchStep>> for SelectionSet {
 }
 
 fn inline_fragment_condition(fragment: &InlineFragmentSelection) -> Option<Condition> {
-    // Return a condition:
     match (fragment.include_if.as_ref(), fragment.skip_if.as_ref()) {
-        // Either @include
+        (Some(include), Some(skip)) => Some(Condition::SkipAndInclude {
+            skip: skip.clone(),
+            include: include.clone(),
+        }),
         (Some(var_name), None) => Some(Condition::Include(var_name.clone())),
-        // or @skip
         (None, Some(var_name)) => Some(Condition::Skip(var_name.clone())),
-        // not when both are available
-        _ => None,
+        (None, None) => None,
     }
 }
 
@@ -329,6 +331,15 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                         selections: prev,
                         skip_if: Some(var_name.clone()),
                         include_if: None,
+                    })];
+            }
+            Condition::SkipAndInclude { skip, include } => {
+                selection_set.items =
+                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: def_name.to_string(),
+                        selections: prev,
+                        skip_if: Some(skip.clone()),
+                        include_if: Some(include.clone()),
                     })];
             }
         }
