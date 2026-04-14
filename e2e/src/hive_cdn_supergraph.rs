@@ -289,12 +289,9 @@ mod hive_cdn_supergraph_e2e_tests {
                         max_retries: 10
                 "#,
             ))
-            .skip_wait_for_ready_on_start() // this one will time out after 3 seconds, we need more
             .build()
             .start()
             .await;
-
-        router.wait_for_ready(Some(Duration::from_secs(7))).await;
 
         one.assert();
         two.assert();
