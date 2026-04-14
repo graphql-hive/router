@@ -378,6 +378,8 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
                 // heartbeat interval and some grace period to account for potential network delays
                 #[cfg(not(test))]
                 let grace_period = std::time::Duration::from_millis(1000);
+                // when dealing with tests that run in parallel in the CI, we need to increase the
+                // grace period to avoid flaky tests due to timing issues with runner under pressure
                 #[cfg(test)]
                 let grace_period = std::time::Duration::from_millis(5000);
                 let deadline = self.heartbeat_interval + grace_period;
