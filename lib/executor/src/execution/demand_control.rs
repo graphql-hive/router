@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::HashMap, sync::Arc};
 
 use hive_router_config::demand_control::DemandControlActualCostMode;
 use hive_router_internal::telemetry::metrics::demand_control_metrics::{
@@ -19,35 +19,148 @@ use crate::response::value::Value;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DemandControlResponseExtensions<'exec> {
+pub struct DemandControlResponseExtensions {
     pub estimated: u64,
     pub result: DemandControlResultCode,
-    pub by_subgraph: HashMap<&'exec str, u64>,
-    pub blocked_subgraphs: HashSet<&'exec str>,
+    pub by_subgraph: ahash::HashMap<String, u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub formula_cache_hit: Option<bool>,
+    pub estimated_formula_by_subgraph: Option<ahash::HashMap<String, String>>,
+    pub blocked_subgraphs: ahash::HashSet<String>,
 
     pub max_cost: Option<u64>,
 
     pub actual: Option<u64>,
     pub delta: Option<i64>,
-    pub actual_by_subgraph: Option<HashMap<&'exec str, u64>>,
+    pub actual_by_subgraph: Option<ahash::HashMap<String, u64>>,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct DemandControlEvaluation<'exec> {
+pub struct DemandControlEvaluation {
     pub estimated_cost: u64,
-    pub per_subgraph: HashMap<&'exec str, u64>,
+    pub per_subgraph: ahash::HashMap<String, u64>,
 }
 
 #[derive(Debug)]
 pub struct DemandControlExecutionContext<'exec> {
     pub max_cost: Option<u64>,
-    pub evaluation: DemandControlEvaluation<'exec>,
-    pub blocked_subgraphs: HashSet<&'exec str>,
+    pub evaluation: DemandControlEvaluation,
+    pub blocked_subgraphs: ahash::HashSet<String>,
     pub operation_name: Option<&'exec str>,
     pub actual_cost_mode: Option<DemandControlActualCostMode>,
     pub result_code: DemandControlResultCode,
     pub metrics_recorder: Option<DemandControlMetricsRecorder>,
     pub include_extension_metadata: bool,
+    pub formula_cache_hit: bool,
+    pub estimated_formula_by_subgraph: Option<ahash::HashMap<String, String>>,
+    /// Pre-compiled actual-cost formulas per service name (BySubgraph mode).
+    /// Eliminates schema lookups during response traversal.
+    pub actual_cost_plan_by_service: Option<ahash::HashMap<String, Arc<Vec<ActualCostPlanNode>>>>,
+}
+
+// ── Compiled actual-cost types ───────────────────────────────────────────────
+
+/// Per-field cost entry compiled at plan time; only response traversal at request time.
+#[derive(Clone, Debug)]
+pub struct ActualCostPlanField {
+    pub response_key: String,
+    pub skip_if: Option<String>,
+    pub include_if: Option<String>,
+    pub base_cost: u64,
+    pub is_list: bool,
+    /// Pre-computed `type_cost` of the return type.
+    pub per_item_cost: u64,
+    pub children: Vec<ActualCostPlanNode>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ActualCostPlanNode {
+    Field(ActualCostPlanField),
+    InlineFragment {
+        type_condition: String,
+        children: Vec<ActualCostPlanNode>,
+    },
+}
+
+/// Evaluate a compiled actual-cost formula against a response object value.
+pub fn evaluate_actual_cost_plan_nodes(
+    nodes: &[ActualCostPlanNode],
+    parent_value: &Value<'_>,
+    vars: &Option<HashMap<String, sonic_rs::Value>>,
+) -> u64 {
+    nodes
+        .iter()
+        .map(|node| match node {
+            ActualCostPlanNode::Field(field) => {
+                evaluate_actual_cost_plan_field(field, parent_value, vars)
+            }
+            ActualCostPlanNode::InlineFragment {
+                type_condition,
+                children,
+            } => {
+                if should_skip_inline_fragment(parent_value, type_condition) {
+                    return 0;
+                }
+                evaluate_actual_cost_plan_nodes(children, parent_value, vars)
+            }
+        })
+        .fold(0u64, |acc, v| acc.saturating_add(v))
+}
+
+fn evaluate_actual_cost_plan_field(
+    field: &ActualCostPlanField,
+    parent_value: &Value<'_>,
+    vars: &Option<HashMap<String, sonic_rs::Value>>,
+) -> u64 {
+    if !actual_cost_plan_field_included(field, vars) {
+        return 0;
+    }
+    let response_value = parent_value
+        .as_object()
+        .and_then(|obj| response_object_get(obj, &field.response_key));
+    if field.is_list {
+        let Some(items) = response_value.and_then(|v| match v {
+            Value::Array(items) => Some(items),
+            _ => None,
+        }) else {
+            return field.base_cost;
+        };
+        let mut total = field.base_cost;
+        for item in items.iter() {
+            let child_cost = evaluate_actual_cost_plan_nodes(&field.children, item, vars);
+            total = total
+                .saturating_add(field.per_item_cost)
+                .saturating_add(child_cost);
+        }
+        total
+    } else {
+        let Some(value) = response_value else {
+            return field.base_cost;
+        };
+        if value.is_null() {
+            return field.base_cost;
+        }
+        let child_cost = evaluate_actual_cost_plan_nodes(&field.children, value, vars);
+        field
+            .base_cost
+            .saturating_add(field.per_item_cost)
+            .saturating_add(child_cost)
+    }
+}
+
+fn actual_cost_plan_field_included(
+    field: &ActualCostPlanField,
+    vars: &Option<HashMap<String, sonic_rs::Value>>,
+) -> bool {
+    if let Some(skip_if) = &field.skip_if {
+        if variable_equals_true(vars, skip_if) {
+            return false;
+        }
+    }
+    if let Some(include_if) = &field.include_if {
+        return variable_equals_true(vars, include_if);
+    }
+    true
 }
 
 pub fn demand_control_actual_cost<'exec>(
@@ -57,14 +170,25 @@ pub fn demand_control_actual_cost<'exec>(
     root_type_name: &str,
     data: &Value<'_>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    actual_cost_by_subgraph_from_responses: HashMap<&'exec str, u64>,
-) -> Option<DemandControlActualCostResult<'exec>> {
+    actual_cost_by_subgraph_from_responses: Option<ahash::HashMap<&'exec str, u64>>,
+) -> Option<DemandControlActualCostResult> {
     let mut actual_by_subgraph = None;
     let actual = match demand_control.actual_cost_mode? {
         DemandControlActualCostMode::BySubgraph => {
-            let total = actual_cost_by_subgraph_from_responses.values().sum();
-            actual_by_subgraph = Some(actual_cost_by_subgraph_from_responses);
-            total
+            if let Some(actual_cost_by_subgraph_from_responses) =
+                actual_cost_by_subgraph_from_responses
+            {
+                let total = actual_cost_by_subgraph_from_responses.values().sum();
+                actual_by_subgraph = Some(
+                    actual_cost_by_subgraph_from_responses
+                        .into_iter()
+                        .map(|(subgraph, cost)| (subgraph.to_string(), cost))
+                        .collect(),
+                );
+                total
+            } else {
+                0
+            }
         }
         DemandControlActualCostMode::ByResponseShape => {
             estimate_actual_operation_cost_from_response_shape(
@@ -104,11 +228,11 @@ pub fn demand_control_actual_cost<'exec>(
     })
 }
 
-pub struct DemandControlActualCostResult<'exec> {
+pub struct DemandControlActualCostResult {
     pub actual: u64,
     pub delta: i64,
     pub max_cost_exceeded: Option<u64>,
-    pub actual_by_subgraph: Option<HashMap<&'exec str, u64>>,
+    pub actual_by_subgraph: Option<ahash::HashMap<String, u64>>,
     pub result_code: DemandControlResultCode,
 }
 

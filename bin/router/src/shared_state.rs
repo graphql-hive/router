@@ -24,6 +24,7 @@ use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
+use crate::pipeline::demand_control::DemandControlFormulaPlan;
 use crate::pipeline::introspection_policy::compile_introspection_policy;
 use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
@@ -153,6 +154,7 @@ pub struct RouterSharedState {
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     pub in_flight_requests: RouterInflightRequestsMap,
     pub in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy,
+    pub(crate) demand_control_formula_cache: Cache<u64, Arc<DemandControlFormulaPlan>>,
 }
 
 impl RouterSharedState {
@@ -195,6 +197,7 @@ impl RouterSharedState {
                 .dedupe
                 .headers)
                 .into(),
+            demand_control_formula_cache: Cache::builder().max_capacity(10_000).build(),
         })
     }
 }

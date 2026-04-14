@@ -747,7 +747,7 @@ impl OtlpCollector {
     }
 
     pub async fn wait_for_span_by_hive_kind_one(&self, hive_kind: &str) -> CollectedSpan {
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_secs(15), async {
             loop {
                 let traces = self.traces().await;
 

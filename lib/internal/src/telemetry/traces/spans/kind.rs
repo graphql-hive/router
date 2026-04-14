@@ -27,6 +27,8 @@ pub enum HiveSpanKind {
     GraphqlNormalize,
     #[strum(serialize = "graphql.plan")]
     GraphqlPlan,
+    #[strum(serialize = "graphql.demand_control")]
+    GraphqlDemandControl,
     #[strum(serialize = "graphql.execute")]
     GraphqlExecute,
     #[strum(serialize = "graphql.operation")]

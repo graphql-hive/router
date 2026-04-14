@@ -1,5 +1,5 @@
 use opentelemetry::{
-    metrics::{Histogram, Meter},
+    metrics::{Counter, Histogram, Meter},
     KeyValue,
 };
 use sonic_rs::Serialize;
@@ -7,10 +7,11 @@ use strum::IntoStaticStr;
 
 #[cfg(debug_assertions)]
 use crate::telemetry::metrics::catalog::debug_assert_attrs;
-use crate::telemetry::metrics::catalog::{labels, names};
+use crate::telemetry::metrics::catalog::{labels, names, values};
 
 struct DemandControlInstruments {
     estimated_cost: Option<Histogram<u64>>,
+    formula_cache_requests_total: Option<Counter<u64>>,
     actual_cost: Option<Histogram<u64>>,
     delta: Option<Histogram<f64>>,
 }
@@ -51,13 +52,47 @@ impl DemandControlMetrics {
                 .build()
         });
 
+        let formula_cache_requests_total = meter.map(|meter| {
+            meter
+                .u64_counter(names::COST_FORMULA_CACHE_REQUESTS_TOTAL)
+                .with_description(
+                    "Demand-control formula cache requests grouped by hit/miss result",
+                )
+                .build()
+        });
+
         Self {
             instruments: DemandControlInstruments {
                 estimated_cost,
+                formula_cache_requests_total,
                 actual_cost,
                 delta,
             },
         }
+    }
+
+    pub fn record_formula_cache_result(&self, cache_hit: bool, operation_name: Option<&str>) {
+        let Some(counter) = self.instruments.formula_cache_requests_total.as_ref() else {
+            return;
+        };
+
+        let result = if cache_hit {
+            values::CacheResult::Hit.as_str()
+        } else {
+            values::CacheResult::Miss.as_str()
+        };
+
+        let mut attrs = vec![KeyValue::new(labels::RESULT, result.to_string())];
+        if let Some(operation_name) = operation_name {
+            attrs.push(KeyValue::new(
+                labels::GRAPHQL_OPERATION_NAME,
+                operation_name.to_string(),
+            ));
+        }
+
+        #[cfg(debug_assertions)]
+        debug_assert_attrs(names::COST_FORMULA_CACHE_REQUESTS_TOTAL, &attrs);
+        counter.add(1, &attrs);
     }
 
     pub fn record_estimated_cost(

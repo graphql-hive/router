@@ -1,8 +1,8 @@
 use super::attributes;
 use super::graphql::{
-    GraphQLAuthorizeSpan, GraphQLExecuteSpan, GraphQLNormalizeSpan, GraphQLOperationSpan,
-    GraphQLParseSpan, GraphQLPlanSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
-    GraphQLValidateSpan, GraphQLVariableCoercionSpan,
+    GraphQLAuthorizeSpan, GraphQLDemandControlSpan, GraphQLExecuteSpan, GraphQLNormalizeSpan,
+    GraphQLOperationSpan, GraphQLParseSpan, GraphQLPlanSpan, GraphQLSpanOperationIdentity,
+    GraphQLSubgraphOperationSpan, GraphQLValidateSpan, GraphQLVariableCoercionSpan,
 };
 use super::http_request::{HttpClientRequestSpan, HttpInflightRequestSpan, HttpServerRequestSpan};
 use crate::graphql::ObservedError;
@@ -426,6 +426,54 @@ fn test_graphql_execute_span() {
 }
 
 #[test]
+fn test_graphql_demand_control_span() {
+    let layer = RecordingLayer::default();
+    let subscriber = Registry::default().with(layer.clone());
+
+    with_default(subscriber, || {
+        let span = GraphQLDemandControlSpan::new();
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_KIND,
+                attributes::CACHE_HIT,
+                attributes::GRAPHQL_OPERATION_NAME,
+                attributes::GRAPHQL_OPERATION_TYPE,
+                attributes::GRAPHQL_DOCUMENT_HASH,
+                attributes::COST_ESTIMATED,
+                attributes::COST_RESULT,
+                attributes::COST_BLOCKED_SUBGRAPH_COUNT,
+                attributes::COST_FORMULA_COMPILE_MS,
+                attributes::COST_FORMULA_EVAL_MS,
+            ],
+        );
+
+        span.record_cache_hit(false);
+        span.record_operation_identity(GraphQLSpanOperationIdentity {
+            name: Some("DemandControlQuery"),
+            operation_type: "query",
+            client_document_hash: "abc123",
+        });
+        span.record_compile_ms(0.12);
+        span.record_eval_ms(0.07);
+        span.record_result(42, 1, "COST_OK");
+
+        layer.assert_recorded_value(&span, attributes::CACHE_HIT, "false");
+        layer.assert_recorded_value(
+            &span,
+            attributes::GRAPHQL_OPERATION_NAME,
+            "DemandControlQuery",
+        );
+        layer.assert_recorded_value(&span, attributes::GRAPHQL_OPERATION_TYPE, "query");
+        layer.assert_recorded_value(&span, attributes::GRAPHQL_DOCUMENT_HASH, "abc123");
+        layer.assert_recorded_value(&span, attributes::COST_ESTIMATED, "42");
+        layer.assert_recorded_value(&span, attributes::COST_BLOCKED_SUBGRAPH_COUNT, "1");
+        layer.assert_recorded_value(&span, attributes::COST_RESULT, "COST_OK");
+    });
+}
+
+#[test]
 fn test_graphql_operation_span() {
     let layer = RecordingLayer::default();
     let subscriber = Registry::default().with(layer.clone());
@@ -448,6 +496,7 @@ fn test_graphql_operation_span() {
                 attributes::COST_ACTUAL,
                 attributes::COST_DELTA,
                 attributes::COST_RESULT,
+                attributes::COST_FORMULA_CACHE_HIT,
                 attributes::HIVE_GRAPHQL_ERROR_COUNT,
                 attributes::HIVE_GRAPHQL_ERROR_CODES,
                 attributes::HIVE_CLIENT_NAME,
@@ -506,11 +555,12 @@ fn test_graphql_operation_span() {
         layer.assert_recorded_value(&span, attributes::HIVE_CLIENT_NAME, "client");
         layer.assert_recorded_value(&span, attributes::HIVE_CLIENT_VERSION, "1.0.0");
 
-        span.record_demand_control(11, Some(3), Some(-8), "COST_OK");
+        span.record_demand_control(11, Some(3), Some(-8), "COST_OK", Some(true));
         layer.assert_recorded_value(&span, attributes::COST_ESTIMATED, "11");
         layer.assert_recorded_value(&span, attributes::COST_ACTUAL, "3");
         layer.assert_recorded_value(&span, attributes::COST_DELTA, "-8");
         layer.assert_recorded_value(&span, attributes::COST_RESULT, "COST_OK");
+        layer.assert_recorded_value(&span, attributes::COST_FORMULA_CACHE_HIT, "true");
     });
 }
 

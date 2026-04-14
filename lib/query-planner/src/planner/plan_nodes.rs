@@ -599,6 +599,15 @@ impl PlanNode {
                     if_clause: None,
                     else_clause: Some(Box::new(node)),
                 }),
+                Condition::SkipAndInclude { skip, include } => PlanNode::Condition(ConditionNode {
+                    condition: skip.clone(), // The condition field will hold the skip variable for simplicity
+                    if_clause: Some(Box::new(node.clone())),
+                    else_clause: Some(Box::new(PlanNode::Condition(ConditionNode {
+                        condition: include.clone(),
+                        if_clause: Some(Box::new(node)),
+                        else_clause: None,
+                    }))),
+                }),
             },
             None => node,
         }

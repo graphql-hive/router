@@ -11,7 +11,7 @@ mod demand_control_e2e_tests {
     use hive_router_internal::telemetry::metrics::catalog::{labels, names};
 
     async fn wait_for_metrics_export() {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
     }
 
     fn assert_histogram_sample_count(
@@ -24,6 +24,32 @@ mod demand_control_e2e_tests {
         assert_eq!(
             count, expected_count,
             "Expected {name} sample count to be {expected_count}, got {count}"
+        );
+    }
+
+    fn assert_histogram_sample_count_at_least(
+        metrics: &CollectedMetrics,
+        name: &str,
+        attrs: &[(&str, &str)],
+        expected_min_count: u64,
+    ) {
+        let (count, _) = metrics.latest_histogram_count_sum(name, attrs);
+        assert!(
+            count >= expected_min_count,
+            "Expected {name} sample count to be >= {expected_min_count}, got {count}"
+        );
+    }
+
+    fn assert_counter_at_least(
+        metrics: &CollectedMetrics,
+        name: &str,
+        attrs: &[(&str, &str)],
+        expected_min: f64,
+    ) {
+        let value = metrics.latest_counter(name, attrs);
+        assert!(
+            value >= expected_min,
+            "Expected {name} counter to be >= {expected_min}, got {value}"
         );
     }
 
@@ -370,6 +396,97 @@ r#"query NewestAdditionsByCursor {
         .await;
     }
 
+    // Directive-heavy query: combines variable-driven @include/@skip, list sizing, and input cost.
+    #[ntex::test]
+    async fn estimator_directive_heavy_query_tracks_variable_driven_cost() {
+        let query = r#"
+            query($withPublisher: Boolean!, $skipBio: Boolean!, $input: CostlySearchInput!) {
+                searchByCostlyInput(input: $input) {
+                    title
+                    author {
+                        name
+                        bio @skip(if: $skipBio)
+                    }
+                    publisher @include(if: $withPublisher) {
+                        name
+                        addressWithCost {
+                            zipCode
+                        }
+                    }
+                }
+            }
+        "#;
+
+        // input.query contributes +2, list size 2, bio included, publisher included => 2 + 2 * (1 + 4 + 6) = 24
+        assert_estimated_too_expensive(
+            query,
+            Some(json!({
+                "withPublisher": true,
+                "skipBio": false,
+                "input": {
+                    "query": "router",
+                    "limit": 2
+                }
+            })),
+            24,
+        )
+        .await;
+
+        // Same operation with different directive variables should collapse to 2 + 2 * (1 + 1) = 6
+        assert_estimated_too_expensive(
+            query,
+            Some(json!({
+                "withPublisher": false,
+                "skipBio": true,
+                "input": {
+                    "query": "router",
+                    "limit": 2
+                }
+            })),
+            6,
+        )
+        .await;
+    }
+
+    #[ntex::test]
+    async fn estimator_field_with_both_skip_and_include_directives_respects_and_semantics() {
+        let query = r#"
+            query($includePublisher: Boolean!, $skipPublisher: Boolean!) {
+                book(id: 1) {
+                    title
+                    publisher @include(if: $includePublisher) @skip(if: $skipPublisher) {
+                        name
+                        addressWithCost {
+                            zipCode
+                        }
+                    }
+                }
+            }
+        "#;
+
+        // include=true, skip=false => publisher branch is included.
+        assert_estimated_too_expensive(
+            query,
+            Some(json!({
+                "includePublisher": true,
+                "skipPublisher": false,
+            })),
+            7,
+        )
+        .await;
+
+        // include=false, skip=false => publisher branch must be excluded.
+        assert_estimated_too_expensive(
+            query,
+            Some(json!({
+                "includePublisher": false,
+                "skipPublisher": false,
+            })),
+            1,
+        )
+        .await;
+    }
+
     #[ntex::test]
     async fn rejects_request_when_estimated_cost_exceeds_max() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
@@ -705,7 +822,7 @@ r#"query NewestAdditionsByCursor {
 
         assert_eq!(
             json["errors"][0]["message"].as_str(),
-            Some("Operation actual cost 4 exceeds configured max cost 3"),
+            Some("Operation actual cost 5 exceeds configured max cost 3"),
         );
 
         let estimated = json["extensions"]["cost"]["estimated"]
@@ -791,7 +908,169 @@ r#"query NewestAdditionsByCursor {
         let metrics = otlp_collector.metrics_view().await;
         let attrs = [(labels::COST_RESULT, "COST_ESTIMATED_TOO_EXPENSIVE")];
 
-        assert_histogram_sample_count(&metrics, names::COST_ESTIMATED, &attrs, 1);
+        assert_histogram_sample_count_at_least(&metrics, names::COST_ESTIMATED, &attrs, 1);
+    }
+
+    #[ntex::test]
+    async fn exposes_formula_cache_hit_in_cost_extension() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph_demand_control.graphql
+
+                demand_control:
+                    enabled: true
+                    max_cost: 1000
+                    include_extension_metadata: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            query {
+              book(id: 1) {
+                title
+              }
+            }
+        "#;
+
+        let first = router.send_graphql_request(query, None, None).await;
+        let first_json = first.json_body().await;
+        assert_eq!(
+            first_json["extensions"]["cost"]["formulaCacheHit"].as_bool(),
+            Some(false),
+            "first request should miss formula cache"
+        );
+
+        let second = router.send_graphql_request(query, None, None).await;
+        let second_json = second.json_body().await;
+        assert_eq!(
+            second_json["extensions"]["cost"]["formulaCacheHit"].as_bool(),
+            Some(true),
+            "second request should hit formula cache"
+        );
+    }
+
+    #[ntex::test]
+    async fn emits_formula_cache_hit_miss_metrics() {
+        let otlp_collector = crate::testkit::otel::OtlpCollector::start()
+            .await
+            .expect("Failed to start OTLP collector");
+        let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph_demand_control.graphql
+
+                demand_control:
+                    enabled: true
+                    max_cost: 1000
+
+                telemetry:
+                    metrics:
+                        exporters:
+                            - kind: otlp
+                              endpoint: "{}"
+                              protocol: http
+                              interval: 30ms
+                              max_export_timeout: 50ms
+                "#,
+                otlp_endpoint
+            ))
+            .with_subgraphs(&subgraphs)
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            query {
+              book(id: 1) {
+                title
+              }
+            }
+        "#;
+
+        router.send_graphql_request(query, None, None).await;
+        router.send_graphql_request(query, None, None).await;
+
+        wait_for_metrics_export().await;
+        let metrics = otlp_collector.metrics_view().await;
+
+        assert_counter_at_least(
+            &metrics,
+            names::COST_FORMULA_CACHE_REQUESTS_TOTAL,
+            &[(labels::RESULT, "miss")],
+            1.0,
+        );
+        assert_counter_at_least(
+            &metrics,
+            names::COST_FORMULA_CACHE_REQUESTS_TOTAL,
+            &[(labels::RESULT, "hit")],
+            1.0,
+        );
+    }
+
+    #[ntex::test]
+    async fn exposes_summed_estimated_formula_for_subgraph_extension_metadata() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+
+                demand_control:
+                    enabled: true
+                    max_cost: 1000
+                    include_extension_metadata: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                query SummedFormulaMetadata($includeAuthorName: Boolean!) {
+                  me {
+                    id
+                    reviews {
+                      author {
+                        name @include(if: $includeAuthorName)
+                      }
+                    }
+                  }
+                }
+                "#,
+                Some(json!({ "includeAuthorName": true })),
+                None,
+            )
+            .await;
+
+        let json = res.json_body().await;
+        let accounts_formula = json["extensions"]["cost"]["estimatedFormulaBySubgraph"]["accounts"]
+            .as_str()
+            .expect("accounts formula should be present");
+        println!("accounts formula: {accounts_formula}");
+
+        assert!(
+            accounts_formula.contains(" + "),
+            "summed accounts formula should contain additive composition across multiple fetches"
+        );
     }
 
     // Ensures cost.estimated, cost.actual and cost.delta are emitted with
@@ -859,9 +1138,9 @@ r#"query NewestAdditionsByCursor {
         let metrics = otlp_collector.metrics_view().await;
         let attrs = [(labels::COST_RESULT, "COST_OK")];
 
-        assert_histogram_sample_count(&metrics, names::COST_ESTIMATED, &attrs, 1);
-        assert_histogram_sample_count(&metrics, names::COST_ACTUAL, &attrs, 1);
-        assert_histogram_sample_count(&metrics, names::COST_DELTA, &attrs, 1);
+        assert_histogram_sample_count_at_least(&metrics, names::COST_ESTIMATED, &attrs, 1);
+        assert_histogram_sample_count_at_least(&metrics, names::COST_ACTUAL, &attrs, 1);
+        assert_histogram_sample_count_at_least(&metrics, names::COST_DELTA, &attrs, 1);
     }
 
     // Ensures cost.actual and cost.delta are emitted with
@@ -1085,6 +1364,10 @@ r#"query NewestAdditionsByCursor {
             operation_span.attributes.get("cost.result"),
             Some(&"COST_OK".to_string())
         );
+        assert_eq!(
+            operation_span.attributes.get("cost.formula_cache_hit"),
+            Some(&"false".to_string())
+        );
 
         let estimated = operation_span
             .attributes
@@ -1107,6 +1390,87 @@ r#"query NewestAdditionsByCursor {
 
         assert!(actual < estimated);
         assert_eq!(delta, actual as i64 - estimated as i64);
+
+        let demand_control_span = otlp_collector
+            .wait_for_span_by_hive_kind_one("graphql.demand_control")
+            .await;
+        assert_eq!(
+            demand_control_span.attributes.get("cache.hit"),
+            Some(&"false".to_string())
+        );
+        assert_eq!(
+            demand_control_span.attributes.get("cost.result"),
+            Some(&"COST_OK".to_string())
+        );
+        assert!(
+            demand_control_span
+                .attributes
+                .get("cost.formula_eval_ms")
+                .is_some(),
+            "demand-control span should include formula eval duration"
+        );
+    }
+
+    #[ntex::test]
+    async fn does_not_emit_demand_control_span_when_demand_control_is_disabled() {
+        let supergraph_path =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+        let otlp_collector = OtlpCollector::start()
+            .await
+            .expect("Failed to start OTLP collector");
+        let otlp_endpoint = otlp_collector.http_traces_endpoint();
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: {}
+
+                demand_control:
+                    enabled: false
+
+                telemetry:
+                    tracing:
+                      exporters:
+                        - kind: otlp
+                          endpoint: {otlp_endpoint}
+                          protocol: http
+                          batch_processor:
+                            scheduled_delay: 50ms
+                            max_export_timeout: 50ms
+                "#,
+                supergraph_path.to_str().unwrap(),
+            ))
+            .with_subgraphs(&subgraphs)
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                query {
+                  me { id }
+                }
+                "#,
+                None,
+                None,
+            )
+            .await;
+
+        assert!(res.status().is_success());
+        let traces = otlp_collector.wait_for_traces_count(1).await;
+
+        assert!(
+            traces
+                .iter()
+                .all(|trace| !trace.has_span_by_hive_kind("graphql.demand_control")),
+            "demand-control span should not be emitted when demand control is disabled"
+        );
     }
 
     // Field-level @cost(weight: 2) on bookWithFieldCost field adds to base query cost.

@@ -305,6 +305,85 @@ impl GraphQLExecuteSpan {
     }
 }
 
+pub struct GraphQLDemandControlSpan {
+    pub span: Span,
+}
+
+impl std::ops::Deref for GraphQLDemandControlSpan {
+    type Target = Span;
+    fn deref(&self) -> &Self::Target {
+        &self.span
+    }
+}
+
+impl Default for GraphQLDemandControlSpan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GraphQLDemandControlSpan {
+    pub fn new() -> Self {
+        if !is_level_enabled(Level::INFO) {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
+        let kind: &'static str = HiveSpanKind::GraphqlDemandControl.into();
+        let span = info_span!(
+            target: TARGET_NAME,
+            "graphql.demand_control",
+            "hive.kind" = kind,
+            "otel.kind" = "Internal",
+            "cache.hit" = Empty,
+            "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
+            "graphql.document.hash" = Empty,
+            "cost.estimated" = Empty,
+            "cost.result" = Empty,
+            "cost.blocked_subgraph_count" = Empty,
+            "cost.formula_compile_ms" = Empty,
+            "cost.formula_eval_ms" = Empty,
+        );
+        GraphQLDemandControlSpan { span }
+    }
+
+    pub fn record_cache_hit(&self, hit: bool) {
+        self.span.record(attributes::CACHE_HIT, hit);
+    }
+
+    pub fn record_operation_identity(&self, identity: GraphQLSpanOperationIdentity) {
+        if self.span.is_disabled() {
+            return;
+        }
+
+        record_all!(
+            self.span,
+            "graphql.operation.name" = identity.name,
+            "graphql.operation.type" = identity.operation_type,
+            "graphql.document.hash" = identity.client_document_hash,
+        );
+    }
+
+    pub fn record_compile_ms(&self, ms: f64) {
+        self.span.record(attributes::COST_FORMULA_COMPILE_MS, ms);
+    }
+
+    pub fn record_eval_ms(&self, ms: f64) {
+        self.span.record(attributes::COST_FORMULA_EVAL_MS, ms);
+    }
+
+    pub fn record_result(&self, estimated: u64, blocked_subgraph_count: usize, result: &str) {
+        self.span.record(attributes::COST_ESTIMATED, estimated);
+        self.span.record(
+            attributes::COST_BLOCKED_SUBGRAPH_COUNT,
+            blocked_subgraph_count as u64,
+        );
+        self.span.record(attributes::COST_RESULT, result);
+    }
+}
+
 pub struct GraphQLOperationSpan {
     pub span: Span,
 }
@@ -352,6 +431,7 @@ impl GraphQLOperationSpan {
             "hive.graphql.operation.hash" = Empty,
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
+            "cost.formula_cache_hit" = Empty,
         );
         GraphQLOperationSpan { span }
     }
@@ -401,6 +481,7 @@ impl GraphQLOperationSpan {
         actual: Option<u64>,
         delta: Option<i64>,
         result: &str,
+        formula_cache_hit: Option<bool>,
     ) {
         if self.span.is_disabled() {
             return;
@@ -414,6 +495,10 @@ impl GraphQLOperationSpan {
             self.span.record(attributes::COST_DELTA, delta);
         }
         self.span.record(attributes::COST_RESULT, result);
+        if let Some(formula_cache_hit) = formula_cache_hit {
+            self.span
+                .record(attributes::COST_FORMULA_CACHE_HIT, formula_cache_hit);
+        }
     }
 }
 

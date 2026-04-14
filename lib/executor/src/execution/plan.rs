@@ -29,7 +29,8 @@ use tracing::Instrument;
 
 use crate::execution::demand_control::{
     demand_control_actual_cost, estimate_actual_subgraph_response_cost_from_response_shape,
-    DemandControlExecutionContext, DemandControlResponseExtensions,
+    evaluate_actual_cost_plan_nodes, DemandControlExecutionContext,
+    DemandControlResponseExtensions,
 };
 use crate::{
     context::ExecutionContext,
@@ -74,7 +75,7 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResultExtensions<'exec> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cost: Option<DemandControlResponseExtensions<'exec>>,
+    pub cost: Option<DemandControlResponseExtensions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query_plan: Option<&'exec QueryPlan>,
 
@@ -227,6 +228,7 @@ pub async fn execute_query_plan<'exec>(
                 Some(actual_cost_result.actual),
                 Some(actual_cost_result.delta),
                 result,
+                Some(demand_control.formula_cache_hit),
             );
 
             if let Some(max_cost) = actual_cost_result.max_cost_exceeded {
@@ -264,6 +266,8 @@ pub async fn execute_query_plan<'exec>(
                 estimated: demand_control.evaluation.estimated_cost,
                 result,
                 by_subgraph: demand_control.evaluation.per_subgraph,
+                formula_cache_hit: Some(demand_control.formula_cache_hit),
+                estimated_formula_by_subgraph: demand_control.estimated_formula_by_subgraph,
                 blocked_subgraphs: demand_control.blocked_subgraphs,
                 actual,
                 delta,
@@ -686,14 +690,26 @@ impl<'exec> Executor<'exec> {
                     if let Some(DemandControlActualCostMode::BySubgraph) =
                         demand_control.actual_cost_mode
                     {
-                        let actual_for_response =
+                        let actual_for_response = if let Some(compiled) = demand_control
+                            .actual_cost_plan_by_service
+                            .as_ref()
+                            .and_then(|m| m.get(subgraph_name))
+                        {
+                            evaluate_actual_cost_plan_nodes(
+                                compiled.as_slice(),
+                                &job.response_ref().data,
+                                self.variable_values,
+                            )
+                        } else {
                             estimate_actual_subgraph_response_cost_from_response_shape(
                                 job.operation(),
                                 &job.response_ref().data,
                                 self.supergraph_state,
                                 self.variable_values,
-                            );
+                            )
+                        };
                         ctx.actual_cost_by_subgraph
+                            .get_or_insert_with(AHashMap::new)
                             .entry(subgraph_name)
                             .and_modify(|cost| *cost = cost.saturating_add(actual_for_response))
                             .or_insert(actual_for_response);

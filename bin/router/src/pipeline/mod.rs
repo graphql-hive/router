@@ -490,12 +490,16 @@ pub async fn execute_pipeline<'exec>(
         supergraph,
         variable_payload,
         &query_plan_payload,
+        normalize_payload.normalized_operation_hash,
+        (&normalize_payload.operation_identity).into(),
         operation_name,
-    ) {
+    )
+    .await
+    {
         Ok(context) => context,
         Err(err @ PipelineError::CostEstimatedTooExpensive { estimated_cost, .. }) => {
             let result: &'static str = (&DemandControlResultCode::CostEstimatedTooExpensive).into();
-            operation_span.record_demand_control(estimated_cost, None, None, result);
+            operation_span.record_demand_control(estimated_cost, None, None, result, None);
             return Err(err);
         }
         Err(err) => return Err(err),
@@ -508,6 +512,7 @@ pub async fn execute_pipeline<'exec>(
             None,
             None,
             result,
+            Some(demand_control.formula_cache_hit),
         );
     }
 
