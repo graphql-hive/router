@@ -130,7 +130,7 @@ pub async fn execute_plan<'exec>(
             client_request: planned_request.client_request_details,
             introspection_context: introspection_context.into(),
             operation_type_name: planned_request.normalized_payload.root_type_name,
-            jwt_auth_forwarding,
+            jwt_auth_forwarding: jwt_auth_forwarding.map(|j| j.into()),
             graphql_error_recorder: app_state.telemetry_context.metrics.graphql.error_recorder(),
             executors: Arc::clone(&supergraph.subgraph_executor_map),
             initial_errors: planned_request

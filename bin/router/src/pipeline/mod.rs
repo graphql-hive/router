@@ -409,7 +409,7 @@ pub async fn execute_planned_request<'exec>(
             },
             query: graphql_params.get_query()?,
         },
-        jwt: jwt_request_details,
+        jwt: jwt_request_details.into(),
     }
     .into();
 
@@ -432,8 +432,7 @@ pub async fn execute_planned_request<'exec>(
             // might choose to not deduplicate across transport boundaries
             let stream_content_type = response_mode
                 .stream_content_type()
-                .ok_or(PipelineError::SubscriptionsTransportNotSupported)?
-                .clone();
+                .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
 
             let (producer_handle, receiver) = shared_state.active_subscriptions.register(guard);
 
