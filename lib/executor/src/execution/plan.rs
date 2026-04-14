@@ -23,6 +23,7 @@ use http::{HeaderMap, StatusCode};
 use sonic_rs::ValueRef;
 use tracing::Instrument;
 
+use crate::response::value::ValueObject;
 use crate::{
     context::ExecutionContext,
     execution::{
@@ -96,7 +97,7 @@ pub async fn execute_query_plan<'exec>(
     } else if opts.projection_plan.is_empty() {
         Value::Null
     } else {
-        Value::Object(Vec::new())
+        Value::Object(ValueObject::default())
     };
 
     let mut errors = opts.initial_errors;
@@ -1473,10 +1474,7 @@ mod tests {
                 // data should have `from_a` field from subgraph_a's response,
                 // so data the merging process does not wait for subgraph_b's response to merge subgraph_a's response
                 if let Some(data) = data_ref.as_object() {
-                    let from_a_index = data.iter().position(|(k, _)| k == &"from_a");
-                    let from_a_value = from_a_index
-                        .and_then(|index| data.get(index))
-                        .and_then(|(_, v)| v.as_str());
+                    let from_a_value = data.get("from_a").and_then(|v| v.as_str());
                     if let Some(from_a_value) = from_a_value {
                         sender
                             .send(from_a_value.to_string())
