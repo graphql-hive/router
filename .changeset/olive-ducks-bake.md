@@ -20,3 +20,7 @@ query($skip: Boolean!, $include: Boolean!) {
 ```
 
 Will now correctly generate a fetch step with an inline fragment that has both `@skip` and `@include` conditions, and the planner will properly evaluate the combined conditions when determining which selections to include in the execution plan.
+
+- `@skip(if: $skip)` is true, the selection will be skipped regardless of the `@include` condition.
+- `@include(if: $include)` is false, the selection will be skipped regardless of the `@skip` condition.
+- Only if `@skip(if: $skip)` is false and `@include(if: $include)` is true, the selection will be included in the execution plan.
