@@ -292,6 +292,7 @@ fn estimate_plan_node_cost<'exec>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[inline]
 fn estimate_fetch_node_cost<'exec>(
     service_name: &'exec str,
@@ -338,7 +339,7 @@ fn estimate_operation_cost<'exec>(
 
     let operation_base: u64 = match operation_kind {
         Some(OperationKind::Mutation) => 10,
-        _ => 1,
+        _ => 0,
     };
 
     let mut sized_path_store = Vec::<&Vec<String>>::new();
@@ -480,7 +481,11 @@ fn estimate_field_selection_cost<'exec>(
             base,
         )
     } else {
-        return 0;
+        (
+            parent_type_name,
+            &TypeNode::Named(parent_type_name.to_string()),
+            0,
+        )
     };
 
     let return_type_cost = type_cost(supergraph_state, return_type_name);
