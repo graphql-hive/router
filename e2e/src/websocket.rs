@@ -168,32 +168,34 @@ mod websocket_e2e_tests {
 
         let mut count1 = 0;
         let mut count2 = 0;
+        let mut done1 = false;
+        let mut done2 = false;
 
         loop {
+            if done1 && done2 {
+                break;
+            }
+
             tokio::select! {
-                maybe_response = stream1.next() => {
+                maybe_response = stream1.next(), if !done1 => {
                     match maybe_response {
                         Some(response) => {
                             assert!(response.errors.is_none(), "Expected no errors in stream1");
                             count1 += 1;
                         }
                         None => {
-                            if count2 > 0 {
-                                break;
-                            }
+                            done1 = true;
                         }
                     }
                 }
-                maybe_response = stream2.next() => {
+                maybe_response = stream2.next(), if !done2 => {
                     match maybe_response {
                         Some(response) => {
                             assert!(response.errors.is_none(), "Expected no errors in stream2");
                             count2 += 1;
                         }
                         None => {
-                            if count1 > 0 {
-                                break;
-                            }
+                            done2 = true;
                         }
                     }
                 }
