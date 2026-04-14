@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::channel::oneshot;
 use futures::stream::BoxStream;
 use futures_util::StreamExt;
-use ntex::rt::Arbiter;
+use ntex::rt;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
@@ -14,7 +15,6 @@ use crate::executors::websocket_client::{connect, WsClient};
 use crate::response::subgraph_response::SubgraphResponse;
 
 pub struct WsSubgraphExecutor {
-    arbiter: Arbiter,
     subgraph_name: String,
     endpoint: http::Uri,
 }
@@ -22,20 +22,9 @@ pub struct WsSubgraphExecutor {
 impl WsSubgraphExecutor {
     pub fn new(subgraph_name: String, endpoint: http::Uri) -> Self {
         Self {
-            // each executors its own arbiter because the WsClient is not sync+send compatible,
-            // so we instead spawn a dedicated arbiter (maps to one OS thread) to run all websocket
-            // connection tasks for this executor
-            arbiter: Arbiter::new(),
             subgraph_name,
             endpoint,
         }
-    }
-}
-
-impl Drop for WsSubgraphExecutor {
-    fn drop(&mut self) {
-        // arbiter does not seem to stop itself on drop, so stop it manually on executor drop
-        self.arbiter.stop();
     }
 }
 
@@ -60,14 +49,17 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
 
-        // spawn_with is deprecated in favor of Handle::spawn, but Handle::spawn requires
-        // F: Future + Send, and the futures here capture non-Send ntex types (Rc, RefCell).
-        // spawn_with sends a Send closure to the arbiter thread which creates the future
-        // locally, so Send is never required on the future itself. no equivalent exists.
-        #[allow(deprecated)]
-        let result = self
-            .arbiter
-            .spawn_with(async move || {
+        let (tx, rx) = oneshot::channel();
+
+        // run this on ntex runtime instead of Handle::spawn because the websocket path builds
+        // and awaits futures that capture ntex local types like Rc and RefCell via WsClient.
+        // those futures are not Send, so they cannot cross a tokio multi-threaded spawn boundary.
+        // ntex::rt::spawn keeps the whole websocket flow on the local ntex runtime, while this
+        // async_trait method still stays Send by awaiting only the futures oneshot receiver here.
+        // this task ends after the first websocket response is forwarded through the oneshot,
+        // or earlier if connect/init fails.
+        rt::spawn(async move {
+            let result = async {
                 let connection = match connect(&endpoint).await {
                     Ok(conn) => conn,
                     Err(e) => {
@@ -101,12 +93,14 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                         endpoint.to_string(),
                     )),
                 }
-            })
+            }
             .await;
 
-        result
-            .map_err(|_| SubgraphExecutorError::WebSocketArbiterChannelClosed)
-            .and_then(|r| r)
+            let _ = tx.send(result);
+        });
+
+        rx.await
+            .map_err(|_| SubgraphExecutorError::WebSocketArbiterChannelClosed)?
     }
 
     async fn subscribe<'a>(
@@ -134,12 +128,12 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             self.subgraph_name, self.endpoint
         );
 
-        // no await intentionally. the arbiter runs the subscription in the background
-        // and sends responses through the channel. The returned future would only resolve
-        // when the subscription completes, but we want to return the stream immediately
-        // same as above - spawn_with needed for non-Send futures
-        #[allow(deprecated)]
-        drop(self.arbiter.spawn_with(move || async move {
+        // no await intentionally. the task runs the subscription in the background
+        // and sends responses through the channel. The spawned future itself stays local
+        // to ntex runtime, so it can hold non-Send websocket client state.
+        // this task ends when the websocket stream completes, the client drops the receiver,
+        // or back-pressure fills the channel and we terminate the subscription.
+        drop(rt::spawn(async move {
             let connection = match connect(&endpoint).await {
                 Ok(conn) => conn,
                 Err(e) => {
