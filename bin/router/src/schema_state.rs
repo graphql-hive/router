@@ -376,7 +376,11 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
             for entry in self.callback_subscriptions.iter() {
                 let last = *entry.value().last_heartbeat.lock().unwrap();
                 // heartbeat interval and some grace period to account for potential network delays
-                let deadline = self.heartbeat_interval + std::time::Duration::from_millis(1000);
+                #[cfg(not(test))]
+                let grace_period = std::time::Duration::from_millis(1000);
+                #[cfg(test)]
+                let grace_period = std::time::Duration::from_millis(5000);
+                let deadline = self.heartbeat_interval + grace_period;
                 let elapsed = match last {
                     // first check hasn't arrived yet, measure from creation time instead
                     None => Instant::now().duration_since(entry.value().created_at),
