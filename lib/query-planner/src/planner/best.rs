@@ -95,10 +95,10 @@ impl Candidate {
 
     #[inline]
     fn get_tree(&self, graph: &Graph) -> Result<QueryTree, QueryPlanError> {
-        self.tree
+        Ok(self
+            .tree
             .get_or_create(|(p, mp)| QueryTree::from_path(graph, &p, mp))
-            .clone()
-            .map_err(Into::into)
+            .clone()?)
     }
 
     #[inline]

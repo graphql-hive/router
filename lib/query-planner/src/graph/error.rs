@@ -14,11 +14,5 @@ pub enum GraphError {
     #[error("Field named '{0}' was not found in definition name '{1}'")]
     FieldDefinitionNotFound(String, String),
     #[error("Supergraph state error: {0}")]
-    SupergraphStateError(Box<SupergraphStateError>),
-}
-
-impl From<SupergraphStateError> for GraphError {
-    fn from(err: SupergraphStateError) -> Self {
-        GraphError::SupergraphStateError(Box::new(err))
-    }
+    SupergraphStateError(#[from] SupergraphStateError),
 }
