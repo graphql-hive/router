@@ -1,4 +1,10 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.22 (2026-04-15)
+
+### Fixes
+
+- Fix `Subscription.primary` type to `FetchNode` instead of `PlanNode` in the distributed `index.d.ts` file.
+
 ## 0.0.21 (2026-04-15)
 
 ### Fixes
