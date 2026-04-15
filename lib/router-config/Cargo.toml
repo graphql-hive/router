@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-config"
-version = "0.0.28"
+version = "0.0.29"
 edition = "2021"
 publish = true
 license = "MIT"
