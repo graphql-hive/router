@@ -2,21 +2,23 @@ pub mod authorization;
 pub mod cors;
 pub mod csrf;
 mod env_overrides;
-pub mod graphiql;
 pub mod headers;
 pub mod http_server;
 pub mod introspection_policy;
 pub mod jwt_auth;
+pub mod laboratory;
 pub mod limits;
 pub mod log;
 pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
+pub mod subscriptions;
 pub mod supergraph;
 pub mod telemetry;
 pub mod traffic_shaping;
 pub mod usage_reporting;
+pub mod websocket;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
@@ -28,9 +30,9 @@ use std::{collections::HashMap, convert::Infallible};
 
 use crate::{
     env_overrides::{EnvVarOverrides, EnvVarOverridesError},
-    graphiql::GraphiQLConfig,
     http_server::HttpServerConfig,
     introspection_policy::IntrospectionPermissionConfig,
+    laboratory::LaboratoryConfig,
     log::LoggingConfig,
     override_labels::OverrideLabelsConfig,
     primitives::file_path::with_start_path,
@@ -51,9 +53,9 @@ pub struct HiveRouterConfig {
     #[serde(default)]
     pub log: LoggingConfig,
 
-    /// Configuration for the GraphiQL interface.
+    /// Configuration for the Hive Laboratory interface.
     #[serde(default)]
-    pub graphiql: GraphiQLConfig,
+    pub laboratory: LaboratoryConfig,
 
     /// Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).
     /// Each source has a different set of configuration, depending on the source type.
@@ -117,6 +119,14 @@ pub struct HiveRouterConfig {
     /// Configuration for custom plugins
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub plugins: HashMap<String, PluginConfig>,
+
+    /// Configuration for subscriptions.
+    #[serde(default)]
+    pub subscriptions: subscriptions::SubscriptionsConfig,
+
+    /// Configuration of router's WebSocket server.
+    #[serde(default)]
+    pub websocket: websocket::WebSocketConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -150,6 +160,38 @@ pub fn default_plugin_enabled() -> bool {
 
 pub fn default_plugin_warn_on_error() -> bool {
     false
+}
+
+impl HiveRouterConfig {
+    pub fn address(&self) -> String {
+        format!("{}:{}", self.http.host, self.http.port)
+    }
+
+    pub fn host(&self) -> String {
+        self.http.host.clone()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.http.port
+    }
+
+    pub fn graphql_path(&self) -> &str {
+        &self.http.graphql_endpoint
+    }
+
+    pub fn websocket_path(&self) -> Option<&str> {
+        self.websocket.enabled.then(|| {
+            self.websocket
+                .path
+                .as_ref()
+                .map(|p| p.as_str())
+                .unwrap_or_else(|| self.graphql_path())
+        })
+    }
+
+    pub fn callback_conf(&self) -> Option<&subscriptions::CallbackConfig> {
+        self.subscriptions.callback.as_ref()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

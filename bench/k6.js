@@ -132,11 +132,17 @@ export function handleSummary(data) {
 }
 
 function sendGraphQLRequest() {
-  return http.post(
+  const res = http.post(
     endpoint,
     graphqlRequest.payload,
     graphqlRequest.params,
   );
+
+  if (res.status !== 200) {
+    console.log(`‼️ Failed to run HTTP request:`, res);
+  }
+
+  return res;
 }
 
 function makeGraphQLRequest() {
@@ -146,10 +152,11 @@ function makeGraphQLRequest() {
     "no graphql errors": (resp) => {
       let has_errors = resp.body.includes(`"errors"`);
       if (has_errors) {
-        const json = resp.json();
-        for (const error of json.errors) {
-          printOnce(error.message, `‼️ Got GraphQL error:`, error);
-        }
+        printOnce(
+          "graphql_errors",
+          `‼️ Got GraphQL errors, here's a sample:`,
+          res.body,
+        );
       }
 
       return !has_errors;

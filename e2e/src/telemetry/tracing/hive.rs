@@ -34,7 +34,7 @@ async fn test_hive_http_export() {
                   enabled: true
                   batch_processor:
                     scheduled_delay: 50ms
-                    max_export_timeout: 50ms
+                    max_export_timeout: 2s
                 usage_reporting:
                   enabled: false
             "#,
@@ -72,27 +72,47 @@ async fn test_hive_http_export() {
     assert_eq!(authorization_header, Some(format!("Bearer {}", token)));
     assert_eq!(target_ref_header, Some(target));
 
-    let all_traces = otlp_collector.traces().await;
-    let trace = all_traces.first().expect("Failed to get first trace");
-
     // Hive Console requires to drop the http.server span
     // and make the graphql.operation the root span.
+    // Wait for all expected spans first, then snapshot traces for the http.server absence check.
+    let operation_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.operation")
+        .await;
+    let parse_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.parse")
+        .await;
+    let validate_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.validate")
+        .await;
+    let variable_coercion_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.variable_coercion")
+        .await;
+    let normalization_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.normalize")
+        .await;
+    let plan_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.plan")
+        .await;
+    let execution_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.execute")
+        .await;
+    let subgraph_operation_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.subgraph.operation")
+        .await;
+    let http_inflight_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.inflight")
+        .await;
+    let http_client_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.client")
+        .await;
+
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
     assert_eq!(
         trace.has_span_by_hive_kind("http.server"),
         false,
         "Unexpected http.server spans"
     );
-
-    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
-    let parse_span = trace.span_by_hive_kind_one("graphql.parse");
-    let validate_span = trace.span_by_hive_kind_one("graphql.validate");
-    let variable_coercion_span = trace.span_by_hive_kind_one("graphql.variable_coercion");
-    let normalization_span = trace.span_by_hive_kind_one("graphql.normalize");
-    let plan_span = trace.span_by_hive_kind_one("graphql.plan");
-    let execution_span = trace.span_by_hive_kind_one("graphql.execute");
-    let subgraph_operation_span = trace.span_by_hive_kind_one("graphql.subgraph.operation");
-    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
-    let http_client_span = trace.span_by_hive_kind_one("http.client");
 
     insta::assert_snapshot!(
       operation_span,

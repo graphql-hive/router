@@ -8,6 +8,7 @@ use std::{
 
 use crate::{
     ast::merge_path::{Condition, MergePath, Segment},
+    ast::value::Value,
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 
@@ -91,6 +92,17 @@ impl SelectionSet {
                 .map(|item| item.strip_for_plan_input())
                 .collect(),
         }
+    }
+
+    pub fn entities_field(&self) -> Option<&FieldSelection> {
+        self.items.iter().find_map(|item| {
+            if let SelectionItem::Field(field) = item {
+                if field.name == "_entities" {
+                    return Some(field);
+                }
+            }
+            None
+        })
     }
 }
 
@@ -235,6 +247,16 @@ impl FieldSelection {
 
     pub fn is_introspection_field(&self) -> bool {
         self.name.starts_with("__")
+    }
+
+    /// Returns the name of the variable if this field represents a representation variable.
+    pub fn representations_variable_name(&self) -> Option<&str> {
+        let value = self.arguments.as_ref()?.get_argument("representations")?;
+
+        match value {
+            Value::Variable(variable_name) => Some(variable_name.as_str()),
+            _ => None,
+        }
     }
 }
 
@@ -422,7 +444,12 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
         for target_item in target.items.iter_mut() {
             match (source_item, target_item) {
                 (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
-                    if source_field == target_field {
+                    if source_field == target_field
+                        && field_condition_equal(
+                            &Option::<Condition>::from(source_field),
+                            target_field,
+                        )
+                    {
                         found = true;
                         merge_selection_set(
                             &mut target_field.selections,
@@ -436,7 +463,12 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
                     SelectionItem::InlineFragment(source_fragment),
                     SelectionItem::InlineFragment(target_fragment),
                 ) => {
-                    if source_fragment.type_condition == target_fragment.type_condition {
+                    if source_fragment.type_condition == target_fragment.type_condition
+                        && fragment_condition_equal(
+                            &Option::<Condition>::from(source_fragment),
+                            target_fragment,
+                        )
+                    {
                         found = true;
                         merge_selection_set(
                             &mut target_fragment.selections,
@@ -727,5 +759,109 @@ mod tests {
           selection_set,
           @r#"{field1(id: 1, list: [1, 2], name: "test", obj: {key: "value"})}"#
         )
+    }
+
+    #[test]
+    fn merge_selection_set_keeps_fields_with_different_conditions_separate() {
+        let mut target = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "reviews".to_string(),
+                selections: SelectionSet::default(),
+                alias: None,
+                arguments: None,
+                skip_if: None,
+                include_if: Some("first".to_string()),
+            })],
+        };
+        let source = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "reviews".to_string(),
+                selections: SelectionSet::default(),
+                alias: None,
+                arguments: None,
+                skip_if: None,
+                include_if: Some("second".to_string()),
+            })],
+        };
+
+        merge_selection_set(&mut target, &source, false);
+
+        assert_eq!(target.items.len(), 2);
+    }
+
+    #[test]
+    fn merge_selection_set_merges_fields_with_same_condition() {
+        let mut target = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "reviews".to_string(),
+                selections: SelectionSet {
+                    items: vec![SelectionItem::Field(FieldSelection {
+                        name: "id".to_string(),
+                        selections: SelectionSet::default(),
+                        alias: None,
+                        arguments: None,
+                        skip_if: None,
+                        include_if: None,
+                    })],
+                },
+                alias: None,
+                arguments: None,
+                skip_if: None,
+                include_if: Some("cond".to_string()),
+            })],
+        };
+        let source = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "reviews".to_string(),
+                selections: SelectionSet {
+                    items: vec![SelectionItem::Field(FieldSelection {
+                        name: "body".to_string(),
+                        selections: SelectionSet::default(),
+                        alias: None,
+                        arguments: None,
+                        skip_if: None,
+                        include_if: None,
+                    })],
+                },
+                alias: None,
+                arguments: None,
+                skip_if: None,
+                include_if: Some("cond".to_string()),
+            })],
+        };
+
+        merge_selection_set(&mut target, &source, false);
+
+        assert_eq!(target.items.len(), 1);
+
+        let SelectionItem::Field(field) = &target.items[0] else {
+            panic!("expected field selection");
+        };
+
+        assert_eq!(field.selections.items.len(), 2);
+    }
+
+    #[test]
+    fn merge_selection_set_keeps_inline_fragments_with_different_conditions_separate() {
+        let mut target = SelectionSet {
+            items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                type_condition: "User".to_string(),
+                selections: SelectionSet::default(),
+                skip_if: None,
+                include_if: Some("first".to_string()),
+            })],
+        };
+        let source = SelectionSet {
+            items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                type_condition: "User".to_string(),
+                selections: SelectionSet::default(),
+                skip_if: None,
+                include_if: Some("second".to_string()),
+            })],
+        };
+
+        merge_selection_set(&mut target, &source, false);
+
+        assert_eq!(target.items.len(), 2);
     }
 }

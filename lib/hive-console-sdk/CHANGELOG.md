@@ -1,3 +1,10 @@
+## 0.3.8 (2026-03-16)
+
+### Fixes
+
+- Update `regress` to `0.11.0`
+- Implements `AsRef` trait for `graphql_tools::parser::query::ast::TypeCondition`
+
 ## 0.3.7 (2026-03-05)
 
 ### Features

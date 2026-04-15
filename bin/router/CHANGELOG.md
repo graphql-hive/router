@@ -116,6 +116,264 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.47 (2026-04-13)
+
+### Fixes
+
+- correct timeout error message (#901)
+- Version bump to fix release issues
+
+#### Fix timeout error message to include the timeout duration instead of the endpoint URL
+
+Previously by mistake, the error message for subgraph request timeouts included the endpoint URL instead of the timeout duration like `Request to subgraph timed out after http://ACCOUNT_ENDPOINT:PORT/accounts milliseconds`. This change simplifies the error message like `Request to subgraph timed out`.
+
+#### Fix planning for conditional inline fragments and field conditions
+
+Fixed a query-planner bug where directive-only inline fragments (using `@include`/`@skip` without an explicit type condition) could fail during normalization/planning for deeply nested operations.
+
+This update improves planner handling for conditional selections and adds regression tests to prevent these failures in the future.
+
+#### Replace GraphiQL with Hive Laboratory
+
+The Laboratory is Hive's powerful GraphQL playground that provides a comprehensive environment for exploring, testing, and experimenting with your GraphQL APIs. Whether you're developing new queries, debugging issues, or sharing operations with your team, the Laboratory offers all the tools you need.
+
+Read more about Hive Laboratory in [the introduction blog post](https://the-guild.dev/graphql/hive/product-updates/2026-01-28-new-laboratory) or [the documentation](https://the-guild.dev/graphql/hive/docs/new-laboratory).
+
+#### Breaking Changes:
+
+The top-level config option has been renamed.
+
+```diff
+- graphiql:
++ laboratory:
+    enabled: true
+```
+
+So was the environment variable override.
+
+```diff
+- GRAPHIQL_ENABLED=true
++ LABORATORY_ENABLED=true
+```
+
+## 0.0.46 (2026-04-12)
+
+### Fixes
+
+#### Replace GraphiQL with Hive Laboratory
+
+The Laboratory is Hive's powerful GraphQL playground that provides a comprehensive environment for exploring, testing, and experimenting with your GraphQL APIs. Whether you're developing new queries, debugging issues, or sharing operations with your team, the Laboratory offers all the tools you need.
+
+Read more about Hive Laboratory in [the introduction blog post](https://the-guild.dev/graphql/hive/product-updates/2026-01-28-new-laboratory) or [the documentation](https://the-guild.dev/graphql/hive/docs/new-laboratory).
+
+#### Breaking Changes:
+
+The top-level config option has been renamed.
+
+```diff
+- graphiql:
++ laboratory:
+    enabled: true
+```
+
+So was the environment variable override.
+
+```diff
+- GRAPHIQL_ENABLED=true
++ LABORATORY_ENABLED=true
+```
+
+## 0.0.45 (2026-03-31)
+
+### Fixes
+
+- preserve client aliases in mismatch output rewrites (#870)
+
+#### Preserve client aliases in mismatch rewrites
+
+Fixed query planner mismatch handling so conflicting fields are tracked by response key (alias-aware), and internal alias rewrites restore the original client-facing key (alias-or-name) instead of always the schema field name.
+
+## 0.0.44 (2026-03-29)
+
+### Fixes
+
+- fix null field handling in entity request projection and prevent malformed JSON (#881)
+
+#### Fix null field handling in entity request projection
+
+Fixed a bug in entity request projection where present `null` fields could be mishandled, which in some nested projection paths could also lead to malformed JSON output. [#880](https://github.com/graphql-hive/router/issues/880).
+
+## 0.0.43 (2026-03-26)
+
+### Features
+
+#### Add router-level in-flight request deduplication for GraphQL queries
+
+The router now supports deduplicating identical incoming GraphQL query requests while they are in flight, so concurrent duplicates can share one execution result.
+
+### Configuration
+
+A new router traffic-shaping section is available:
+
+- `traffic_shaping.router.dedupe.enabled` (default: `false`)
+- `traffic_shaping.router.dedupe.headers` as `all`, `none`, or `{ include: [...] }` (default: `all`)
+
+Supported header config shapes:
+
+```yaml
+headers: all
+```
+
+```yaml
+headers: none
+```
+
+```yaml
+headers:
+  include:
+    - authorization
+    - cookie
+```
+
+Header names are validated and normalized as standard HTTP header names.
+
+### Deduplication key behavior
+
+The router dedupe fingerprint includes:
+
+- request method and path
+- selected request headers (based on dedupe header policy)
+- normalized operation hash
+- GraphQL variables hash
+- schema checksum
+- GraphQL extensions
+
+### Fixes
+
+#### Introspection Bug Fix
+
+Fixed an issue where, when introspection is disabled, querying root `__typename` was incorrectly rejected (https://github.com/graphql-hive/router/issues/871).
+
+## 0.0.42 (2026-03-16)
+
+### Features
+
+#### Introduce BatchFetch for compatible entity fetches to improve query performance
+
+When multiple `Flatten(Fetch)` steps target the same subgraph and have compatible shape, the planner can group them into one batched fetch operation with aliases.
+
+Batching keeps execution depth the same, but **reduces request fanout**.
+In our benchmark query, **downstream requests drop from `13` to `7`** while the number of execution waves stays unchanged.
+This should also reduce pressure on subgraphs, because entities are resolved in one batched subgraph call instead of being resolved across multiple incoming GraphQL requests, where the lack of DataLoader or another caching layer could otherwise cause duplicate resolution work.
+
+Before: 
+
+```graphql
+Parallel {
+  Flatten(path: "products.@") {
+    Fetch(service: "inventory") {
+      {
+        ... on Product {
+          upc
+        }
+      } =>
+      {
+        ... on Product {
+          shippingEstimate
+        }
+      }
+    }
+  }
+  Flatten(path: "topProducts.@") {
+    Fetch(service: "inventory") {
+      {
+        ... on Product {
+          upc
+        }
+      } =>
+      {
+        ... on Product {
+          shippingEstimate
+        }
+      }
+    }
+  }
+}
+```
+
+After:
+
+```graphql
+BatchFetch(service: "inventory") {
+  {
+    _e0 {
+      paths: [
+        "products.@"
+        "topProducts.@"
+      ]
+      {
+        ... on Product {
+          upc
+        }
+      }
+    }
+  }
+  {
+    _e0: _entities(representations: $__batch_reps_0) {
+      ... on Product {
+        shippingEstimate
+      }
+    }
+  }
+}
+```
+
+When two entity fetches go to the same subgraph but request different output fields, they are batched into one `BatchFetch` node with two aliases, but share the same variables, to reduce the payload size.
+
+```
+BatchFetch(service: "inventory") {
+  {
+    _e0 {
+      paths: [
+        "products.@"
+      ]
+      {
+        ... on Product {
+          upc
+        }
+      }
+    }
+    _e1 {
+      paths: [
+        "products.@"
+      ]
+      {
+        ... on Product {
+          upc
+        }
+      }
+    }
+  }
+  {
+    _e0: _entities(representations: $__batch_reps_0) {
+      ... on Product {
+        shippingEstimate
+      }
+    }
+    _e1: _entities(representations: $__batch_reps_0) {
+      ... on Product {
+        inStock
+      }
+    }
+  }
+}
+```
+
+### Fixes
+
+- Update `regress` to `0.11.0`
+- Implements `AsRef` trait for `graphql_tools::parser::query::ast::TypeCondition`
+
 ## 0.0.41 (2026-03-12)
 
 ### Features

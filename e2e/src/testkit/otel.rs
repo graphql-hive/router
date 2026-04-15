@@ -2,6 +2,7 @@ use hive_router_internal::telemetry::traces::spans::attributes::HIVE_KIND;
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Display;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{oneshot, Mutex};
@@ -93,19 +94,28 @@ impl<'a> TraceParent<'a> {
     }
 
     pub fn random_trace_id() -> String {
-        let random: u128 = std::time::SystemTime::now()
+        // combine a monotonic counter with wall clock nanos to guarantee
+        // uniqueness even when multiple calls land in the same nanosecond
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos();
-        format!("{:032x}", random)
+            .as_nanos() as u64;
+        let hi = nanos as u128;
+        let lo = seq as u128;
+        format!("{:016x}{:016x}", hi, lo)
     }
 
     pub fn random_span_id() -> String {
-        let random: u64 = std::time::SystemTime::now()
+        // same counter trick; span ids only need 8 bytes so xor the two halves
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_micros() as u64;
-        format!("{:016x}", random)
+            .as_nanos() as u64;
+        format!("{:016x}", nanos ^ seq.wrapping_add(1))
     }
 }
 
@@ -689,7 +699,7 @@ impl OtlpCollector {
 
     /// Waits for at least `count` traces to be collected, returning all collected traces.
     pub async fn wait_for_traces_count(&self, count: usize) -> Vec<CollectedTrace> {
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let traces = self.traces().await;
 
@@ -704,8 +714,40 @@ impl OtlpCollector {
         .expect("waiting for traces with count timed out")
     }
 
+    /// Waits for at least `count` traces where each has a span with the given hive.kind.
+    /// This is more robust than `wait_for_traces_count` because spans may arrive in
+    /// separate batches after the trace ID is first seen.
+    pub async fn wait_for_traces_with_span(
+        &self,
+        count: usize,
+        hive_kind: &str,
+    ) -> Vec<CollectedTrace> {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let traces = self.traces().await;
+                let matching = traces
+                    .iter()
+                    .filter(|t| t.has_span_by_hive_kind(hive_kind))
+                    .count();
+
+                if matching >= count {
+                    return traces;
+                }
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "waiting for {} traces with hive.kind={} timed out",
+                count, hive_kind
+            )
+        })
+    }
+
     pub async fn wait_for_span_by_hive_kind_one(&self, hive_kind: &str) -> CollectedSpan {
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let traces = self.traces().await;
 

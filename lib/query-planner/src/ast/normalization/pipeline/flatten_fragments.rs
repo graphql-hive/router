@@ -212,6 +212,7 @@ fn process_inline_fragment(
     parent_type_def: &SupergraphDefinition,
     mut fragment: InlineFragment<'static, String>,
 ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
+    let had_no_type_condition = fragment.type_condition.is_none();
     let type_condition_matches_parent = fragment
         .type_condition
         .as_ref()
@@ -235,6 +236,24 @@ fn process_inline_fragment(
                 parent_type_def,
                 &mut fragment.selection_set,
             )?;
+
+            if had_no_type_condition {
+                fragment.type_condition =
+                    Some(TypeCondition::On(parent_type_def.name().to_string()));
+
+                if matches!(
+                    parent_type_def,
+                    SupergraphDefinition::Interface(_) | SupergraphDefinition::Union(_)
+                ) {
+                    return expand_abstract_fragment(
+                        state,
+                        possible_types,
+                        parent_type_def,
+                        fragment,
+                    );
+                }
+            }
+
             Ok(vec![Selection::InlineFragment(fragment)])
         }
     } else {

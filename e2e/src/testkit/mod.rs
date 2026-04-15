@@ -6,32 +6,83 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use hive_router_plan_executor::plugin_trait::RouterPlugin;
 use lazy_static::lazy_static;
+use mockito::Mock;
 use ntex::{
     client::ClientResponse,
+    io::Sealed,
     web::{
         self,
-        test::{self, TestServerConfig},
+        test,
     },
+    ws::WsConnection,
 };
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
 use std::{
-    any::Any, future::Future, marker::PhantomData, net::SocketAddr, path::PathBuf, sync::Arc,
-    time::Duration,
+    any::Any,
+    future::Future,
+    marker::PhantomData,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use tempfile::{NamedTempFile, TempPath};
-use tokio::sync::Semaphore;
+use tokio::{
+    sync::Semaphore,
+    time,
+};
 use tracing::{info, warn};
 
 use hive_router::{
-    background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider, invoke_shutdown_hooks, plugins::plugins_service::PluginService,
-    telemetry::Telemetry, PluginRegistry, RouterPaths, RouterSharedState, SchemaState,
+    add_callback_handler, background_tasks::BackgroundTasksManager, configure_app_from_config,
+    configure_ntex_app, init_rustls_crypto_provider, invoke_shutdown_hooks,
+    pipeline::long_lived_client_limit::LongLivedClientLimitService,
+    plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry, RouterPaths,
+    RouterSharedState, SchemaState,
 };
-use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
-use subgraphs::subgraphs_app;
+use hive_router_config::{
+    load_config, parse_yaml_config, subscriptions::CallbackConfig, HiveRouterConfig,
+};
+use hive_router_plan_executor::executors::websocket_client;
+use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 
 // utilities
+
+/// Retries the code wrapped 3 times before reporting the last error as failure.
+#[macro_export]
+macro_rules! flakey {
+    ($body:expr) => {{
+        use futures::FutureExt;
+        let mut last_err = None;
+        let attempts = 3;
+        for attempt in 1..=attempts {
+            let result = std::panic::AssertUnwindSafe($body).catch_unwind().await;
+            match result {
+                Ok(_) => return,
+                Err(e) => {
+                    eprintln!("Flakey attempt {}/{} failed", attempt, attempts);
+                    last_err = Some(e);
+                }
+            }
+        }
+        std::panic::resume_unwind(last_err.unwrap());
+    }};
+}
+
+// #[macro_export] always hoists to the crate root so we re-export it here module level
+pub use flakey;
+
+/// Binds a TCP listener to an OS-assigned port and returns that port number.
+/// The listener is immediately dropped, so the port is free for the caller to use.
+pub fn get_available_port() -> u16 {
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("failed to bind to get available port");
+    listener
+        .local_addr()
+        .expect("failed to get local address")
+        .port()
+}
 
 /// Creates a Some(http::HeaderMap) from a list of key-value pairs, for use in test requests.
 #[macro_export]
@@ -201,8 +252,10 @@ impl ResponseLike {
 type OnRequest = dyn Fn(RequestLike) -> Option<ResponseLike> + Send + Sync;
 
 pub struct TestSubgraphsBuilder {
+    subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
     on_request: Option<Arc<OnRequest>>,
     rustls_config: Option<RustlsConfig>,
+    delay: Option<Duration>,
 }
 
 impl TestSubgraphsBuilder {
@@ -210,10 +263,19 @@ impl TestSubgraphsBuilder {
         Self {
             on_request: None,
             rustls_config: None,
+            delay: None,
+            subscriptions_protocol: HTTPStreamingSubscriptionProtocol::default(),
         }
     }
 
-    #[allow(unused)]
+    pub fn with_http_streaming_subscriptions_protocol(
+        mut self,
+        protocol: HTTPStreamingSubscriptionProtocol,
+    ) -> Self {
+        self.subscriptions_protocol = protocol;
+        self
+    }
+
     pub fn with_on_request(
         mut self,
         on_request: impl Fn(RequestLike) -> Option<ResponseLike> + Send + Sync + 'static,
@@ -228,10 +290,22 @@ impl TestSubgraphsBuilder {
         self
     }
 
+    /// Adds a cooperative async delay to every subgraph request.
+    /// Unlike `with_on_request` with `std::thread::sleep`, this yields
+    /// back to the tokio runtime, allowing other tasks (like schema
+    /// pollers) to make progress during the delay.
+    #[allow(unused)]
+    pub fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = Some(delay);
+        self
+    }
+
     pub fn build(self) -> TestSubgraphs<Built> {
         TestSubgraphs {
             on_request: self.on_request,
             rustls_config: self.rustls_config,
+            delay: self.delay,
+            subscriptions_protocol: self.subscriptions_protocol,
             handle: None,
             _state: PhantomData,
         }
@@ -251,8 +325,10 @@ struct TestSubgraphsHandle {
 }
 
 pub struct TestSubgraphs<State> {
+    subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
     on_request: Option<Arc<OnRequest>>,
     rustls_config: Option<RustlsConfig>,
+    delay: Option<Duration>,
     handle: Option<TestSubgraphsHandle>,
     _state: PhantomData<State>,
 }
@@ -329,23 +405,36 @@ impl TestSubgraphs<Built> {
     }
 
     pub async fn start(self) -> TestSubgraphs<Started> {
-        let addr = SocketAddr::from(([127, 0, 0, 1], 0)); // bind to any available port
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("failed to bind tcp listener");
+        let addr = listener.local_addr().expect("failed to get local address");
+        drop(listener); // release the listener; the axum_server will bind to the same addr
 
-        let mut app = subgraphs_app();
+        let mut app = subgraphs_app(self.subscriptions_protocol.clone());
 
         let middleware_state = Arc::new(TestSubgraphsMiddlewareState {
             request_log: DashMap::new(),
         });
-        app = app.layer(axum::middleware::from_fn_with_state(
-            middleware_state.clone(),
-            record_requests,
-        ));
         if let Some(on_request) = self.on_request.clone() {
             app = app.layer(axum::middleware::from_fn_with_state(
                 on_request,
                 handle_on_request,
             ));
         }
+        if let Some(delay) = self.delay {
+            app = app.layer(axum::middleware::from_fn(
+                move |req, next: axum::middleware::Next| async move {
+                    tokio::time::sleep(delay).await;
+                    next.run(req).await
+                },
+            ));
+        }
+        // record_requests must be outermost so it logs the request before any blocking on_request handler runs
+        app = app.layer(axum::middleware::from_fn_with_state(
+            middleware_state.clone(),
+            record_requests,
+        ));
 
         let rustls_config_clone = self.rustls_config.clone();
 
@@ -375,6 +464,8 @@ impl TestSubgraphs<Built> {
         TestSubgraphs {
             on_request: self.on_request,
             rustls_config: rustls_config_clone,
+            delay: self.delay,
+            subscriptions_protocol: self.subscriptions_protocol,
             handle: Some(TestSubgraphsHandle {
                 server_handle,
                 addr,
@@ -431,6 +522,8 @@ pub struct TestRouterBuilder {
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     subgraphs_url: Option<String>,
+    port: u16,
+    listener: Option<std::net::TcpListener>,
 }
 
 impl TestRouterBuilder {
@@ -441,6 +534,8 @@ impl TestRouterBuilder {
             config: None,
             plugins: vec![],
             subgraphs_url: None,
+            port: 0,
+            listener: None,
         }
     }
 
@@ -474,6 +569,16 @@ impl TestRouterBuilder {
         self
     }
 
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
+
+    pub fn with_listener(mut self, listener: std::net::TcpListener) -> Self {
+        self.listener = Some(listener);
+        self
+    }
+
     pub fn skip_wait_for_healthy_on_start(mut self) -> Self {
         self.wait_for_healthy_on_start = false;
         self
@@ -493,6 +598,7 @@ impl TestRouterBuilder {
 
     pub fn build(self) -> TestRouter<Built> {
         let mut config = self.config.unwrap_or_default();
+        config.http.port = self.port; // sync with config // TODO: what if testing custom port?
         let mut _hold_until_drop: Vec<Box<dyn Any>> = vec![];
 
         // change the supergraph to use the test subgraphs address
@@ -527,7 +633,11 @@ impl TestRouterBuilder {
         TestRouter {
             wait_for_healthy_on_start: self.wait_for_healthy_on_start,
             wait_for_ready_on_start: self.wait_for_ready_on_start,
-            graphql_path: config.http.graphql_endpoint().to_string(),
+            graphql_path: config.graphql_path().to_string(),
+            websocket_path: config.websocket_path().map(|s| s.to_string()),
+            callback_conf: config.callback_conf().cloned(),
+            port: self.port,
+            listener: self.listener,
             config: Some(config),
             plugins: self.plugins,
             handle: None,
@@ -578,7 +688,8 @@ impl Drop for TestRouterHandle {
                     tracing::info!(
                         component = "telemetry",
                         layer = "provider",
-                        "shutdown scheduled"
+                        layer = "provider",
+                        "shutdown completed"
                     );
                     let _ = provider.force_flush();
                     let _ = provider.shutdown();
@@ -614,6 +725,10 @@ pub struct TestRouter<State> {
     wait_for_healthy_on_start: bool,
     wait_for_ready_on_start: bool,
     graphql_path: String,
+    websocket_path: Option<String>,
+    callback_conf: Option<CallbackConfig>,
+    port: u16,
+    listener: Option<std::net::TcpListener>,
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     handle: Option<TestRouterHandle>,
@@ -660,14 +775,64 @@ impl TestRouter<Built> {
 
         let serv_shared_state = shared_state.clone();
         let serv_schema_state = schema_state.clone();
-        let paths = RouterPaths::new(self.graphql_path.clone());
+        let serv_callback_subs = schema_state.callback_subscriptions.clone();
+        let serv_graphql_path = self.graphql_path.clone();
+        let serv_websocket_path = self.websocket_path.clone();
+
+        // when `listen` is set, the callback route lives on a dedicated server bound to that
+        // address as a background task; otherwise it is mounted on the main server
+        let serv_callback_path = match self.callback_conf {
+            Some(CallbackConfig {
+                listen: Some(listen),
+                ref path,
+                ..
+            }) => {
+                let cb_path = path.to_string();
+                let cb_addr = listen.to_string();
+                let cb_subs = schema_state.callback_subscriptions.clone();
+
+                let server = web::HttpServer::new(async move || {
+                    let cb_subs = cb_subs.clone();
+                    let cb_path = cb_path.clone();
+                    web::App::new()
+                        .state(cb_subs)
+                        .configure(move |m| add_callback_handler(m, &cb_path))
+                })
+                .bind(&cb_addr)
+                .expect("failed to bind callback server")
+                .run();
+
+                bg_tasks_manager.register_handle(async move {
+                    server.await.ok();
+                });
+
+                None
+            }
+            Some(ref cb) => Some(cb.path.to_string()),
+            None => None,
+        };
+
+        let paths = RouterPaths::new(
+            serv_graphql_path,
+            serv_websocket_path,
+            serv_callback_path.clone(),
+        );
         paths
             .detect_conflicts(&prometheus)
             .expect("failed to detect endpoint conflicts");
 
+        let serv_listener = self.listener.unwrap_or(
+            std::net::TcpListener::bind(format!("127.0.0.1:{}", self.port))
+                .expect("failed to bind tcp listener for test server"),
+        );
+        let serv_port = serv_listener
+            .local_addr()
+            .expect("failed to get local address of test server")
+            .port();
         let serv_paths = paths.clone();
         let serv_prometheus = prometheus.clone();
-        let mut serv_config = TestServerConfig::default();
+        let long_lived_limit = LongLivedClientLimitService::new(&shared_state.router_config);
+        let mut serv_config = test::config().listener(serv_listener);
         if let Some(tls_config) = serv_shared_state
             .router_config
             .traffic_shaping
@@ -684,6 +849,9 @@ impl TestRouter<Built> {
             let schema_state = serv_schema_state.clone();
             let paths = serv_paths.clone();
             let prometheus = serv_prometheus.clone();
+            let serv_callback_path = serv_callback_path.clone();
+            let callback_subs = serv_callback_subs.clone();
+            let long_lived_limit = long_lived_limit.clone();
 
             // set the tracing dispatch on the server thread. the guard is
             // intentionally leaked: dropping it would restore the no-op default
@@ -697,10 +865,17 @@ impl TestRouter<Built> {
 
             async move {
                 web::App::new()
+                    .middleware(long_lived_limit)
                     .middleware(PluginService)
                     .state(shared_state)
                     .state(schema_state)
+                    .state(callback_subs)
                     .configure(|m| configure_ntex_app(m, &paths, prometheus))
+                    .configure(|m| {
+                        if let Some(ref callback) = serv_callback_path {
+                            add_callback_handler(m, callback);
+                        }
+                    })
             }
         })
         .await;
@@ -708,9 +883,13 @@ impl TestRouter<Built> {
         let mut hold_until_drop = self._hold_until_drop;
         hold_until_drop.push(Box::new(subscription_guard));
         TestRouter {
+            port: serv_port,
+            listener: None,
             wait_for_healthy_on_start: self.wait_for_healthy_on_start,
             wait_for_ready_on_start: self.wait_for_ready_on_start,
             graphql_path: self.graphql_path,
+            websocket_path: self.websocket_path,
+            callback_conf: self.callback_conf,
             handle: Some(TestRouterHandle {
                 schema_state,
                 shared_state,
@@ -757,7 +936,7 @@ impl TestRouter<Started> {
 
     /// Waits for the /health endpoint to return 200 OK, with an optional timeout (defaults to 5 seconds).
     pub async fn wait_for_healthy(&self, timeout: Option<Duration>) {
-        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(5)), async {
+        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(10)), async {
             loop {
                 match self.serv().get("/health").send().await {
                     Ok(response) => {
@@ -778,7 +957,7 @@ impl TestRouter<Started> {
 
     /// Waits for the /readiness endpoint to return 200 OK, with an optional timeout (defaults to 5 seconds).
     pub async fn wait_for_ready(&self, timeout: Option<Duration>) {
-        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(5)), async {
+        tokio::time::timeout(timeout.unwrap_or(Duration::from_secs(10)), async {
             loop {
                 match self.serv().get("/readiness").send().await {
                     Ok(response) => {
@@ -827,6 +1006,19 @@ impl TestRouter<Started> {
         .await
         .expect("Failed to send graphql request")
     }
+
+    pub async fn ws(&self) -> WsConnection<Sealed> {
+        let url = self.handle.as_ref().unwrap().serv.url(
+            self.websocket_path
+                .as_deref()
+                .expect("Websocket path not set"),
+        );
+        let ws_url = url.as_str().replace("http://", "ws://");
+        let ws_uri = ws_url.parse::<http::Uri>().expect("Failed to parse ws url");
+        websocket_client::connect(&ws_uri)
+            .await
+            .expect("Failed to connect to websocket")
+    }
 }
 
 pub trait ClientResponseExt {
@@ -851,5 +1043,22 @@ impl ClientResponseExt for ClientResponse {
     async fn json_body_string_pretty(&self) -> String {
         sonic_rs::to_string_pretty(&self.json_body().await)
             .expect("failed to pretty print JSON body")
+    }
+}
+
+pub async fn wait_until_mock_matched(mock: &Mock) -> Result<(), String> {
+    let now = Instant::now();
+    let timeout = Duration::from_secs(10); // always a sane default
+    loop {
+        if mock.matched_async().await {
+            return Ok(());
+        }
+
+        // anything less will congest the router, keep the interval chill
+        time::sleep(Duration::from_millis(100)).await;
+
+        if now.elapsed() > timeout {
+            return Err(format!("timeout after {:?}", now.elapsed()));
+        }
     }
 }

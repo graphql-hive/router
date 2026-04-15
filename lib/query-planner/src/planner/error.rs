@@ -1,4 +1,7 @@
-use crate::{graph::error::GraphError, utils::cancellation::CancellationError};
+use crate::{
+    ast::fragment_expansion::FragmentExpansionError, graph::error::GraphError,
+    utils::cancellation::CancellationError,
+};
 
 use super::fetch::error::FetchGraphError;
 
@@ -16,6 +19,8 @@ pub enum QueryPlanError {
     UnexpectedPendingState,
     #[error("Internal Error: {0}")]
     Internal(String),
+    #[error("Fragment expansion error: {0}")]
+    FragmentExpansionFailure(#[from] FragmentExpansionError),
     #[error(transparent)]
     CancellationError(#[from] CancellationError),
 }

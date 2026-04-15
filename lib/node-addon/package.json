@@ -1,21 +1,21 @@
 {
   "name": "@graphql-hive/router-query-planner",
-  "version": "0.0.14",
+  "version": "0.0.18",
   "type": "module",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "files": [
     "README.md",
-    "index.js",
-    "index.cjs",
-    "index.d.ts",
-    "*.node"
+    "dist/index.js",
+    "dist/index.cjs",
+    "dist/index.d.ts",
+    "dist/*.node"
   ],
   "exports": {
     ".": {
-      "import": "./index.js",
-      "require": "./index.cjs",
-      "types": "./index.d.ts"
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
     },
     "./package.json": "./package.json"
   },
@@ -48,12 +48,13 @@
     "bun": "^1"
   },
   "scripts": {
-    "build": "RELEASE=true node build.js",
-    "build:debug": "node build.js",
-    "test": "node tests",
-    "test:updatesnaps": "node --test-update-snapshots tests"
+    "build": "RELEASE=true node scripts/build.ts",
+    "build:debug": "node scripts/build.ts",
+    "test": "node tests/index.ts",
+    "test:updatesnaps": "node --test-update-snapshots tests/index.ts"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.2.0"
+    "@types/node": "25.5.0",
+    "@napi-rs/cli": "3.5.1"
   }
 }

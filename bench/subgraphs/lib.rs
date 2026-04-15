@@ -1,9 +1,10 @@
 pub mod accounts;
+pub mod graphql_with_subscriptions;
 pub mod inventory;
 pub mod products;
 pub mod reviews;
 
-use async_graphql_axum::GraphQL;
+use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use axum::{
     extract::Request,
     http::StatusCode,
@@ -57,7 +58,7 @@ pub fn start_subgraphs_server(port: Option<u16>) -> (JoinHandle<()>, Sender<()>)
         .map(|v| v.to_string())
         .unwrap_or(std::env::var("PORT").unwrap_or("4200".to_owned()));
 
-    let mut app = subgraphs_app();
+    let mut app = subgraphs_app(HTTPStreamingSubscriptionProtocol::default());
     app = app.route("/health", get(health_check_handler));
 
     println!("Starting server on http://{}:{}", host, port);
@@ -80,7 +81,19 @@ pub fn start_subgraphs_server(port: Option<u16>) -> (JoinHandle<()>, Sender<()>)
     (server_handle, shutdown_tx)
 }
 
-pub fn subgraphs_app() -> Router<()> {
+/// The protocol to use for GraphQL subscriptions over HTTP streaming.
+/// It is purely the streaming HTTP protocol, other subscription protocols
+/// are handled automatically through HTTP negotiation (like websocket upgrades
+/// or http callbacks).
+#[derive(Clone, Default)]
+pub enum HTTPStreamingSubscriptionProtocol {
+    #[default]
+    PreferMultipartFallbackSse,
+    MultipartOnly,
+    SseOnly,
+}
+
+pub fn subgraphs_app(subscriptions_protocol: HTTPStreamingSubscriptionProtocol) -> Router<()> {
     Router::new()
         .route(
             "/accounts",
@@ -94,9 +107,16 @@ pub fn subgraphs_app() -> Router<()> {
             "/products",
             post_service(GraphQL::new(products::get_subgraph())),
         )
+        .route_service(
+            "/reviews/ws",
+            GraphQLSubscription::new(reviews::get_subgraph()),
+        )
         .route(
             "/reviews",
-            post_service(GraphQL::new(reviews::get_subgraph())),
+            post_service(graphql_with_subscriptions::GraphQL::new(
+                reviews::get_subgraph(),
+                subscriptions_protocol,
+            )),
         )
         .route_layer(middleware::from_fn(add_subgraph_header))
         .route_layer(middleware::from_fn(delay_middleware))

@@ -7,6 +7,8 @@ mod body_limit;
 #[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
+mod entity_batching;
+#[cfg(test)]
 mod env_vars;
 #[cfg(test)]
 mod error_handling;
@@ -19,7 +21,11 @@ mod hive_cdn_supergraph;
 #[cfg(test)]
 mod http;
 #[cfg(test)]
+mod http_callback;
+#[cfg(test)]
 mod introspection;
+#[cfg(test)]
+mod issues;
 #[cfg(test)]
 mod jwt;
 #[cfg(test)]
@@ -37,6 +43,8 @@ mod probes;
 #[cfg(test)]
 mod router_timeout;
 #[cfg(test)]
+mod subscriptions;
+#[cfg(test)]
 mod supergraph;
 #[cfg(test)]
 mod telemetry;
@@ -44,6 +52,8 @@ mod telemetry;
 mod timeout_per_subgraph;
 #[cfg(test)]
 mod tls;
+#[cfg(test)]
+mod websocket;
 
 pub use insta;
 pub use mockito;

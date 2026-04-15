@@ -4,7 +4,7 @@ supergraph:
   path: ../supergraph.graphql
 traffic_shaping:
   all:
-    request_timeout: 2s
+    request_timeout: 200ms
     # Disable deduplication to better hunt for deadlocks in tests
     dedupe_enabled: false
   subgraphs:
@@ -12,7 +12,7 @@ traffic_shaping:
       request_timeout:
         expression: |
           if (.request.headers."x-timeout" == "short") {
-            "10s"
+            "5s"
           } else {
             .default
           }

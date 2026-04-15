@@ -66,20 +66,28 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           },
         },
         Parallel {
-          Flatten(path: "userInC") {
-            Fetch(service: "b") {
-              {
-                ... on User {
-                  __typename
-                  id
+          BatchFetch(service: "b") {
+            {
+              _e0 {
+                paths: [
+                  "userInC"
+                  "userInA"
+                ]
+                {
+                  ... on User {
+                    __typename
+                    id
+                  }
                 }
-              } =>
-              {
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
                 ... on User {
                   name
                 }
               }
-            },
+            }
           },
           Flatten(path: "userInB") {
             Fetch(service: "c") {
@@ -109,90 +117,59 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {
                 ... on User {
                   aName
-                }
-              }
-            },
-          },
-          Flatten(path: "userInA") {
-            Fetch(service: "b") {
-              {
-                ... on User {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  name
                 }
               }
             },
           },
         },
         Parallel {
-          Flatten(path: "userInC") {
-            Fetch(service: "c") {
-              {
-                ... on User {
-                  __typename
-                  name
-                  id
+          BatchFetch(service: "c") {
+            {
+              _e0 {
+                paths: [
+                  "userInC"
+                  "userInA"
+                ]
+                {
+                  ... on User {
+                    __typename
+                    name
+                    id
+                  }
                 }
-              } =>
-              {
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
                 ... on User {
                   cName
                 }
               }
-            },
+            }
           },
-          Flatten(path: "userInC") {
-            Fetch(service: "a") {
-              {
-                ... on User {
-                  __typename
-                  name
-                  id
+          BatchFetch(service: "a") {
+            {
+              _e0 {
+                paths: [
+                  "userInC"
+                  "userInA"
+                ]
+                {
+                  ... on User {
+                    __typename
+                    name
+                    id
+                  }
                 }
-              } =>
-              {
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
                 ... on User {
                   aName
                 }
               }
-            },
-          },
-          Flatten(path: "userInA") {
-            Fetch(service: "c") {
-              {
-                ... on User {
-                  __typename
-                  name
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  cName
-                }
-              }
-            },
-          },
-          Flatten(path: "userInA") {
-            Fetch(service: "a") {
-              {
-                ... on User {
-                  __typename
-                  name
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  aName
-                }
-              }
-            },
+            }
           },
         },
       },
@@ -231,29 +208,41 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
             "kind": "Parallel",
             "nodes": [
               {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "userInC"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "b",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
-                  "requires": [
+                "kind": "BatchFetch",
+                "serviceName": "b",
+                "operationKind": "query",
+                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{name}}}",
+                "entityBatch": {
+                  "aliases": [
                     {
-                      "kind": "InlineFragment",
-                      "typeCondition": "User",
-                      "selections": [
+                      "alias": "_e0",
+                      "representationsVariableName": "__batch_reps_0",
+                      "paths": [
+                        [
+                          {
+                            "Field": "userInC"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "userInA"
+                          }
+                        ]
+                      ],
+                      "requires": [
                         {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
+                          "kind": "InlineFragment",
+                          "typeCondition": "User",
+                          "selections": [
+                            {
+                              "kind": "Field",
+                              "name": "__typename"
+                            },
+                            {
+                              "kind": "Field",
+                              "name": "id"
+                            }
+                          ]
                         }
                       ]
                     }
@@ -318,36 +307,6 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                         {
                           "kind": "Field",
                           "name": "name"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "userInA"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "b",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "User",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
                         },
                         {
                           "kind": "Field",
@@ -364,33 +323,45 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
             "kind": "Parallel",
             "nodes": [
               {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "userInC"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "c",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{cName}}}",
-                  "requires": [
+                "kind": "BatchFetch",
+                "serviceName": "c",
+                "operationKind": "query",
+                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{cName}}}",
+                "entityBatch": {
+                  "aliases": [
                     {
-                      "kind": "InlineFragment",
-                      "typeCondition": "User",
-                      "selections": [
+                      "alias": "_e0",
+                      "representationsVariableName": "__batch_reps_0",
+                      "paths": [
+                        [
+                          {
+                            "Field": "userInC"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "userInA"
+                          }
+                        ]
+                      ],
+                      "requires": [
                         {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "name"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
+                          "kind": "InlineFragment",
+                          "typeCondition": "User",
+                          "selections": [
+                            {
+                              "kind": "Field",
+                              "name": "__typename"
+                            },
+                            {
+                              "kind": "Field",
+                              "name": "name"
+                            },
+                            {
+                              "kind": "Field",
+                              "name": "id"
+                            }
+                          ]
                         }
                       ]
                     }
@@ -398,101 +369,45 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 }
               },
               {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "userInC"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{aName}}}",
-                  "requires": [
+                "kind": "BatchFetch",
+                "serviceName": "a",
+                "operationKind": "query",
+                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{aName}}}",
+                "entityBatch": {
+                  "aliases": [
                     {
-                      "kind": "InlineFragment",
-                      "typeCondition": "User",
-                      "selections": [
+                      "alias": "_e0",
+                      "representationsVariableName": "__batch_reps_0",
+                      "paths": [
+                        [
+                          {
+                            "Field": "userInC"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "userInA"
+                          }
+                        ]
+                      ],
+                      "requires": [
                         {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "name"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "userInA"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "c",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{cName}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "User",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "name"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "userInA"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{aName}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "User",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "name"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
+                          "kind": "InlineFragment",
+                          "typeCondition": "User",
+                          "selections": [
+                            {
+                              "kind": "Field",
+                              "name": "__typename"
+                            },
+                            {
+                              "kind": "Field",
+                              "name": "name"
+                            },
+                            {
+                              "kind": "Field",
+                              "name": "id"
+                            }
+                          ]
                         }
                       ]
                     }

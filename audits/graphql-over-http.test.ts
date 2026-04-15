@@ -1,5 +1,5 @@
 import { describe, it } from "node:test";
-import { serverAudits } from "graphql-http";
+import { type AuditFail, serverAudits } from "graphql-http";
 import assert from "node:assert";
 
 describe("GraphQL over HTTP", () => {
@@ -8,7 +8,7 @@ describe("GraphQL over HTTP", () => {
     })) {
       it(audit.name, async () => {
         const result = await audit.fn();
-        assert.equal(result.status, "ok", result.reason);
+        assert.equal(result.status, "ok", `${audit.name} failed: ${(result as AuditFail).reason}`);
       });
     }
     it('preserve the order of the selection set', async () => {

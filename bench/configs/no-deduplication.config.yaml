@@ -7,3 +7,6 @@ log:
 traffic_shaping:
   all:
     dedupe_enabled: false
+  router:
+    dedupe:
+      enabled: false

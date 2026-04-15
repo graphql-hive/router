@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use graphql_tools::parser::query as parser;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -31,6 +32,16 @@ impl Eq for FragmentDefinition {}
 impl PartialEq for FragmentDefinition {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
+    }
+}
+
+impl<'a, T: parser::Text<'a>> From<parser::FragmentDefinition<'a, T>> for FragmentDefinition {
+    fn from(fragment_def: parser::FragmentDefinition<'a, T>) -> Self {
+        FragmentDefinition {
+            name: fragment_def.name.as_ref().to_string(),
+            selection_set: fragment_def.selection_set.into(),
+            type_condition: fragment_def.type_condition.as_ref().as_ref().to_string(),
+        }
     }
 }
 
