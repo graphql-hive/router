@@ -1,4 +1,12 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.19 (2026-04-15)
+
+### Features
+
+#### Query Plan Subscriptions Node
+
+The query planner now emits a `Subscription` node when planning a subscription operation. The `Subscription` node contains a `primary` fetch that is sent to the subgraph owning the subscription field.
+
 ## 0.0.18 (2026-04-13)
 
 ### Fixes
