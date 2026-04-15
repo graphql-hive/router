@@ -3542,7 +3542,7 @@ dependencies = [
 
 [[package]]
 name = "node-addon"
-version = "0.0.20"
+version = "0.0.21"
 dependencies = [
  "graphql-tools",
  "hive-router-query-planner",

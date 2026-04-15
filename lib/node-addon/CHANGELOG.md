@@ -1,4 +1,12 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.21 (2026-04-15)
+
+### Fixes
+
+#### `Subscription` node's `primary` is `FetchNode` instead of `PlanNode` now, but the types were not compatible.
+
+This change updates the type of `Subscription.primary` to be `FetchNode` instead of `PlanNode`.
+
 ## 0.0.20 (2026-04-15)
 
 ### Features
