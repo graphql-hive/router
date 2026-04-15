@@ -61,7 +61,7 @@ pub struct DemandControlExecutionContext {
 // ── Compiled actual-cost types ───────────────────────────────────────────────
 
 /// Per-field cost entry compiled at plan time; only response traversal at request time.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ActualCostPlanField {
     pub response_key: String,
     pub skip_if: Option<String>,
@@ -73,7 +73,7 @@ pub struct ActualCostPlanField {
     pub children: Vec<ActualCostPlanNode>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum ActualCostPlanNode {
     Field(ActualCostPlanField),
     InlineFragment {
@@ -92,7 +92,7 @@ pub fn evaluate_actual_cost_plan_nodes(
         .iter()
         .map(|node| match node {
             ActualCostPlanNode::Field(field) => {
-                evaluate_actual_cost_plan_field(field, parent_value, vars)
+                evaluate_actual_cost_plan_node(field, parent_value, vars)
             }
             ActualCostPlanNode::InlineFragment {
                 type_condition,
@@ -107,7 +107,7 @@ pub fn evaluate_actual_cost_plan_nodes(
         .fold(0u64, |acc, v| acc.saturating_add(v))
 }
 
-fn evaluate_actual_cost_plan_field(
+fn evaluate_actual_cost_plan_node(
     field: &ActualCostPlanField,
     parent_value: &Value<'_>,
     vars: &Option<HashMap<String, sonic_rs::Value>>,

@@ -12,6 +12,8 @@ use hive_router_plan_executor::{
     },
     hooks::on_supergraph_load::SupergraphData,
 };
+use hive_router_query_planner::ast::operation::SubgraphFetchOperation;
+use hive_router_query_planner::federation_spec::demand_control::ListSizeDirective;
 use hive_router_query_planner::{
     ast::{
         fragment::FragmentDefinition,
@@ -157,19 +159,12 @@ pub struct DemandControlFormulaPlan {
 }
 
 enum FormulaPlanNode {
-    Empty,
     Fetch(FormulaFetchNode),
-    Sequence(Vec<FormulaPlanNode>),
-    Parallel(Vec<FormulaPlanNode>),
+    Aggregate(Vec<FormulaPlanNode>),
     Condition {
         condition: String,
         if_clause: Option<Box<FormulaPlanNode>>,
         else_clause: Option<Box<FormulaPlanNode>>,
-    },
-    Subscription(Box<FormulaPlanNode>),
-    Defer {
-        primary: Option<Box<FormulaPlanNode>>,
-        deferred: Vec<FormulaPlanNode>,
     },
 }
 
@@ -235,7 +230,7 @@ pub async fn evaluate_demand_control<'exec>(
             });
 
         let eval_started_at = Instant::now();
-        let estimation = evaluate_compiled_plan(
+        let estimation = evaluate_formula_plan(
             compiled_plan.as_ref(),
             &supergraph.planner.supergraph,
             variable_payload,
@@ -295,7 +290,6 @@ pub async fn evaluate_demand_control<'exec>(
 
 fn collect_estimated_formulas(node: &FormulaPlanNode, formulas: &mut AHashMap<String, CostExpr>) {
     match node {
-        FormulaPlanNode::Empty => {}
         FormulaPlanNode::Fetch(fetch) => {
             formulas
                 .entry(fetch.service_name.clone())
@@ -304,7 +298,7 @@ fn collect_estimated_formulas(node: &FormulaPlanNode, formulas: &mut AHashMap<St
                 })
                 .or_insert_with(|| fetch.estimated_expr.clone());
         }
-        FormulaPlanNode::Sequence(nodes) | FormulaPlanNode::Parallel(nodes) => {
+        FormulaPlanNode::Aggregate(nodes) => {
             for child in nodes {
                 collect_estimated_formulas(child, formulas);
             }
@@ -319,15 +313,6 @@ fn collect_estimated_formulas(node: &FormulaPlanNode, formulas: &mut AHashMap<St
             }
             if let Some(c) = else_clause.as_deref() {
                 collect_estimated_formulas(c, formulas);
-            }
-        }
-        FormulaPlanNode::Subscription(node) => collect_estimated_formulas(node, formulas),
-        FormulaPlanNode::Defer { primary, deferred } => {
-            if let Some(p) = primary.as_deref() {
-                collect_estimated_formulas(p, formulas);
-            }
-            for child in deferred {
-                collect_estimated_formulas(child, formulas);
             }
         }
     }
@@ -338,7 +323,6 @@ fn collect_actual_cost_plan_nodes(
     by_service: &mut AHashMap<String, Arc<Vec<ActualCostPlanNode>>>,
 ) {
     match node {
-        FormulaPlanNode::Empty => {}
         FormulaPlanNode::Fetch(fetch) => {
             if let Some(actual_nodes) = &fetch.actual_nodes {
                 by_service
@@ -346,7 +330,7 @@ fn collect_actual_cost_plan_nodes(
                     .or_insert_with(|| actual_nodes.clone());
             }
         }
-        FormulaPlanNode::Sequence(nodes) | FormulaPlanNode::Parallel(nodes) => {
+        FormulaPlanNode::Aggregate(nodes) => {
             for child in nodes {
                 collect_actual_cost_plan_nodes(child, by_service);
             }
@@ -361,15 +345,6 @@ fn collect_actual_cost_plan_nodes(
             }
             if let Some(c) = else_clause.as_deref() {
                 collect_actual_cost_plan_nodes(c, by_service);
-            }
-        }
-        FormulaPlanNode::Subscription(node) => collect_actual_cost_plan_nodes(node, by_service),
-        FormulaPlanNode::Defer { primary, deferred } => {
-            if let Some(p) = primary.as_deref() {
-                collect_actual_cost_plan_nodes(p, by_service);
-            }
-            for child in deferred {
-                collect_actual_cost_plan_nodes(child, by_service);
             }
         }
     }
@@ -442,8 +417,10 @@ fn compile_demand_control_plan(
     let root = query_plan
         .node
         .as_ref()
-        .map(|node| compile_plan_node(node, supergraph_state, config, compile_actual_by_subgraph))
-        .unwrap_or(FormulaPlanNode::Empty);
+        .map(|node| {
+            compile_formula_plan_node(node, supergraph_state, config, compile_actual_by_subgraph)
+        })
+        .unwrap_or(FormulaPlanNode::Aggregate(vec![]));
 
     let formula_by_subgraph = if include_extension_metadata {
         let mut expr_by_subgraph = AHashMap::new();
@@ -471,88 +448,99 @@ fn compile_demand_control_plan(
     }
 }
 
-fn compile_plan_node(
+fn compile_formula_fetch_node(
+    service_name: &str,
+    operation_kind: Option<&OperationKind>,
+    operation: &SubgraphFetchOperation,
+    supergraph_state: &SupergraphState,
+    config: &hive_router_config::demand_control::DemandControlConfig,
+    compile_actual_by_subgraph: bool,
+) -> FormulaFetchNode {
+    let default_list_size = default_list_size_for_subgraph(config, service_name);
+    let root_type = supergraph_state.root_type_name(operation_kind);
+    FormulaFetchNode {
+        service_name: service_name.to_string(),
+        estimated_expr: compile_cost_expr_for_operation(
+            &operation.document.operation,
+            &operation.document.fragments,
+            root_type,
+            operation_kind,
+            supergraph_state,
+            default_list_size,
+        ),
+        actual_nodes: compile_actual_by_subgraph.then(|| {
+            Arc::new(compile_actual_cost_plan_nodes(
+                &operation.document.operation.selection_set,
+                root_type,
+                supergraph_state,
+            ))
+        }),
+    }
+}
+
+fn compile_formula_plan_node(
     node: &PlanNode,
     supergraph_state: &SupergraphState,
     config: &hive_router_config::demand_control::DemandControlConfig,
     compile_actual_by_subgraph: bool,
 ) -> FormulaPlanNode {
     match node {
-        PlanNode::Fetch(fetch_node) => {
-            let default_list_size =
-                default_list_size_for_subgraph(config, &fetch_node.service_name);
-            let root_type = supergraph_state.root_type_name(fetch_node.operation_kind.as_ref());
-            FormulaPlanNode::Fetch(FormulaFetchNode {
-                service_name: fetch_node.service_name.clone(),
-                estimated_expr: compile_operation_expr(
-                    &fetch_node.operation.document.operation,
-                    &fetch_node.operation.document.fragments,
-                    root_type,
-                    fetch_node.operation_kind.as_ref(),
-                    supergraph_state,
-                    default_list_size,
-                ),
-                actual_nodes: compile_actual_by_subgraph.then(|| {
-                    Arc::new(compile_actual_cost_plan_nodes(
-                        &fetch_node.operation.document.operation.selection_set,
-                        root_type,
-                        supergraph_state,
-                    ))
-                }),
-            })
-        }
+        PlanNode::Fetch(fetch_node) => FormulaPlanNode::Fetch(compile_formula_fetch_node(
+            &fetch_node.service_name,
+            fetch_node.operation_kind.as_ref(),
+            &fetch_node.operation,
+            supergraph_state,
+            config,
+            compile_actual_by_subgraph,
+        )),
         PlanNode::BatchFetch(batch_fetch_node) => {
-            let default_list_size =
-                default_list_size_for_subgraph(config, &batch_fetch_node.service_name);
-            let root_type =
-                supergraph_state.root_type_name(batch_fetch_node.operation_kind.as_ref());
-            FormulaPlanNode::Fetch(FormulaFetchNode {
-                service_name: batch_fetch_node.service_name.clone(),
-                estimated_expr: compile_operation_expr(
-                    &batch_fetch_node.operation.document.operation,
-                    &batch_fetch_node.operation.document.fragments,
-                    root_type,
-                    batch_fetch_node.operation_kind.as_ref(),
-                    supergraph_state,
-                    default_list_size,
-                ),
-                actual_nodes: compile_actual_by_subgraph.then(|| {
-                    Arc::new(compile_actual_cost_plan_nodes(
-                        &batch_fetch_node.operation.document.operation.selection_set,
-                        root_type,
-                        supergraph_state,
-                    ))
-                }),
-            })
+            FormulaPlanNode::Fetch(compile_formula_fetch_node(
+                &batch_fetch_node.service_name,
+                batch_fetch_node.operation_kind.as_ref(),
+                &batch_fetch_node.operation,
+                supergraph_state,
+                config,
+                compile_actual_by_subgraph,
+            ))
         }
-        PlanNode::Flatten(flatten) => compile_plan_node(
+        PlanNode::Flatten(flatten) => compile_formula_plan_node(
             &flatten.node,
             supergraph_state,
             config,
             compile_actual_by_subgraph,
         ),
-        PlanNode::Sequence(sequence) => FormulaPlanNode::Sequence(
+        PlanNode::Sequence(sequence) => FormulaPlanNode::Aggregate(
             sequence
                 .nodes
                 .iter()
                 .map(|child| {
-                    compile_plan_node(child, supergraph_state, config, compile_actual_by_subgraph)
+                    compile_formula_plan_node(
+                        child,
+                        supergraph_state,
+                        config,
+                        compile_actual_by_subgraph,
+                    )
                 })
                 .collect(),
         ),
-        PlanNode::Parallel(parallel) => FormulaPlanNode::Parallel(
+        PlanNode::Parallel(parallel) => FormulaPlanNode::Aggregate(
             parallel
                 .nodes
                 .iter()
                 .map(|child| {
-                    compile_plan_node(child, supergraph_state, config, compile_actual_by_subgraph)
+                    compile_formula_plan_node(
+                        child,
+                        supergraph_state,
+                        config,
+                        compile_actual_by_subgraph,
+                    )
                 })
                 .collect(),
         ),
         PlanNode::Condition(condition) => FormulaPlanNode::Condition {
             condition: condition.condition.clone(),
             if_clause: condition.if_clause.as_ref().map(|node| {
-                Box::new(compile_plan_node(
+                Box::new(compile_formula_plan_node(
                     node,
                     supergraph_state,
                     config,
@@ -560,7 +548,7 @@ fn compile_plan_node(
                 ))
             }),
             else_clause: condition.else_clause.as_ref().map(|node| {
-                Box::new(compile_plan_node(
+                Box::new(compile_formula_plan_node(
                     node,
                     supergraph_state,
                     config,
@@ -568,66 +556,52 @@ fn compile_plan_node(
                 ))
             }),
         },
-        PlanNode::Subscription(subscription) => {
-            let default_list_size =
-                default_list_size_for_subgraph(config, &subscription.primary.service_name);
-            let root_type =
-                supergraph_state.root_type_name(subscription.primary.operation_kind.as_ref());
-            FormulaPlanNode::Subscription(Box::new(FormulaPlanNode::Fetch(FormulaFetchNode {
-                service_name: subscription.primary.service_name.clone(),
-                estimated_expr: compile_operation_expr(
-                    &subscription.primary.operation.document.operation,
-                    &subscription.primary.operation.document.fragments,
-                    root_type,
-                    subscription.primary.operation_kind.as_ref(),
-                    supergraph_state,
-                    default_list_size,
-                ),
-                actual_nodes: compile_actual_by_subgraph.then(|| {
-                    Arc::new(compile_actual_cost_plan_nodes(
-                        &subscription
-                            .primary
-                            .operation
-                            .document
-                            .operation
-                            .selection_set,
-                        root_type,
-                        supergraph_state,
-                    ))
-                }),
-            })))
-        }
-        PlanNode::Defer(defer) => FormulaPlanNode::Defer {
-            primary: defer.primary.node.as_ref().map(|node| {
-                Box::new(compile_plan_node(
-                    node,
+        PlanNode::Subscription(subscription) => FormulaPlanNode::Fetch(compile_formula_fetch_node(
+            &subscription.primary.service_name,
+            subscription.primary.operation_kind.as_ref(),
+            &subscription.primary.operation,
+            supergraph_state,
+            config,
+            compile_actual_by_subgraph,
+        )),
+        PlanNode::Defer(defer) => {
+            let primary = defer.primary.node.as_ref().map(|primary| {
+                compile_formula_plan_node(
+                    primary,
                     supergraph_state,
                     config,
                     compile_actual_by_subgraph,
-                ))
-            }),
-            deferred: defer
+                )
+            });
+            let deferred: Vec<FormulaPlanNode> = defer
                 .deferred
                 .iter()
                 .filter_map(|node| node.node.as_ref())
                 .map(|node| {
-                    compile_plan_node(node, supergraph_state, config, compile_actual_by_subgraph)
+                    compile_formula_plan_node(
+                        node,
+                        supergraph_state,
+                        config,
+                        compile_actual_by_subgraph,
+                    )
                 })
-                .collect(),
-        },
+                .collect();
+            let aggregate = primary.into_iter().chain(deferred).collect();
+            FormulaPlanNode::Aggregate(aggregate)
+        }
     }
 }
 
 // ── Evaluate phase: plan ─────────────────────────────────────────────────────
 
-fn evaluate_compiled_plan(
-    compiled_plan: &DemandControlFormulaPlan,
+fn evaluate_formula_plan(
+    formula_plan: &DemandControlFormulaPlan,
     supergraph_state: &SupergraphState,
     variable_payload: &CoerceVariablesPayload,
 ) -> DemandControlEvaluation {
     let mut evaluation = DemandControlEvaluation::default();
-    evaluate_compiled_plan_node(
-        &compiled_plan.root,
+    evaluate_formula_plan_node(
+        &formula_plan.root,
         supergraph_state,
         variable_payload,
         &mut evaluation,
@@ -635,14 +609,13 @@ fn evaluate_compiled_plan(
     evaluation
 }
 
-fn evaluate_compiled_plan_node(
+fn evaluate_formula_plan_node(
     node: &FormulaPlanNode,
     supergraph_state: &SupergraphState,
     variable_payload: &CoerceVariablesPayload,
     out: &mut DemandControlEvaluation,
 ) {
     match node {
-        FormulaPlanNode::Empty => {}
         FormulaPlanNode::Fetch(fetch_node) => {
             let cost = eval_cost_expr(
                 &fetch_node.estimated_expr,
@@ -657,9 +630,9 @@ fn evaluate_compiled_plan_node(
                     .insert(fetch_node.service_name.clone(), cost);
             }
         }
-        FormulaPlanNode::Sequence(nodes) | FormulaPlanNode::Parallel(nodes) => {
+        FormulaPlanNode::Aggregate(nodes) => {
             for child in nodes {
-                evaluate_compiled_plan_node(child, supergraph_state, variable_payload, out);
+                evaluate_formula_plan_node(child, supergraph_state, variable_payload, out);
             }
         }
         FormulaPlanNode::Condition {
@@ -674,18 +647,7 @@ fn evaluate_compiled_plan_node(
             };
 
             if let Some(child) = branch {
-                evaluate_compiled_plan_node(child, supergraph_state, variable_payload, out);
-            }
-        }
-        FormulaPlanNode::Subscription(node) => {
-            evaluate_compiled_plan_node(node, supergraph_state, variable_payload, out);
-        }
-        FormulaPlanNode::Defer { primary, deferred } => {
-            if let Some(primary) = primary.as_deref() {
-                evaluate_compiled_plan_node(primary, supergraph_state, variable_payload, out);
-            }
-            for child in deferred {
-                evaluate_compiled_plan_node(child, supergraph_state, variable_payload, out);
+                evaluate_formula_plan_node(child, supergraph_state, variable_payload, out);
             }
         }
     }
@@ -763,7 +725,7 @@ fn eval_cost_expr(
 
 // ── Compile phase: estimated cost → CostExpr ─────────────────────────────────
 
-fn compile_operation_expr(
+fn compile_cost_expr_for_operation(
     operation: &OperationDefinition,
     operation_fragments: &[FragmentDefinition],
     root_type_name: &str,
@@ -778,7 +740,7 @@ fn compile_operation_expr(
     let mut fragments_cache = AHashMap::new();
     let mut visited_fragments = AHashSet::new();
     let empty_overrides: SizeOverrides = Vec::new();
-    let fields_expr = compile_selection_set_expr(
+    let fields_expr = compile_cost_expr_for_selection_set(
         &operation.selection_set,
         operation_fragments,
         root_type_name,
@@ -796,7 +758,7 @@ fn compile_operation_expr(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn compile_selection_set_expr<'exec>(
+fn compile_cost_expr_for_selection_set<'exec>(
     selection_set: &'exec SelectionSet,
     operation_fragments: &'exec [FragmentDefinition],
     parent_type_name: &'exec str,
@@ -820,7 +782,7 @@ fn compile_selection_set_expr<'exec>(
                     .filter(|(path, _)| path.len() > 1 && path[0] == field_name)
                     .map(|(path, expr)| (path[1..].to_vec(), expr.clone()))
                     .collect();
-                field_exprs.push(compile_field_expr(
+                field_exprs.push(compile_cost_expr_for_field_selection(
                     field,
                     operation_fragments,
                     parent_type_name,
@@ -833,7 +795,7 @@ fn compile_selection_set_expr<'exec>(
                 ));
             }
             SelectionItem::InlineFragment(fragment) => {
-                field_exprs.push(compile_selection_set_expr(
+                field_exprs.push(compile_cost_expr_for_selection_set(
                     &fragment.selections,
                     operation_fragments,
                     fragment.type_condition.as_str(),
@@ -857,7 +819,7 @@ fn compile_selection_set_expr<'exec>(
                     continue;
                 };
                 visited_fragments.insert(fragment_name.as_str());
-                field_exprs.push(compile_selection_set_expr(
+                field_exprs.push(compile_cost_expr_for_selection_set(
                     &fragment_def.selection_set,
                     operation_fragments,
                     fragment_def.type_condition.as_str(),
@@ -875,7 +837,7 @@ fn compile_selection_set_expr<'exec>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn compile_field_expr<'exec>(
+fn compile_cost_expr_for_field_selection<'exec>(
     field: &'exec FieldSelection,
     operation_fragments: &'exec [FragmentDefinition],
     parent_type_name: &'exec str,
@@ -916,7 +878,8 @@ fn compile_field_expr<'exec>(
             base_parts.insert(0, CostExpr::Const(base_cost));
         }
         if let Some(list_size_directive) = &def.list_size {
-            let size_expr = compile_list_size_expr(list_size_directive, field, default_list_size);
+            let size_expr =
+                compile_cost_expr_for_list_size(list_size_directive, field, default_list_size);
             if let Some(sized_fields) = &list_size_directive.sized_fields {
                 for path in sized_fields {
                     all_child_overrides.push((path.clone(), size_expr.clone()));
@@ -934,7 +897,7 @@ fn compile_field_expr<'exec>(
     };
 
     let return_type_cost = type_cost(supergraph_state, return_type_name);
-    let children_expr = compile_selection_set_expr(
+    let children_expr = compile_cost_expr_for_selection_set(
         &field.selections,
         operation_fragments,
         return_type_name,
@@ -987,8 +950,8 @@ fn compile_field_expr<'exec>(
     expr
 }
 
-fn compile_list_size_expr(
-    directive: &hive_router_query_planner::federation_spec::demand_control::ListSizeDirective,
+fn compile_cost_expr_for_list_size(
+    directive: &ListSizeDirective,
     field: &FieldSelection,
     default_list_size: usize,
 ) -> CostExpr {

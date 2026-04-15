@@ -1069,12 +1069,8 @@ r#"query NewestAdditionsByCursor {
         let accounts_formula = json["extensions"]["cost"]["estimatedFormulaBySubgraph"]["accounts"]
             .as_str()
             .expect("accounts formula should be present");
-        println!("accounts formula: {accounts_formula}");
 
-        assert!(
-            accounts_formula.contains(" + "),
-            "summed accounts formula should contain additive composition across multiple fetches"
-        );
+        assert_eq!(accounts_formula, "((1 + 1) + 1)");
     }
 
     // Ensures cost.estimated, cost.actual and cost.delta are emitted with
