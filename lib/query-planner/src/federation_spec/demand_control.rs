@@ -18,25 +18,23 @@ impl FederationDirective for CostDirective {
     where
         Self: Sized,
     {
-        let mut weight = None; // default value
-
         for (arg_name, arg_value) in &directive.arguments {
             if arg_name == "weight" {
                 if let graphql_tools::parser::schema::Value::Int(int_value) = arg_value {
-                    weight = int_value.as_i64();
+                    if let Some(weight_value) = int_value.as_i64() {
+                        return Self {
+                            weight: u64::try_from(weight_value).expect(
+                                "'cost' directive 'weight' argument must be a non-negative integer",
+                            ),
+                        };
+                    }
                 }
             }
         }
 
-        if let Some(weight) = weight {
-            Self {
-                weight: weight as u64,
-            }
-        } else {
-            panic!(
-                "'cost' directive is missing required 'weight' argument or it is not an integer"
-            );
-        }
+        panic!(
+            "'cost' directive is missing required 'weight' argument that must be a non-negative integer"
+        );
     }
 }
 
@@ -82,7 +80,11 @@ impl FederationDirective for ListSizeDirective {
             match arg_name.as_str() {
                 "assumedSize" => {
                     if let graphql_tools::parser::schema::Value::Int(int_value) = arg_value {
-                        assumed_size = int_value.as_i64().map(|v| v as usize);
+                        assumed_size = int_value.as_i64().map(|v| {
+                            usize::try_from(v).expect(
+                                "'listSize' directive 'assumedSize' argument must be a non-negative integer",
+                            )
+                        });
                     }
                 }
                 "slicingArguments" => {

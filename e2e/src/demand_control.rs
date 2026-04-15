@@ -251,7 +251,8 @@ r#"query NewestAdditions {
 
         let json = res.json_body().await;
         assert!(
-            !json.get("errors").is_some(),
+            json.get("errors").is_none()
+                || json.get("errors").is_some_and(|errors| errors.is_null()),
             "negative literal slicing arg must not overflow estimated cost"
         );
     }
