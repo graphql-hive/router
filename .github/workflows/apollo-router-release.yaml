@@ -267,24 +267,27 @@ jobs:
           # Wait for the container to be ready
           echo "Waiting for the container to be ready..."
           sleep 20
-          HTTP_RESPONSE=$(curl --retry 5 --retry-delay 5 --max-time 30 --write-out "%{http_code}" --silent --output /dev/null "http://127.0.0.1:8088/health")
+          HTTP_RESPONSE=$(curl -v --retry 5 --retry-delay 5 --max-time 30 --write-out "%{http_code}" --output /dev/null "http://127.0.0.1:8088/health")
 
           # Check if the HTTP response code is 200 (OK)
           if [ $HTTP_RESPONSE -eq 200 ]; then
             echo "Health check successful."
-            docker stop apollo_router_test
-            docker rm apollo_router_test
             exit 0
           else
             echo "Health check failed with HTTP status code $HTTP_RESPONSE."
-            docker stop apollo_router_test
-            docker rm apollo_router_test
             exit 1
           fi
 
+      - name: troubleshoot container
+        if: ${{ failure() }}
+        run: |
+          docker --version
+          docker ps --format json | jq .
+          docker logs apollo_router_test
+
   # Build and publish Rust crates and binaries
   test-rust:
-    name: cargo test
+    name: test
     needs: find-changes
     runs-on: ubuntu-22.04
     steps:
@@ -342,7 +345,7 @@ jobs:
             target: x86_64-apple-darwin
             binary_name: macos
             cache_key: macOS
-    name: publish binary (${{ matrix.binary_name }})
+    name: binary (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
