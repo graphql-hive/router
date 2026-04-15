@@ -1,6 +1,6 @@
 [package]
 name = "hive-router"
-version = "0.0.45"
+version = "0.0.47"
 edition = "2021"
 description = "GraphQL router/gateway for Federation"
 license = "MIT"
@@ -9,6 +9,7 @@ authors = ["The Guild"]
 repository = "https://github.com/graphql-hive/router"
 homepage = "https://github.com/graphql-hive/router"
 readme = "README.crate.md"
+exclude = ["node_modules"]
 
 [lib]
 
@@ -21,10 +22,10 @@ noop_otlp_exporter = ["hive-router-internal/noop_otlp_exporter"]
 testing = []
 
 [dependencies]
-hive-router-query-planner = { path = "../../lib/query-planner", version = "2.5.1" }
-hive-router-plan-executor = { path = "../../lib/executor", version = "6.9.2" }
-hive-router-config = { path = "../../lib/router-config", version = "0.0.26" }
-hive-router-internal = { path = "../../lib/internal", version = "0.0.15" }
+hive-router-query-planner = { path = "../../lib/query-planner", version = "2.5.2" }
+hive-router-plan-executor = { path = "../../lib/executor", version = "6.9.3" }
+hive-router-config = { path = "../../lib/router-config", version = "0.0.28" }
+hive-router-internal = { path = "../../lib/internal", version = "0.0.16" }
 hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.8" }
 graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.3" }
 
@@ -72,7 +73,12 @@ insta = { workspace = true }
 mimalloc = { version = "0.1.48", features = ["v3"] }
 mediatype = "0.21.0"
 headers-accept = "0.3.0"
+async-stream = "0.3.6"
+futures-util = "0.3.31"
+futures-timer = "3.0.3"
+const-str = "1.0.0"
 md5 = "0.8.0"
+bytes = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

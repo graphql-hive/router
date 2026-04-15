@@ -1,21 +1,18 @@
 #[cfg(test)]
 mod timeout_per_subgraph_e2e_tests {
-    use std::{thread::sleep, time::Duration};
+    use std::time::Duration;
 
     use ntex::http::StatusCode;
     use sonic_rs::json;
 
     use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
 
+    const SUBGRAPH_DELAY: Duration = Duration::from_millis(300);
+
     #[ntex::test]
     async fn should_apply_static_subgraph_timeout_override() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/accounts" {
-                    sleep(Duration::from_secs(3));
-                }
-                None
-            })
+            .with_delay(SUBGRAPH_DELAY)
             .build()
             .start()
             .await;
@@ -52,12 +49,7 @@ mod timeout_per_subgraph_e2e_tests {
     #[ntex::test]
     async fn should_apply_dynamic_subgraph_timeout_override_and_fallback_to_default() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/accounts" {
-                    sleep(Duration::from_secs(3));
-                }
-                None
-            })
+            .with_delay(SUBGRAPH_DELAY)
             .build()
             .start()
             .await;
@@ -183,7 +175,7 @@ mod timeout_per_subgraph_e2e_tests {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .file_config("configs/timeout_per_subgraph_dynamic.router.yaml")
+            .file_config("configs/timeout_per_subgraph_dynamic_deadlock.router.yaml")
             .build()
             .start()
             .await;
