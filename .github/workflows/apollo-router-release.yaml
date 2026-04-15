@@ -36,7 +36,7 @@ jobs:
       release_version: ${{ steps.find_changes.outputs.release_version }}
       release_latest: ${{ steps.find_changes.outputs.release_latest }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 2
 
@@ -61,6 +61,10 @@ jobs:
           plugin_version=$(grep '^version' Cargo.toml | sed 's/version *= *"\(.*\)"/\1/')
           has_changes=$(git diff HEAD~ HEAD --name-only -- 'Cargo.toml' 'Cargo.lock')
 
+          echo "router_version: $router_version"
+          echo "plugin_version: $plugin_version"
+          echo "has_changes: $has_changes"
+
           if [ "$has_changes" ]; then
             image_tag_version="router${router_version}-plugin${plugin_version}"
 
@@ -79,6 +83,8 @@ jobs:
               echo "release_latest=true" >> $GITHUB_OUTPUT
             else
               echo "No changes found in version $image_tag_version"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+              echo "release_latest=false" >> $GITHUB_OUTPUT
             fi
           fi
 
@@ -91,7 +97,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - builder: ubuntu-22.04
+          - builder: ubuntu-latest
             platform: linux/amd64
             suffix: "-amd64"
             cache_key: Linux
@@ -107,7 +113,7 @@ jobs:
       pull-requests: write
     steps:
       - name: checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 2
 
@@ -223,7 +229,7 @@ jobs:
       HIVE_TOKEN: ${{ secrets.HIVE_TOKEN }}
     steps:
       - name: checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 2
       - name: Run Docker image
@@ -279,7 +285,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 2
 
@@ -310,8 +316,9 @@ jobs:
       - name: Run tests
         run: cargo test
 
-  publish-rust:
+  publish-binary:
     needs: find-changes
+    if: ${{ needs.find-changes.outputs.should_release == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -331,13 +338,12 @@ jobs:
             target: x86_64-apple-darwin
             binary_name: macos
             cache_key: macOS
-    name: publish apollo-router binary (${{ matrix.cache_key }})
+    name: publish apollo-router binary (${{ matrix.binary_name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 2
 
