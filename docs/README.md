@@ -3198,7 +3198,6 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |**volume\_threshold**|`integer`, `null`|Count of requests before starting evaluating.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Additional Properties:** not allowed  
-
 <a name="websocket"></a>
 ## websocket: object
 
