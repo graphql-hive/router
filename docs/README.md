@@ -521,7 +521,7 @@ A valid HTTP header name, according to RFC 7230.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**actual\_cost**](#demand_controlactual_cost)|`object`, `null`|Optional actual cost calculation configuration.<br/>|no|
+|[**actual\_cost**](#demand_controlactual_cost)|`object`, `null`|Optional actual cost calculation configuration.<br/>|yes|
 |**enabled**|`boolean`|Setting this `true` to measure operation costs, or enforce the cost limits for the operation<br/>|yes|
 |**include\_extension\_metadata**|`boolean`, `null`|Whether to include the calculated cost in the response extensions.<br/>|no|
 |**list\_size**|`integer`, `null`|The assumed maximum size of a list for fields that return lists.<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|no|
