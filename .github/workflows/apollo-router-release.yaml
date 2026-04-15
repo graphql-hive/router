@@ -101,7 +101,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - builder: ubuntu-latest
+          - builder: ubuntu-22.04
             platform: linux/amd64
             suffix: "-amd64"
             cache_key: Linux
