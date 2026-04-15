@@ -30,6 +30,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.7.0 (2026-04-15)
+
+### Features
+
+#### Query Plan Subscriptions Node
+
+The query planner now emits a `Subscription` node when planning a subscription operation. The `Subscription` node contains a `primary` fetch that is sent to the subgraph owning the subscription field.
+
+## 2.6.0 (2026-04-15)
+
+### Features
+
+#### Query Plan Subscriptions Node
+
+The query planner now emits a `Subscription` node when planning a subscription operation. The `Subscription` node contains a `primary` fetch that is sent to the subgraph owning the subscription field.
+
 ## 2.5.2 (2026-04-13)
 
 ### Fixes
