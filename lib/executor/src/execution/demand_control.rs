@@ -54,7 +54,8 @@ pub struct DemandControlExecutionContext {
     pub estimated_formula_by_subgraph: Arc<ahash::HashMap<String, String>>,
     /// Pre-compiled actual-cost formulas per service name (BySubgraph mode).
     /// Eliminates schema lookups during response traversal.
-    pub actual_cost_plan_by_service: Option<ahash::HashMap<String, Arc<Vec<ActualCostPlanNode>>>>,
+    pub actual_cost_plan_by_service:
+        Option<Arc<ahash::HashMap<String, Arc<Vec<ActualCostPlanNode>>>>>,
 }
 
 // ── Compiled actual-cost types ───────────────────────────────────────────────

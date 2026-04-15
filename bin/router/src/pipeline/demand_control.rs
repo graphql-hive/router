@@ -153,6 +153,7 @@ impl fmt::Display for CostExpr {
 pub struct DemandControlFormulaPlan {
     root: FormulaPlanNode,
     formula_by_subgraph: Arc<AHashMap<String, String>>,
+    actual_cost_plan_by_service: Option<Arc<AHashMap<String, Arc<Vec<ActualCostPlanNode>>>>>,
 }
 
 enum FormulaPlanNode {
@@ -177,7 +178,7 @@ struct FormulaFetchNode {
     /// Mathematical formula: pure arithmetic on variable lookups.
     estimated_expr: CostExpr,
     /// Pre-compiled actual-cost nodes for schema-lookup-free response traversal.
-    actual_nodes: Arc<Vec<ActualCostPlanNode>>,
+    actual_nodes: Option<Arc<Vec<ActualCostPlanNode>>>,
 }
 
 pub async fn evaluate_demand_control<'exec>(
@@ -275,26 +276,6 @@ pub async fn evaluate_demand_control<'exec>(
             &estimated_result,
         );
 
-        // Compile per-service actual-cost formulas for BySubgraph mode
-        let is_by_subgraph = config
-            .actual_cost
-            .as_ref()
-            .map(|a| {
-                matches!(
-                    a.mode,
-                    hive_router_config::demand_control::DemandControlActualCostMode::BySubgraph
-                )
-            })
-            .unwrap_or(false);
-
-        let actual_cost_plan_by_service = if is_by_subgraph {
-            let mut by_service: AHashMap<String, Arc<Vec<ActualCostPlanNode>>> = AHashMap::new();
-            collect_actual_cost_plan_nodes(&compiled_plan.root, &mut by_service);
-            Some(by_service)
-        } else {
-            None
-        };
-
         Ok(Some(DemandControlExecutionContext {
             max_cost: config.max_cost,
             evaluation: estimation,
@@ -305,7 +286,7 @@ pub async fn evaluate_demand_control<'exec>(
             include_extension_metadata: config.include_extension_metadata.unwrap_or(false),
             formula_cache_hit,
             estimated_formula_by_subgraph: compiled_plan.formula_by_subgraph.clone(),
-            actual_cost_plan_by_service,
+            actual_cost_plan_by_service: compiled_plan.actual_cost_plan_by_service.clone(),
         }))
     }
     .instrument(demand_control_span.clone())
@@ -359,9 +340,11 @@ fn collect_actual_cost_plan_nodes(
     match node {
         FormulaPlanNode::Empty => {}
         FormulaPlanNode::Fetch(fetch) => {
-            by_service
-                .entry(fetch.service_name.clone())
-                .or_insert_with(|| fetch.actual_nodes.clone());
+            if let Some(actual_nodes) = &fetch.actual_nodes {
+                by_service
+                    .entry(fetch.service_name.clone())
+                    .or_insert_with(|| actual_nodes.clone());
+            }
         }
         FormulaPlanNode::Sequence(nodes) | FormulaPlanNode::Parallel(nodes) => {
             for child in nodes {
@@ -444,21 +427,47 @@ fn compile_demand_control_plan(
     supergraph_state: &SupergraphState,
     config: &hive_router_config::demand_control::DemandControlConfig,
 ) -> DemandControlFormulaPlan {
+    let include_extension_metadata = config.include_extension_metadata.unwrap_or(false);
+    let compile_actual_by_subgraph = config
+        .actual_cost
+        .as_ref()
+        .map(|a| {
+            matches!(
+                a.mode,
+                hive_router_config::demand_control::DemandControlActualCostMode::BySubgraph
+            )
+        })
+        .unwrap_or(false);
+
     let root = query_plan
         .node
         .as_ref()
-        .map(|node| compile_plan_node(node, supergraph_state, config))
+        .map(|node| compile_plan_node(node, supergraph_state, config, compile_actual_by_subgraph))
         .unwrap_or(FormulaPlanNode::Empty);
-    let mut expr_by_subgraph = AHashMap::new();
-    collect_estimated_formulas(&root, &mut expr_by_subgraph);
-    let formula_by_subgraph: AHashMap<String, String> = expr_by_subgraph
-        .into_iter()
-        .map(|(service, expr)| (service, expr.to_string()))
-        .collect();
+
+    let formula_by_subgraph = if include_extension_metadata {
+        let mut expr_by_subgraph = AHashMap::new();
+        collect_estimated_formulas(&root, &mut expr_by_subgraph);
+        expr_by_subgraph
+            .into_iter()
+            .map(|(service, expr)| (service, expr.to_string()))
+            .collect()
+    } else {
+        AHashMap::new()
+    };
+
+    let actual_cost_plan_by_service = if compile_actual_by_subgraph {
+        let mut by_service: AHashMap<String, Arc<Vec<ActualCostPlanNode>>> = AHashMap::new();
+        collect_actual_cost_plan_nodes(&root, &mut by_service);
+        Some(Arc::new(by_service))
+    } else {
+        None
+    };
 
     DemandControlFormulaPlan {
         root,
         formula_by_subgraph: Arc::new(formula_by_subgraph),
+        actual_cost_plan_by_service,
     }
 }
 
@@ -466,6 +475,7 @@ fn compile_plan_node(
     node: &PlanNode,
     supergraph_state: &SupergraphState,
     config: &hive_router_config::demand_control::DemandControlConfig,
+    compile_actual_by_subgraph: bool,
 ) -> FormulaPlanNode {
     match node {
         PlanNode::Fetch(fetch_node) => {
@@ -482,11 +492,13 @@ fn compile_plan_node(
                     supergraph_state,
                     default_list_size,
                 ),
-                actual_nodes: Arc::new(compile_actual_cost_plan_nodes(
-                    &fetch_node.operation.document.operation.selection_set,
-                    root_type,
-                    supergraph_state,
-                )),
+                actual_nodes: compile_actual_by_subgraph.then(|| {
+                    Arc::new(compile_actual_cost_plan_nodes(
+                        &fetch_node.operation.document.operation.selection_set,
+                        root_type,
+                        supergraph_state,
+                    ))
+                }),
             })
         }
         PlanNode::BatchFetch(batch_fetch_node) => {
@@ -504,38 +516,57 @@ fn compile_plan_node(
                     supergraph_state,
                     default_list_size,
                 ),
-                actual_nodes: Arc::new(compile_actual_cost_plan_nodes(
-                    &batch_fetch_node.operation.document.operation.selection_set,
-                    root_type,
-                    supergraph_state,
-                )),
+                actual_nodes: compile_actual_by_subgraph.then(|| {
+                    Arc::new(compile_actual_cost_plan_nodes(
+                        &batch_fetch_node.operation.document.operation.selection_set,
+                        root_type,
+                        supergraph_state,
+                    ))
+                }),
             })
         }
-        PlanNode::Flatten(flatten) => compile_plan_node(&flatten.node, supergraph_state, config),
+        PlanNode::Flatten(flatten) => compile_plan_node(
+            &flatten.node,
+            supergraph_state,
+            config,
+            compile_actual_by_subgraph,
+        ),
         PlanNode::Sequence(sequence) => FormulaPlanNode::Sequence(
             sequence
                 .nodes
                 .iter()
-                .map(|child| compile_plan_node(child, supergraph_state, config))
+                .map(|child| {
+                    compile_plan_node(child, supergraph_state, config, compile_actual_by_subgraph)
+                })
                 .collect(),
         ),
         PlanNode::Parallel(parallel) => FormulaPlanNode::Parallel(
             parallel
                 .nodes
                 .iter()
-                .map(|child| compile_plan_node(child, supergraph_state, config))
+                .map(|child| {
+                    compile_plan_node(child, supergraph_state, config, compile_actual_by_subgraph)
+                })
                 .collect(),
         ),
         PlanNode::Condition(condition) => FormulaPlanNode::Condition {
             condition: condition.condition.clone(),
-            if_clause: condition
-                .if_clause
-                .as_ref()
-                .map(|node| Box::new(compile_plan_node(node, supergraph_state, config))),
-            else_clause: condition
-                .else_clause
-                .as_ref()
-                .map(|node| Box::new(compile_plan_node(node, supergraph_state, config))),
+            if_clause: condition.if_clause.as_ref().map(|node| {
+                Box::new(compile_plan_node(
+                    node,
+                    supergraph_state,
+                    config,
+                    compile_actual_by_subgraph,
+                ))
+            }),
+            else_clause: condition.else_clause.as_ref().map(|node| {
+                Box::new(compile_plan_node(
+                    node,
+                    supergraph_state,
+                    config,
+                    compile_actual_by_subgraph,
+                ))
+            }),
         },
         PlanNode::Subscription(subscription) => {
             let default_list_size =
@@ -552,29 +583,36 @@ fn compile_plan_node(
                     supergraph_state,
                     default_list_size,
                 ),
-                actual_nodes: Arc::new(compile_actual_cost_plan_nodes(
-                    &subscription
-                        .primary
-                        .operation
-                        .document
-                        .operation
-                        .selection_set,
-                    root_type,
-                    supergraph_state,
-                )),
+                actual_nodes: compile_actual_by_subgraph.then(|| {
+                    Arc::new(compile_actual_cost_plan_nodes(
+                        &subscription
+                            .primary
+                            .operation
+                            .document
+                            .operation
+                            .selection_set,
+                        root_type,
+                        supergraph_state,
+                    ))
+                }),
             })))
         }
         PlanNode::Defer(defer) => FormulaPlanNode::Defer {
-            primary: defer
-                .primary
-                .node
-                .as_ref()
-                .map(|node| Box::new(compile_plan_node(node, supergraph_state, config))),
+            primary: defer.primary.node.as_ref().map(|node| {
+                Box::new(compile_plan_node(
+                    node,
+                    supergraph_state,
+                    config,
+                    compile_actual_by_subgraph,
+                ))
+            }),
             deferred: defer
                 .deferred
                 .iter()
                 .filter_map(|node| node.node.as_ref())
-                .map(|node| compile_plan_node(node, supergraph_state, config))
+                .map(|node| {
+                    compile_plan_node(node, supergraph_state, config, compile_actual_by_subgraph)
+                })
                 .collect(),
         },
     }
@@ -686,18 +724,35 @@ fn eval_cost_expr(
             require_one,
             default,
         } => {
-            let values: Vec<u64> = args
-                .iter()
-                .filter_map(|(value, path)| resolve_integer_value(value, path, variable_payload))
-                .collect();
             if *require_one {
-                if values.len() == 1 {
-                    values[0]
+                let mut seen = 0usize;
+                let mut only_value = 0u64;
+                for (value, path) in args {
+                    if let Some(resolved) = resolve_integer_value(value, path, variable_payload) {
+                        seen += 1;
+                        if seen == 1 {
+                            only_value = resolved;
+                        }
+                    }
+                }
+
+                if seen == 1 {
+                    only_value
                 } else {
                     *default as u64
                 }
             } else {
-                values.into_iter().max().unwrap_or(*default as u64)
+                let mut max_value: Option<u64> = None;
+                for (value, path) in args {
+                    if let Some(resolved) = resolve_integer_value(value, path, variable_payload) {
+                        max_value = Some(match max_value {
+                            Some(current_max) => current_max.max(resolved),
+                            None => resolved,
+                        });
+                    }
+                }
+
+                max_value.unwrap_or(*default as u64)
             }
         }
         CostExpr::InputArgCost { value, value_type } => {

@@ -4,8 +4,6 @@ hive-router-query-planner: patch
 
 Fix query planner handling for combined `@skip` and `@include` conditions.
 
-Fixed planner behavior for selections that has both `@skip` and `@include` directives.
-
 - Preserve both directives when converting inline fragment conditions into fetch step selections.
 - Build the expected nested condition nodes for combined skip/include execution paths.
 - Handle `SkipAndInclude` in selection matching, fetch-step rendering, and multi-type batch path hashing.
