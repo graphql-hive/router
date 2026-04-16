@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use hive_router::http::StatusCode;
+use hive_router::http::HeaderMap;
 use hive_router::plugins::hooks::on_execute::{
     OnExecuteEndHookPayload, OnExecuteStartHookPayload, OnExecuteStartHookResult,
 };
@@ -8,9 +8,11 @@ use hive_router::plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginI
 use hive_router::plugins::hooks::on_supergraph_load::{
     OnSupergraphLoadStartHookPayload, OnSupergraphLoadStartHookResult,
 };
-use hive_router::plugins::plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload};
+use hive_router::plugins::plugin_trait::{
+    EarlyHTTPResponse, EndHookPayload, RouterPlugin, StartHookPayload,
+};
 use hive_router::ArcSwap;
-use hive_router::{async_trait, graphql_tools, sonic_rs, PlanExecutionOutput};
+use hive_router::{async_trait, graphql_tools, sonic_rs};
 use redis::Commands;
 use serde::Deserialize;
 
@@ -70,11 +72,12 @@ impl RouterPlugin for ResponseCachePlugin {
                             key,
                             String::from_utf8_lossy(&body)
                         );
-                        return payload.end_with_response(PlanExecutionOutput {
+                        let mut headers = HeaderMap::new();
+                        headers.insert("X-Cache-Status", "HIT".parse().unwrap());
+                        return payload.end_with_response(EarlyHTTPResponse {
                             body,
-                            error_count: 0,
-                            response_headers_aggregator: None,
-                            status_code: StatusCode::OK,
+                            headers,
+                            ..Default::default()
                         });
                     }
                 }
