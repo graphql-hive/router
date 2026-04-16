@@ -73,7 +73,7 @@ impl RouterPlugin for ResponseCachePlugin {
                             String::from_utf8_lossy(&body)
                         );
                         let mut headers = HeaderMap::new();
-                        headers.insert("X-Cache-Status", "HIT".parse().unwrap());
+                        headers.insert("X-Cache-Status", "HIT".parse().expect("X-Cache-Status and HIT are valid header name and value"));
                         return payload.end_with_response(EarlyHTTPResponse {
                             body,
                             headers,
