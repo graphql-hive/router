@@ -872,4 +872,32 @@ mod tests {
 
         assert_eq!(target.items.len(), 2);
     }
+
+    #[test]
+    // TODO: rename
+    fn bug1() {
+        let cond = Some(Condition::Include("include".to_string()));
+        let field = FieldSelection {
+            name: "name".to_string(),
+            selections: SelectionSet::default(),
+            alias: None,
+            arguments: None,
+            skip_if: Some("skip".to_string()),
+            include_if: Some("include".to_string()),
+        };
+        assert!(!field_condition_equal(&cond, &field));
+    }
+
+    #[test]
+    // TODO: rename
+    fn bug2() {
+        let cond = Some(Condition::Skip("skip".to_string()));
+        let fragment = InlineFragmentSelection {
+            type_condition: "Product".to_string(),
+            selections: SelectionSet::default(),
+            skip_if: Some("skip".to_string()),
+            include_if: Some("include".to_string()),
+        };
+        assert!(!fragment_condition_equal(&cond, &fragment));
+    }
 }
