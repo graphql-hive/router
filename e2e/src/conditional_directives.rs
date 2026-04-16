@@ -30,15 +30,6 @@ mod conditional_directives_e2e_tests {
     }
 
     fn check_response_includes_product_name(json_body: sonic_rs::Value, expected_included: bool) {
-        println!("Response body: {}", json_body);
-        println!(
-            "Checking if product name is {} in the response",
-            if expected_included {
-                "included"
-            } else {
-                "skipped"
-            }
-        );
         let product_name =
             json_body.pointer(&pointer!["data", "me", "reviews", 0, "product", "name",]);
         if expected_included {
