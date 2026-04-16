@@ -56,6 +56,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use faststr::FastStr;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
@@ -101,10 +102,10 @@ struct BatchFetchBuilder<'a> {
     operation_variable_definitions: Vec<VariableDefinition>,
     operation_selection_items: Vec<SelectionItem>,
     batched_aliases: Vec<EntityBatchAlias>,
-    used_variable_names: HashSet<String>,
+    used_variable_names: HashSet<FastStr>,
     representations_var_index: usize,
     variable_usages: BTreeSet<String>,
-    representations_var_by_input_key: HashMap<RepresentationsInputKey, String>,
+    representations_var_by_input_key: HashMap<RepresentationsInputKey, FastStr>,
 }
 
 impl<'a> BatchFetchBuilder<'a> {
@@ -121,7 +122,7 @@ impl<'a> BatchFetchBuilder<'a> {
             batched_aliases: Vec::with_capacity(alias_count),
             used_variable_names: merged_non_representation_variables
                 .iter()
-                .map(|var| var.name.clone())
+                .map(|var| var.name.clone().into())
                 .collect(),
             representations_var_index: 0,
             variable_usages: BTreeSet::new(),
@@ -158,7 +159,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 arguments: Some(
                     (
                         "representations".to_string(),
-                        Value::Variable(representations_variable_name.clone()),
+                        Value::Variable(representations_variable_name.to_string()),
                     )
                         .into(),
                 ),
@@ -168,7 +169,7 @@ impl<'a> BatchFetchBuilder<'a> {
 
         self.batched_aliases.push(EntityBatchAlias {
             alias,
-            representations_variable_name,
+            representations_variable_name: representations_variable_name.to_string(),
             merge_paths,
             requires: representative.requires.clone(),
             input_rewrites: representative.input_rewrites.clone(),
@@ -196,7 +197,7 @@ impl<'a> BatchFetchBuilder<'a> {
         &mut self,
         representative: &EntityFetch,
         merge_paths: &[FlattenNodePath],
-    ) -> String {
+    ) -> FastStr {
         let representations_input_key = RepresentationsInputKey {
             requires: representative.requires.clone(),
             input_rewrites: representative.input_rewrites.clone(),
@@ -217,7 +218,7 @@ impl<'a> BatchFetchBuilder<'a> {
 
         self.operation_variable_definitions
             .push(VariableDefinition {
-                name: name.clone(),
+                name: name.to_string(),
                 // [_Any!]!
                 variable_type: TypeNode::NonNull(
                     // [
@@ -266,7 +267,7 @@ impl<'a> BatchFetchBuilder<'a> {
 
         Ok(BatchFetchNode {
             id: first_candidate.fetch_node_id,
-            service_name: first_candidate.service_name.clone(),
+            service_name: first_candidate.service_name.to_string(),
             variable_usages: if self.variable_usages.is_empty() {
                 None
             } else {
@@ -302,7 +303,7 @@ struct EntityFetch {
     /// Original index in the Parallel block (for stable ordering).
     index: usize,
     fetch_node_id: i64,
-    service_name: String,
+    service_name: FastStr,
     flatten_path: FlattenNodePath,
     variable_usages: Option<BTreeSet<String>>,
     requires: SelectionSet,
@@ -395,7 +396,7 @@ impl EntityFetch {
         Ok(Some(EntityFetch {
             index,
             fetch_node_id: fetch_node.id,
-            service_name: fetch_node.service_name.clone(),
+            service_name: fetch_node.service_name.clone().into(),
             flatten_path: flatten_node.path.clone(),
             variable_usages: fetch_node.variable_usages.clone(),
             requires,
@@ -596,8 +597,8 @@ fn optimize_parallel_node(
 
 fn partition_by_subgraph(
     nodes: &[PlanNode],
-) -> Result<HashMap<String, Vec<EntityFetch>>, QueryPlanError> {
-    let mut candidates_by_subgraph: HashMap<String, Vec<EntityFetch>> = HashMap::new();
+) -> Result<HashMap<FastStr, Vec<EntityFetch>>, QueryPlanError> {
+    let mut candidates_by_subgraph: HashMap<FastStr, Vec<EntityFetch>> = HashMap::new();
 
     for (index, node) in nodes.iter().enumerate() {
         if let Some(candidate) = EntityFetch::from_node(index, node)? {
@@ -625,11 +626,11 @@ fn fetch_rewrites_hash(rewrites: Option<&[FetchRewrite]>) -> u64 {
 }
 
 fn next_unique_representations_var_name(
-    used_variable_names: &mut HashSet<String>,
+    used_variable_names: &mut HashSet<FastStr>,
     next_index: &mut usize,
-) -> String {
+) -> FastStr {
     loop {
-        let name = format!("__batch_reps_{next_index}");
+        let name: FastStr = format!("__batch_reps_{next_index}").into();
         *next_index += 1;
 
         if used_variable_names.insert(name.clone()) {
@@ -857,6 +858,7 @@ mod tests {
         path::PathBuf,
     };
 
+    use faststr::FastStr;
     use graphql_tools::parser::query as query_ast;
 
     use crate::{
@@ -877,7 +879,10 @@ mod tests {
 
     #[test]
     fn next_unique_representations_variable_name_skips_used_values() {
-        let mut used = HashSet::from(["__batch_reps_0".to_string(), "__batch_reps_2".to_string()]);
+        let mut used = HashSet::from([
+            FastStr::from("__batch_reps_0"),
+            FastStr::from("__batch_reps_2"),
+        ]);
         let mut next_index = 0;
 
         let first = next_unique_representations_var_name(&mut used, &mut next_index);
