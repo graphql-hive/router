@@ -880,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    // Field Condition should only be equal to Condition::IncludeAndSkip
+    // Field Condition should only be equal to Condition::SkipAndInclude
     fn field_condition_skip_and_include() {
         let skip_cond = Some(Condition::Skip("skip".to_string()));
         let include_cond: Option<Condition> = Some(Condition::Include("include".to_string()));
@@ -902,7 +902,7 @@ mod tests {
     }
 
     #[test]
-    // Fragment Condition should only be equal to Condition::IncludeAndSkip
+    // Fragment Condition should only be equal to Condition::SkipAndInclude
     fn fragment_condition_skip_and_include() {
         let skip_cond = Some(Condition::Skip("skip".to_string()));
         let include_cond: Option<Condition> = Some(Condition::Include("include".to_string()));

@@ -56,7 +56,22 @@ mod conditional_directives_e2e_tests {
         let res = router
             .send_graphql_request(query, Some(variables), None)
             .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+
         let json_body = res.json_body().await;
+        let data = json_body.pointer(&pointer!["data"]);
+        assert!(
+            data.is_some_and(|value| value.is_object()),
+            "Expected response.data to be an object. Response body: {}",
+            json_body
+        );
+        let errors = json_body.pointer(&pointer!["errors"]);
+        assert!(
+            errors.is_none_or(|value| value.is_null()),
+            "Expected response.errors to be null or missing. Response body: {}",
+            json_body
+        );
+
         check_response_includes_product_name(json_body, expected_included);
     }
 
