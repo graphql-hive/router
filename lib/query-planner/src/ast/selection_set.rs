@@ -575,9 +575,11 @@ pub fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -
     match cond {
         Some(cond) => match cond {
             Condition::Include(var_name) => {
-                field.include_if.as_ref().is_some_and(|v| v == var_name)
+                field.include_if.as_ref().is_some_and(|v| v == var_name) && field.skip_if.is_none()
             }
-            Condition::Skip(var_name) => field.skip_if.as_ref().is_some_and(|v| v == var_name),
+            Condition::Skip(var_name) => {
+                field.skip_if.as_ref().is_some_and(|v| v == var_name) && field.include_if.is_none()
+            }
             Condition::SkipAndInclude { skip, include } => {
                 field.skip_if.as_ref().is_some_and(|v| v == skip)
                     && field.include_if.as_ref().is_some_and(|v| v == include)
@@ -592,8 +594,12 @@ fn fragment_condition_equal(cond: &Option<Condition>, fragment: &InlineFragmentS
         Some(cond) => match cond {
             Condition::Include(var_name) => {
                 fragment.include_if.as_ref().is_some_and(|v| v == var_name)
+                    && fragment.skip_if.is_none()
             }
-            Condition::Skip(var_name) => fragment.skip_if.as_ref().is_some_and(|v| v == var_name),
+            Condition::Skip(var_name) => {
+                fragment.skip_if.as_ref().is_some_and(|v| v == var_name)
+                    && fragment.include_if.is_none()
+            }
             Condition::SkipAndInclude { skip, include } => {
                 fragment.skip_if.as_ref().is_some_and(|v| v == skip)
                     && fragment.include_if.as_ref().is_some_and(|v| v == include)
@@ -874,9 +880,14 @@ mod tests {
     }
 
     #[test]
-    // TODO: rename
-    fn bug1() {
-        let cond = Some(Condition::Include("include".to_string()));
+    // Field Condition should only be equal to Condition::IncludeAndSkip
+    fn field_condition_skip_and_include() {
+        let skip_cond = Some(Condition::Skip("skip".to_string()));
+        let include_cond: Option<Condition> = Some(Condition::Include("include".to_string()));
+        let skip_and_include_cond = Some(Condition::SkipAndInclude {
+            skip: "skip".to_string(),
+            include: "include".to_string(),
+        });
         let field = FieldSelection {
             name: "name".to_string(),
             selections: SelectionSet::default(),
@@ -885,19 +896,28 @@ mod tests {
             skip_if: Some("skip".to_string()),
             include_if: Some("include".to_string()),
         };
-        assert!(!field_condition_equal(&cond, &field));
+        assert!(!field_condition_equal(&skip_cond, &field));
+        assert!(!field_condition_equal(&include_cond, &field));
+        assert!(field_condition_equal(&skip_and_include_cond, &field));
     }
 
     #[test]
-    // TODO: rename
-    fn bug2() {
-        let cond = Some(Condition::Skip("skip".to_string()));
+    // Fragment Condition should only be equal to Condition::IncludeAndSkip
+    fn fragment_condition_skip_and_include() {
+        let skip_cond = Some(Condition::Skip("skip".to_string()));
+        let include_cond: Option<Condition> = Some(Condition::Include("include".to_string()));
+        let skip_and_include_cond = Some(Condition::SkipAndInclude {
+            skip: "skip".to_string(),
+            include: "include".to_string(),
+        });
         let fragment = InlineFragmentSelection {
             type_condition: "Product".to_string(),
             selections: SelectionSet::default(),
             skip_if: Some("skip".to_string()),
             include_if: Some("include".to_string()),
         };
-        assert!(!fragment_condition_equal(&cond, &fragment));
+        assert!(!fragment_condition_equal(&skip_cond, &fragment));
+        assert!(!fragment_condition_equal(&include_cond, &fragment));
+        assert!(fragment_condition_equal(&skip_and_include_cond, &fragment));
     }
 }
