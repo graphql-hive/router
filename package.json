@@ -5,8 +5,7 @@
   "workspaces": [
     "audits",
     "lib/node-addon",
-    "docs/generator",
-    "bench"
+    "docs/generator"
   ],
   "packageManager": "npm@11.11.1",
   "devDependencies": {
