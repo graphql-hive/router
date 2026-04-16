@@ -456,10 +456,14 @@ impl From<EarlyHTTPResponse> for PlanExecutionOutput {
         } else {
             let mut entries: HashMap<HeaderName, (HeaderAggregationStrategy, Vec<HeaderValue>)> =
                 Default::default();
+            let mut last_name = None;
             for (name, value) in val.headers.into_iter() {
                 if let Some(name) = name {
+                    last_name = Some(name);
+                }
+                if let Some(name) = &last_name {
                     let aggregated_header = entries
-                        .entry(name)
+                        .entry(name.clone())
                         .or_insert_with(|| (HeaderAggregationStrategy::Append, Vec::new()));
                     aggregated_header.1.push(value);
                 }
