@@ -107,6 +107,8 @@ pub mod names {
     pub const PLAN_CACHE_REQUESTS_TOTAL: &str = "hive.router.plan_cache.requests_total";
     pub const PLAN_CACHE_DURATION: &str = "hive.router.plan_cache.duration";
     pub const PLAN_CACHE_SIZE: &str = "hive.router.plan_cache.size";
+    pub const CIRCUIT_BREAKER_REJECTED_REQUESTS: &str =
+        "hive.router.circuit_breaker.rejected_requests_total";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
@@ -234,6 +236,10 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (names::PLAN_CACHE_REQUESTS_TOTAL, &[labels::RESULT]),
     (names::PLAN_CACHE_DURATION, &[labels::RESULT]),
     (names::PLAN_CACHE_SIZE, &[]),
+    (
+        names::CIRCUIT_BREAKER_REJECTED_REQUESTS,
+        &[labels::SUBGRAPH_NAME],
+    ),
 ];
 
 pub fn labels_for(metric_name: &str) -> Option<&'static [&'static str]> {

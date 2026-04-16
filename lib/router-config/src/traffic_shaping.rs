@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Duration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::http_header::HttpHeaderName;
+use crate::primitives::{http_header::HttpHeaderName, percentage::Percentage};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
@@ -88,6 +88,11 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     ///      }
     /// ```
     pub request_timeout: Option<DurationOrExpression>,
+
+    /// Circuit Breaker configuration for the subgraph.
+    /// When the circuit breaker is open, requests to the subgraph will be short-circuited and an error will be returned to the client.
+    /// The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
+    pub circuit_breaker: Option<TrafficShapingSubgraphCircuitBreakerConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -129,6 +134,12 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// ```
     #[serde(default = "default_request_timeout")]
     pub request_timeout: DurationOrExpression,
+
+    /// Circuit Breaker configuration for all subgraphs.
+    /// When the circuit breaker is open, requests to the subgraph will be
+    /// short-circuited and an error will be returned to the client.
+    /// The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
+    pub circuit_breaker: Option<TrafficShapingSubgraphCircuitBreakerConfig>,
 }
 
 fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
@@ -159,6 +170,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             pool_idle_timeout: default_pool_idle_timeout(),
             dedupe_enabled: default_dedupe_enabled(),
             request_timeout: default_request_timeout(),
+            circuit_breaker: default_circuit_breaker_config(),
         }
     }
 }
@@ -288,4 +300,39 @@ impl Default for TrafficShapingRouterConfig {
             max_long_lived_clients: default_max_long_lived_clients(),
         }
     }
+}
+
+fn default_circuit_breaker_config() -> Option<TrafficShapingSubgraphCircuitBreakerConfig> {
+    None
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingSubgraphCircuitBreakerConfig {
+    /// Enable or disable the circuit breaker for the subgraph.
+    /// Default: false (circuit breaker is disabled)
+    #[serde(default = "default_circuit_breaker_enabled")]
+    pub enabled: bool,
+    /// Percentage after what the circuit breaker should kick in.
+    /// Default: 50%
+    #[serde(default)]
+    #[schemars(with = "String")]
+    pub error_threshold: Option<Percentage>,
+    /// Count of requests before starting evaluating.
+    /// Default: 5
+    #[serde(default)]
+    pub volume_threshold: Option<usize>,
+    /// The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.
+    /// Default: 30s
+    #[serde(
+        default,
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub reset_timeout: Option<Duration>,
+}
+
+fn default_circuit_breaker_enabled() -> bool {
+    false
 }

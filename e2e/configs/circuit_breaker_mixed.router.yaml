@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+traffic_shaping:
+  all:
+    circuit_breaker:
+      enabled: true
+      error_threshold: 50%
+      volume_threshold: 10
+      reset_timeout: 30s
+    dedupe_enabled: false
+  subgraphs:
+    accounts:
+      circuit_breaker:
+        enabled: true
+        volume_threshold: 3  # Override only volume_threshold
+        # error_threshold and reset_timeout inherit from global
