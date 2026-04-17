@@ -24,6 +24,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - name: install nextest
+        uses: taiki-e/install-action@a2352fc6ce487f030a3aa709482d57823eadfb37 # v2.75.16
+        with:
+          tool: nextest@0.9.133
       - name: test all
         run: cargo test_all
         timeout-minutes: 5
@@ -37,15 +41,17 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - name: install nextest
+        uses: taiki-e/install-action@a2352fc6ce487f030a3aa709482d57823eadfb37 # v2.75.16
+        with:
+          tool: nextest@0.9.133
       - name: test e2e
-        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        run: cargo test_e2e
+        timeout-minutes: 10
         env:
+          NEXTEST_PROFILE: ci
           RUST_BACKTRACE: full
           RUST_LOG: debug
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          command: cargo test_e2e
 
   plugin_examples:
     name: test / plugin examples
@@ -56,6 +62,10 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: install nextest
+        uses: taiki-e/install-action@a2352fc6ce487f030a3aa709482d57823eadfb37 # v2.75.16
+        with:
+          tool: nextest@0.9.133
       - name: test plugin examples
         run: cargo test_plugin_examples
         timeout-minutes: 10
