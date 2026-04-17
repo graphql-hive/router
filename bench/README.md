@@ -27,6 +27,7 @@ Defaults: 50 connections for 30s
 # Custom settings
 BENCH_CONNECTIONS=69 ./bench/run-benchmark.sh
 BENCH_DURATION=10s ./bench/run-benchmark.sh
+BENCH_PERSISTED_MODE=true BENCH_DOCUMENT_ID=bench_test_query ./bench/run-benchmark.sh
 
 # Backward-compatible env names
 BENCH_VUS=69 ./bench/run-benchmark.sh

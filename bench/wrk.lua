@@ -51,6 +51,25 @@ local function build_graphql_request_body(query)
   return "{\"query\":\"" .. escaped_query .. "\"}"
 end
 
+local function build_persisted_document_request_body(document_id)
+  if cjson_safe ~= nil and cjson_safe.encode ~= nil then
+    local encoded = cjson_safe.encode({ documentId = document_id })
+    if encoded ~= nil then
+      return encoded
+    end
+  end
+
+  if cjson ~= nil and cjson.encode ~= nil then
+    local ok_encode, encoded = pcall(cjson.encode, { documentId = document_id })
+    if ok_encode and encoded ~= nil then
+      return encoded
+    end
+  end
+
+  local escaped_document_id = escape_json(document_id)
+  return "{\"documentId\":\"" .. escaped_document_id .. "\"}"
+end
+
 local function hash_string(value)
   local hash = 5381
   local max_u32 = 4294967296
@@ -101,17 +120,28 @@ local function check_response_structure(body)
 end
 
 local operation_file = os.getenv("BENCH_OPERATION_FILE")
-local query
+local persisted_mode = os.getenv("BENCH_PERSISTED_MODE") == "true"
+local request_body
 
-if operation_file ~= nil and operation_file ~= "" then
-  query = read_file(operation_file)
+if persisted_mode then
+  local document_id = os.getenv("BENCH_DOCUMENT_ID")
+  if document_id == nil or document_id == "" then
+    document_id = "bench_test_query"
+  end
+  request_body = build_persisted_document_request_body(document_id)
 else
-  query = read_file_if_exists("operation.graphql") or read_file("bench/operation.graphql")
+  local query
+  if operation_file ~= nil and operation_file ~= "" then
+    query = read_file(operation_file)
+  else
+    query = read_file_if_exists("operation.graphql") or read_file("bench/operation.graphql")
+  end
+  request_body = build_graphql_request_body(query)
 end
 
 wrk.method = "POST"
 wrk.headers["Content-Type"] = "application/json"
-wrk.body = build_graphql_request_body(query)
+wrk.body = request_body
 
 response = function(status, headers, body)
   if status ~= 200 then
