@@ -580,7 +580,7 @@ mod tests {
               response:
                 - insert:
                     name: x-original-forwarded-for
-                    expression: '.response."x-forwarded-for"'
+                    expression: '.response.headers."x-forwarded-for"'
         "#;
         let config = parse_yaml_config(String::from(yaml_str)).unwrap();
         let plan = compile_headers_plan(&config.headers).unwrap();

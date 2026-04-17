@@ -7,8 +7,8 @@ mod graphql_request;
 #[cfg(test)]
 mod graphql_response;
 #[cfg(test)]
-mod unix_domain_socket;
-#[cfg(test)]
 mod router_request;
 #[cfg(test)]
 mod router_response;
+#[cfg(test)]
+mod unix_domain_socket;

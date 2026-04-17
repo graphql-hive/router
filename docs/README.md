@@ -1187,7 +1187,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1409,7 +1409,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1662,7 +1662,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1884,7 +1884,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
