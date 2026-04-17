@@ -4,6 +4,7 @@ hive-router-config: minor
 hive-router: minor
 hive-router-internal: minor
 hive-console-sdk: minor
+hive-apollo-router-plugin: patch
 ---
 
 # Persisted Documents

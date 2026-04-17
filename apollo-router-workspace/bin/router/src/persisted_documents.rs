@@ -313,7 +313,7 @@ struct ExpectedBodyStructure {
 
 fn extract_document_id(body: &[u8]) -> Result<ExpectedBodyStructure, PersistedDocumentsError> {
     serde_json::from_slice::<ExpectedBodyStructure>(body)
-        .map_err(PersistedDocumentsError::FailedToParseBody)
+        .map_err(|error| PersistedDocumentsError::FailedToParseBody(error.to_string()))
 }
 
 /// To test this plugin, we do the following:
