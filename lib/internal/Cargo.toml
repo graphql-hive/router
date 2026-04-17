@@ -36,6 +36,7 @@ ahash = { workspace = true }
 dashmap = { workspace = true }
 serde = { workspace = true }
 tokio-stream = "0.1.18"
+serde = { workspace = true }
 
 # telemetry
 opentelemetry = { workspace = true, features = ["trace"] }

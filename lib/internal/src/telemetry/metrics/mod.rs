@@ -5,6 +5,7 @@ pub mod demand_control_metrics;
 pub mod graphql_metrics;
 pub mod http_client_metrics;
 pub mod http_server_metrics;
+pub mod persisted_documents_metrics;
 pub mod setup;
 pub mod supergraph_metrics;
 
@@ -18,6 +19,7 @@ use crate::telemetry::metrics::demand_control_metrics::DemandControlMetrics;
 use crate::telemetry::metrics::graphql_metrics::GraphQLMetrics;
 use crate::telemetry::metrics::http_client_metrics::HttpClientMetrics;
 use crate::telemetry::metrics::http_server_metrics::HttpServerMetrics;
+use crate::telemetry::metrics::persisted_documents_metrics::PersistedDocumentsMetrics;
 use crate::telemetry::metrics::supergraph_metrics::SupergraphMetrics;
 
 pub struct Metrics {
@@ -27,6 +29,7 @@ pub struct Metrics {
     pub demand_control: DemandControlMetrics,
     pub supergraph: SupergraphMetrics,
     pub cache: CacheMetrics,
+    pub persisted_documents: PersistedDocumentsMetrics,
 }
 
 impl Metrics {
@@ -38,6 +41,7 @@ impl Metrics {
             demand_control: DemandControlMetrics::new(meter),
             supergraph: SupergraphMetrics::new(meter),
             cache: CacheMetrics::new(meter),
+            persisted_documents: PersistedDocumentsMetrics::new(meter),
         }
     }
 }

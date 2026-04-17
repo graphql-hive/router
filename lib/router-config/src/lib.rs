@@ -12,6 +12,7 @@ pub mod limits;
 pub mod log;
 pub mod override_labels;
 pub mod override_subgraph_urls;
+pub mod persisted_documents;
 pub mod primitives;
 pub mod query_planner;
 pub mod subscriptions;
@@ -131,6 +132,10 @@ pub struct HiveRouterConfig {
     /// Configuration of router's WebSocket server.
     #[serde(default)]
     pub websocket: websocket::WebSocketConfig,
+
+    /// Configuration for persisted documents extraction and resolution.
+    #[serde(default)]
+    pub persisted_documents: persisted_documents::PersistedDocumentsConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

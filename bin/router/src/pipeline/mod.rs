@@ -41,7 +41,7 @@ use crate::{
         demand_control::evaluate_demand_control,
         error::PipelineError,
         execution::{execute_plan, PlannedRequest},
-        execution_request::{deserialize_graphql_params, DeserializationResult, GetQueryStr},
+        execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult},
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
@@ -81,6 +81,7 @@ pub mod long_lived_client_limit;
 pub mod multipart_subscribe;
 pub mod normalize;
 pub mod parser;
+pub mod persisted_documents;
 pub mod progressive_override;
 pub mod query_plan;
 pub mod request_extensions;
@@ -142,31 +143,6 @@ pub async fn graphql_request_handler(
         write_request_body_size(req, body_bytes.len() as u64);
         http_server_request_span.record_body_size(body_bytes.len());
 
-        let mut plugin_req_state = None;
-
-        if let (Some(plugins), Some(plugin_context)) = (
-            shared_state.plugins.as_ref(),
-            req.extensions().get::<Arc<PluginContext>>(),
-        ) {
-            plugin_req_state = Some(PluginRequestState {
-                plugins: plugins.clone(),
-                router_http_request: req.into(),
-                context: plugin_context.clone(),
-            });
-        }
-
-        let deserialization_result =
-            deserialize_graphql_params(req, body_bytes, &plugin_req_state).await?;
-
-        let graphql_params = match deserialization_result {
-            DeserializationResult::GraphQLParams(params) => params,
-            DeserializationResult::EarlyResponse(response) => {
-                return Ok(response);
-            }
-        };
-
-        write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
-
         let client_name = req
             .headers()
             .get(
@@ -187,6 +163,40 @@ pub async fn graphql_request_handler(
                     .version_header,
             )
             .and_then(|v| v.to_str().ok());
+
+        let mut plugin_req_state = None;
+
+        if let (Some(plugins), Some(plugin_context)) = (
+            shared_state.plugins.as_ref(),
+            req.extensions().get::<Arc<PluginContext>>(),
+        ) {
+            plugin_req_state = Some(PluginRequestState {
+                plugins: plugins.clone(),
+                router_http_request: req.into(),
+                context: plugin_context.clone(),
+            });
+        }
+
+        let operation_preparation_result = OperationPreparation::prepare(
+            req,
+            shared_state,
+            &plugin_req_state,
+            body_bytes,
+            client_name,
+            client_version,
+        )
+        .await?;
+
+        let prepared_operation = match operation_preparation_result {
+            OperationPreparationResult::Operation(prepared_operation) => prepared_operation,
+            OperationPreparationResult::EarlyResponse(response) => {
+                return Ok(response);
+            }
+        };
+
+        let graphql_params = prepared_operation.graphql_params;
+
+        write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
 
         let parser_result =
             parse_operation_with_cache(shared_state, &graphql_params, &plugin_req_state).await?;
