@@ -2,16 +2,44 @@ use async_dropper_simple::{AsyncDrop, AsyncDropper};
 use graphql_tools::parser::schema::Document;
 use recloser::AsyncRecloser;
 use reqwest_middleware::ClientWithMiddleware;
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, BTreeMap, HashMap},
     sync::Arc,
     time::Duration,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::{buffer::AddStatus, utils::OperationProcessor};
-use crate::agent::{buffer::Buffer, builder::UsageAgentBuilder};
+use crate::{agent::{buffer::Buffer, builder::UsageAgentBuilder}, expressions::values::boolean::{BooleanConversionError, BooleanOrProgram}};
+use crate::{
+    agent::{buffer::AddStatus, utils::OperationProcessor},
+    expressions::ExecutableProgram,
+};
+use vrl::{core::Value as VrlValue, value::KeyString};
+use crate::expressions::lib::FromVrlValue;
+
+#[derive(Debug, Clone, Default)]
+pub enum OperationType {
+    #[default]
+    Query,
+    Mutation,
+    Subscription,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestDetails {
+    pub headers: BTreeMap<String, String>,
+    pub method: String,
+    pub url: RequestDetailsUrl,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestDetailsUrl {
+    pub host: String,
+    pub port: u16,
+    pub path: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct ExecutionReport {
@@ -24,7 +52,9 @@ pub struct ExecutionReport {
     pub errors: usize,
     pub operation_body: String,
     pub operation_name: Option<String>,
+    pub operation_type: OperationType,
     pub persisted_document_hash: Option<String>,
+    pub request_details: RequestDetails,
 }
 
 typify::import_types!(schema = "./usage-report-v2.schema.json");
@@ -36,6 +66,7 @@ pub struct UsageAgentInner {
     pub(crate) client: ClientWithMiddleware,
     pub(crate) flush_interval: Duration,
     pub(crate) circuit_breaker: AsyncRecloser,
+    pub(crate) exclude: BooleanOrProgram,
 }
 
 pub fn non_empty_string(value: Option<String>) -> Option<String> {
@@ -70,6 +101,12 @@ pub enum AgentError {
     CircuitBreakerRejected,
     #[error("unable to send report: {0}")]
     Unknown(String),
+    #[error("failed to compile exclude expression: {0}")]
+    ExcludeExpressionCompileError(#[from] crate::expressions::ExpressionCompileError),
+    #[error("failed to execute exclude expression: {0}")]
+    ExcludeExpressionExecutionError(#[from] crate::expressions::ExpressionExecutionError),
+    #[error("failed to convert exclude expression result to boolean: {0}")]
+    ExcludeExpressionResultConversionError(#[from] BooleanConversionError),
 }
 
 pub type UsageAgent = Arc<AsyncDropper<UsageAgentInner>>;
@@ -237,12 +274,87 @@ impl UsageAgentExt for UsageAgent {
     }
 
     async fn add_report(&self, execution_report: ExecutionReport) -> Result<(), AgentError> {
-        if let AddStatus::Full { drained } = self.inner().buffer.add(execution_report).await {
-            self.inner().handle_drained(drained).await?;
+        let inner = self.inner();
+        if let BooleanOrProgram::Program(exclude_program) = &inner.exclude {
+            let result =
+                exclude_program.execute(get_vrl_value_from_execution_report(&execution_report))?;
+            let result_bool = bool::from_vrl_value(result)?;
+            if result_bool {
+                tracing::debug!(
+                    "Excluding report for operation \"{}\" based on exclude expression evaluation",
+                    execution_report
+                        .operation_name
+                        .clone()
+                        .or_else(|| Some("anonymous".to_string()))
+                        .unwrap()
+                );
+                return Ok(());
+            }
+        }
+        if let AddStatus::Full { drained } = inner.buffer.add(execution_report).await {
+            inner.handle_drained(drained).await?;
         }
 
         Ok(())
     }
+}
+
+pub fn get_vrl_value_from_execution_report(report: &ExecutionReport) -> VrlValue {
+    let mut headers_value: BTreeMap<KeyString, VrlValue> = BTreeMap::new();
+    for (header_name, header_value) in report.request_details.headers.iter() {
+        headers_value.insert(header_name.as_str().into(), header_value.as_str().into());
+    }
+
+    let headers_value = VrlValue::Object(headers_value);
+
+    // .request.url
+    let url_value = VrlValue::Object(BTreeMap::from([
+        (
+            "host".into(),
+            report.request_details.url.host.as_str().into(),
+        ),
+        (
+            "path".into(),
+            report.request_details.url.path.as_str().into(),
+        ),
+        (
+            "port".into(),
+            VrlValue::Integer(report.request_details.url.port.into()),
+        ),
+    ]));
+
+    // .request.operation
+    let operation_value = VrlValue::Object(BTreeMap::from([
+        (
+            "name".into(),
+            report.operation_name.as_deref().unwrap_or_default().into(),
+        ),
+        (
+            "type".into(),
+            match report.operation_type {
+                OperationType::Query => "query".into(),
+                OperationType::Mutation => "mutation".into(),
+                OperationType::Subscription => "subscription".into(),
+            },
+        ),
+        ("query".into(), report.operation_body.as_str().into()),
+    ]));
+
+    // .request
+    let request_value = VrlValue::Object(BTreeMap::from([
+        (
+            "method".into(),
+            report.request_details.method.as_str().into(),
+        ),
+        ("headers".into(), headers_value),
+        ("url".into(), url_value),
+        ("operation".into(), operation_value),
+    ]));
+
+    VrlValue::Object(BTreeMap::from([
+        ("request".into(), request_value),
+        ("default".into(), VrlValue::Boolean(false)),
+    ]))
 }
 
 #[async_trait::async_trait]
@@ -259,9 +371,15 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use graphql_tools::parser::{parse_query, parse_schema};
-    use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+    use reqwest::{
+        header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
+        Method,
+    };
 
-    use crate::agent::usage_agent::{ExecutionReport, Report, UsageAgent, UsageAgentExt};
+    use crate::agent::usage_agent::{
+        ExecutionReport, OperationType, Report, RequestDetails, RequestDetailsUrl, UsageAgent,
+        UsageAgentExt,
+    };
 
     const CONTENT_TYPE_VALUE: &'static str = "application/json";
     const GRAPHQL_CLIENT_NAME: &'static str = "Hive Client";
@@ -435,6 +553,7 @@ mod tests {
                     schema: Arc::new(schema),
                     operation_body: op.to_string(),
                     operation_name: Some("deleteProject".to_string()),
+                    operation_type: OperationType::Mutation,
                     client_name: Some(GRAPHQL_CLIENT_NAME.to_string()),
                     client_version: Some(GRAPHQL_CLIENT_VERSION.to_string()),
                     timestamp,
@@ -442,6 +561,15 @@ mod tests {
                     ok: true,
                     errors: 0,
                     persisted_document_hash: None,
+                    request_details: RequestDetails {
+                        headers: Default::default(),
+                        method: "POST".to_string(),
+                        url: RequestDetailsUrl {
+                            host: "example.com".to_string(),
+                            port: 443,
+                            path: "/graphql".to_string(),
+                        },
+                    },
                 })
                 .await?;
         }

@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
-use std::time::Duration;
 
-use hive_router_config::traffic_shaping::DurationOrExpression;
 use vrl::{
     compiler::{compile as vrl_compile, Program as VrlProgram, TargetValue as VrlTargetValue},
     core::Value as VrlValue,
@@ -345,3 +343,4 @@ impl<'a, 'b> VrlObjectBuilder<'a, 'b> {
         ChildState::Explore(child)
     }
 }
+
