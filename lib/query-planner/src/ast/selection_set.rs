@@ -444,7 +444,12 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
         for target_item in target.items.iter_mut() {
             match (source_item, target_item) {
                 (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
-                    if source_field == target_field {
+                    if source_field == target_field
+                        && field_condition_equal(
+                            &Option::<Condition>::from(source_field),
+                            target_field,
+                        )
+                    {
                         found = true;
                         merge_selection_set(
                             &mut target_field.selections,
@@ -458,7 +463,12 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
                     SelectionItem::InlineFragment(source_fragment),
                     SelectionItem::InlineFragment(target_fragment),
                 ) => {
-                    if source_fragment.type_condition == target_fragment.type_condition {
+                    if source_fragment.type_condition == target_fragment.type_condition
+                        && fragment_condition_equal(
+                            &Option::<Condition>::from(source_fragment),
+                            target_fragment,
+                        )
+                    {
                         found = true;
                         merge_selection_set(
                             &mut target_fragment.selections,
@@ -565,9 +575,15 @@ pub fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -
     match cond {
         Some(cond) => match cond {
             Condition::Include(var_name) => {
-                field.include_if.as_ref().is_some_and(|v| v == var_name)
+                field.include_if.as_ref().is_some_and(|v| v == var_name) && field.skip_if.is_none()
             }
-            Condition::Skip(var_name) => field.skip_if.as_ref().is_some_and(|v| v == var_name),
+            Condition::Skip(var_name) => {
+                field.skip_if.as_ref().is_some_and(|v| v == var_name) && field.include_if.is_none()
+            }
+            Condition::SkipAndInclude { skip, include } => {
+                field.skip_if.as_ref().is_some_and(|v| v == skip)
+                    && field.include_if.as_ref().is_some_and(|v| v == include)
+            }
         },
         None => field.include_if.is_none() && field.skip_if.is_none(),
     }
@@ -578,8 +594,16 @@ fn fragment_condition_equal(cond: &Option<Condition>, fragment: &InlineFragmentS
         Some(cond) => match cond {
             Condition::Include(var_name) => {
                 fragment.include_if.as_ref().is_some_and(|v| v == var_name)
+                    && fragment.skip_if.is_none()
             }
-            Condition::Skip(var_name) => fragment.skip_if.as_ref().is_some_and(|v| v == var_name),
+            Condition::Skip(var_name) => {
+                fragment.skip_if.as_ref().is_some_and(|v| v == var_name)
+                    && fragment.include_if.is_none()
+            }
+            Condition::SkipAndInclude { skip, include } => {
+                fragment.skip_if.as_ref().is_some_and(|v| v == skip)
+                    && fragment.include_if.as_ref().is_some_and(|v| v == include)
+            }
         },
         None => fragment.include_if.is_none() && fragment.skip_if.is_none(),
     }
@@ -749,5 +773,151 @@ mod tests {
           selection_set,
           @r#"{field1(id: 1, list: [1, 2], name: "test", obj: {key: "value"})}"#
         )
+    }
+
+    #[test]
+    fn merge_selection_set_keeps_fields_with_different_conditions_separate() {
+        let mut target = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "reviews".to_string(),
+                selections: SelectionSet::default(),
+                alias: None,
+                arguments: None,
+                skip_if: None,
+                include_if: Some("first".to_string()),
+            })],
+        };
+        let source = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "reviews".to_string(),
+                selections: SelectionSet::default(),
+                alias: None,
+                arguments: None,
+                skip_if: None,
+                include_if: Some("second".to_string()),
+            })],
+        };
+
+        merge_selection_set(&mut target, &source, false);
+
+        assert_eq!(target.items.len(), 2);
+    }
+
+    #[test]
+    fn merge_selection_set_merges_fields_with_same_condition() {
+        let mut target = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "reviews".to_string(),
+                selections: SelectionSet {
+                    items: vec![SelectionItem::Field(FieldSelection {
+                        name: "id".to_string(),
+                        selections: SelectionSet::default(),
+                        alias: None,
+                        arguments: None,
+                        skip_if: None,
+                        include_if: None,
+                    })],
+                },
+                alias: None,
+                arguments: None,
+                skip_if: None,
+                include_if: Some("cond".to_string()),
+            })],
+        };
+        let source = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "reviews".to_string(),
+                selections: SelectionSet {
+                    items: vec![SelectionItem::Field(FieldSelection {
+                        name: "body".to_string(),
+                        selections: SelectionSet::default(),
+                        alias: None,
+                        arguments: None,
+                        skip_if: None,
+                        include_if: None,
+                    })],
+                },
+                alias: None,
+                arguments: None,
+                skip_if: None,
+                include_if: Some("cond".to_string()),
+            })],
+        };
+
+        merge_selection_set(&mut target, &source, false);
+
+        assert_eq!(target.items.len(), 1);
+
+        let SelectionItem::Field(field) = &target.items[0] else {
+            panic!("expected field selection");
+        };
+
+        assert_eq!(field.selections.items.len(), 2);
+    }
+
+    #[test]
+    fn merge_selection_set_keeps_inline_fragments_with_different_conditions_separate() {
+        let mut target = SelectionSet {
+            items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                type_condition: "User".to_string(),
+                selections: SelectionSet::default(),
+                skip_if: None,
+                include_if: Some("first".to_string()),
+            })],
+        };
+        let source = SelectionSet {
+            items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                type_condition: "User".to_string(),
+                selections: SelectionSet::default(),
+                skip_if: None,
+                include_if: Some("second".to_string()),
+            })],
+        };
+
+        merge_selection_set(&mut target, &source, false);
+
+        assert_eq!(target.items.len(), 2);
+    }
+
+    #[test]
+    // Field Condition should only be equal to Condition::SkipAndInclude
+    fn field_condition_skip_and_include() {
+        let skip_cond = Some(Condition::Skip("skip".to_string()));
+        let include_cond: Option<Condition> = Some(Condition::Include("include".to_string()));
+        let skip_and_include_cond = Some(Condition::SkipAndInclude {
+            skip: "skip".to_string(),
+            include: "include".to_string(),
+        });
+        let field = FieldSelection {
+            name: "name".to_string(),
+            selections: SelectionSet::default(),
+            alias: None,
+            arguments: None,
+            skip_if: Some("skip".to_string()),
+            include_if: Some("include".to_string()),
+        };
+        assert!(!field_condition_equal(&skip_cond, &field));
+        assert!(!field_condition_equal(&include_cond, &field));
+        assert!(field_condition_equal(&skip_and_include_cond, &field));
+    }
+
+    #[test]
+    // Fragment Condition should only be equal to Condition::SkipAndInclude
+    fn fragment_condition_skip_and_include() {
+        let skip_cond = Some(Condition::Skip("skip".to_string()));
+        let include_cond: Option<Condition> = Some(Condition::Include("include".to_string()));
+        let skip_and_include_cond = Some(Condition::SkipAndInclude {
+            skip: "skip".to_string(),
+            include: "include".to_string(),
+        });
+        let fragment = InlineFragmentSelection {
+            type_condition: "Product".to_string(),
+            selections: SelectionSet::default(),
+            skip_if: Some("skip".to_string()),
+            include_if: Some("include".to_string()),
+        };
+        assert!(!fragment_condition_equal(&skip_cond, &fragment));
+        assert!(!fragment_condition_equal(&include_cond, &fragment));
+        assert!(fragment_condition_equal(&skip_and_include_cond, &fragment));
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-internal"
-version = "0.0.15"
+version = "0.0.17"
 edition = "2021"
 description = "GraphQL Hive Router internal crate"
 license = "MIT"
@@ -15,7 +15,7 @@ authors = ["The Guild"]
 noop_otlp_exporter = []
 
 [dependencies]
-hive-router-config = { path = "../router-config", version = "0.0.26" }
+hive-router-config = { path = "../router-config", version = "0.0.30" }
 
 sonic-rs = { workspace = true }
 vrl = { workspace = true }
@@ -35,6 +35,7 @@ thiserror = { workspace = true }
 ahash = { workspace = true }
 dashmap = { workspace = true }
 tokio-stream = "0.1.18"
+serde = { workspace = true }
 
 # telemetry
 opentelemetry = { workspace = true, features = ["trace"] }

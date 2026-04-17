@@ -94,6 +94,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.11.0 (2026-04-15)
+
+### Features
+
+#### Federated GraphQL Subscriptions
+
+Hive Router now supports federated GraphQL subscriptions with full protocol coverage across [SSE](https://the-guild.dev/graphql/hive/docs/router/subscriptions/sse), [WebSockets](https://the-guild.dev/graphql/hive/docs/router/subscriptions/websockets), [Multipart HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/multipart-http), [Incremental Delivery](https://the-guild.dev/graphql/hive/docs/router/subscriptions/incremental-delivery), and [HTTP Callback](https://the-guild.dev/graphql/hive/docs/router/subscriptions/http-callback) - for both client-to-router and router-to-subgraph communication. Subscription events spanning multiple subgraphs are resolved automatically: when a subscription field lives in one subgraph but the response includes entity fields owned by others, the router fetches those on every event with no extra configuration.
+
+- [Read the product update](https://the-guild.dev/graphql/hive/product-updates/2026-04-14-hive-router-subscriptions)
+- [Subscriptions overview](https://the-guild.dev/graphql/hive/docs/router/subscriptions)
+- [Server-Sent Events](https://the-guild.dev/graphql/hive/docs/router/subscriptions/sse)
+- [Incremental Delivery over HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/incremental-delivery)
+- [Multipart HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/multipart-http)
+- [WebSockets](https://the-guild.dev/graphql/hive/docs/router/subscriptions/websockets)
+- [HTTP Callback](https://the-guild.dev/graphql/hive/docs/router/subscriptions/http-callback)
+
+### Fixes
+
+#### Query Plan Subscriptions Node
+
+The query planner now emits a `Subscription` node when planning a subscription operation. The `Subscription` node contains a `primary` fetch that is sent to the subgraph owning the subscription field.
+
+## 6.10.0 (2026-04-15)
+
+### Features
+
+#### Federated GraphQL Subscriptions
+
+Hive Router now supports federated GraphQL subscriptions with full protocol coverage across [SSE](https://the-guild.dev/graphql/hive/docs/router/subscriptions/sse), [WebSockets](https://the-guild.dev/graphql/hive/docs/router/subscriptions/websockets), [Multipart HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/multipart-http), [Incremental Delivery](https://the-guild.dev/graphql/hive/docs/router/subscriptions/incremental-delivery), and [HTTP Callback](https://the-guild.dev/graphql/hive/docs/router/subscriptions/http-callback) - for both client-to-router and router-to-subgraph communication. Subscription events spanning multiple subgraphs are resolved automatically: when a subscription field lives in one subgraph but the response includes entity fields owned by others, the router fetches those on every event with no extra configuration.
+
+- [Read the product update](https://the-guild.dev/graphql/hive/product-updates/2026-04-14-hive-router-subscriptions)
+- [Subscriptions overview](https://the-guild.dev/graphql/hive/docs/router/subscriptions)
+- [Server-Sent Events](https://the-guild.dev/graphql/hive/docs/router/subscriptions/sse)
+- [Incremental Delivery over HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/incremental-delivery)
+- [Multipart HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/multipart-http)
+- [WebSockets](https://the-guild.dev/graphql/hive/docs/router/subscriptions/websockets)
+- [HTTP Callback](https://the-guild.dev/graphql/hive/docs/router/subscriptions/http-callback)
+
+## 6.9.3 (2026-04-13)
+
+### Fixes
+
+- correct timeout error message (#901)
+- Version bump to fix release issues
+
+#### Fix timeout error message to include the timeout duration instead of the endpoint URL
+
+Previously by mistake, the error message for subgraph request timeouts included the endpoint URL instead of the timeout duration like `Request to subgraph timed out after http://ACCOUNT_ENDPOINT:PORT/accounts milliseconds`. This change simplifies the error message like `Request to subgraph timed out`.
+
+#### Fix planning for conditional inline fragments and field conditions
+
+Fixed a query-planner bug where directive-only inline fragments (using `@include`/`@skip` without an explicit type condition) could fail during normalization/planning for deeply nested operations.
+
+This update improves planner handling for conditional selections and adds regression tests to prevent these failures in the future.
+
+## 6.9.2 (2026-03-31)
+
+### Fixes
+
+#### Preserve client aliases in mismatch rewrites
+
+Fixed query planner mismatch handling so conflicting fields are tracked by response key (alias-aware), and internal alias rewrites restore the original client-facing key (alias-or-name) instead of always the schema field name.
+
+## 6.9.1 (2026-03-29)
+
+### Fixes
+
+#### Fix null field handling in entity request projection
+
+Fixed a bug in entity request projection where present `null` fields could be mishandled, which in some nested projection paths could also lead to malformed JSON output. [#880](https://github.com/graphql-hive/router/issues/880).
+
 ## 6.9.0 (2026-03-26)
 
 ### Features

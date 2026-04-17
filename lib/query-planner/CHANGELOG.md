@@ -30,6 +30,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.7.0 (2026-04-15)
+
+### Features
+
+#### Query Plan Subscriptions Node
+
+The query planner now emits a `Subscription` node when planning a subscription operation. The `Subscription` node contains a `primary` fetch that is sent to the subgraph owning the subscription field.
+
+## 2.6.0 (2026-04-15)
+
+### Features
+
+#### Query Plan Subscriptions Node
+
+The query planner now emits a `Subscription` node when planning a subscription operation. The `Subscription` node contains a `primary` fetch that is sent to the subgraph owning the subscription field.
+
+## 2.5.2 (2026-04-13)
+
+### Fixes
+
+- planning for conditional inline fragments and field conditions (#894)
+- Version bump to fix release issues
+
+#### Fix planning for conditional inline fragments and field conditions
+
+Fixed a query-planner bug where directive-only inline fragments (using `@include`/`@skip` without an explicit type condition) could fail during normalization/planning for deeply nested operations.
+
+This update improves planner handling for conditional selections and adds regression tests to prevent these failures in the future.
+
+## 2.5.1 (2026-03-31)
+
+### Fixes
+
+- preserve client aliases in mismatch output rewrites (#870)
+
+#### Preserve client aliases in mismatch rewrites
+
+Fixed query planner mismatch handling so conflicting fields are tracked by response key (alias-aware), and internal alias rewrites restore the original client-facing key (alias-or-name) instead of always the schema field name.
+
 ## 2.5.0 (2026-03-16)
 
 ### Features

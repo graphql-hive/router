@@ -5,6 +5,8 @@ mod authorization_directives_reject;
 #[cfg(test)]
 mod body_limit;
 #[cfg(test)]
+mod conditional_directives;
+#[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
 mod entity_batching;
@@ -21,7 +23,11 @@ mod hive_cdn_supergraph;
 #[cfg(test)]
 mod http;
 #[cfg(test)]
+mod http_callback;
+#[cfg(test)]
 mod introspection;
+#[cfg(test)]
+mod issues;
 #[cfg(test)]
 mod jwt;
 #[cfg(test)]
@@ -35,15 +41,21 @@ mod max_tokens;
 #[cfg(test)]
 mod override_subgraph_urls;
 #[cfg(test)]
+mod persisted_documents;
+#[cfg(test)]
 mod probes;
 #[cfg(test)]
 mod router_timeout;
+#[cfg(test)]
+mod subscriptions;
 #[cfg(test)]
 mod supergraph;
 #[cfg(test)]
 mod telemetry;
 #[cfg(test)]
 mod timeout_per_subgraph;
+#[cfg(test)]
+mod websocket;
 
 pub use insta;
 pub use mockito;

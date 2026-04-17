@@ -22,9 +22,13 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     pipeline::{
+        active_subscriptions::ActiveSubscriptions,
         error::handle_pipeline_error,
         graphql_request_handler,
         header::ResponseMode,
+        http_callback::handler,
+        long_lived_client_limit::LongLivedClientLimitService,
+        persisted_documents::PersistedDocumentsRuntime,
         request_extensions::{
             read_graphql_operation_metric_identity, read_graphql_response_metric_status,
             read_request_body_size, write_graphql_response_metric_status,
@@ -35,6 +39,7 @@ use crate::{
             max_aliases_rule::MaxAliasesRule, max_depth_rule::MaxDepthRule,
             max_directives_rule::MaxDirectivesRule,
         },
+        websocket_server::ws_index,
     },
     plugins::plugins_service::PluginService,
     telemetry::{HeaderExtractor, PrometheusAttached},
@@ -49,8 +54,9 @@ pub use dashmap::DashMap;
 pub use graphql_tools;
 use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use hive_router_config::humantime_serde;
-use hive_router_config::{load_config, HiveRouterConfig};
+use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
+use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::{
     otel::tracing_opentelemetry::OpenTelemetrySpanExt,
@@ -71,7 +77,32 @@ pub use tokio;
 pub use tracing;
 use tracing::{info, warn, Instrument};
 
-static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
+static LABORATORY_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/laboratory.html"));
+
+struct CallbackServer(std::sync::Mutex<Option<ntex::server::Server>>);
+
+impl From<ntex::server::Server> for CallbackServer {
+    fn from(server: ntex::server::Server) -> Self {
+        Self(std::sync::Mutex::new(Some(server)))
+    }
+}
+
+#[async_trait]
+impl BackgroundTask for CallbackServer {
+    fn id(&self) -> &str {
+        "callback_server"
+    }
+
+    async fn run(&self, token: CancellationToken) {
+        token.cancelled().await;
+        // only poisoned if a thread panicked while holding the lock; since the only
+        // operation inside is .take(), that can't happen
+        let server = self.0.lock().unwrap().take();
+        if let Some(server) = server {
+            server.stop(true).await;
+        }
+    }
+}
 
 async fn graphql_endpoint_handler(
     request: HttpRequest,
@@ -170,8 +201,10 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         .as_ref()
         .and_then(|prom| prom.to_attached());
     info!("hive-router@{} starting...", ROUTER_VERSION);
-    let http_config = router_config.http.clone();
-    let addr = router_config.http.address();
+    let addr = router_config.address();
+    let graphql_path = router_config.graphql_path().to_string();
+    let websocket_path = router_config.websocket_path().map(|p| p.to_string());
+    let callback_conf = router_config.callback_conf().cloned();
     let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
@@ -182,20 +215,62 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     .await?;
 
     let shared_state_clone = shared_state.clone();
-    let graphql_path = http_config.graphql_endpoint();
+    let callback_subscriptions_for_handler = schema_state.callback_subscriptions.clone();
 
-    let paths = RouterPaths::new(graphql_path.to_string());
+    // when `listen` is set, the callback route lives on a dedicated server bound to that address
+    // otherwise, the callback route is mounted on the main server on the `callback_path`
+    let callback_path = match callback_conf {
+        Some(CallbackConfig {
+            listen: Some(listen),
+            ref path,
+            ..
+        }) => {
+            let cb_path = path.to_string();
+            let cb_addr = listen.to_string();
+            let cb_subs = callback_subscriptions_for_handler.clone();
+            let cb_server = web::HttpServer::new(async move || {
+                let cb_subs = cb_subs.clone();
+                let cb_path = cb_path.clone();
+                web::App::new()
+                    .state(cb_subs)
+                    .configure(move |m| add_callback_handler(m, &cb_path))
+            })
+            .bind(&cb_addr)
+            .map_err(|err| RouterInitError::HttpCallbackServerBindError(cb_addr, err))?
+            .run();
+
+            bg_tasks_manager.register_task(CallbackServer::from(cb_server));
+
+            None
+        }
+        Some(ref cb) => Some(cb.path.to_string()),
+        None => None,
+    };
+
+    // after callback config check because there we decide if callback_path should be set
+    let paths = RouterPaths::new(graphql_path.clone(), websocket_path, callback_path);
     paths.detect_conflicts(&prometheus)?;
 
-    let graphql_path = graphql_path.to_string();
+    let long_lived_client_limit_service =
+        LongLivedClientLimitService::new(&shared_state.router_config);
+
     let maybe_error = web::HttpServer::new(async move || {
         let landing_page_path = graphql_path.clone();
         let prometheus = prometheus.clone();
+        let long_lived_client_limit_service = long_lived_client_limit_service.clone();
         web::App::new()
+            .middleware(long_lived_client_limit_service)
             .middleware(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .configure(|m| configure_ntex_app(m, &paths, prometheus))
+            .configure(|m| {
+                if let Some(ref callback) = paths.callback {
+                    // callback path will be some only if callback is enabled and if
+                    // its listen is not configured to be on another server
+                    add_callback_handler(m, callback);
+                }
+            })
             .default_service(web::to(move || {
                 landing_page_handler(landing_page_path.clone())
             }))
@@ -243,6 +318,8 @@ pub async fn configure_app_from_config(
     };
     let plugins_arc = plugin_registry.initialize_plugins(&router_config, bg_tasks_manager)?;
 
+    let active_subscriptions =
+        ActiveSubscriptions::new(router_config.subscriptions.broadcast_capacity);
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
     let cache_state = Arc::new(CacheState::new());
@@ -257,6 +334,7 @@ pub async fn configure_app_from_config(
         router_config_arc.clone(),
         plugins_arc.clone(),
         cache_state.clone(),
+        active_subscriptions.clone(),
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
@@ -276,14 +354,35 @@ pub async fn configure_app_from_config(
             config: max_aliases_config.clone(),
         }));
     }
+    let persisted_documents_runtime = PersistedDocumentsRuntime::init(
+        &router_config_arc.persisted_documents,
+        &router_config_arc.http.graphql_endpoint,
+        bg_tasks_manager,
+    )
+    .await
+    .map_err(|err| crate::shared_state::SharedStateError::PersistedDocuments(Box::new(err)))?;
+
+    if !persisted_documents_runtime
+        .supports_graphql_endpoint(&router_config_arc.http.graphql_endpoint)
+    {
+        // url_path_param extractor depends on path segments relative to graphql endpoint.
+        // Root endpoint would make all routes ambiguous for persisted-document extraction.
+        // Even /health could be treated as a graphql request with document id == "health".
+        return Err(RouterInitError::PersistedDocumentsEndpointIncompatible(
+            "http.graphql_endpoint='/' is not allowed when persisted_documents.selectors contains type=url_path_param. Use a non-root endpoint like '/graphql'.".to_string(),
+        ));
+    }
+
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc,
+        persisted_documents_runtime,
         jwt_runtime,
         hive_usage_agent,
         validation_plan,
         telemetry_context_arc,
         plugins_arc,
         cache_state,
+        active_subscriptions.clone(),
     )?);
 
     Ok((shared_state, schema_state_arc))
@@ -292,14 +391,18 @@ pub async fn configure_app_from_config(
 #[derive(Clone)]
 pub struct RouterPaths {
     graphql: String,
+    websocket: Option<String>,
+    callback: Option<String>,
     health: String,
     readiness: String,
 }
 
 impl RouterPaths {
-    pub fn new(graphql: String) -> Self {
+    pub fn new(graphql: String, websocket: Option<String>, callback: Option<String>) -> Self {
         RouterPaths {
             graphql,
+            websocket,
+            callback,
             health: "/health".to_string(),
             readiness: "/readiness".to_string(),
         }
@@ -309,12 +412,23 @@ impl RouterPaths {
         &self,
         prometheus: &Option<PrometheusAttached>,
     ) -> Result<(), RouterInitError> {
-        // A pair of context and actual path
+        // A pair of context and actual path (only include optional paths when present)
         let mut paths = vec![
             ("graphql", self.graphql.as_str()),
             ("health", self.health.as_str()),
             ("readiness", self.readiness.as_str()),
         ];
+
+        if let Some(ws) = self.websocket.as_deref() {
+            // its safe to have graphql and websocket on same path
+            if ws != self.graphql.as_str() {
+                paths.push(("websocket", ws));
+            }
+        }
+
+        if let Some(cb) = self.callback.as_deref() {
+            paths.push(("callback", cb));
+        }
 
         if let Some(prom) = prometheus {
             paths.push(("prometheus", prom.endpoint.as_str()));
@@ -338,11 +452,35 @@ impl RouterPaths {
     }
 }
 
+pub fn add_callback_handler(cfg: &mut web::ServiceConfig, callback_path: &str) {
+    let callback_route = format!(
+        "{}/{{subscription_id}}",
+        callback_path.trim_end_matches('/'),
+    );
+    cfg.route(&callback_route, web::post().to(handler));
+}
+
 pub fn configure_ntex_app(
     cfg: &mut web::ServiceConfig,
     paths: &RouterPaths,
     prometheus: Option<PrometheusAttached>,
 ) {
+    if let Some(websocket) = &paths.websocket {
+        cfg.service(
+            web::resource(websocket.as_str())
+                // guard ensures this resource is only matched for actual ws upgrade requests,
+                // so a plain GET to the same path (e.g. graphql GET request) falls through
+                // to the next registered resource instead of hitting the ws handshake
+                .guard(web::guard::fn_guard(|head| {
+                    head.headers()
+                        .get(ntex::http::header::UPGRADE)
+                        .and_then(|v| v.to_str().ok())
+                        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
+                }))
+                .route(web::get().to(ws_index)),
+        );
+    }
+
     cfg.route(paths.graphql.as_str(), web::to(graphql_endpoint_handler))
         .route(paths.health.as_str(), web::to(health_check_handler))
         .route(paths.readiness.as_str(), web::to(readiness_check_handler));
@@ -355,6 +493,13 @@ pub fn configure_ntex_app(
                 let registry = registry.clone();
                 async move { telemetry::build_metrics_response(&registry) }
             }),
+        );
+    }
+
+    // Enables /graphql/sha256:12345 cases for persisted documents
+    if paths.graphql != "/" {
+        cfg.service(
+            web::scope(paths.graphql.as_str()).default_service(web::to(graphql_endpoint_handler)),
         );
     }
 }

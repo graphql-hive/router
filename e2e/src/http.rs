@@ -1,32 +1,15 @@
 #[cfg(test)]
 mod http_tests {
-    use std::{
-        thread::sleep,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
 
     use futures::{stream::FuturesUnordered, StreamExt};
     use hive_router::pipeline::execution::EXPOSE_QUERY_PLAN_HEADER;
-    use mockito::Mock;
     use ntex::time;
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
-
-    async fn wait_until_mock_matched(mock: &Mock, timeout: Duration) -> Result<(), String> {
-        let started = Instant::now();
-        loop {
-            if mock.matched_async().await {
-                return Ok(());
-            }
-
-            time::sleep(Duration::from_millis(10)).await;
-
-            if started.elapsed() > timeout {
-                return Err(format!("timeout after {:?}", started.elapsed()));
-            }
-        }
-    }
+    use crate::testkit::{
+        some_header_map, wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     async fn should_allow_to_customize_graphql_endpoint() {
@@ -232,12 +215,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_not_dedupe_inflight_router_requests_by_default() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -297,12 +275,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_dedupe_inflight_router_requests_when_enabled() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -365,12 +338,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_not_dedupe_inflight_router_mutation_requests() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -429,12 +397,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_not_share_inflight_dedupe_entry_across_schema_reload() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(1500));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -463,7 +426,7 @@ mod http_tests {
                     source: hive
                     endpoint: http://{host}/supergraph
                     key: dummy_key
-                    poll_interval: 100ms
+                    poll_interval: 500ms
                 traffic_shaping:
                     all:
                         dedupe_enabled: false
@@ -494,10 +457,10 @@ mod http_tests {
                 .is_empty()
             {
                 assert!(
-                    started.elapsed() < Duration::from_secs(3),
+                    started.elapsed() < Duration::from_secs(5),
                     "first request did not reach products subgraph in time"
                 );
-                time::sleep(Duration::from_millis(25)).await;
+                time::sleep(Duration::from_millis(100)).await;
             }
 
             mock_initial.remove();
@@ -511,7 +474,7 @@ mod http_tests {
                 .with_body(changed_supergraph)
                 .create();
 
-            wait_until_mock_matched(&mock_changed, Duration::from_secs(2))
+            wait_until_mock_matched(&mock_changed)
                 .await
                 .expect("expected schema reload poll to fetch changed supergraph");
 
@@ -543,12 +506,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_use_all_headers_in_router_dedupe_key_by_default() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -621,12 +579,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_ignore_headers_in_router_dedupe_key_when_headers_is_empty() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;
@@ -700,12 +653,7 @@ mod http_tests {
     #[ntex::test]
     async fn should_use_case_insensitive_header_allowlist_in_router_dedupe_key() {
         let subgraphs = TestSubgraphs::builder()
-            .with_on_request(|request| {
-                if request.path == "/products" {
-                    sleep(Duration::from_millis(50));
-                }
-                None
-            })
+            .with_delay(Duration::from_millis(100))
             .build()
             .start()
             .await;

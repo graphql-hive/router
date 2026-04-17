@@ -1320,3 +1320,269 @@ fn deeply_nested_no_conflicts() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn multi_enum_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+           query GetAllTypesWithConflictingField {
+                getTypes {
+                    id
+                    identifier
+                    code
+                    metadata {
+                        value
+                        unit
+                    }
+                    ... on TypeA {
+                        field # maps to EnumA
+                    }
+                    ... on TypeB {
+                        typeBField: field # maps to EnumB
+                    }
+                    ... on TypeC {
+                        typeCField: field # maps to EnumC
+                    }
+                    ... on TypeD {
+                        typeDField: field # maps to EnumD
+                    }
+                }
+            }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/mismatch-mix-enum-scalar.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+        QueryPlan {
+          Fetch(service: "service") {
+            {
+              getTypes {
+                id
+                identifier
+                code
+                metadata {
+                  value
+                  unit
+                }
+                __typename
+                ... on TypeA {
+                  field
+                }
+                ... on TypeB {
+                  typeBField: field
+                }
+                ... on TypeC {
+                  typeCField: field
+                }
+                ... on TypeD {
+                  typeDField: field
+                }
+              }
+            }
+          },
+        },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+        {
+          "kind": "QueryPlan",
+          "node": {
+            "kind": "Fetch",
+            "serviceName": "service",
+            "operationKind": "query",
+            "operation": "{getTypes{id identifier code metadata{value unit} __typename ...on TypeA{field} ...on TypeB{typeBField: field} ...on TypeC{typeCField: field} ...on TypeD{typeDField: field}}}"
+          }
+        }
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn multi_scalar_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+           query GetAllTypesWithConflictingField {
+                getTypes {
+                    id
+                    identifier
+                    code
+                    metadata {
+                        value
+                        unit
+                    }
+                    ... on TypeA {
+                        isScalar # is a Int
+                    }
+                    ... on TypeB {
+                        scalarB: isScalar # is a Boolean
+                    }
+                    ... on TypeC {
+                        scalarC: isScalar # is a Float
+                    }
+                    ... on TypeD {
+                        scalarD: isScalar # is a Int
+                    }
+                }
+            }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/mismatch-mix-enum-scalar.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+        QueryPlan {
+          Fetch(service: "service") {
+            {
+              getTypes {
+                id
+                identifier
+                code
+                metadata {
+                  value
+                  unit
+                }
+                __typename
+                ... on TypeA {
+                  isScalar
+                }
+                ... on TypeB {
+                  scalarB: isScalar
+                }
+                ... on TypeC {
+                  scalarC: isScalar
+                }
+                ... on TypeD {
+                  scalarD: isScalar
+                }
+              }
+            }
+          },
+        },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+        {
+          "kind": "QueryPlan",
+          "node": {
+            "kind": "Fetch",
+            "serviceName": "service",
+            "operationKind": "query",
+            "operation": "{getTypes{id identifier code metadata{value unit} __typename ...on TypeA{isScalar} ...on TypeB{scalarB: isScalar} ...on TypeC{scalarC: isScalar} ...on TypeD{scalarD: isScalar}}}"
+          }
+        }
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn conflict_list_type_in_interface_preserves_client_alias() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+            i {
+                ... on TypeA {
+                    clientStrFieldA: strField # [String]
+                }
+                ... on TypeB {
+                    clientStrFieldB: strField # String
+                }
+            }
+        }
+"#,
+    );
+    let query_plan = build_query_plan("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          i {
+            __typename
+            ... on TypeA {
+              clientStrFieldA: strField
+            }
+            ... on TypeB {
+              clientStrFieldB: strField
+            }
+          }
+        }
+      },
+    },
+    "###);
+
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Fetch",
+        "serviceName": "a",
+        "operationKind": "query",
+        "operation": "{i{__typename ...on TypeA{clientStrFieldA: strField} ...on TypeB{clientStrFieldB: strField}}}"
+      }
+    }
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn conflict_list_type_in_interface_with_distinct_response_keys() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+            i {
+                ... on TypeA {
+                    typeAField: strField # [String]
+                }
+                ... on TypeB {
+                    typeBField: strField # String
+                }
+            }
+        }
+"#,
+    );
+    let query_plan = build_query_plan("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          i {
+            __typename
+            ... on TypeA {
+              typeAField: strField
+            }
+            ... on TypeB {
+              typeBField: strField
+            }
+          }
+        }
+      },
+    },
+    "###);
+
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Fetch",
+        "serviceName": "a",
+        "operationKind": "query",
+        "operation": "{i{__typename ...on TypeA{typeAField: strField} ...on TypeB{typeBField: strField}}}"
+      }
+    }
+    "#);
+
+    Ok(())
+}

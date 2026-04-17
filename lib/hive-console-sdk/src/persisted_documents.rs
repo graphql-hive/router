@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use crate::agent::usage_agent::non_empty_string;
 use crate::circuit_breaker::CircuitBreakerBuilder;
+use crate::circuit_breaker::CircuitBreakerError;
 use moka::future::Cache;
 use recloser::AsyncRecloser;
 use reqwest::header::HeaderMap;
@@ -16,23 +17,24 @@ use tracing::{debug, info, warn};
 pub struct PersistedDocumentsManager {
     client: ClientWithMiddleware,
     cache: Cache<String, String>,
+    negative_cache: Option<Cache<String, ()>>,
     endpoints_with_circuit_breakers: Vec<(String, AsyncRecloser)>,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 pub enum PersistedDocumentsError {
     #[error("Failed to read body: {0}")]
     FailedToReadBody(String),
     #[error("Failed to parse body: {0}")]
-    FailedToParseBody(serde_json::Error),
+    FailedToParseBody(String),
     #[error("Persisted document not found.")]
     DocumentNotFound,
     #[error("Failed to locate the persisted document key in request.")]
     KeyNotFound,
     #[error("Failed to validate persisted document")]
-    FailedToFetchFromCDN(reqwest_middleware::Error),
+    FailedToFetchFromCDN(String),
     #[error("Failed to read CDN response body")]
-    FailedToReadCDNResponse(reqwest::Error),
+    FailedToReadCDNResponse(String),
     #[error("No persisted document provided, or document id cannot be resolved.")]
     PersistedDocumentRequired,
     #[error("Missing required configuration option: {0}")]
@@ -40,13 +42,31 @@ pub enum PersistedDocumentsError {
     #[error("Invalid CDN key {0}")]
     InvalidCDNKey(String),
     #[error("Failed to create HTTP client: {0}")]
-    HTTPClientCreationError(reqwest::Error),
+    HTTPClientCreationError(String),
     #[error("unable to create circuit breaker: {0}")]
-    CircuitBreakerCreationError(#[from] crate::circuit_breaker::CircuitBreakerError),
+    CircuitBreakerCreationError(String),
     #[error("rejected by the circuit breaker")]
     CircuitBreakerRejected,
     #[error("unknown error")]
     Unknown,
+}
+
+impl From<reqwest_middleware::Error> for PersistedDocumentsError {
+    fn from(err: reqwest_middleware::Error) -> Self {
+        PersistedDocumentsError::FailedToFetchFromCDN(err.to_string())
+    }
+}
+
+impl From<serde_json::Error> for PersistedDocumentsError {
+    fn from(err: serde_json::Error) -> Self {
+        PersistedDocumentsError::FailedToParseBody(err.to_string())
+    }
+}
+
+impl From<CircuitBreakerError> for PersistedDocumentsError {
+    fn from(err: CircuitBreakerError) -> Self {
+        PersistedDocumentsError::CircuitBreakerCreationError(err.to_string())
+    }
 }
 
 impl PersistedDocumentsError {
@@ -105,7 +125,7 @@ impl PersistedDocumentsManager {
             .call(response_fut)
             .await
             .map_err(|e| match e {
-                recloser::Error::Inner(e) => PersistedDocumentsError::FailedToFetchFromCDN(e),
+                recloser::Error::Inner(e) => PersistedDocumentsError::from(e),
                 recloser::Error::Rejected => PersistedDocumentsError::CircuitBreakerRejected,
             })?;
 
@@ -113,21 +133,17 @@ impl PersistedDocumentsManager {
             let document = response
                 .text()
                 .await
-                .map_err(PersistedDocumentsError::FailedToReadCDNResponse)?;
-            debug!(
-                "Document fetched from CDN: {}, storing in local cache",
-                document
-            );
-            self.cache
-                .insert(document_id.into(), document.clone())
-                .await;
+                .map_err(|e| PersistedDocumentsError::FailedToReadCDNResponse(e.to_string()))?;
+            debug!("Document fetched from CDN: {}", document);
 
             return Ok(document);
         }
 
+        let status = response.status();
+
         warn!(
             "Document fetch from CDN failed: HTTP {}, Body: {:?}",
-            response.status(),
+            status,
             response
                 .text()
                 .await
@@ -136,42 +152,57 @@ impl PersistedDocumentsManager {
 
         Err(PersistedDocumentsError::DocumentNotFound)
     }
+
     /// Resolves the document from the cache, or from the CDN
     pub async fn resolve_document(
         &self,
         document_id: &str,
     ) -> Result<String, PersistedDocumentsError> {
-        let cached_record = self.cache.get(document_id).await;
-
-        match cached_record {
-            Some(document) => {
-                debug!("Document {} found in cache: {}", document_id, document);
-
-                Ok(document)
+        if let Some(negative_cache) = &self.negative_cache {
+            if negative_cache.get(document_id).await.is_some() {
+                debug!(
+                    "Document {} found in negative cache, skipping CDN fetch",
+                    document_id
+                );
+                return Err(PersistedDocumentsError::DocumentNotFound);
             }
-            None => {
+        }
+
+        if let Some(cached_document) = self.cache.get(document_id).await {
+            return Ok(cached_document);
+        }
+
+        let result = self
+            .cache
+            .try_get_with_by_ref(document_id, async {
                 debug!(
                     "Document {} not found in cache. Fetching from CDN",
                     document_id
                 );
+
                 let mut last_error: Option<PersistedDocumentsError> = None;
-                for (endpoint, circuit_breaker) in &self.endpoints_with_circuit_breakers {
-                    let result = self
+                for (endpoint, circuit_breaker) in self.endpoints_with_circuit_breakers.iter() {
+                    match self
                         .resolve_from_endpoint(endpoint, document_id, circuit_breaker)
-                        .await;
-                    match result {
+                        .await
+                    {
                         Ok(document) => return Ok(document),
-                        Err(e) => {
-                            last_error = Some(e);
-                        }
+                        Err(error) => last_error = Some(error),
                     }
                 }
-                match last_error {
-                    Some(e) => Err(e),
-                    None => Err(PersistedDocumentsError::Unknown),
-                }
+
+                Err(last_error.unwrap_or(PersistedDocumentsError::Unknown))
+            })
+            .await
+            .map_err(|error| error.as_ref().clone());
+
+        if matches!(&result, Err(PersistedDocumentsError::DocumentNotFound)) {
+            if let Some(negative_cache) = &self.negative_cache {
+                negative_cache.insert(document_id.to_string(), ()).await;
             }
         }
+
+        result
     }
 }
 
@@ -183,6 +214,7 @@ pub struct PersistedDocumentsManagerBuilder {
     request_timeout: Duration,
     retry_policy: ExponentialBackoff,
     cache_size: u64,
+    negative_cache_ttl: Option<Duration>,
     user_agent: Option<String>,
     circuit_breaker: CircuitBreakerBuilder,
 }
@@ -197,6 +229,7 @@ impl Default for PersistedDocumentsManagerBuilder {
             request_timeout: Duration::from_secs(15),
             retry_policy: ExponentialBackoff::builder().build_with_max_retries(3),
             cache_size: 10_000,
+            negative_cache_ttl: None,
             user_agent: None,
             circuit_breaker: CircuitBreakerBuilder::default(),
         }
@@ -260,6 +293,21 @@ impl PersistedDocumentsManagerBuilder {
         self
     }
 
+    /// TTL for negative cache entries (failed lookups / not found responses).
+    ///
+    /// When set, repeated misses for the same document id are served from in-memory cache
+    /// until the TTL expires.
+    pub fn negative_cache_ttl(mut self, ttl: Duration) -> Self {
+        self.negative_cache_ttl = Some(ttl);
+        self
+    }
+
+    /// Circuit breaker configuration for persisted document CDN requests.
+    pub fn circuit_breaker(mut self, circuit_breaker: CircuitBreakerBuilder) -> Self {
+        self.circuit_breaker = circuit_breaker;
+        self
+    }
+
     /// User-Agent header to be sent with each request
     pub fn user_agent(mut self, user_agent: String) -> Self {
         self.user_agent = non_empty_string(Some(user_agent));
@@ -293,12 +341,18 @@ impl PersistedDocumentsManagerBuilder {
 
         let reqwest_agent = reqwest_agent
             .build()
-            .map_err(PersistedDocumentsError::HTTPClientCreationError)?;
+            .map_err(|e| PersistedDocumentsError::HTTPClientCreationError(e.to_string()))?;
         let client = ClientBuilder::new(reqwest_agent)
             .with(RetryTransientMiddleware::new_with_policy(self.retry_policy))
             .build();
 
         let cache = Cache::<String, String>::new(self.cache_size);
+        let negative_cache = self.negative_cache_ttl.map(|ttl| {
+            Cache::builder()
+                .max_capacity(self.cache_size)
+                .time_to_live(ttl)
+                .build()
+        });
 
         if self.endpoints.is_empty() {
             return Err(PersistedDocumentsError::MissingConfigurationOption(
@@ -309,15 +363,12 @@ impl PersistedDocumentsManagerBuilder {
         Ok(PersistedDocumentsManager {
             client,
             cache,
+            negative_cache,
             endpoints_with_circuit_breakers: self
                 .endpoints
                 .into_iter()
                 .map(move |endpoint| {
-                    let circuit_breaker = self
-                        .circuit_breaker
-                        .clone()
-                        .build_async()
-                        .map_err(PersistedDocumentsError::CircuitBreakerCreationError)?;
+                    let circuit_breaker = self.circuit_breaker.clone().build_async()?;
                     Ok((endpoint, circuit_breaker))
                 })
                 .collect::<Result<Vec<(String, AsyncRecloser)>, PersistedDocumentsError>>()?,

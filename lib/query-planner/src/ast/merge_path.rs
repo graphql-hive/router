@@ -12,18 +12,21 @@ type SelectionIdentifier = String;
 pub enum Condition {
     Skip(String),
     Include(String),
+    SkipAndInclude { skip: String, include: String },
 }
 
 impl Condition {
     pub fn to_skip_if(&self) -> Option<String> {
         match self {
             Condition::Skip(var) => Some(var.clone()),
+            Condition::SkipAndInclude { skip, .. } => Some(skip.clone()),
             _ => None,
         }
     }
     pub fn to_include_if(&self) -> Option<String> {
         match self {
             Condition::Include(var) => Some(var.clone()),
+            Condition::SkipAndInclude { include, .. } => Some(include.clone()),
             _ => None,
         }
     }
@@ -34,45 +37,52 @@ impl Display for Condition {
         match self {
             Self::Skip(condition) => write!(f, "@skip(if: ${})", condition),
             Self::Include(condition) => write!(f, "@include(if: ${})", condition),
+            Self::SkipAndInclude { skip, include } => {
+                write!(f, "@skip(if: ${}) @include(if: ${})", skip, include)
+            }
         }
     }
 }
 
 impl From<&FieldSelection> for Option<Condition> {
     fn from(field: &FieldSelection) -> Self {
-        if let Some(variable) = &field.skip_if {
-            return Some(Condition::Skip(variable.clone()));
+        match (&field.skip_if, &field.include_if) {
+            (Some(skip), Some(include)) => Some(Condition::SkipAndInclude {
+                skip: skip.clone(),
+                include: include.clone(),
+            }),
+            (Some(variable), None) => Some(Condition::Skip(variable.clone())),
+            (None, Some(variable)) => Some(Condition::Include(variable.clone())),
+            (None, None) => None,
         }
-        if let Some(variable) = &field.include_if {
-            return Some(Condition::Include(variable.clone()));
-        }
-        None
     }
 }
 
 impl From<&mut FieldSelection> for Option<Condition> {
     fn from(field: &mut FieldSelection) -> Self {
-        if let Some(variable) = &field.skip_if {
-            return Some(Condition::Skip(variable.clone()));
+        match (&field.skip_if, &field.include_if) {
+            (Some(skip), Some(include)) => Some(Condition::SkipAndInclude {
+                skip: skip.clone(),
+                include: include.clone(),
+            }),
+            (Some(variable), None) => Some(Condition::Skip(variable.clone())),
+            (None, Some(variable)) => Some(Condition::Include(variable.clone())),
+            (None, None) => None,
         }
-        if let Some(variable) = &field.include_if {
-            return Some(Condition::Include(variable.clone()));
-        }
-        None
     }
 }
 
 impl From<&InlineFragmentSelection> for Option<Condition> {
     fn from(fragment: &InlineFragmentSelection) -> Self {
-        if let Some(variable) = &fragment.skip_if {
-            return Some(Condition::Skip(variable.clone()));
+        match (&fragment.skip_if, &fragment.include_if) {
+            (Some(skip), Some(include)) => Some(Condition::SkipAndInclude {
+                skip: skip.clone(),
+                include: include.clone(),
+            }),
+            (Some(variable), None) => Some(Condition::Skip(variable.clone())),
+            (None, Some(variable)) => Some(Condition::Include(variable.clone())),
+            (None, None) => None,
         }
-
-        if let Some(variable) = &fragment.include_if {
-            return Some(Condition::Include(variable.clone()));
-        }
-
-        None
     }
 }
 

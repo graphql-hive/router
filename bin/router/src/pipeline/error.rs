@@ -1,8 +1,11 @@
 use std::{sync::Arc, vec};
 
+use futures_util::stream;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
-    execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
+    execution::{
+        error::PlanExecutionError, jwt_forward::JwtForwardingError, plan::FailedExecutionResult,
+    },
     headers::errors::HeaderRuleRuntimeError,
     hooks::on_graphql_error::handle_graphql_errors_with_plugins,
     response::graphql_error::GraphQLError,
@@ -10,19 +13,25 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
 };
+use http::header;
 use http::{header::RETRY_AFTER, HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError},
 };
-use serde::Serialize;
 use strum::IntoStaticStr;
 
 use crate::{
     jwt::errors::JwtError,
     pipeline::{
-        authorization::AuthorizationError, body_read::ReadBodyStreamError, header::ResponseMode,
+        authorization::AuthorizationError,
+        body_read::ReadBodyStreamError,
+        header::{ResponseMode, StreamContentType},
+        multipart_subscribe::{
+            self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
+        },
         progressive_override::LabelEvaluationError,
+        sse,
     },
     RouterSharedState,
 };
@@ -44,9 +53,6 @@ pub enum PipelineError {
     UnsupportedContentType,
 
     // GET Specific pipeline errors
-    #[error("Failed to deserialize query parameters")]
-    #[strum(serialize = "INVALID_QUERY_PARAMS")]
-    GetInvalidQueryParams,
     #[error("Missing query parameter: {0}")]
     #[strum(serialize = "MISSING_QUERY_PARAM")]
     GetMissingQueryParam(&'static str),
@@ -70,6 +76,18 @@ pub enum PipelineError {
     #[error("Failed to parse GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_FAILED")]
     FailedToParseOperation(#[from] Arc<graphql_tools::parser::query::ParseError>),
+    #[error("Persisted document not found: {0}")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_NOT_FOUND")]
+    PersistedDocumentNotFound(String),
+    #[error("Persisted document id is required")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_ID_REQUIRED")]
+    PersistedDocumentIdRequired,
+    #[error("{0}")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_EXTRACTION_FAILED")]
+    PersistedDocumentExtraction(String),
+    #[error("{0}")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_RESOLUTION_FAILED")]
+    PersistedDocumentResolution(String),
     #[error("Failed to minify parsed GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
     FailedToMinifyParsedOperation(String),
@@ -195,11 +213,17 @@ impl PipelineError {
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
             (Self::GetUnprocessableQueryParams(_), _) => StatusCode::BAD_REQUEST,
-            (Self::GetInvalidQueryParams, _) => StatusCode::BAD_REQUEST,
             (Self::GetMissingQueryParam(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseBody(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseVariables(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseExtensions(_), _) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentNotFound(_), false) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentNotFound(_), true) => StatusCode::OK,
+            (Self::PersistedDocumentIdRequired, false) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentIdRequired, true) => StatusCode::OK,
+            (Self::PersistedDocumentExtraction(_), false) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentExtraction(_), true) => StatusCode::OK,
+            (Self::PersistedDocumentResolution(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::FailedToParseOperation(_), false) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseOperation(_), true) => StatusCode::OK,
             (Self::FailedToMinifyParsedOperation(_), false) => StatusCode::BAD_REQUEST,
@@ -230,38 +254,32 @@ impl PipelineError {
     }
 }
 
-#[derive(Serialize)]
-struct FailedExecutionResult {
-    errors: Vec<GraphQLError>,
-}
-
 #[inline]
 pub fn handle_pipeline_error(
     err: PipelineError,
     shared_state: &RouterSharedState,
     response_mode: &ResponseMode,
 ) -> web::HttpResponse {
-    let single_content_type = response_mode.single_content_type();
-
-    let prefer_ok = response_mode.prefer_status_ok_for_errors();
-
-    let status = err.default_status_code(prefer_ok);
+    let status = if matches!(response_mode, ResponseMode::StreamOnly(_)) {
+        // alwats status OK for streaming response modes, because we accept
+        // the stream and then stream the error from within the stream by default
+        StatusCode::OK
+    } else {
+        let prefer_ok = response_mode.prefer_status_ok_for_errors();
+        err.default_status_code(prefer_ok)
+    };
 
     let mut res = ResponseBuilder::new(status);
-
-    if let Some(single_content_type) = single_content_type {
-        res.content_type(single_content_type.as_ref());
-    }
 
     if matches!(err, PipelineError::NoSupergraphAvailable) {
         res.header(RETRY_AFTER, "10");
     }
 
     let mut errors = match err {
-        PipelineError::ValidationErrors(validation_errors) => {
+        PipelineError::ValidationErrors(ref validation_errors) => {
             validation_errors.iter().map(|error| error.into()).collect()
         }
-        PipelineError::AuthorizationFailed(authorization_errors) => authorization_errors
+        PipelineError::AuthorizationFailed(ref authorization_errors) => authorization_errors
             .iter()
             .map(|error| error.into())
             .collect(),
@@ -291,5 +309,42 @@ pub fn handle_pipeline_error(
             .record_errors(|| errors.iter().map(|error| error.extensions.code.as_deref()));
     }
 
-    res.json(&FailedExecutionResult { errors })
+    let data = FailedExecutionResult { errors }.serialize();
+
+    match response_mode {
+        ResponseMode::SingleOnly(content_type) | ResponseMode::Dual(content_type, _) => res
+            .header(header::CONTENT_TYPE, content_type.as_ref())
+            .body(data),
+        ResponseMode::StreamOnly(StreamContentType::IncrementalDelivery) => res
+            .header(
+                header::CONTENT_TYPE,
+                http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE),
+            )
+            .streaming(multipart_subscribe::create_incremental_delivery_stream(
+                Box::pin(stream::once(async move { data })),
+            )),
+        ResponseMode::StreamOnly(StreamContentType::SSE) => res
+            .header(
+                header::CONTENT_TYPE,
+                http::HeaderValue::from_static("text/event-stream"),
+            )
+            .streaming(sse::create_stream(
+                Box::pin(stream::once(async move { data })),
+                std::time::Duration::from_secs(10),
+            )),
+        ResponseMode::StreamOnly(StreamContentType::ApolloMultipartHTTP) => res
+            .header(
+                header::CONTENT_TYPE,
+                http::HeaderValue::from_static(APOLLO_MULTIPART_HTTP_CONTENT_TYPE),
+            )
+            .streaming(multipart_subscribe::create_apollo_multipart_http_stream(
+                Box::pin(stream::once(async move { data })),
+                std::time::Duration::from_secs(10),
+            )),
+        ResponseMode::Laboratory => {
+            unreachable!(
+                "Laboratory can not be a response mode because Laboratory requests can not execute operations"
+            )
+        }
+    }
 }

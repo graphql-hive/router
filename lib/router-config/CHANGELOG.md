@@ -66,6 +66,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.30 (2026-04-15)
+
+### Features
+
+#### Federated GraphQL Subscriptions
+
+Hive Router now supports federated GraphQL subscriptions with full protocol coverage across [SSE](https://the-guild.dev/graphql/hive/docs/router/subscriptions/sse), [WebSockets](https://the-guild.dev/graphql/hive/docs/router/subscriptions/websockets), [Multipart HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/multipart-http), [Incremental Delivery](https://the-guild.dev/graphql/hive/docs/router/subscriptions/incremental-delivery), and [HTTP Callback](https://the-guild.dev/graphql/hive/docs/router/subscriptions/http-callback) - for both client-to-router and router-to-subgraph communication. Subscription events spanning multiple subgraphs are resolved automatically: when a subscription field lives in one subgraph but the response includes entity fields owned by others, the router fetches those on every event with no extra configuration.
+
+- [Read the product update](https://the-guild.dev/graphql/hive/product-updates/2026-04-14-hive-router-subscriptions)
+- [Subscriptions overview](https://the-guild.dev/graphql/hive/docs/router/subscriptions)
+- [Server-Sent Events](https://the-guild.dev/graphql/hive/docs/router/subscriptions/sse)
+- [Incremental Delivery over HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/incremental-delivery)
+- [Multipart HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/multipart-http)
+- [WebSockets](https://the-guild.dev/graphql/hive/docs/router/subscriptions/websockets)
+- [HTTP Callback](https://the-guild.dev/graphql/hive/docs/router/subscriptions/http-callback)
+
+## 0.0.29 (2026-04-15)
+
+### Features
+
+#### Federated GraphQL Subscriptions
+
+Hive Router now supports federated GraphQL subscriptions with full protocol coverage across [SSE](https://the-guild.dev/graphql/hive/docs/router/subscriptions/sse), [WebSockets](https://the-guild.dev/graphql/hive/docs/router/subscriptions/websockets), [Multipart HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/multipart-http), [Incremental Delivery](https://the-guild.dev/graphql/hive/docs/router/subscriptions/incremental-delivery), and [HTTP Callback](https://the-guild.dev/graphql/hive/docs/router/subscriptions/http-callback) - for both client-to-router and router-to-subgraph communication. Subscription events spanning multiple subgraphs are resolved automatically: when a subscription field lives in one subgraph but the response includes entity fields owned by others, the router fetches those on every event with no extra configuration.
+
+- [Read the product update](https://the-guild.dev/graphql/hive/product-updates/2026-04-14-hive-router-subscriptions)
+- [Subscriptions overview](https://the-guild.dev/graphql/hive/docs/router/subscriptions)
+- [Server-Sent Events](https://the-guild.dev/graphql/hive/docs/router/subscriptions/sse)
+- [Incremental Delivery over HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/incremental-delivery)
+- [Multipart HTTP](https://the-guild.dev/graphql/hive/docs/router/subscriptions/multipart-http)
+- [WebSockets](https://the-guild.dev/graphql/hive/docs/router/subscriptions/websockets)
+- [HTTP Callback](https://the-guild.dev/graphql/hive/docs/router/subscriptions/http-callback)
+
+## 0.0.28 (2026-04-13)
+
+### Fixes
+
+- Version bump to fix release issues
+
+#### Replace GraphiQL with Hive Laboratory
+
+The Laboratory is Hive's powerful GraphQL playground that provides a comprehensive environment for exploring, testing, and experimenting with your GraphQL APIs. Whether you're developing new queries, debugging issues, or sharing operations with your team, the Laboratory offers all the tools you need.
+
+Read more about Hive Laboratory in [the introduction blog post](https://the-guild.dev/graphql/hive/product-updates/2026-01-28-new-laboratory) or [the documentation](https://the-guild.dev/graphql/hive/docs/new-laboratory).
+
+#### Breaking Changes:
+
+The top-level config option has been renamed.
+
+```diff
+- graphiql:
++ laboratory:
+    enabled: true
+```
+
+So was the environment variable override.
+
+```diff
+- GRAPHIQL_ENABLED=true
++ LABORATORY_ENABLED=true
+```
+
+## 0.0.27 (2026-04-12)
+
+### Fixes
+
+#### Replace GraphiQL with Hive Laboratory
+
+The Laboratory is Hive's powerful GraphQL playground that provides a comprehensive environment for exploring, testing, and experimenting with your GraphQL APIs. Whether you're developing new queries, debugging issues, or sharing operations with your team, the Laboratory offers all the tools you need.
+
+Read more about Hive Laboratory in [the introduction blog post](https://the-guild.dev/graphql/hive/product-updates/2026-01-28-new-laboratory) or [the documentation](https://the-guild.dev/graphql/hive/docs/new-laboratory).
+
+#### Breaking Changes:
+
+The top-level config option has been renamed.
+
+```diff
+- graphiql:
++ laboratory:
+    enabled: true
+```
+
+So was the environment variable override.
+
+```diff
+- GRAPHIQL_ENABLED=true
++ LABORATORY_ENABLED=true
+```
+
 ## 0.0.26 (2026-03-26)
 
 ### Features
