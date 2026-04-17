@@ -65,7 +65,7 @@ jobs:
       - name: install nextest
         uses: taiki-e/install-action@a2352fc6ce487f030a3aa709482d57823eadfb37 # v2.75.16
         with:
-          tool: nextest
+          tool: nextest@0.9.133
       - name: test plugin examples
         run: cargo test_plugin_examples
         timeout-minutes: 10
