@@ -1531,7 +1531,7 @@ mod subscriptions_e2e_tests {
         // in CI, promotion can race with source handoff and briefly reconnect once
         let reviews_requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
         assert!(
-            reviews_requests.len() <= 2,
+            (1..=2).contains(&reviews_requests.len()),
             "Expected at most one promotion reconnect to reviews subgraph, got {} requests",
             reviews_requests.len()
         );

@@ -58,6 +58,11 @@ mod supergraph_e2e_tests {
             }
 
             if std::time::Instant::now() >= deadline {
+                eprintln!(
+                    "cache warmup timeout reached before both caches populated: plan={}, normalize={}",
+                    router.schema_state().plan_cache.entry_count(),
+                    router.schema_state().normalize_cache.entry_count()
+                );
                 break;
             }
             ntex::time::sleep(Duration::from_millis(50)).await;
