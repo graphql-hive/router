@@ -396,6 +396,11 @@ fn normalized_path_hash(path: &MergePath) -> u64 {
                         "Condition(Include)".hash(&mut hasher);
                         variable.hash(&mut hasher);
                     }
+                    Some(Condition::SkipAndInclude { skip, include }) => {
+                        "Condition(SkipAndInclude)".hash(&mut hasher);
+                        skip.hash(&mut hasher);
+                        include.hash(&mut hasher);
+                    }
                     None => "Condition(None)".hash(&mut hasher),
                 }
             }
