@@ -605,6 +605,7 @@ propagate: {}
 ```
 
 
+   
 **Option 2 (alternative):** 
 Remove headers before sending the request to a subgraph.
 
@@ -627,6 +628,7 @@ remove: {}
 ```
 
 
+   
 **Option 3 (alternative):** 
 Add or overwrite a header with a static value.
 
@@ -759,6 +761,7 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
+   
 **Option 2 (optional):** 
 A dynamic value computed by a VRL expression.
 
@@ -825,6 +828,7 @@ propagate: {}
 ```
 
 
+   
 **Option 2 (alternative):** 
 Remove headers before sending the response to the client.
 
@@ -844,6 +848,7 @@ remove: {}
 ```
 
 
+   
 **Option 3 (alternative):** 
 Add or overwrite a header in the response to the client.
 
@@ -978,6 +983,7 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
+   
 **Option 2 (optional):** 
 A dynamic value computed by a VRL expression.
 
@@ -1074,6 +1080,7 @@ propagate: {}
 ```
 
 
+   
 **Option 2 (alternative):** 
 Remove headers before sending the request to a subgraph.
 
@@ -1096,6 +1103,7 @@ remove: {}
 ```
 
 
+   
 **Option 3 (alternative):** 
 Add or overwrite a header with a static value.
 
@@ -1228,6 +1236,7 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
+   
 **Option 2 (optional):** 
 A dynamic value computed by a VRL expression.
 
@@ -1294,6 +1303,7 @@ propagate: {}
 ```
 
 
+   
 **Option 2 (alternative):** 
 Remove headers before sending the response to the client.
 
@@ -1313,6 +1323,7 @@ remove: {}
 ```
 
 
+   
 **Option 3 (alternative):** 
 Add or overwrite a header in the response to the client.
 
@@ -1447,6 +1458,7 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
+   
 **Option 2 (optional):** 
 A dynamic value computed by a VRL expression.
 
@@ -1636,6 +1648,7 @@ A local file on the file-system. This file will be read once on startup and cach
 |**source**|`string`|Constant Value: `"file"`<br/>|yes|
 
 
+   
 **Option 2 (alternative):** 
 A remote JWKS provider. The JWKS will be fetched via HTTP/HTTPS and cached.
 
@@ -1677,6 +1690,7 @@ The first one that is found will be used.
 |**source**|`string`|Constant Value: `"header"`<br/>|yes|
 
 
+   
 **Option 2 (alternative):** 
 **Properties**
 
@@ -1921,6 +1935,7 @@ storage: null
 |**type**|`string`|Constant Value: `"json_path"`<br/>|yes|
 
 
+   
 **Option 2 (alternative):** 
 **Properties**
 
@@ -1930,6 +1945,7 @@ storage: null
 |**type**|`string`|Constant Value: `"url_path_param"`<br/>|yes|
 
 
+   
 **Option 3 (alternative):** 
 **Properties**
 
@@ -2121,6 +2137,7 @@ Configuration for the Federation supergraph source. By default, the router will 
 Each source has a different set of configuration, depending on the source type.
 
 
+   
 **Option 1 (alternative):** 
 Loads a supergraph from the filesystem.
 The path can be either absolute or relative to the router's working directory.
@@ -2143,6 +2160,7 @@ poll_interval: null
 ```
 
 
+   
 **Option 2 (alternative):** 
 Loads a supergraph from Hive Console CDN.
 
@@ -2525,6 +2543,7 @@ temporality: cumulative
 ```
 
 
+   
 **Option 2 (alternative):** 
 **Properties**
 
@@ -2878,6 +2897,7 @@ http: null
 ```
 
 
+   
 **Option 2 (alternative):** 
 **Properties**
 
@@ -3259,4 +3279,5 @@ persist: false
 source: connection
 
 ```
+
 
