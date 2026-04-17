@@ -34,6 +34,11 @@ typify = "0.6.0"
 regress = "0.11.0"
 lazy_static = { workspace = true }
 async-dropper-simple = { version = "0.2.6", features = ["tokio", "no-default-bound"] }
+vrl = { workspace = true }
+http = { workspace = true }
+bytes ={ workspace = true }
+sonic-rs = { workspace = true }
+humantime = { workspace = true }
 
 [dev-dependencies]
 mockito = { workspace = true }

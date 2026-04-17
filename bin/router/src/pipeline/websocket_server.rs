@@ -1,3 +1,4 @@
+use hive_console_sdk::agent::usage_agent::{RequestDetails, RequestDetailsUrl};
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
@@ -34,6 +35,7 @@ use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_planned_request;
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
+use crate::pipeline::usage_reporting::{from_ntex_headers_to_map};
 use crate::pipeline::{
     hash_graphql_extensions, hash_graphql_variables, inbound_request_fingerprint,
     normalize::normalize_request_with_cache, parser::parse_operation_with_cache, usage_reporting,
@@ -507,6 +509,7 @@ async fn handle_text_frame(
                         client_name,
                         client_version,
                         normalize_payload.operation_for_plan.name.as_deref(),
+                        normalize_payload.operation_for_plan.operation_kind.as_ref(),
                         &parser_payload.minified_document,
                         hive_usage_agent,
                         shared_state
@@ -517,6 +520,15 @@ async fn handle_text_frame(
                             .map(|c| &c.usage_reporting)
                             .expect("Expected Usage Reporting options to be present when Hive Usage Agent is initialized"),
                         shared_response.error_count(),
+                        RequestDetails {
+                            url: RequestDetailsUrl {
+                                host: ws_uri.host().unwrap_or_default().to_string(),
+                                port: ws_uri.port_u16().unwrap_or(80),
+                                path: ws_uri.path().to_string(),
+                            },
+                            method: Method::POST.to_string(),
+                            headers: from_ntex_headers_to_map(&headers),
+                        },
                     )
                     .await;
                 }

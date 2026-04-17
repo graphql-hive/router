@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
-use std::time::Duration;
 
-use hive_router_config::traffic_shaping::DurationOrExpression;
 use vrl::{
     compiler::{compile as vrl_compile, Program as VrlProgram, TargetValue as VrlTargetValue},
     core::Value as VrlValue,
@@ -138,21 +136,6 @@ where
                     .map_err(ProgramResolutionError::ExecutionFailed)?;
 
                 T::from_vrl_value(result_value).map_err(ProgramResolutionError::ConversionFailed)
-            }
-        }
-    }
-}
-
-impl ValueOrProgram<Duration> {
-    pub fn compile(
-        config: &DurationOrExpression,
-        fns: Option<&[Box<dyn Function>]>,
-    ) -> Result<Self, ExpressionCompileError> {
-        match config {
-            DurationOrExpression::Duration(dur) => Ok(ValueOrProgram::Value(*dur)),
-            DurationOrExpression::Expression { expression } => {
-                let program = expression.as_str().compile_expression(fns)?;
-                Ok(ValueOrProgram::Program(Box::new(program)))
             }
         }
     }
