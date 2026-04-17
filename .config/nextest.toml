@@ -7,5 +7,3 @@ success-output = "never"
 fail-fast = false
 # Mark as slow test after 10s and terminate after 3 retries
 slow-timeout = { period = "10s", terminate-after = 3 }
-# Retry failed tests up to 2 times
-retries = 2
