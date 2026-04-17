@@ -5,6 +5,11 @@ use std::{
 };
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_GRAPHIQL");
+    if env::var_os("CARGO_FEATURE_GRAPHIQL").is_some() {
+        return;
+    }
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("missing OUT_DIR"));
     let output_file = out_dir.join("laboratory.html");
