@@ -22,10 +22,19 @@ pub struct UsageReportingConfig {
     #[schemars(with = "String")]
     pub sample_rate: Percentage,
 
-    /// A list of operations (by name) to be ignored by Hive.
-    /// Example: ["IntrospectionQuery", "MeQuery"]
+    /// An expression in VRL to exclude certain operations from being sent to Hive Console.
+    /// Returning `true` from this expression will exclude the operation, while `false` will include it.
+    /// This expression is a VRL expression that has access to the request and operation details;
+    ///
+    /// ```vrl
+    ///  if (.request.operation.name == "ExcludeMe") {
+    ///    true
+    ///  } else {
+    ///    false
+    ///  }
+    /// ```
     #[serde(default)]
-    pub exclude: Vec<String>,
+    pub exclude: Option<String>,
 
     /// A maximum number of operations to hold in a buffer before sending to Hive Console
     /// Default: 1000
@@ -74,7 +83,7 @@ impl Default for UsageReportingConfig {
             enabled: default_enabled(),
             endpoint: default_endpoint(),
             sample_rate: default_sample_rate(),
-            exclude: Vec::new(),
+            exclude: None,
             buffer_size: default_buffer_size(),
             accept_invalid_certs: default_accept_invalid_certs(),
             connect_timeout: default_connect_timeout(),

@@ -1,18 +1,21 @@
 use std::{
+    collections::BTreeMap,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
 use graphql_tools::parser::schema::Document;
-use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgentExt};
-use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
+use hive_console_sdk::agent::usage_agent::{
+    AgentError, ExecutionReport, OperationType, RequestDetails, UsageAgent, UsageAgentExt,
+};
 use hive_router_config::{
     telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
     usage_reporting::UsageReportingConfig,
 };
 use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
+use hive_router_query_planner::state::supergraph_state::OperationKind;
 use rand::prelude::*;
 use tokio_util::sync::CancellationToken;
 
@@ -71,6 +74,10 @@ pub fn init_hive_usage_agent(
         agent_builder = agent_builder.target_id(target_id);
     }
 
+    if let Some(exclude_expr) = &usage_config.exclude {
+        agent_builder = agent_builder.exclude_expression(exclude_expr.to_string());
+    }
+
     let agent = agent_builder.build()?;
 
     bg_tasks_manager.register_task(UsageAgentTask(agent.clone()));
@@ -86,16 +93,15 @@ pub async fn collect_usage_report<'a>(
     client_name: Option<&str>,
     client_version: Option<&str>,
     operation_name: Option<&'a str>,
+    operation_kind: Option<&'a OperationKind>,
     operation_body: &'a str,
     hive_usage_agent: &UsageAgent,
     usage_config: &UsageReportingConfig,
     error_count: usize,
+    request_details: RequestDetails,
 ) {
     let sample_rate = usage_config.sample_rate.as_f64();
     if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
-        return;
-    }
-    if operation_name.is_some_and(|op_name| usage_config.exclude.iter().any(|s| s == op_name)) {
         return;
     }
     let timestamp = SystemTime::now()
@@ -111,8 +117,14 @@ pub async fn collect_usage_report<'a>(
         ok: error_count == 0,
         errors: error_count,
         operation_body: operation_body.to_owned(),
+        operation_type: match operation_kind {
+            Some(OperationKind::Mutation) => OperationType::Mutation,
+            Some(OperationKind::Subscription) => OperationType::Subscription,
+            _ => OperationType::Query,
+        },
         operation_name: operation_name.map(|s| s.to_owned()),
         persisted_document_hash: None,
+        request_details,
     };
 
     if let Err(err) = hive_usage_agent.add_report(execution_report).await {
@@ -131,4 +143,13 @@ impl BackgroundTask for UsageAgentTask {
     async fn run(&self, token: CancellationToken) {
         self.0.start_flush_interval(&token).await
     }
+}
+
+pub fn from_ntex_headers_to_map(headers: &ntex::http::HeaderMap) -> BTreeMap<String, String> {
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            Some((name.as_str().to_string(), value.to_str().ok()?.to_string()))
+        })
+        .collect()
 }
