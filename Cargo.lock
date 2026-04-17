@@ -2340,8 +2340,11 @@ dependencies = [
  "anyhow",
  "async-dropper-simple",
  "async-trait",
+ "bytes",
  "futures-util",
  "graphql-tools",
+ "http",
+ "humantime",
  "lazy_static",
  "md5",
  "mockito",
@@ -2356,11 +2359,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sonic-rs",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
  "typify",
+ "vrl",
 ]
 
 [[package]]
@@ -2434,6 +2439,7 @@ version = "0.0.30"
 dependencies = [
  "config",
  "envconfig",
+ "hive-console-sdk",
  "http",
  "human-size",
  "humantime",
@@ -2461,6 +2467,7 @@ dependencies = [
  "criterion",
  "dashmap",
  "futures",
+ "hive-console-sdk",
  "hive-router-config",
  "http",
  "http-body-util",

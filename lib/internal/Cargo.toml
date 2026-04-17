@@ -16,9 +16,9 @@ noop_otlp_exporter = []
 
 [dependencies]
 hive-router-config = { path = "../router-config", version = "0.0.30" }
+hive-console-sdk = { path = "../hive-console-sdk", version = "0.3.8" }
 
 sonic-rs = { workspace = true }
-vrl = { workspace = true }
 humantime = { workspace = true }
 bytes = { workspace = true }
 http = { workspace=true }
@@ -36,6 +36,7 @@ ahash = { workspace = true }
 dashmap = { workspace = true }
 tokio-stream = "0.1.18"
 serde = { workspace = true }
+vrl = { workspace = true }
 
 # telemetry
 opentelemetry = { workspace = true, features = ["trace"] }

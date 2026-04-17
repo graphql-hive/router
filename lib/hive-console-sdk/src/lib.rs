@@ -4,3 +4,4 @@ pub mod persisted_documents;
 pub mod supergraph_fetcher;
 pub use async_dropper_simple::AsyncDropper;
 pub use graphql_tools;
+pub mod expressions;

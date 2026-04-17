@@ -11,6 +11,8 @@ use crate::agent::buffer::Buffer;
 use crate::agent::usage_agent::{non_empty_string, AgentError, UsageAgent, UsageAgentInner};
 use crate::agent::utils::OperationProcessor;
 use crate::circuit_breaker;
+use crate::expressions::values::boolean::BooleanOrProgram;
+use crate::expressions::{CompileExpression, ValueOrProgram};
 use retry_policies::policies::ExponentialBackoff;
 
 pub struct UsageAgentBuilder {
@@ -25,6 +27,7 @@ pub struct UsageAgentBuilder {
     retry_policy: ExponentialBackoff,
     user_agent: Option<String>,
     circuit_breaker: Option<AsyncRecloser>,
+    exclude_expression: Option<String>,
 }
 
 pub static DEFAULT_HIVE_USAGE_ENDPOINT: &str = "https://app.graphql-hive.com/usage";
@@ -43,6 +46,7 @@ impl Default for UsageAgentBuilder {
             retry_policy: ExponentialBackoff::builder().build_with_max_retries(3),
             user_agent: None,
             circuit_breaker: None,
+            exclude_expression: None,
         }
     }
 }
@@ -183,6 +187,12 @@ impl UsageAgentBuilder {
 
         let buffer = Buffer::new(self.buffer_size);
 
+        let exclude = if let Some(expr) = self.exclude_expression {
+            BooleanOrProgram::Program(expr.compile_expression(None)?.into())
+        } else {
+            BooleanOrProgram::Value(false)
+        };
+
         Ok(UsageAgentInner {
             endpoint,
             buffer,
@@ -190,7 +200,14 @@ impl UsageAgentBuilder {
             client,
             flush_interval: self.flush_interval,
             circuit_breaker,
+            exclude,
         })
+    }
+    pub fn exclude_expression(mut self, expression: String) -> Self {
+        if let Some(expression) = non_empty_string(Some(expression)) {
+            self.exclude_expression = Some(expression);
+        }
+        self
     }
     pub fn build(self) -> Result<UsageAgent, AgentError> {
         let agent = self.build_agent()?;

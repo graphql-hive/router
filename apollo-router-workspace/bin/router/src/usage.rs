@@ -4,6 +4,9 @@ use apollo_router::plugin::Plugin;
 use apollo_router::plugin::PluginInit;
 use apollo_router::services::*;
 use apollo_router::Context;
+use hive_console_sdk::agent::usage_agent::OperationType;
+use hive_console_sdk::agent::usage_agent::RequestDetails;
+use hive_console_sdk::agent::usage_agent::RequestDetailsUrl;
 use core::ops::Drop;
 use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::UsageAgentExt;
@@ -14,7 +17,6 @@ use http::HeaderValue;
 use rand::Rng;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -36,12 +38,12 @@ struct OperationContext {
     pub(crate) operation_body: String,
     pub(crate) operation_name: Option<String>,
     pub(crate) dropped: bool,
+    pub(crate) request_details: RequestDetails,
 }
 
 #[derive(Clone, Debug)]
 struct OperationConfig {
     sample_rate: f64,
-    exclude: Option<Vec<String>>,
     client_name_header: String,
     client_version_header: String,
 }
@@ -74,8 +76,18 @@ pub struct Config {
     /// 1.0 = 100% chance of being sent.
     /// Default: 1.0
     sample_rate: Option<f64>,
-    /// A list of operations (by name) to be ignored by GraphQL Hive.
-    exclude: Option<Vec<String>>,
+    /// An expression in VRL to exclude certain operations from being sent to Hive Console.
+    /// Returning `true` from this expression will exclude the operation, while `false` will include it.
+    /// This expression is a VRL expression that has access to the request and operation details;
+    /// 
+    /// ```vrl
+    ///  if (.request.operation.name == "ExcludeMe") {
+    ///    true
+    ///  } else {
+    ///    false
+    ///  }
+    /// ```
+    exclude: Option<String>,
     client_name_header: Option<String>,
     client_version_header: Option<String>,
     /// A maximum number of operations to hold in a buffer before sending to GraphQL Hive
@@ -124,29 +136,13 @@ impl UsagePlugin {
             .clone()
             .unwrap_or_default();
 
-        let excluded_operation_names: HashSet<String> = config
-            .exclude
-            .unwrap_or_default()
-            .clone()
-            .into_iter()
-            .collect();
-
         let mut rng = rand::rng();
         let sampled = rng.random::<f64>() < config.sample_rate;
-        let mut dropped = !sampled;
-
-        if !dropped {
-            if let Some(name) = &operation_name {
-                if excluded_operation_names.contains(name) {
-                    dropped = true;
-                }
-            }
-        }
 
         let _ = context.insert(
             OPERATION_CONTEXT,
             OperationContext {
-                dropped,
+                dropped: !sampled,
                 client_name,
                 client_version,
                 operation_name,
@@ -156,6 +152,18 @@ impl UsagePlugin {
                     .unwrap_or_default()
                     .as_secs()
                     * 1000,
+                request_details: RequestDetails {
+                                    headers: req.supergraph_request.headers()
+                                        .iter()
+                                        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                                        .collect(),
+                                    method: req.supergraph_request.method().as_str().to_string(),
+                                    url: RequestDetailsUrl {
+                                        host: req.supergraph_request.uri().host().unwrap_or("localhost").to_string(),
+                                        port: req.supergraph_request.uri().port_u16().unwrap_or(80),
+                                        path: req.supergraph_request.uri().path().to_string(),
+                                    }
+                                }
             },
         );
     }
@@ -218,6 +226,10 @@ impl Plugin for UsagePlugin {
                 agent = agent.flush_interval(Duration::from_secs(flush_interval));
             }
 
+            if let Some(exclude_expression) = user_config.exclude {
+                agent = agent.exclude_expression(exclude_expression);
+            }
+
             let agent = agent.build().map_err(Box::new)?;
 
             let cancellation_token_for_interval = cancellation_token.clone();
@@ -240,7 +252,6 @@ impl Plugin for UsagePlugin {
             schema: Arc::new(schema),
             config: OperationConfig {
                 sample_rate: user_config.sample_rate.unwrap_or(1.0),
-                exclude: user_config.exclude,
                 client_name_header: user_config
                     .client_name_header
                     .unwrap_or("graphql-client-name".to_string()),
@@ -304,6 +315,7 @@ impl Plugin for UsagePlugin {
                                     operation_name,
                                     timestamp,
                                     operation_body,
+                                    request_details,
                                     ..
                                 } = operation_context;
 
@@ -322,8 +334,10 @@ impl Plugin for UsagePlugin {
                                                     ok: false,
                                                     errors: 1,
                                                     operation_body,
+                                                    operation_type: OperationType::Query,
                                                     operation_name,
                                                     persisted_document_hash,
+                                                    request_details, 
                                                 })
                                                 .await;
                                             if let Err(e) = res {
@@ -351,9 +365,11 @@ impl Plugin for UsagePlugin {
                                                         ok: !is_failure && !response_has_errors,
                                                         errors: response.errors.len(),
                                                         operation_body: operation_body.clone(),
+                                                    operation_type: OperationType::Query,
                                                         operation_name: operation_name.clone(),
                                                         persisted_document_hash:
                                                             persisted_document_hash.clone(),
+                                                    request_details: request_details.clone(), 
                                                     };
                                                     tokio::spawn(async move {
                                                         let res = agent
