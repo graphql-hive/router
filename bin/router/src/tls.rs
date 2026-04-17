@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use hive_router_config::traffic_shaping::ServerTLSConfig;
 use hive_router_plan_executor::executors::{
-    error::TlsCertificatesError, map::from_cert_file_config_to_certificate_der,
+    error::TlsCertificatesError, tls::from_cert_file_config_to_certificate_der,
 };
 use rustls::{
     pki_types::{pem::PemObject, PrivateKeyDer},
