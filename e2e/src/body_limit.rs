@@ -2,7 +2,7 @@
 mod body_limit_e2e_tests {
     use ntex::web::WebResponseError;
 
-    use crate::testkit::{flakey, ClientResponseExt, TestRouter};
+    use crate::testkit::{ClientResponseExt, TestRouter};
     #[ntex::test]
     async fn should_return_payload_too_large_if_limit_exceeds_while_reading_the_stream() {
         let router = TestRouter::builder()
@@ -50,57 +50,55 @@ mod body_limit_e2e_tests {
 
     #[ntex::test]
     async fn should_return_payload_too_large_if_content_length_header_exceeds_the_limit() {
-        flakey!(async {
-            let router = TestRouter::builder()
-                .inline_config(
-                    r#"
-                    supergraph:
-                        source: file
-                        path: supergraph.graphql
-                    limits:
-                        max_request_body_size: 1B
-                    "#,
-                )
-                .build()
-                .start()
-                .await;
+        let router = TestRouter::builder()
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                limits:
+                    max_request_body_size: 1B
+                "#,
+            )
+            .build()
+            .start()
+            .await;
 
-            // use send_body instead of send_json to avoid a race condition
-            // where ntex's send_json may encounter a "Disconnected" error in CI
-            // when the server closes the connection before reading the full body
-            // and responding with 413
-            let body = sonic_rs::to_vec(&sonic_rs::json!({
-                "query": "{ __typename }",
-            }))
-            .unwrap();
+        // use send_body instead of send_json to avoid a race condition
+        // where ntex's send_json may encounter a "Disconnected" error in CI
+        // when the server closes the connection before reading the full body
+        // and responding with 413
+        let body = sonic_rs::to_vec(&sonic_rs::json!({
+            "query": "{ __typename }",
+        }))
+        .unwrap();
 
-            let res = router
-                .serv()
-                .post(router.graphql_path())
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .send_body(body)
-                .await;
+        let res = router
+            .serv()
+            .post(router.graphql_path())
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .send_body(body)
+            .await;
 
-            match res {
-                Ok(res) => {
-                    assert_eq!(res.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
-                    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        match res {
+            Ok(res) => {
+                assert_eq!(res.status(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
+                insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+            {
+              "errors": [
                 {
-                  "errors": [
-                    {
-                      "message": "Content-Length exceeds the maximum allowed size: 1",
-                      "extensions": {
-                        "code": "PAYLOAD_TOO_LARGE_CONTENT_LENGTH"
-                      }
-                    }
-                  ]
+                  "message": "Content-Length exceeds the maximum allowed size: 1",
+                  "extensions": {
+                    "code": "PAYLOAD_TOO_LARGE_CONTENT_LENGTH"
+                  }
                 }
-                "#);
-                }
-                Err(e) => {
-                    assert_eq!(e.status_code(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
-                }
+              ]
             }
-        })
+            "#);
+            }
+            Err(e) => {
+                assert_eq!(e.status_code(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
+            }
+        }
     }
 }
