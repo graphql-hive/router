@@ -5,6 +5,8 @@ import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
 const endpoint = __ENV.ROUTER_ENDPOINT || "http://0.0.0.0:4000/graphql";
 const vus = __ENV.BENCH_VUS ? parseInt(__ENV.BENCH_VUS) : 50;
 const duration = __ENV.BENCH_OVER_TIME || "30s";
+const persistedMode = __ENV.BENCH_PERSISTED_MODE === "true";
+const documentId = __ENV.BENCH_DOCUMENT_ID || "bench_test_query";
 
 export const options = {
   vus,
@@ -42,9 +44,7 @@ function runOnce(identifier, cb) {
   return cb();
 }
 
-const graphqlRequest = {
-  payload: JSON.stringify({
-    query: `fragment User on User {
+const graphqlQuery = `fragment User on User {
       id
       username
       name
@@ -101,8 +101,12 @@ const graphqlRequest = {
           }
         }
       }
-    }`,
-  }),
+    }`;
+
+const graphqlRequest = {
+  payload: JSON.stringify(
+    persistedMode ? { documentId } : { query: graphqlQuery },
+  ),
   params: {
     headers: {
       "Content-Type": "application/json",

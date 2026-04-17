@@ -12,6 +12,7 @@ use hive_router::{
     plugins::hooks::on_plugin_init::OnPluginInitResult, plugins::plugin_trait::RouterPlugin,
 };
 use hive_router_internal::telemetry::metrics::catalog::{labels, labels_for, names, values};
+use tempfile::NamedTempFile;
 
 async fn wait_for_metrics_export() {
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -136,7 +137,93 @@ async fn test_otlp_http_metrics_export_with_graphql_request() {
     assert_histogram_count(&metrics, names::PLAN_CACHE_DURATION, &no_attrs, 2);
 }
 
-/// Verify cache size metrics are exported as gauges
+#[ntex::test]
+async fn test_otlp_persisted_documents_failure_and_missing_id_counters() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let manifest = NamedTempFile::new().expect("failed to create temp persisted manifest");
+    std::fs::write(
+        manifest.path(),
+        sonic_rs::to_string(&sonic_rs::json!({
+            "sha256:known": "{ topProducts { name } }"
+        }))
+        .expect("failed to serialize manifest"),
+    )
+    .expect("failed to write manifest");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          persisted_documents:
+            enabled: true
+            require_id: true
+            storage:
+              type: file
+              path: "{}"
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  interval: 30ms
+                  max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            manifest.path().display(),
+            otlp_endpoint
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    // Missing id request.
+    let _ = router
+        .send_post_request("/graphql", sonic_rs::json!({}), None)
+        .await;
+
+    // Resolve failure request.
+    let _ = router
+        .send_post_request(
+            "/graphql",
+            sonic_rs::json!({ "documentId": "sha256:not-found" }),
+            None,
+        )
+        .await;
+
+    wait_for_metrics_export().await;
+
+    let metrics = otlp_collector.metrics_view().await;
+    let no_attrs: [(&str, &str); 0] = [];
+
+    assert_counter_eq(
+        &metrics,
+        names::PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL,
+        &no_attrs,
+        1.0,
+    );
+    assert_counter_eq(
+        &metrics,
+        names::PERSISTED_DOCUMENTS_STORAGE_FAILURES_TOTAL,
+        &no_attrs,
+        1.0,
+    );
+}
+
 #[ntex::test]
 async fn test_otlp_cache_size_metrics_exported_as_gauges() {
     let supergraph_path =
@@ -435,6 +522,8 @@ async fn test_otlp_all_metrics_path_attribute_names() {
         (names::PLAN_CACHE_REQUESTS_TOTAL, &[][..]),
         (names::PLAN_CACHE_DURATION, &[][..]),
         (names::PLAN_CACHE_SIZE, &[][..]),
+        (names::PERSISTED_DOCUMENTS_STORAGE_FAILURES_TOTAL, &[][..]),
+        (names::PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL, &[][..]),
     ] {
         assert_metric_has_attrs(&metrics, name, ignore);
     }
@@ -533,6 +622,8 @@ async fn test_otlp_all_metrics_happy_path_attribute_names() {
         (names::PLAN_CACHE_REQUESTS_TOTAL, &[][..]),
         (names::PLAN_CACHE_DURATION, &[][..]),
         (names::PLAN_CACHE_SIZE, &[][..]),
+        (names::PERSISTED_DOCUMENTS_STORAGE_FAILURES_TOTAL, &[][..]),
+        (names::PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL, &[][..]),
     ] {
         assert_metric_has_attrs(&metrics, name, ignore);
     }

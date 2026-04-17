@@ -1,10 +1,14 @@
-use core::fmt;
-
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt;
 
+use hive_router_internal::json::MapAccessSerdeExt;
 use ntex::util::Bytes;
+use serde::de;
+use serde::de::IgnoredAny;
+use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
-use serde::{de, Deserialize, Deserializer};
 use sonic_rs::Value;
 
 use crate::plugin_context::PluginContext;
@@ -63,37 +67,21 @@ impl<'de> Deserialize<'de> for GraphQLParams {
                 let mut operation_name = None;
                 let mut variables: Option<HashMap<String, Value>> = None;
                 let mut extensions: Option<HashMap<String, Value>> = None;
-                let mut extra_params = HashMap::new();
 
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "query" => {
-                            if query.is_some() {
-                                return Err(de::Error::duplicate_field("query"));
-                            }
-                            query = map.next_value::<Option<String>>()?;
-                        }
+                while let Some(key) = map.next_key::<Cow<'de, str>>()? {
+                    match key.as_ref() {
+                        "query" => map.deserialize_once_into_option(&mut query, "query")?,
                         "operationName" => {
-                            if operation_name.is_some() {
-                                return Err(de::Error::duplicate_field("operationName"));
-                            }
-                            operation_name = map.next_value::<Option<String>>()?;
+                            map.deserialize_once_into_option(&mut operation_name, "operationName")?
                         }
                         "variables" => {
-                            if variables.is_some() {
-                                return Err(de::Error::duplicate_field("variables"));
-                            }
-                            variables = map.next_value::<Option<HashMap<String, Value>>>()?;
+                            map.deserialize_once_into_option(&mut variables, "variables")?
                         }
                         "extensions" => {
-                            if extensions.is_some() {
-                                return Err(de::Error::duplicate_field("extensions"));
-                            }
-                            extensions = map.next_value::<Option<HashMap<String, Value>>>()?;
+                            map.deserialize_once_into_option(&mut extensions, "extensions")?
                         }
-                        other => {
-                            let value: Value = map.next_value()?;
-                            extra_params.insert(other.to_string(), value);
+                        _ => {
+                            let _ = map.next_value::<IgnoredAny>()?;
                         }
                     }
                 }

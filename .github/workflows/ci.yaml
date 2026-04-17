@@ -188,6 +188,12 @@ jobs:
             binary: "hive_router_with_plugin"
             config: "bench/configs/plugins.config.yaml"
             compare_with_default: true
+          - name: "persisted-documents"
+            args: ""
+            package: "hive-router"
+            binary: "hive_router"
+            config: "bench/configs/persisted-documents.config.yaml"
+            compare_with_default: true
     name: benchmark / router / ${{ matrix.name }}
     runs-on: ubuntu-latest
     env:
@@ -220,7 +226,12 @@ jobs:
           ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
       - name: Run k6 benchmark for ${{ github.ref }}
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./bench/results/pr bench/k6.js
+        run: |
+          if [ "${{ matrix.name }}" = "persisted-documents" ]; then
+            k6 run -e SUMMARY_PATH=./bench/results/pr -e BENCH_PERSISTED_MODE=true -e BENCH_DOCUMENT_ID=bench_test_query bench/k6.js
+          else
+            k6 run -e SUMMARY_PATH=./bench/results/pr bench/k6.js
+          fi
       - name: Checkout main branch in a separate directory
         if: github.event_name == 'pull_request'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
