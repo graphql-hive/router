@@ -26,8 +26,9 @@ use hyper_util::{
     rt::{TokioExecutor, TokioTimer},
 };
 use rustls::{
-    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
-    ClientConfig, RootCertStore,
+    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName, UnixTime},
+    ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme,
 };
 use tokio::sync::Semaphore;
 
@@ -112,37 +113,96 @@ pub fn from_cert_file_config_to_certificate_der<'a>(
     }
 }
 
-fn build_https_client_config(
+/// A certificate verifier that accepts any server certificate without validation.
+/// Only for use in development/testing environments.
+#[derive(Debug)]
+struct NoVerifier;
+
+impl ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+            SignatureScheme::RSA_PKCS1_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA384,
+            SignatureScheme::RSA_PKCS1_SHA512,
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            SignatureScheme::ECDSA_NISTP521_SHA512,
+            SignatureScheme::RSA_PSS_SHA256,
+            SignatureScheme::RSA_PSS_SHA384,
+            SignatureScheme::RSA_PSS_SHA512,
+            SignatureScheme::ED25519,
+            SignatureScheme::ED448,
+        ]
+    }
+}
+
+pub fn build_https_client_config(
     tls_config: Option<&ClientTLSConfig>,
 ) -> Result<ClientConfig, TlsCertificatesError> {
-    let tls_config_for_rustls =
-        if let Some(cert_file_path) = tls_config.and_then(|c| c.cert_file.as_ref()) {
-            // Read trust roots
-            let certs = from_cert_file_config_to_certificate_der(cert_file_path)?;
+    let insecure_skip = tls_config
+        .map(|c| c.insecure_skip_ca_verification)
+        .unwrap_or(false);
 
-            if certs.is_empty() {
-                return Err(TlsCertificatesError::InvalidTlsCertificates(format!(
-                    "No valid certificates found in {:#?}",
-                    cert_file_path
-                )));
-            }
+    let tls_config_for_rustls = if insecure_skip {
+        ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerifier))
+    } else if let Some(cert_file_path) = tls_config.and_then(|c| c.cert_file.as_ref()) {
+        // Read trust roots
+        let certs = from_cert_file_config_to_certificate_der(cert_file_path)?;
 
-            let certs_len = certs.len();
-            let mut roots = RootCertStore::empty();
-            let (valid, _) = roots.add_parsable_certificates(certs);
-            if valid != certs_len {
-                return Err(TlsCertificatesError::InvalidTlsCertificates(format!(
-                    "Expected {} certificates in {:#?}, but only {} were valid",
-                    certs_len, cert_file_path, valid
-                )));
-            }
-            // TLS client config using the custom CA store for lookups
-            ClientConfig::builder().with_root_certificates(roots)
-        } else {
-            ClientConfig::builder()
-                .with_native_roots()
-                .map_err(TlsCertificatesError::NativeTlsCertificatesError)?
-        };
+        if certs.is_empty() {
+            return Err(TlsCertificatesError::InvalidTlsCertificates(format!(
+                "No valid certificates found in {:#?}",
+                cert_file_path
+            )));
+        }
+
+        let certs_len = certs.len();
+        let mut roots = RootCertStore::empty();
+        let (valid, _) = roots.add_parsable_certificates(certs);
+        if valid != certs_len {
+            return Err(TlsCertificatesError::InvalidTlsCertificates(format!(
+                "Expected {} certificates in {:#?}, but only {} were valid",
+                certs_len, cert_file_path, valid
+            )));
+        }
+        // TLS client config using the custom CA store for lookups
+        ClientConfig::builder().with_root_certificates(roots)
+    } else {
+        ClientConfig::builder()
+            .with_native_roots()
+            .map_err(TlsCertificatesError::NativeTlsCertificatesError)?
+    };
     let client_config = if let Some(client_auth) = tls_config.and_then(|c| c.client_auth.as_ref()) {
         let certs = from_cert_file_config_to_certificate_der(&client_auth.cert_file)?;
 
@@ -188,6 +248,8 @@ fn get_merged_tls_config(
                     .client_auth
                     .clone()
                     .or_else(|| global.client_auth.clone()),
+                insecure_skip_ca_verification: subgraph.insecure_skip_ca_verification
+                    || global.insecure_skip_ca_verification,
             };
             Some(merged)
         }
@@ -588,10 +650,25 @@ impl SubgraphExecutorMap {
                         )
                     })?;
 
+                // Resolve TLS config for the subgraph (merging global + per-subgraph)
+                let tls_config = get_merged_tls_config(
+                    self.config.traffic_shaping.all.tls.as_ref(),
+                    self.config
+                        .traffic_shaping
+                        .subgraphs
+                        .get(subgraph_name)
+                        .and_then(|s| s.tls.as_ref()),
+                );
+                let ws_tls_config = match tls_config.as_ref() {
+                    Some(tls) => Some(Arc::new(build_https_client_config(Some(tls))?)),
+                    None => None,
+                };
+
                 let ws_executor = WsSubgraphExecutor::new(
                     subgraph_name.to_string(),
                     // we use the new constructed ws_endpoint_uri here
                     ws_endpoint_uri,
+                    ws_tls_config,
                 )
                 .to_boxed_arc();
 
@@ -613,10 +690,12 @@ impl SubgraphExecutorMap {
 
                 let heartbeat_interval_ms = callback_config.heartbeat_interval.as_millis() as u64;
 
+                let subgraph_config = self.resolve_subgraph_config(subgraph_name)?;
+
                 let callback_executor = HttpCallbackSubgraphExecutor::new(
                     subgraph_name.to_string(),
                     endpoint_uri,
-                    self.client.clone(),
+                    subgraph_config.client,
                     callback_config.public_url.to_string(),
                     heartbeat_interval_ms,
                     self.callback_subscriptions.clone(),

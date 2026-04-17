@@ -315,6 +315,8 @@ pub struct ServerTLSConfig {
 #[serde(deny_unknown_fields)]
 pub struct ServerClientAuthConfig {
     pub cert_file: SingleOrMultiple<FilePath>,
+    #[serde(default)]
+    pub required: Option<bool>,
 }
 
 #[derive(Default, Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -322,6 +324,8 @@ pub struct ServerClientAuthConfig {
 pub struct ClientTLSConfig {
     pub cert_file: Option<SingleOrMultiple<FilePath>>,
     pub client_auth: Option<ClientAuthConfig>,
+    #[serde(default)]
+    pub insecure_skip_ca_verification: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

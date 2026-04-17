@@ -14,7 +14,7 @@ mod tls_tests {
     use tempfile::NamedTempFile;
     use tonic::transport::CertificateDer;
 
-    use crate::testkit::{ClientResponseExt, Started, TestRouter, TestSubgraphs};
+    use crate::testkit::{some_header_map, ClientResponseExt, Started, TestRouter, TestSubgraphs};
 
     struct GeneratedKeyPair {
         cert_file: NamedTempFile,
@@ -493,5 +493,352 @@ mod tls_tests {
             &client_auth_generated_key_pair_2,
         )
         .await;
+    }
+
+    /// Setup TLS on a subgraph, configure the router to trust the subgraph's certificate,
+    /// and verify that SSE subscriptions work correctly over the TLS connection.
+    #[ntex::test]
+    async fn sse_subscription_over_tls_subgraph() {
+        init_rustls_crypto_provider();
+        let (subgraphs, generated_key_pair) = generate_tls_subgraph().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            subscriptions:
+                enabled: true
+            traffic_shaping:
+                all:
+                    tls:
+                        cert_file: "{}"
+                "#,
+                generated_key_pair.cert_file_path
+            ))
+            .build()
+            .start()
+            .await;
+        let resp = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map!(
+                    ntex::http::header::ACCEPT => "text/event-stream"
+                ),
+            )
+            .await;
+        assert!(resp.status().is_success(), "Expected 200 OK");
+        let body = resp.string_body().await;
+        assert!(
+            body.contains(
+                r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
+            ),
+            "Expected at least one emitted event, got: {}",
+            body
+        );
+        assert!(body.contains("event: complete"));
+    }
+
+    /// Setup TLS on a subgraph, configure the router to trust the subgraph's certificate,
+    /// and verify that WebSocket subscriptions work correctly over the TLS (wss://) connection.
+    #[ntex::test]
+    async fn websocket_subscription_over_tls_subgraph() {
+        init_rustls_crypto_provider();
+        let (subgraphs, generated_key_pair) = generate_tls_subgraph().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            subscriptions:
+                enabled: true
+                websocket:
+                    subgraphs:
+                        reviews:
+                            path: /reviews/ws
+            traffic_shaping:
+                all:
+                    tls:
+                        cert_file: "{}"
+                "#,
+                generated_key_pair.cert_file_path
+            ))
+            .build()
+            .start()
+            .await;
+        let resp = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map!(
+                    ntex::http::header::ACCEPT => "text/event-stream"
+                ),
+            )
+            .await;
+        assert!(resp.status().is_success(), "Expected 200 OK");
+        let body = resp.string_body().await;
+        assert!(
+            body.contains(
+                r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
+            ),
+            "Expected at least one emitted event, got: {}",
+            body
+        );
+        assert!(body.contains("event: complete"));
+    }
+
+    /// Setup mTLS on a subgraph and verify that WebSocket subscriptions work correctly
+    /// when the router authenticates itself to the subgraph via client certificate.
+    #[ntex::test]
+    async fn websocket_subscription_over_mtls_subgraph() {
+        init_rustls_crypto_provider();
+        let generated_keypair = generate_keypair().await;
+        let client_auth_generated_key_pair = generate_keypair().await;
+
+        let mut client_auth_roots = RootCertStore::empty();
+        let client_auth_cert: CertificateDer<'static> =
+            CertificateDer::from_pem_file(&client_auth_generated_key_pair.cert_file_path)
+                .expect("Failed to read certificate from PEM file");
+        client_auth_roots
+            .add(client_auth_cert.clone())
+            .expect("Failed to add certificate to root store");
+
+        let cert = CertificateDer::from_pem_file(&generated_keypair.cert_file_path)
+            .expect("Failed to read certificate from PEM file");
+        let key: PrivateKeyDer<'static> =
+            PrivateKeyDer::from_pem_file(&generated_keypair.key_file_path)
+                .expect("Failed to read private key from PEM file");
+        let rustls_config = RustlsConfig::from_config(Arc::new(
+            ServerConfig::builder()
+                .with_client_cert_verifier(
+                    WebPkiClientVerifier::builder(client_auth_roots.into())
+                        .build()
+                        .expect("Failed to build WebPkiClientVerifier for mTLS test"),
+                )
+                .with_single_cert(vec![cert], key)
+                .unwrap(),
+        ));
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_rustls_config(rustls_config)
+            .build()
+            .start()
+            .await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            subscriptions:
+                enabled: true
+                websocket:
+                    subgraphs:
+                        reviews:
+                            path: /reviews/ws
+            traffic_shaping:
+                all:
+                    tls:
+                        cert_file: "{}"
+                        client_auth:
+                            cert_file: "{}"
+                            key_file: "{}"
+                "#,
+                generated_keypair
+                    .cert_file
+                    .path()
+                    .to_str()
+                    .expect("Failed to convert cert file path to string"),
+                client_auth_generated_key_pair
+                    .cert_file
+                    .path()
+                    .to_str()
+                    .expect("Failed to convert cert file path to string"),
+                client_auth_generated_key_pair
+                    .key_file
+                    .path()
+                    .to_str()
+                    .expect("Failed to convert key file path to string")
+            ))
+            .build()
+            .start()
+            .await;
+        let resp = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map!(
+                    ntex::http::header::ACCEPT => "text/event-stream"
+                ),
+            )
+            .await;
+        assert!(resp.status().is_success(), "Expected 200 OK");
+        let body = resp.string_body().await;
+        assert!(
+            body.contains(
+                r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
+            ),
+            "Expected at least one emitted event, got: {}",
+            body
+        );
+        assert!(body.contains("event: complete"));
+    }
+
+    /// Setup TLS on a subgraph with a self-signed certificate, and verify that when
+    /// `insecure_skip_ca_verification` is enabled, the router successfully connects
+    /// without needing to trust the subgraph's CA.
+    #[ntex::test]
+    async fn insecure_skip_ca_verification() {
+        init_rustls_crypto_provider();
+        let (subgraphs, _generated_key_pair) = generate_tls_subgraph().await;
+        // Note: we do NOT configure cert_file here — normally this would fail
+        // because the subgraph has a self-signed cert.
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            traffic_shaping:
+                all:
+                    tls:
+                        insecure_skip_ca_verification: true
+                "#
+                .to_string(),
+            )
+            .build()
+            .start()
+            .await;
+        let resp = router
+            .send_graphql_request("{ me { name } }", None, None)
+            .await;
+        assert!(resp.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(
+            resp.json_body_string_pretty().await
+            , @r###"
+        {
+          "data": {
+            "me": {
+              "name": "Uri Goldshtein"
+            }
+          }
+        }
+        "###);
+    }
+
+    /// Setup mTLS on the router with `required: false` in client_auth config.
+    /// Verify that clients WITHOUT a certificate can still connect successfully,
+    /// and clients WITH a valid certificate also connect successfully.
+    #[ntex::test]
+    async fn optional_mtls_router() {
+        init_rustls_crypto_provider();
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let generated_key_pair = generate_keypair().await;
+        let client_auth_generated_key_pair = generate_keypair().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            traffic_shaping:
+                router:
+                    tls:
+                        key_file: "{}"
+                        cert_file: "{}"
+                        client_auth:
+                            cert_file: "{}"
+                            required: false
+                "#,
+                generated_key_pair.key_file_path,
+                generated_key_pair.cert_file_path,
+                client_auth_generated_key_pair.cert_file_path
+            ))
+            .build()
+            .start_without_healthcheck()
+            .await;
+        let graphql_endpoint = router.serv().url(router.graphql_path());
+
+        // Test 1: Client WITHOUT a certificate should succeed
+        let client_no_cert = reqwest::Client::builder()
+            .add_root_certificate(
+                reqwest::Certificate::from_pem(generated_key_pair.cert_pem.as_bytes())
+                    .expect("Failed to create certificate from PEM"),
+            )
+            .use_rustls_tls()
+            .build()
+            .expect("Failed to build reqwest client without client cert");
+        let resp = client_no_cert
+            .post(&graphql_endpoint)
+            .json(&json!({
+                "query": "{ me { name } }"
+            }))
+            .send()
+            .await
+            .expect("Failed to send request without client cert");
+        insta::assert_snapshot!(
+            resp.text().await.expect("Failed to parse response")
+            , @r#"{"data":{"me":{"name":"Uri Goldshtein"}}}"#);
+
+        // Test 2: Client WITH a valid certificate should also succeed
+        let mut client_auth_buf = Vec::new();
+        client_auth_buf.extend_from_slice(client_auth_generated_key_pair.cert_pem.as_bytes());
+        client_auth_buf.extend_from_slice(client_auth_generated_key_pair.key_pem.as_bytes());
+        let identity = reqwest::Identity::from_pem(&client_auth_buf)
+            .expect("Failed to create identity from PEM");
+        let client_with_cert = reqwest::Client::builder()
+            .add_root_certificate(
+                reqwest::Certificate::from_pem(generated_key_pair.cert_pem.as_bytes())
+                    .expect("Failed to create certificate from PEM"),
+            )
+            .use_rustls_tls()
+            .identity(identity)
+            .build()
+            .expect("Failed to build reqwest client with client cert");
+        let resp = client_with_cert
+            .post(&graphql_endpoint)
+            .json(&json!({
+                "query": "{ me { name } }"
+            }))
+            .send()
+            .await
+            .expect("Failed to send request with client cert");
+        insta::assert_snapshot!(
+            resp.text().await.expect("Failed to parse response")
+            , @r#"{"data":{"me":{"name":"Uri Goldshtein"}}}"#);
     }
 }

@@ -1009,7 +1009,7 @@ impl TestRouter<Started> {
         );
         let ws_url = url.as_str().replace("http://", "ws://");
         let ws_uri = ws_url.parse::<http::Uri>().expect("Failed to parse ws url");
-        websocket_client::connect(&ws_uri)
+        websocket_client::connect(&ws_uri, None)
             .await
             .expect("Failed to connect to websocket")
     }

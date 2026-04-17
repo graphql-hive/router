@@ -17,7 +17,13 @@ pub fn build_rustls_config(
         let certs = from_cert_file_config_to_certificate_der(&client_auth_config.cert_file)?;
         let mut roots = RootCertStore::empty();
         roots.add_parsable_certificates(certs);
-        WebPkiClientVerifier::builder(roots.into()).build()?
+        let builder = WebPkiClientVerifier::builder(roots.into());
+        let required = client_auth_config.required.unwrap_or(true);
+        if required {
+            builder.build()?
+        } else {
+            builder.allow_unauthenticated().build()?
+        }
     } else {
         Arc::new(NoClientAuth)
     };
