@@ -12,7 +12,7 @@ mod override_subgraph_urls_e2e_tests {
     /// This way we can verify that the override is applied correctly.
     async fn should_override_subgraph_url_based_on_static_value() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
-        let subgraphs_addr = subgraphs.addr();
+        let subgraphs_url = subgraphs.url();
 
         let router = TestRouter::builder()
             .inline_config(format!(
@@ -22,7 +22,7 @@ mod override_subgraph_urls_e2e_tests {
                     path: supergraph.graphql
                 override_subgraph_urls:
                     accounts:
-                        url: "http://{subgraphs_addr}/accounts"
+                        url: "{subgraphs_url}/accounts"
                 "#,
             ))
             .build()
@@ -54,7 +54,7 @@ mod override_subgraph_urls_e2e_tests {
     /// Without the header, the request goes to 4200 and fail (thanks to `.default`).
     async fn should_override_subgraph_url_based_on_header_value() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
-        let subgraphs_addr = subgraphs.addr();
+        let subgraphs_url = subgraphs.url();
 
         let router = TestRouter::builder()
             .inline_config(format!(
@@ -67,7 +67,7 @@ mod override_subgraph_urls_e2e_tests {
                         url:
                             expression: |
                                 if .request.headers."x-accounts-port" == "4100" {{
-                                    "http://{subgraphs_addr}/accounts"
+                                    "{subgraphs_url}/accounts"
                                 }} else {{
                                     .default
                                 }}

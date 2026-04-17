@@ -17,7 +17,7 @@ sonic-rs = { workspace = true }
 lazy_static = { workspace = true }
 jsonwebtoken = { workspace = true }
 insta = { workspace = true }
-reqwest = { workspace = true, features = ["json"]}
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 opentelemetry-otlp = { workspace = true, features = ["http-proto"] }
 opentelemetry-proto = { workspace = true }
 prost = { workspace = true }
@@ -31,6 +31,7 @@ dashmap = { workspace = true }
 axum = { workspace = true }
 bytes = { workspace = true }
 arc-swap = { workspace = true }
+rustls = { workspace = true }
 
 hive-router = { path = "../bin/router", features = ["testing"] }
 hive-router-config = { path = "../lib/router-config" }
@@ -46,4 +47,5 @@ hex = "0.4"
 tiny_http = "0.12"
 futures-util = { workspace = true }
 bollard = "0.20.0"
-
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+rcgen = "0.14.7"

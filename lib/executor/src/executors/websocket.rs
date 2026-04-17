@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -17,13 +18,19 @@ use crate::response::subgraph_response::SubgraphResponse;
 pub struct WsSubgraphExecutor {
     subgraph_name: String,
     endpoint: http::Uri,
+    tls_config: Option<Arc<rustls::ClientConfig>>,
 }
 
 impl WsSubgraphExecutor {
-    pub fn new(subgraph_name: String, endpoint: http::Uri) -> Self {
+    pub fn new(
+        subgraph_name: String,
+        endpoint: http::Uri,
+        tls_config: Option<Arc<rustls::ClientConfig>>,
+    ) -> Self {
         Self {
             subgraph_name,
             endpoint,
+            tls_config,
         }
     }
 }
@@ -42,6 +49,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
+        let tls_config = self.tls_config.clone();
         debug!(
             "establishing WebSocket connection to subgraph {} at {}",
             subgraph_name, endpoint
@@ -60,7 +68,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // or earlier if connect/init fails.
         rt::spawn(async move {
             let result = async {
-                let connection = match connect(&endpoint).await {
+                let connection = match connect(&endpoint, tls_config).await {
                     Ok(conn) => conn,
                     Err(e) => {
                         return Err(SubgraphExecutorError::WebSocketConnectFailure(
@@ -120,6 +128,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
+        let tls_config = self.tls_config.clone();
 
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
 
@@ -134,7 +143,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // this task ends when the websocket stream completes, the client drops the receiver,
         // or back-pressure fills the channel and we terminate the subscription.
         drop(rt::spawn(async move {
-            let connection = match connect(&endpoint).await {
+            let connection = match connect(&endpoint, tls_config).await {
                 Ok(conn) => conn,
                 Err(e) => {
                     let _ = tx.try_send(Err(SubgraphExecutorError::WebSocketConnectFailure(
