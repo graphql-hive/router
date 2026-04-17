@@ -1,10 +1,14 @@
 use std::{
-    collections::BTreeMap, str::FromStr, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}
+    collections::BTreeMap,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
 use graphql_tools::parser::schema::Document;
-use hive_console_sdk::agent::usage_agent::{AgentError, ExecutionReport, OperationType, RequestDetails, UsageAgent, UsageAgentExt};
+use hive_console_sdk::agent::usage_agent::{
+    AgentError, ExecutionReport, OperationType, RequestDetails, UsageAgent, UsageAgentExt,
+};
 use hive_router_config::{
     telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
     usage_reporting::UsageReportingConfig,
@@ -69,7 +73,7 @@ pub fn init_hive_usage_agent(
     if let Some(target_id) = target {
         agent_builder = agent_builder.target_id(target_id);
     }
-    
+
     if let Some(exclude_expr) = &usage_config.exclude {
         agent_builder = agent_builder.exclude_expression(exclude_expr.to_string());
     }
@@ -115,9 +119,7 @@ pub async fn collect_usage_report<'a>(
         operation_body: operation_body.to_owned(),
         operation_type: match operation_kind {
             Some(OperationKind::Mutation) => OperationType::Mutation,
-            Some(OperationKind::Subscription) => {
-                OperationType::Subscription
-            },
+            Some(OperationKind::Subscription) => OperationType::Subscription,
             _ => OperationType::Query,
         },
         operation_name: operation_name.map(|s| s.to_owned()),
@@ -145,7 +147,9 @@ impl BackgroundTask for UsageAgentTask {
 
 pub fn from_ntex_headers_to_map(headers: &ntex::http::HeaderMap) -> BTreeMap<String, String> {
     headers
-            .iter()
-            .filter_map(|(name, value)| Some((name.as_str().to_string(), value.to_str().ok()?.to_string())))
-            .collect()
+        .iter()
+        .filter_map(|(name, value)| {
+            Some((name.as_str().to_string(), value.to_str().ok()?.to_string()))
+        })
+        .collect()
 }

@@ -7,9 +7,7 @@ use tonic::{
 };
 use vrl::core::Value;
 
-use crate::{
-    telemetry::error::TelemetryError,
-};
+use crate::telemetry::error::TelemetryError;
 use hive_router_config::primitives::value_or_expression::ValueOrExpression;
 
 pub(super) fn build_metadata(

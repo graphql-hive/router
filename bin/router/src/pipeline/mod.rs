@@ -22,7 +22,7 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{Method, header::CONTENT_TYPE};
+use http::{header::CONTENT_TYPE, Method};
 use ntex::{
     http::body::{Body, ResponseBody},
     http::HeaderMap,
@@ -41,7 +41,7 @@ use tracing::{error, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
-    LABORATORY_HTML, pipeline::{
+    pipeline::{
         active_subscriptions::SubscriptionEvent,
         authorization::enforce_operation_authorization,
         client_identification::identify_client,
@@ -67,7 +67,8 @@ use crate::{
     shared_state::{
         RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse,
         SharedRouterResponseGuard, SharedRouterSingleResponse, SharedRouterStreamResponse,
-    }
+    },
+    LABORATORY_HTML,
 };
 
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;

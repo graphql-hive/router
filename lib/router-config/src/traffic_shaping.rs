@@ -1,6 +1,5 @@
 use std::{collections::HashMap, time::Duration};
 
-use hive_console_sdk::expressions::{CompileExpression, ExpressionCompileError, ValueOrProgram, vrl::prelude::Function};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
