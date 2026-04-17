@@ -185,6 +185,12 @@ jobs:
             binary: "hive_router_with_plugin"
             config: "bench/configs/plugins.config.yaml"
             compare_with_default: true
+          - name: "persisted-documents"
+            args: ""
+            package: "hive-router"
+            binary: "hive_router"
+            config: "bench/configs/persisted-documents.config.yaml"
+            compare_with_default: false
     name: benchmark / router / ${{ matrix.name }}
     runs-on: ubuntu-latest
     env:
@@ -219,6 +225,8 @@ jobs:
         run: ./bench/run-benchmark.sh
         env:
           SUMMARY_PATH: ./bench/results/pr
+          BENCH_PERSISTED_MODE: ${{ matrix.name == 'persisted-documents' && 'true' || '' }}
+          BENCH_DOCUMENT_ID: ${{ matrix.name == 'persisted-documents' && 'bench_test_query' || '' }}
       - name: Checkout main branch in a separate directory
         if: github.event_name == 'pull_request'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -257,6 +265,8 @@ jobs:
         run: ./bench/run-benchmark.sh
         env:
           SUMMARY_PATH: ./bench/results/main
+          BENCH_PERSISTED_MODE: ${{ matrix.name == 'persisted-documents' && 'true' || '' }}
+          BENCH_DOCUMENT_ID: ${{ matrix.name == 'persisted-documents' && 'bench_test_query' || '' }}
       - name: Compare benchmark results
         if: github.event_name == 'pull_request'
         run: |
