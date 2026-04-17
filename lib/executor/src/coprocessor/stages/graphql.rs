@@ -5,7 +5,6 @@ use hive_router_config::coprocessor::{
     CoprocessorGraphqlAnalysisIncludeConfig, CoprocessorGraphqlRequestIncludeConfig,
     CoprocessorGraphqlResponseIncludeConfig, CoprocessorHookConfig,
 };
-use hive_router_internal::expressions::lib::ToVrlValue;
 use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use ntex::http::body::{Body, ResponseBody};
 use ntex::http::HeaderMap;
@@ -14,9 +13,12 @@ use ntex::web;
 use crate::coprocessor::error::CoprocessorError;
 use crate::coprocessor::protocol::COPROCESSOR_VERSION;
 use crate::coprocessor::runtime::MutableRequestState;
-use crate::coprocessor::stage::{
-    compile_condition, evaluate_condition, CoprocessorRequest, CoprocessorRequestBody,
-    CoprocessorResponseBody, HeaderMapJsonRef, Stage, StageResponsePayload,
+use crate::coprocessor::{
+    context::{RequestContextView, RequestResponseContextView, ResponseLike},
+    stage::{
+        compile_condition, evaluate_condition, CoprocessorRequest, CoprocessorRequestBody,
+        CoprocessorResponseBody, HeaderMapJsonRef, Stage, StageResponsePayload,
+    },
 };
 use crate::plugins::hooks::on_graphql_params::GraphQLParams;
 
@@ -143,6 +145,22 @@ impl<'a> GraphqlResponseInput<'a> {
     }
 }
 
+impl ResponseLike for GraphqlResponseInput<'_> {
+    type Request = web::HttpRequest;
+
+    fn headers(&self) -> &HeaderMap {
+        self.response.headers()
+    }
+
+    fn status_code(&self) -> u16 {
+        self.response.status().as_u16()
+    }
+
+    fn request(&self) -> &Self::Request {
+        self.request
+    }
+}
+
 impl Stage for GraphqlRequestStage {
     type Input<'a> = GraphqlRequestInput<'a>;
 
@@ -150,19 +168,9 @@ impl Stage for GraphqlRequestStage {
 
     fn should_run(&self, input: &Self::Input<'_>) -> Result<bool, CoprocessorError> {
         evaluate_condition(self.condition.as_ref(), |hints| {
-            hints.context_builder(|root| {
-                root.insert_object("request", |req| {
-                    req.insert_lazy("method", || input.request.method().as_str().into())
-                        .insert_lazy("headers", || input.request.headers().to_vrl_value())
-                        .insert_lazy("url", || input.request.uri().to_vrl_value())
-                        .insert_object("operation", |op| {
-                            op.insert_lazy("name", || {
-                                input.graphql_params.operation_name.clone().into()
-                            })
-                            .insert_lazy("query", || input.graphql_params.query.clone().into());
-                        });
-                });
-            })
+            hints.context_from(
+                &RequestContextView::new(input.request).with_operation(input.graphql_params),
+            )
         })
     }
 
@@ -229,19 +237,9 @@ impl Stage for GraphqlAnalysisStage {
 
     fn should_run(&self, input: &Self::Input<'_>) -> Result<bool, CoprocessorError> {
         evaluate_condition(self.condition.as_ref(), |hints| {
-            hints.context_builder(|root| {
-                root.insert_object("request", |req| {
-                    req.insert_lazy("method", || input.request.method.as_str().into())
-                        .insert_lazy("headers", || input.request.headers.to_vrl_value())
-                        .insert_lazy("url", || input.request.uri.to_vrl_value())
-                        .insert_object("operation", |op| {
-                            op.insert_lazy("name", || {
-                                input.graphql_params.operation_name.clone().into()
-                            })
-                            .insert_lazy("query", || input.graphql_params.query.clone().into());
-                        });
-                });
-            })
+            hints.context_from(
+                &RequestContextView::new(&input.request).with_operation(input.graphql_params),
+            )
         })
     }
 
@@ -308,13 +306,7 @@ impl Stage for GraphqlResponseStage {
 
     fn should_run(&self, input: &Self::Input<'_>) -> Result<bool, CoprocessorError> {
         evaluate_condition(self.condition.as_ref(), |hints| {
-            hints.context_builder(|root| {
-                root.insert_object("request", |req| {
-                    req.insert_lazy("method", || input.request.method().as_str().into())
-                        .insert_lazy("headers", || input.request.headers().to_vrl_value())
-                        .insert_lazy("url", || input.request.uri().to_vrl_value());
-                });
-            })
+            hints.context_from(&RequestResponseContextView { response: input })
         })
     }
 

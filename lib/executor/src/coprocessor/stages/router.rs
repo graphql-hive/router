@@ -5,7 +5,7 @@ use hive_router_config::coprocessor::{
     CoprocessorHookConfig, CoprocessorRouterRequestIncludeConfig,
     CoprocessorRouterResponseIncludeConfig,
 };
-use hive_router_internal::expressions::{lib::ToVrlValue, values::boolean::BooleanOrProgram};
+use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use ntex::http::{
     body::{Body, ResponseBody},
     error::PayloadError,
@@ -16,9 +16,12 @@ use ntex::web::{self, DefaultError};
 
 use crate::coprocessor::error::CoprocessorError;
 use crate::coprocessor::protocol::COPROCESSOR_VERSION;
-use crate::coprocessor::stage::{
-    compile_condition, evaluate_condition, CoprocessorRequest, CoprocessorRequestBody,
-    CoprocessorResponseBody, HeaderMapJsonRef, Stage, StageResponsePayload,
+use crate::coprocessor::{
+    context::{RequestContextView, RequestResponseContextView},
+    stage::{
+        compile_condition, evaluate_condition, CoprocessorRequest, CoprocessorRequestBody,
+        CoprocessorResponseBody, HeaderMapJsonRef, Stage, StageResponsePayload,
+    },
 };
 
 pub struct RouterRequestStage {
@@ -104,13 +107,7 @@ impl Stage for RouterRequestStage {
 
     fn should_run(&self, input: &Self::Input<'_>) -> Result<bool, CoprocessorError> {
         evaluate_condition(self.condition.as_ref(), |hints| {
-            hints.context_builder(|root| {
-                root.insert_object("request", |req| {
-                    req.insert_lazy("method", || input.request.method().as_str().into())
-                        .insert_lazy("headers", || input.request.headers().to_vrl_value())
-                        .insert_lazy("url", || input.request.uri().to_vrl_value());
-                });
-            })
+            hints.context_from(&RequestContextView::new(&input.request))
         })
     }
 
@@ -185,19 +182,8 @@ impl Stage for RouterResponseStage {
 
     fn should_run(&self, input: &Self::Input<'_>) -> Result<bool, CoprocessorError> {
         evaluate_condition(self.condition.as_ref(), |hints| {
-            hints.context_builder(|root| {
-                root.insert_object("request", |req| {
-                    req.insert_lazy("method", || {
-                        input.response.request().method().as_str().into()
-                    })
-                    .insert_lazy("headers", || {
-                        input.response.request().headers().to_vrl_value()
-                    })
-                    .insert_lazy("url", || input.response.request().uri().to_vrl_value());
-                })
-                .insert_object("response", |res| {
-                    res.insert_lazy("headers", || input.response.headers().to_vrl_value());
-                });
+            hints.context_from(&RequestResponseContextView {
+                response: &input.response,
             })
         })
     }

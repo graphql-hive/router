@@ -88,6 +88,17 @@ impl CompileExpression for str {
 /// target values, and error handling.
 pub trait ExecutableProgram {
     fn execute(&self, value: VrlValue) -> Result<VrlValue, ExpressionExecutionError>;
+
+    fn execute_with_hints<F>(
+        &self,
+        hints: &ProgramHints,
+        vrl_context_fn: F,
+    ) -> Result<VrlValue, ExpressionExecutionError>
+    where
+        F: FnOnce(&ProgramHints) -> VrlValue,
+    {
+        self.execute(vrl_context_fn(hints))
+    }
 }
 
 impl ExecutableProgram for VrlProgram {
@@ -156,9 +167,8 @@ where
         match self {
             ValueOrProgram::Value(v) => Ok(v.clone()),
             ValueOrProgram::Program(vrl_program, hints) => {
-                let vrl_context = vrl_context_fn(hints);
                 let result_value = vrl_program
-                    .execute(vrl_context)
+                    .execute_with_hints(hints, vrl_context_fn)
                     .map_err(ProgramResolutionError::ExecutionFailed)?;
 
                 T::from_vrl_value(result_value).map_err(ProgramResolutionError::ConversionFailed)
@@ -239,6 +249,13 @@ impl ProgramHints {
     ) -> VrlValue {
         VrlContextBuilder::new(self).build_root(build_fn)
     }
+
+    pub fn context_from<V>(&self, view: &V) -> VrlValue
+    where
+        V: VrlView,
+    {
+        self.context_builder(|root| view.write(root))
+    }
 }
 
 pub struct VrlContextBuilder<'a> {
@@ -274,6 +291,10 @@ pub struct VrlObjectBuilder<'a, 'b> {
     node: Option<&'a HintNode>,
     force_build: bool,
     map: &'b mut BTreeMap<vrl::value::KeyString, VrlValue>,
+}
+
+pub trait VrlView {
+    fn write<'a>(&self, out: &mut VrlObjectBuilder<'a, '_>);
 }
 
 impl<'a, 'b> VrlObjectBuilder<'a, 'b> {

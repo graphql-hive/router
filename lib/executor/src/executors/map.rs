@@ -10,7 +10,9 @@ use hive_router_config::{
     HiveRouterConfig,
 };
 use hive_router_internal::expressions::vrl::core::Value as VrlValue;
-use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
+use hive_router_internal::expressions::{
+    CompileExpression, DurationOrProgram, ExecutableProgram, VrlView,
+};
 use hive_router_internal::{
     expressions::vrl::compiler::Program as VrlProgram, inflight::InFlightMap,
     telemetry::TelemetryContext,
@@ -24,7 +26,7 @@ use hyper_util::{
 use tokio::sync::Semaphore;
 
 use crate::{
-    execution::client_request_details::ClientRequestDetails,
+    execution::client_request_details::{ClientRequestDetails, ClientRequestView},
     executors::{
         common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         error::SubgraphExecutorError,
@@ -485,18 +487,16 @@ fn resolve_timeout(
     default_timeout: Option<Duration>,
 ) -> Result<Duration, SubgraphExecutorError> {
     duration_or_program
-        .resolve(|| {
-            let mut context_map = BTreeMap::new();
-            context_map.insert("request".into(), client_request.into());
+        .resolve_with_hints(|hints| {
+            hints.context_builder(|root| {
+                root.insert_object("request", |req| {
+                    ClientRequestView::new(client_request).write(req);
+                });
 
-            if let Some(default) = default_timeout {
-                context_map.insert(
-                    "default".into(),
-                    VrlValue::Integer(default.as_millis() as i64),
-                );
-            }
-
-            VrlValue::Object(context_map)
+                if let Some(default) = default_timeout {
+                    root.insert_lazy("default", || VrlValue::Integer(default.as_millis() as i64));
+                }
+            })
         })
         .map_err(|err| SubgraphExecutorError::TimeoutExpressionResolution(err.to_string()))
 }

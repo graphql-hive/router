@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod failures;
+#[cfg(test)]
 mod graphql_analysis;
 #[cfg(test)]
 mod graphql_request;
@@ -8,5 +10,3 @@ mod graphql_response;
 mod router_request;
 #[cfg(test)]
 mod router_response;
-#[cfg(test)]
-mod failures;
