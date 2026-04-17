@@ -94,6 +94,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.12.0 (2026-04-17)
+
+### Features
+
+#### Persisted Documents
+
+Introduces persisted documents support in Hive Router with configurable extraction and storage backends.
+
+Supports extracting persisted document IDs from:
+- `documentId` in request body (default)
+- `documentId` in URL query params (default)
+- Apollo-style `extensions.persistedQuery.sha256Hash` (default)
+- custom `json_path` (for example `doc_id` or `extensions.anything.id`)
+- custom `url_query_param` (for example `?doc_id=123`)
+- custom `url_path_param` (for example `/graphql/:id`)
+
+Order is configurable and evaluated top-to-bottom.
+
+Supports persisted document resolution from:
+- file manifests (Apollo and Relay KV styles)
+- Hive CDN (via `hive-console-sdk`)
+
+File storage includes watch mode by default (with 150ms debounce) to reload manifests after file changes.
+Hive storage validates document ID syntax before generating CDN paths to avoid silent invalid-path behavior.
+
+Adds persisted-documents metrics:
+
+- `hive.router.persisted_documents.extract.missing_id_total`
+- `hive.router.persisted_documents.storage.failures_total`
+
+These help track migration progress and resolution failures in production
+
+#### TLS Support
+
+Adds TLS support to Hive Router for both client and subgraph connections, including mutual TLS (mTLS) authentication. This allows secure communication between clients, the router, and subgraphs by encrypting data in transit and optionally verifying identities.
+
+### TLS Directions
+
+TLS Support has implementations for the following 4 directions:
+
+#### Router -> Client - Regular TLS
+Router has an `identity` (`cert`, `key`), and client has `cert`, then Client validates the router's `identity`
+
+#### Client -> Router - mTLS
+Router has the `cert`, client has the `identity`, mTLS/Client Auth then the router validates the client's `identity`
+
+#### Subgraph -> Router - Regular TLS
+Subgraph has the `identity` (`cert`, `key`), and router has `cert`, then Router validates the subgraph's `identity`.
+
+#### Router -> Subgraph - mTLS
+Subgraph has the `cert`, router(which is the client this time) has the `identity`, then subgraph validates the router's `identity`.
+
+### TLS Directions Diagram
+
+```mermaid
+flowchart LR
+    Client["Client"]
+    Router["Router"]
+    Subgraph["Subgraph"]
+
+    %% Router -> Client: Regular TLS
+    Router -- "TLS\n(cert_file + key_file)" --> Client
+    Client -. "validates router identity\n(cert_file)" .-> Router
+
+    %% Client -> Router: mTLS / Client Auth
+    Client -- "mTLS\n(client identity)" --> Router
+    Router -. "validates client identity\n(client_auth.cert_file)" .-> Client
+
+    %% Subgraph -> Router: Regular TLS
+    Subgraph -- "TLS\n(cert_file)" --> Router
+    Router -. "validates subgraph identity\n(all/subgraphs.cert_file)" .-> Subgraph
+
+    %% Router -> Subgraph: mTLS
+    Router -- "mTLS\n(client_auth.cert_file + key_file)" --> Subgraph
+    Subgraph -. "validates router identity\n(cert_file)" .-> Router
+```
+
+### Configuration Structure
+```yaml
+traffic_shaping:
+  router:
+    key_file:          # Router server private key
+    cert_file:         # Router server certificate(s)
+    client_auth:       # mTLS: Client -> Router
+       cert_file:      # Trusted client CA certificate(s)
+  all:                 # Default TLS for all subgraph connections
+    cert_file:         # Trusted subgraph CA certificate(s)
+    client_auth:       # mTLS: Router -> Subgraph
+       cert_file:      # Router client certificate(s)
+       key_file:       # Router client private key
+  subgraphs:
+    SUBGRAPH_NAME:     # Per-subgraph TLS override
+      cert_file:       # Trusted subgraph CA certificate(s)
+      client_auth:     # mTLS: Router -> Subgraph
+         cert_file:    # Router client certificate(s)
+         key_file:     # Router client private key
+```
+
+### Fixes
+
+#### Expose `EarlyHTTPResponse` instead of `PlanExecutionOutput` in the hooks that do not have internal fields like `response_headers_aggregator` etc, and it is easier to construct an HTTP response with a body, header map and status code.
+
+```rust
+payload.end_with_response(
+    EarlyHTTPResponse {
+        body,
+        headers,
+        status_code,
+    }
+);
+```
+
 ## 6.11.0 (2026-04-15)
 
 ### Features
