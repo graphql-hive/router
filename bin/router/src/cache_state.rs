@@ -6,15 +6,16 @@ use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use moka::future::Cache;
 use moka::Entry;
 
+use crate::pipeline::demand_control::DemandControlFormulaPlan;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::parser::ParseCacheEntry;
 
-#[derive(Clone)]
 pub struct CacheState {
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
+    pub demand_control_formula_cache: Cache<u64, Arc<DemandControlFormulaPlan>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -73,6 +74,7 @@ impl CacheState {
             validate_cache: Cache::new(1000),
             normalize_cache: Cache::new(1000),
             plan_cache: Cache::new(1000),
+            demand_control_formula_cache: Cache::new(1000),
         }
     }
 
@@ -80,6 +82,7 @@ impl CacheState {
         self.plan_cache.invalidate_all();
         self.validate_cache.invalidate_all();
         self.normalize_cache.invalidate_all();
+        self.demand_control_formula_cache.invalidate_all();
     }
 }
 
@@ -108,4 +111,11 @@ pub fn register_cache_size_observers(
     metrics
         .plan
         .observe_size_with(move || plan_cache.plan_cache.entry_count());
+
+    let demand_control_formula_cache = Arc::clone(&cache_state);
+    metrics.demand_control_formula.observe_size_with(move || {
+        demand_control_formula_cache
+            .demand_control_formula_cache
+            .entry_count()
+    });
 }

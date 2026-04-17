@@ -1,8 +1,4 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use crate::pipeline::authorization::AuthorizationError;
-use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::shared_state::RouterSharedState;
@@ -10,9 +6,11 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLExecuteSpan, GraphQLOperationSpan,
 };
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
+use hive_router_plan_executor::execution::demand_control::DemandControlExecutionContext;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{
-    execute_query_plan, PlanExecutionOutput, QueryPlanExecutionOpts, QueryPlanExecutionResult,
+    execute_query_plan, CoerceVariablesPayload, ExecutionResultExtensions, PlanExecutionOutput,
+    QueryPlanExecutionOpts, QueryPlanExecutionResult,
 };
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
@@ -20,6 +18,7 @@ use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use sonic_rs::json;
+use std::sync::Arc;
 use tracing::Instrument;
 
 pub static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
@@ -34,9 +33,10 @@ pub enum ExposeQueryPlanMode {
 pub struct PlannedRequest<'req> {
     pub normalized_payload: Arc<GraphQLNormalizationPayload>,
     pub query_plan_payload: &'req QueryPlan,
-    pub variable_payload: CoerceVariablesPayload,
+    pub variable_payload: Arc<CoerceVariablesPayload>,
     pub client_request_details: Arc<ClientRequestDetails<'req>>,
     pub authorization_errors: Vec<AuthorizationError>,
+    pub demand_control_execution_context: Option<DemandControlExecutionContext>,
     pub plugin_req_state: Option<PluginRequestState<'req>>,
 }
 
@@ -57,7 +57,7 @@ pub async fn execute_plan<'exec>(
         metadata: Arc::clone(&supergraph.metadata),
     };
     async {
-        let mut extensions = HashMap::new();
+        let mut extensions = ExecutionResultExtensions::default();
 
         let mut expose_query_plan = ExposeQueryPlanMode::No;
         if app_state.router_config.query_planner.allow_expose {
@@ -79,11 +79,7 @@ pub async fn execute_plan<'exec>(
             expose_query_plan,
             ExposeQueryPlanMode::Yes | ExposeQueryPlanMode::DryRun
         ) {
-            extensions.insert(
-                "queryPlan".into(),
-                sonic_rs::to_value(&planned_request.query_plan_payload)
-                    .map_err(PipelineError::QueryPlanSerializationFailed)?,
-            );
+            extensions.query_plan = Some(planned_request.query_plan_payload);
         }
 
         if matches!(expose_query_plan, ExposeQueryPlanMode::DryRun) {
@@ -125,13 +121,16 @@ pub async fn execute_plan<'exec>(
                 .clone(),
             projection_plan: planned_request.normalized_payload.projection_plan.clone(),
             headers_plan: app_state.headers_plan.clone(),
-            variable_values: Arc::new(planned_request.variable_payload.variables_map),
+            variable_values: planned_request.variable_payload.clone(),
             extensions,
             client_request: planned_request.client_request_details,
             introspection_context: introspection_context.into(),
             operation_type_name: planned_request.normalized_payload.root_type_name,
             jwt_auth_forwarding: jwt_auth_forwarding.map(|j| j.into()),
             graphql_error_recorder: app_state.telemetry_context.metrics.graphql.error_recorder(),
+            demand_control: planned_request
+                .demand_control_execution_context
+                .map(|d| d.into()),
             executors: Arc::clone(&supergraph.subgraph_executor_map),
             initial_errors: planned_request
                 .authorization_errors
@@ -140,6 +139,7 @@ pub async fn execute_plan<'exec>(
                 .collect(),
             span,
             plugin_req_state: planned_request.plugin_req_state,
+            supergraph_state: supergraph.planner.supergraph.clone(),
         })
         .await?;
 

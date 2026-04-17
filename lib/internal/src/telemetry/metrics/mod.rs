@@ -1,6 +1,7 @@
 pub mod cache_metrics;
 mod capture;
 pub mod catalog;
+pub mod demand_control_metrics;
 pub mod graphql_metrics;
 pub mod http_client_metrics;
 pub mod http_server_metrics;
@@ -14,6 +15,7 @@ pub use setup::{build_meter_provider_from_config, MetricsSetup, PrometheusRuntim
 use opentelemetry::metrics::Meter;
 
 use crate::telemetry::metrics::cache_metrics::CacheMetrics;
+use crate::telemetry::metrics::demand_control_metrics::DemandControlMetrics;
 use crate::telemetry::metrics::graphql_metrics::GraphQLMetrics;
 use crate::telemetry::metrics::http_client_metrics::HttpClientMetrics;
 use crate::telemetry::metrics::http_server_metrics::HttpServerMetrics;
@@ -24,6 +26,7 @@ pub struct Metrics {
     pub http_server: HttpServerMetrics,
     pub http_client: HttpClientMetrics,
     pub graphql: GraphQLMetrics,
+    pub demand_control: DemandControlMetrics,
     pub supergraph: SupergraphMetrics,
     pub cache: CacheMetrics,
     pub persisted_documents: PersistedDocumentsMetrics,
@@ -35,6 +38,7 @@ impl Metrics {
             http_server: HttpServerMetrics::new(meter),
             http_client: HttpClientMetrics::new(meter),
             graphql: GraphQLMetrics::new(meter),
+            demand_control: DemandControlMetrics::new(meter),
             supergraph: SupergraphMetrics::new(meter),
             cache: CacheMetrics::new(meter),
             persisted_documents: PersistedDocumentsMetrics::new(meter),

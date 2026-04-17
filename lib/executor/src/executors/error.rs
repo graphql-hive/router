@@ -92,6 +92,9 @@ pub enum SubgraphExecutorError {
     #[error("HTTP Callback protocol configured for subgraph but no callback configuration provided for router")]
     #[strum(serialize = "SUBGRAPH_HTTP_CALLBACK_NOT_CONFIGURED")]
     HttpCallbackNotConfigured,
+    #[error("Skipped subgraph execution because the estimated cost ({estimated_cost}) exceeds the maximum allowed cost.")]
+    #[strum(serialize = "SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE")]
+    CostEstimatedTooExpensive { estimated_cost: u64 },
 }
 
 impl SubgraphExecutorError {

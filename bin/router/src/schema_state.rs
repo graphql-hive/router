@@ -39,7 +39,10 @@ use tracing::{debug, error, trace};
 
 use crate::{
     cache_state::CacheState,
-    pipeline::{authorization::AuthorizationMetadataError, normalize::GraphQLNormalizationPayload},
+    pipeline::{
+        authorization::AuthorizationMetadataError, demand_control::DemandControlFormulaPlan,
+        normalize::GraphQLNormalizationPayload,
+    },
     supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
@@ -51,6 +54,7 @@ pub struct SchemaState {
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
+    pub demand_control_formula_cache: Cache<u64, Arc<DemandControlFormulaPlan>>,
     pub telemetry_context: Arc<TelemetryContext>,
     pub callback_subscriptions: CallbackSubscriptionsMap,
 }
@@ -103,6 +107,7 @@ impl SchemaState {
         let plan_cache = cache_state.plan_cache.clone();
         let validate_cache = cache_state.validate_cache.clone();
         let normalize_cache = cache_state.normalize_cache.clone();
+        let demand_control_formula_cache = cache_state.demand_control_formula_cache.clone();
         let callback_subscriptions: CallbackSubscriptionsMap = Arc::new(DashMap::new());
 
         // This is cheap clone, as Cache is thread-safe and can be cloned without any performance penalty.
@@ -240,6 +245,7 @@ impl SchemaState {
             plan_cache,
             validate_cache,
             normalize_cache,
+            demand_control_formula_cache,
             telemetry_context: telemetry_context.clone(),
             callback_subscriptions,
         })
