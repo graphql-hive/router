@@ -1,4 +1,4 @@
-name: apollo-router plugin
+name: apollo-router-fork
 on:
   # For PRs, this pipeline will use the commit ID as Docker image tag and R2 artifact prefix.
   pull_request:
@@ -6,11 +6,15 @@ on:
       - main
     paths:
       - "apollo-router-workspace/**"
+      - ".github/workflows/apollo-router-release.yaml"
+      - ".github/workflows/apollo-router-updater.yaml"
   # For `main` changes, this pipeline will look for changes in Rust crates or plugin versioning, and
   # publish them only if changes are found and image does not exists in GH Packages.
   push:
     paths:
       - "apollo-router-workspace/**"
+      - ".github/workflows/apollo-router-release.yaml"
+      - ".github/workflows/apollo-router-updater.yaml"
     branches:
       - main
 
@@ -28,7 +32,7 @@ jobs:
   # 2. Check if there are changes in the Cargo.toml file in the current commit
   # 3. If there are changes, check if the image tag exists in the GitHub Container Registry
   find-changes:
-    name: find changes for apollo-router release
+    name: evaluate changes
     runs-on: ubuntu-22.04
     if: ${{ !github.event.pull_request.head.repo.fork }}
     outputs:
@@ -36,7 +40,7 @@ jobs:
       release_version: ${{ steps.find_changes.outputs.release_version }}
       release_latest: ${{ steps.find_changes.outputs.release_latest }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 2
 
@@ -61,6 +65,10 @@ jobs:
           plugin_version=$(grep '^version' Cargo.toml | sed 's/version *= *"\(.*\)"/\1/')
           has_changes=$(git diff HEAD~ HEAD --name-only -- 'Cargo.toml' 'Cargo.lock')
 
+          echo "router_version: $router_version"
+          echo "plugin_version: $plugin_version"
+          echo "has_changes: $has_changes"
+
           if [ "$has_changes" ]; then
             image_tag_version="router${router_version}-plugin${plugin_version}"
 
@@ -79,12 +87,14 @@ jobs:
               echo "release_latest=true" >> $GITHUB_OUTPUT
             else
               echo "No changes found in version $image_tag_version"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+              echo "release_latest=false" >> $GITHUB_OUTPUT
             fi
           fi
 
   # Builds Rust crates, and creates Docker images
   dockerize:
-    name: image build and dockerize apollo-router (${{ matrix.platform }})
+    name: dockerize (${{ matrix.platform }})
     needs: find-changes
     if: ${{ needs.find-changes.outputs.should_release == 'true' }}
     strategy:
@@ -107,7 +117,7 @@ jobs:
       pull-requests: write
     steps:
       - name: checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 2
 
@@ -121,20 +131,6 @@ jobs:
         with:
           target: ${{ matrix.rust_target }}
           rust-src-dir: ./apollo-router-workspace
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-
-      - name: Cache target
-        uses: actions/cache@v3
-        with:
-          path: apollo-router-workspace/target
-          key: apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
-            apollo-router-target-${{ matrix.cache_key }}-build-
-            apollo-router-target-${{ matrix.cache_key }}-
-            apollo-router-target-
 
       - name: Build
         run: cargo build --release --target ${{ matrix.rust_target }}
@@ -213,7 +209,7 @@ jobs:
             **Image Tag**: `${{ needs.find-changes.outputs.release_version }}`
 
   # Test the Docker image, if it was published
-  test-image:
+  test-docker-image:
     name: test apollo-router docker image
     needs:
       - find-changes
@@ -223,7 +219,7 @@ jobs:
       HIVE_TOKEN: ${{ secrets.HIVE_TOKEN }}
     steps:
       - name: checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 2
       - name: Run Docker image
@@ -257,29 +253,32 @@ jobs:
           # Wait for the container to be ready
           echo "Waiting for the container to be ready..."
           sleep 20
-          HTTP_RESPONSE=$(curl --retry 5 --retry-delay 5 --max-time 30 --write-out "%{http_code}" --silent --output /dev/null "http://127.0.0.1:8088/health")
+          HTTP_RESPONSE=$(curl -v --retry 5 --retry-delay 5 --max-time 30 --write-out "%{http_code}" --output /dev/null "http://127.0.0.1:8088/health")
 
           # Check if the HTTP response code is 200 (OK)
           if [ $HTTP_RESPONSE -eq 200 ]; then
             echo "Health check successful."
-            docker stop apollo_router_test
-            docker rm apollo_router_test
             exit 0
           else
             echo "Health check failed with HTTP status code $HTTP_RESPONSE."
-            docker stop apollo_router_test
-            docker rm apollo_router_test
             exit 1
           fi
 
+      - name: troubleshoot container
+        if: ${{ failure() }}
+        run: |
+          docker --version
+          docker ps --format json | jq .
+          docker logs apollo_router_test
+
   # Build and publish Rust crates and binaries
   test-rust:
-    name: test apollo-router plugin
+    name: test
     needs: find-changes
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 2
 
@@ -293,25 +292,12 @@ jobs:
         with:
           rust-src-dir: ./apollo-router-workspace
 
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-
-      - name: Cache target
-        uses: actions/cache@v3
-        with:
-          path: apollo-router-workspace/target
-          key: apollo-router-target-${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            apollo-router-target-${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
-            apollo-router-target-${{ runner.os }}-test-
-            apollo-router-target-${{ runner.os }}-
-            apollo-router-target-
-
       - name: Run tests
         run: cargo test
 
-  publish-rust:
+  publish-binary:
     needs: find-changes
+    if: ${{ needs.find-changes.outputs.should_release == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -331,13 +317,12 @@ jobs:
             target: x86_64-apple-darwin
             binary_name: macos
             cache_key: macOS
-    name: publish apollo-router binary (${{ matrix.cache_key }})
+    name: binary (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 2
 
@@ -351,20 +336,6 @@ jobs:
         with:
           target: ${{ matrix.target }}
           rust-src-dir: ./apollo-router-workspace
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-
-      - name: Cache target
-        uses: actions/cache@v3
-        with:
-          path: apollo-router-workspace/target
-          key: apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            apollo-router-target-${{ matrix.cache_key }}-build-${{ hashFiles('**/Cargo.lock') }}
-            apollo-router-target-${{ matrix.cache_key }}-build-
-            apollo-router-target-${{ matrix.cache_key }}-
-            apollo-router-target-
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
