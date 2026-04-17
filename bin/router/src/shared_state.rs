@@ -36,6 +36,8 @@ use crate::pipeline::multipart_subscribe::{
     self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
 };
 use crate::pipeline::parser::ParseCacheEntry;
+use crate::pipeline::persisted_documents::resolve::PersistedDocumentResolverError;
+use crate::pipeline::persisted_documents::PersistedDocumentsRuntime;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 use crate::pipeline::sse;
 
@@ -269,6 +271,7 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
 pub struct RouterSharedState {
     pub validation_plan: Arc<ValidationPlan>,
     pub parse_cache: Cache<u64, ParseCacheEntry>,
+    pub persisted_documents_runtime: PersistedDocumentsRuntime,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: Arc<HeaderRulesPlan>,
     pub override_labels_evaluator: OverrideLabelsEvaluator,
@@ -295,6 +298,7 @@ impl RouterSharedState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
+        persisted_documents_runtime: PersistedDocumentsRuntime,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
         hive_usage_agent: Option<UsageAgent>,
         validation_plan: ValidationPlan,
@@ -308,6 +312,7 @@ impl RouterSharedState {
             validation_plan: Arc::new(validation_plan),
             headers_plan: Arc::new(compile_headers_plan(&router_config.headers).map_err(Box::new)?),
             parse_cache,
+            persisted_documents_runtime,
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             jwt_claims_cache: Cache::builder()
                 // High capacity due to potentially high token diversity.
@@ -349,6 +354,8 @@ pub enum SharedStateError {
     OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
     #[error("error creating hive usage agent: {0}")]
     UsageAgent(#[from] Box<AgentError>),
+    #[error("invalid persisted documents config: {0}")]
+    PersistedDocuments(#[from] Box<PersistedDocumentResolverError>),
     #[error("invalid introspection config: {0}")]
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
 }

@@ -107,6 +107,10 @@ pub mod names {
     pub const PLAN_CACHE_REQUESTS_TOTAL: &str = "hive.router.plan_cache.requests_total";
     pub const PLAN_CACHE_DURATION: &str = "hive.router.plan_cache.duration";
     pub const PLAN_CACHE_SIZE: &str = "hive.router.plan_cache.size";
+    pub const PERSISTED_DOCUMENTS_STORAGE_FAILURES_TOTAL: &str =
+        "hive.router.persisted_documents.storage.failures_total";
+    pub const PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL: &str =
+        "hive.router.persisted_documents.extract.missing_id_total";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
@@ -234,6 +238,8 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (names::PLAN_CACHE_REQUESTS_TOTAL, &[labels::RESULT]),
     (names::PLAN_CACHE_DURATION, &[labels::RESULT]),
     (names::PLAN_CACHE_SIZE, &[]),
+    (names::PERSISTED_DOCUMENTS_STORAGE_FAILURES_TOTAL, &[]),
+    (names::PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL, &[]),
 ];
 
 pub fn labels_for(metric_name: &str) -> Option<&'static [&'static str]> {
