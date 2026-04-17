@@ -55,6 +55,8 @@ mod telemetry;
 #[cfg(test)]
 mod timeout_per_subgraph;
 #[cfg(test)]
+mod tls;
+#[cfg(test)]
 mod websocket;
 
 pub use insta;

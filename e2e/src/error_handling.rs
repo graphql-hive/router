@@ -5,7 +5,7 @@ mod error_handling_e2e_tests {
     #[ntex::test]
     async fn should_continue_execution_when_a_subgraph_is_down() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
-        let subgraphs_addr = subgraphs.addr();
+        let subgraphs_url = subgraphs.url();
 
         let router = TestRouter::builder()
             // we dont set subgraphs avoiding the port change in the supergrph.
@@ -18,9 +18,9 @@ mod error_handling_e2e_tests {
                     path: supergraph.graphql
                   override_subgraph_urls:
                     accounts:
-                      url: "http://{subgraphs_addr}/accounts"
+                      url: "{subgraphs_url}/accounts"
                     reviews:
-                      url: "http://{subgraphs_addr}/reviews"
+                      url: "{subgraphs_url}/reviews"
                     products:
                       url: "http://0.0.0.0:1000/products"
                 "#,
