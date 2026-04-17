@@ -10,10 +10,7 @@ use mockito::Mock;
 use ntex::{
     client::ClientResponse,
     io::Sealed,
-    web::{
-        self,
-        test,
-    },
+    web::{self, test},
     ws::WsConnection,
 };
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
@@ -28,10 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tempfile::{NamedTempFile, TempPath};
-use tokio::{
-    sync::Semaphore,
-    time,
-};
+use tokio::{sync::Semaphore, time};
 use tracing::{info, warn};
 
 use hive_router::{
