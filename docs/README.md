@@ -3137,6 +3137,25 @@ request_timeout: 1m
 
 ```
 
+<a name="traffic_shapingrouterdedupe"></a>
+#### traffic\_shaping\.router\.dedupe: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Enables/disables in-flight request and active subscriptions deduplication at the router level.<br/><br/>When enabled, the router deduplicates both queries and subscriptions using the same<br/>fingerprint key (method, path, selected headers, schema checksum, normalized operation<br/>hash, variables, and extensions). The `headers` configuration below controls which<br/>headers participate in that key for all operation types.<br/><br/>For queries, concurrent HTTP requests that produce the same fingerprint share a single<br/>in-flight execution - only the first one runs, and the rest wait for and receive the<br/>same result.<br/><br/>For subscriptions, the mechanism is broadcast-based rather than request-sharing. The<br/>first client with a given fingerprint becomes the leader: it runs the upstream subscription<br/>and its events are fanned out through a broadcast channel backed by an active subscriptions<br/>registry. Any subsequent client that arrives with an identical fingerprint while that subscription<br/>is still active joins as a listener on the same broadcast channel instead of starting a new upstream<br/>connection. When all listeners have dropped and the leader finishes, the entry is removed from the<br/>registry.<br/><br/>WebSocket connections participate in the same deduplication space as HTTP. Each<br/>subscribe message is processed with a synthetic request assembled from the WebSocket<br/>path and the headers derived from the `websocket.headers` config. The fingerprint is computed<br/>from those synthetic headers using the same header policy, so a subscription started over HTTP<br/>and an identical one started over WebSocket will deduplicate against each other.<br/><br/>The deduplication is transport agnostic. A query over WebSocket would get deduplicated with an<br/>identical query over HTTP if they arrive at the same time and have the same fingerprint.<br/><br/>Note: `content-type` is part of the fingerprint when `headers` includes it (e.g. `all`).<br/>Since HTTP streaming clients send different `accept` headers than WebSocket clients,<br/>cross-transport deduplication for subscriptions only applies when `content-type` (and<br/>transport-specific headers) are excluded from the key. Configure `headers: none` or<br/>`headers: { include: [] }` (or exclude the relevant headers) to enable true cross-transport<br/>deduplication, where a WebSocket subscription and an SSE subscription with the same operation<br/>share a single upstream connection and the events are fanned out to both.<br/>Default: `false`<br/>||
+|**headers**||Header configuration participating in the dedupe key.<br/><br/>Accepted forms:<br/>- `all`<br/>- `none`<br/>- `{ include: ["authorization", "cookie"] }`<br/><br/>Header names are case-insensitive and validated as standard HTTP header names.<br/>Default: `"all"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+enabled: false
+headers: all
+
+```
+
 <a name="traffic_shapingroutertls"></a>
 #### traffic\_shaping\.router\.tls: object,null
 
@@ -3159,25 +3178,6 @@ request_timeout: 1m
 |**cert\_file**|||yes|
 
 **Additional Properties:** not allowed  
-<a name="traffic_shapingrouterdedupe"></a>
-#### traffic\_shaping\.router\.dedupe: object
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**enabled**|`boolean`|Enables/disables in-flight request and active subscriptions deduplication at the router level.<br/><br/>When enabled, the router deduplicates both queries and subscriptions using the same<br/>fingerprint key (method, path, selected headers, schema checksum, normalized operation<br/>hash, variables, and extensions). The `headers` configuration below controls which<br/>headers participate in that key for all operation types.<br/><br/>For queries, concurrent HTTP requests that produce the same fingerprint share a single<br/>in-flight execution - only the first one runs, and the rest wait for and receive the<br/>same result.<br/><br/>For subscriptions, the mechanism is broadcast-based rather than request-sharing. The<br/>first client with a given fingerprint becomes the leader: it runs the upstream subscription<br/>and its events are fanned out through a broadcast channel backed by an active subscriptions<br/>registry. Any subsequent client that arrives with an identical fingerprint while that subscription<br/>is still active joins as a listener on the same broadcast channel instead of starting a new upstream<br/>connection. When all listeners have dropped and the leader finishes, the entry is removed from the<br/>registry.<br/><br/>WebSocket connections participate in the same deduplication space as HTTP. Each<br/>subscribe message is processed with a synthetic request assembled from the WebSocket<br/>path and the headers derived from the `websocket.headers` config. The fingerprint is computed<br/>from those synthetic headers using the same header policy, so a subscription started over HTTP<br/>and an identical one started over WebSocket will deduplicate against each other.<br/><br/>The deduplication is transport agnostic. A query over WebSocket would get deduplicated with an<br/>identical query over HTTP if they arrive at the same time and have the same fingerprint.<br/><br/>Note: `content-type` is part of the fingerprint when `headers` includes it (e.g. `all`).<br/>Since HTTP streaming clients send different `accept` headers than WebSocket clients,<br/>cross-transport deduplication for subscriptions only applies when `content-type` (and<br/>transport-specific headers) are excluded from the key. Configure `headers: none` or<br/>`headers: { include: [] }` (or exclude the relevant headers) to enable true cross-transport<br/>deduplication, where a WebSocket subscription and an SSE subscription with the same operation<br/>share a single upstream connection and the events are fanned out to both.<br/>Default: `false`<br/>||
-|**headers**||Header configuration participating in the dedupe key.<br/><br/>Accepted forms:<br/>- `all`<br/>- `none`<br/>- `{ include: ["authorization", "cookie"] }`<br/><br/>Header names are case-insensitive and validated as standard HTTP header names.<br/>Default: `"all"`<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-enabled: false
-headers: all
-
-```
-
 <a name="traffic_shapingsubgraphs"></a>
 ### traffic\_shaping\.subgraphs: object
 
