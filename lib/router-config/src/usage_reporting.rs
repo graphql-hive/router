@@ -25,7 +25,7 @@ pub struct UsageReportingConfig {
     /// An expression in VRL to exclude certain operations from being sent to Hive Console.
     /// Returning `true` from this expression will exclude the operation, while `false` will include it.
     /// This expression is a VRL expression that has access to the request and operation details;
-    /// 
+    ///
     /// ```vrl
     ///  if (.request.operation.name == "ExcludeMe") {
     ///    true

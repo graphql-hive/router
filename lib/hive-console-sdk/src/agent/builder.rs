@@ -12,7 +12,7 @@ use crate::agent::usage_agent::{non_empty_string, AgentError, UsageAgent, UsageA
 use crate::agent::utils::OperationProcessor;
 use crate::circuit_breaker;
 use crate::expressions::values::boolean::BooleanOrProgram;
-use crate::expressions::{CompileExpression, ValueOrProgram};
+use crate::expressions::CompileExpression;
 use retry_policies::policies::ExponentialBackoff;
 
 pub struct UsageAgentBuilder {
