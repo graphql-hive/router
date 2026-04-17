@@ -3173,6 +3173,7 @@ request_timeout: 30s
 |----|----|-----------|--------|
 |**cert\_file**||||
 |[**client\_auth**](#traffic_shapingalltlsclient_auth)|`object`, `null`||yes|
+|**insecure\_skip\_ca\_verification**|`boolean`|Default: `false`<br/>||
 
 **Additional Properties:** not allowed  
 <a name="traffic_shapingalltlsclient_auth"></a>
@@ -3252,6 +3253,7 @@ headers: all
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**cert\_file**|||yes|
+|**required**|`boolean`, `null`||no|
 
 **Additional Properties:** not allowed  
 <a name="traffic_shapingsubgraphs"></a>
@@ -3288,6 +3290,7 @@ Optional per-subgraph configurations that will override the default configuratio
 |----|----|-----------|--------|
 |**cert\_file**||||
 |[**client\_auth**](#traffic_shapingsubgraphsadditionalpropertiestlsclient_auth)|`object`, `null`||yes|
+|**insecure\_skip\_ca\_verification**|`boolean`|Default: `false`<br/>||
 
 **Additional Properties:** not allowed  
 <a name="traffic_shapingsubgraphsadditionalpropertiestlsclient_auth"></a>
