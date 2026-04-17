@@ -5,6 +5,8 @@ mod authorization_directives_reject;
 #[cfg(test)]
 mod body_limit;
 #[cfg(test)]
+mod conditional_directives;
+#[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
 mod entity_batching;
@@ -38,6 +40,8 @@ mod max_directives;
 mod max_tokens;
 #[cfg(test)]
 mod override_subgraph_urls;
+#[cfg(test)]
+mod persisted_documents;
 #[cfg(test)]
 mod probes;
 #[cfg(test)]

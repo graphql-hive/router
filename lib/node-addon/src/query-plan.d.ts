@@ -50,7 +50,7 @@ export interface EntityBatchAlias {
 
 export interface SubscriptionNode {
   kind: "Subscription";
-  primary: PlanNode;
+  primary: FetchNode;
 }
 
 export type FetchNodePathSegment =
