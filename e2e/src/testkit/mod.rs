@@ -220,6 +220,7 @@ pub struct RequestLike {
     pub headers: http::HeaderMap,
     #[allow(unused)]
     pub body: Option<Bytes>,
+    pub http_version: http::Version,
 }
 
 pub struct ResponseLike {
@@ -250,6 +251,7 @@ pub struct TestSubgraphsBuilder {
     on_request: Option<Arc<OnRequest>>,
     rustls_config: Option<RustlsConfig>,
     delay: Option<Duration>,
+    http2_only: bool,
 }
 
 impl TestSubgraphsBuilder {
@@ -259,6 +261,7 @@ impl TestSubgraphsBuilder {
             rustls_config: None,
             delay: None,
             subscriptions_protocol: HTTPStreamingSubscriptionProtocol::default(),
+            http2_only: false,
         }
     }
 
@@ -294,12 +297,21 @@ impl TestSubgraphsBuilder {
         self
     }
 
+    /// Enables HTTP/2 only mode (h2c) for the test subgraph server.
+    /// When enabled, the server will only accept HTTP/2 connections over plain TCP.
+    #[allow(unused)]
+    pub fn with_http2_only(mut self) -> Self {
+        self.http2_only = true;
+        self
+    }
+
     pub fn build(self) -> TestSubgraphs<Built> {
         TestSubgraphs {
             on_request: self.on_request,
             rustls_config: self.rustls_config,
             delay: self.delay,
             subscriptions_protocol: self.subscriptions_protocol,
+            http2_only: self.http2_only,
             handle: None,
             _state: PhantomData,
         }
@@ -323,6 +335,7 @@ pub struct TestSubgraphs<State> {
     on_request: Option<Arc<OnRequest>>,
     rustls_config: Option<RustlsConfig>,
     delay: Option<Duration>,
+    http2_only: bool,
     handle: Option<TestSubgraphsHandle>,
     _state: PhantomData<State>,
 }
@@ -345,6 +358,7 @@ async fn record_requests(
     let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
 
     let header_map = parts.headers.clone();
+    let http_version = parts.version;
     let record = RequestLike {
         path,
         headers: header_map,
@@ -353,6 +367,7 @@ async fn record_requests(
         } else {
             Some(body_bytes.clone())
         },
+        http_version,
     };
     state.request_log.entry(subgraph).or_default().push(record);
 
@@ -373,6 +388,7 @@ async fn handle_on_request(
         path: path.clone(),
         headers: parts.headers.clone(),
         body: None, // TODO: do we really care about the body?
+        http_version: parts.version,
     };
 
     if let Some(new_resp) = on_request(req) {
@@ -441,6 +457,13 @@ impl TestSubgraphs<Built> {
                     .serve(app.into_make_service())
                     .await
                     .expect("failed to start subgraphs server");
+            } else if self.http2_only {
+                axum_server::bind(addr)
+                    .http2_only()
+                    .handle(server_handle_clone.clone())
+                    .serve(app.into_make_service())
+                    .await
+                    .expect("failed to start subgraphs h2c server");
             } else {
                 axum_server::bind(addr)
                     .handle(server_handle_clone.clone())
@@ -460,6 +483,7 @@ impl TestSubgraphs<Built> {
             rustls_config: rustls_config_clone,
             delay: self.delay,
             subscriptions_protocol: self.subscriptions_protocol,
+            http2_only: self.http2_only,
             handle: Some(TestSubgraphsHandle {
                 server_handle,
                 addr,
