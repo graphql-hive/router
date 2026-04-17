@@ -68,14 +68,8 @@ impl From<&FetchStepSelections<MultiTypeFetchStep>> for SelectionSet {
 
                     SelectionItem::InlineFragment(InlineFragmentSelection {
                         type_condition: type_name.to_string(),
-                        include_if: match &condition {
-                            Condition::Include(var_name) => Some(var_name.clone()),
-                            Condition::Skip(_) => None,
-                        },
-                        skip_if: match &condition {
-                            Condition::Skip(var_name) => Some(var_name.clone()),
-                            Condition::Include(_) => None,
-                        },
+                        include_if: condition.to_include_if(),
+                        skip_if: condition.to_skip_if(),
                         selections: selections_for_wrapper,
                     })
                 })
@@ -85,17 +79,16 @@ impl From<&FetchStepSelections<MultiTypeFetchStep>> for SelectionSet {
 }
 
 fn inline_fragment_condition(fragment: &InlineFragmentSelection) -> Option<Condition> {
-    // Return a condition:
-    match (fragment.include_if.as_ref(), fragment.skip_if.as_ref()) {
-        // Either @include
-        (Some(var_name), None) => Some(Condition::Include(var_name.clone())),
-        // or @skip
-        (None, Some(var_name)) => Some(Condition::Skip(var_name.clone())),
-        // not when both are available
-        _ => None,
-    }
+    fragment.into()
 }
 
+/// Attempts to lift a common condition from the top-level inline fragments for
+/// `type_name` into the wrapper `... on Type` fragment we build in `From`.
+///
+/// Lifting is valid when every top-level item is an inline fragment on the same
+/// type and they all share the same condition. That condition may be
+/// `@include`, `@skip`, or both directives together
+/// (`Condition::SkipAndInclude`).
 fn try_lift_condition(
     type_name: &str,
     selections: &SelectionSet,
@@ -329,6 +322,15 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                         selections: prev,
                         skip_if: Some(var_name.clone()),
                         include_if: None,
+                    })];
+            }
+            Condition::SkipAndInclude { skip, include } => {
+                selection_set.items =
+                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: def_name.to_string(),
+                        selections: prev,
+                        skip_if: Some(skip.clone()),
+                        include_if: Some(include.clone()),
                     })];
             }
         }
