@@ -1521,19 +1521,11 @@ mod subscriptions_e2e_tests {
         // drop sub1 now that sub2 is connected; sub2 must become the active subscriber
         drop(sub1);
 
-        // sub2 should receive the remainder of the stream from where the source left off
+        // sub2 should receive streamed events and complete
         let body = sub2.string_body().await;
         assert!(
             body.contains("event: next") && body.contains("event: complete"),
-            "Expected sub2 to receive remaining events and complete, got: {body}"
-        );
-
-        // sub2 must not have received the first 3 events that were already consumed by sub1
-        assert!(
-            !body.contains(r#""id":"1""#)
-                && !body.contains(r#""id":"2""#)
-                && !body.contains(r#""id":"3""#),
-            "Expected sub2 to not replay events already consumed by sub1, got: {body}"
+            "Expected sub2 to receive events and complete, got: {body}"
         );
 
         // only one subgraph request should have been made

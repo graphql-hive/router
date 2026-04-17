@@ -41,7 +41,7 @@ mod supergraph_e2e_tests {
         loop {
             // we keep making requests to ensure the cache because its flakey
             let res = router
-                .send_graphql_request("{ __schema { types { name } } }", None, None)
+                .send_graphql_request("{ topProducts { upc name } }", None, None)
                 .await;
             assert!(res.status().is_success(), "Expected 200 OK");
 
