@@ -14,7 +14,7 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{Method, header::CONTENT_TYPE};
+use http::{header::CONTENT_TYPE, Method};
 use ntex::{
     http::HeaderMap,
     rt,
@@ -31,15 +31,34 @@ use tracing::{error, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
-    LABORATORY_HTML, pipeline::{
-        active_subscriptions::SubscriptionEvent, authorization::enforce_operation_authorization, body_read::read_body_stream, coerce_variables::{CoerceVariablesPayload, coerce_request_variables}, csrf_prevention::perform_csrf_prevention, error::PipelineError, execution::{PlannedRequest, execute_plan}, execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult}, header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME}, introspection_policy::handle_introspection_policy, normalize::{GraphQLNormalizationPayload, normalize_request_with_cache}, parser::{ParseResult, parse_operation_with_cache}, progressive_override::request_override_context, query_plan::{QueryPlanResult, plan_operation_with_cache}, request_extensions::{
+    pipeline::{
+        active_subscriptions::SubscriptionEvent,
+        authorization::enforce_operation_authorization,
+        body_read::read_body_stream,
+        coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
+        csrf_prevention::perform_csrf_prevention,
+        error::PipelineError,
+        execution::{execute_plan, PlannedRequest},
+        execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult},
+        header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
+        introspection_policy::handle_introspection_policy,
+        normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
+        parser::{parse_operation_with_cache, ParseResult},
+        progressive_override::request_override_context,
+        query_plan::{plan_operation_with_cache, QueryPlanResult},
+        request_extensions::{
             write_graphql_operation_metric_identity, write_graphql_response_metric_status,
             write_request_body_size,
-        }, usage_reporting::from_ntex_headers_to_map, validation::validate_operation_with_cache
-    }, schema_state::SchemaState, shared_state::{
+        },
+        usage_reporting::from_ntex_headers_to_map,
+        validation::validate_operation_with_cache,
+    },
+    schema_state::SchemaState,
+    shared_state::{
         RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse,
         SharedRouterResponseGuard, SharedRouterSingleResponse, SharedRouterStreamResponse,
-    }
+    },
+    LABORATORY_HTML,
 };
 
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;

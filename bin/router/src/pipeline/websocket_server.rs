@@ -35,7 +35,7 @@ use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_planned_request;
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
-use crate::pipeline::usage_reporting::{from_ntex_headers_to_map};
+use crate::pipeline::usage_reporting::from_ntex_headers_to_map;
 use crate::pipeline::{
     hash_graphql_extensions, hash_graphql_variables, inbound_request_fingerprint,
     normalize::normalize_request_with_cache, parser::parse_operation_with_cache, usage_reporting,

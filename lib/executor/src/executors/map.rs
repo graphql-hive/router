@@ -10,7 +10,10 @@ use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, subscriptions::SubscriptionProtocol,
     traffic_shaping::DurationOrExpression, HiveRouterConfig,
 };
-use hive_router_internal::expressions::{ExpressionCompileError, ValueOrProgram, vrl::{core::Value as VrlValue, prelude::Function}};
+use hive_router_internal::expressions::{
+    vrl::{core::Value as VrlValue, prelude::Function},
+    ExpressionCompileError, ValueOrProgram,
+};
 use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
 use hive_router_internal::{
     expressions::vrl::compiler::Program as VrlProgram, inflight::InFlightMap,
@@ -116,13 +119,14 @@ impl SubgraphExecutorMap {
         telemetry_context: Arc<TelemetryContext>,
         active_callback_subscriptions: CallbackSubscriptionsMap,
     ) -> Result<Self, SubgraphExecutorError> {
-        let global_timeout = compile_duration_or_expression(
-            &config.traffic_shaping.all.request_timeout,
-            None,
-        )
-        .map_err(|err| {
-            SubgraphExecutorError::RequestTimeoutExpressionBuild("all".to_string(), err.diagnostics)
-        })?;
+        let global_timeout =
+            compile_duration_or_expression(&config.traffic_shaping.all.request_timeout, None)
+                .map_err(|err| {
+                    SubgraphExecutorError::RequestTimeoutExpressionBuild(
+                        "all".to_string(),
+                        err.diagnostics,
+                    )
+                })?;
         let mut subgraph_executor_map =
             SubgraphExecutorMap::new(config.clone(), global_timeout, telemetry_context)?;
         subgraph_executor_map.callback_subscriptions = active_callback_subscriptions;
@@ -635,7 +639,6 @@ fn resolve_timeout(
         })
         .map_err(|err| SubgraphExecutorError::TimeoutExpressionResolution(err.to_string()))
 }
-
 
 pub fn compile_duration_or_expression(
     config: &DurationOrExpression,
