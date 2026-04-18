@@ -1,5 +1,9 @@
-use crate::expressions::FromVrlValue;
-use http::HeaderValue;
+use std::collections::BTreeMap;
+
+use crate::expressions::{lib::ToVrlValue, FromVrlValue};
+use bytes::Bytes;
+use http::{HeaderMap, HeaderValue, Uri};
+use ntex::http::HeaderMap as NtexHeaderMap;
 use vrl::core::Value as VrlValue;
 
 /// Error type for HeaderValue conversion failures
@@ -59,5 +63,56 @@ impl FromVrlValue for HeaderValue {
             VrlValue::Object(_) => Err(HeaderValueConversionError::UnsupportedObject),
             VrlValue::Null => Err(HeaderValueConversionError::UnsupportedNull),
         }
+    }
+}
+
+impl ToVrlValue for NtexHeaderMap {
+    fn to_vrl_value(&self) -> VrlValue {
+        let mut obj = BTreeMap::new();
+        for (header_name, header_value) in self.iter() {
+            if let Ok(value) = header_value.to_str() {
+                obj.insert(
+                    header_name.as_str().into(),
+                    VrlValue::Bytes(Bytes::from(value.to_owned())),
+                );
+            }
+        }
+        VrlValue::Object(obj)
+    }
+}
+
+impl ToVrlValue for HeaderMap {
+    fn to_vrl_value(&self) -> VrlValue {
+        let mut obj = BTreeMap::new();
+        for (header_name, header_value) in self.iter() {
+            if let Ok(value) = header_value.to_str() {
+                obj.insert(
+                    header_name.as_str().into(),
+                    VrlValue::Bytes(Bytes::from(value.to_owned())),
+                );
+            }
+        }
+        VrlValue::Object(obj)
+    }
+}
+
+impl ToVrlValue for Uri {
+    fn to_vrl_value(&self) -> VrlValue {
+        VrlValue::Object(BTreeMap::from([
+            ("host".into(), self.host().unwrap_or("unknown").into()),
+            ("path".into(), self.path().into()),
+            (
+                "port".into(),
+                self.port_u16()
+                    .unwrap_or_else(|| {
+                        if self.scheme() == Some(&http::uri::Scheme::HTTPS) {
+                            443
+                        } else {
+                            80
+                        }
+                    })
+                    .into(),
+            ),
+        ]))
     }
 }
