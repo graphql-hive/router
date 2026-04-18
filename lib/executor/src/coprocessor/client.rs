@@ -224,17 +224,14 @@ impl CoprocessorClient {
                     timeout_ms: self.timeout.as_millis(),
                 });
 
-            // TODO: Improve code here
             let response = match response {
                 Ok(Ok(res)) => res,
                 Ok(Err(err)) => {
-                    // TODO: check the error codes
-                    request_capture.finish_error("client_error", start.elapsed());
+                    request_capture.finish_error(err.error_code(), start.elapsed());
                     return Err(err);
                 }
                 Err(err) => {
-                    // TODO: check the error codes
-                    request_capture.finish_error("timeout", start.elapsed());
+                    request_capture.finish_error(err.error_code(), start.elapsed());
                     return Err(err);
                 }
             };
@@ -243,23 +240,23 @@ impl CoprocessorClient {
             request_capture.set_status_code(response.status().as_u16());
 
             if !response.status().is_success() {
+                let error = CoprocessorError::UnexpectedStatus(response.status());
                 request_capture.finish(
                     0,
                     start.elapsed(),
                     GraphQLResponseStatus::Error,
-                    // TODO: check the error codes
-                    Some("status_error"),
+                    Some(error.error_code()),
                 );
-                return Err(CoprocessorError::UnexpectedStatus(response.status()));
+                return Err(error);
             }
 
             let (parts, response_body) = response.into_parts();
             let response_body = match response_body.collect().await {
                 Ok(body) => body.to_bytes(),
                 Err(err) => {
-                    // TODO: check the error codes
-                    request_capture.finish_error("body_read_error", start.elapsed());
-                    return Err(CoprocessorError::ResponseBodyReadFailure(err));
+                    let error = CoprocessorError::ResponseBodyReadFailure(err);
+                    request_capture.finish_error(error.error_code(), start.elapsed());
+                    return Err(error);
                 }
             };
 

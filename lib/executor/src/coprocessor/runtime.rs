@@ -97,7 +97,7 @@ impl<A: Stage> StageRuntime<A> {
 
         async {
           // Build stage payload and call the coprocessor
-          // TODO: Include `id` / `request_id` in coprocessor payloads for log correlation
+          // TODO: Include `request_id` in coprocessor payloads for log correlation
           //       once Dotan's logging PR is merged.
           let request = self.stage.build_request(input, &id).map_err(|err| {
               error!(%err, coprocessor.stage = stage_name, "Coprocessor failed to build request");
@@ -243,7 +243,6 @@ impl CoprocessorRuntime {
         })
     }
 
-    // TODO: provide real public SDL
     pub fn graphql_request_needs_sdl(&self) -> bool {
         self.graphql_request
             .as_ref()
@@ -251,7 +250,6 @@ impl CoprocessorRuntime {
             .unwrap_or(false)
     }
 
-    // TODO: provide real public SDL
     pub fn graphql_response_needs_sdl(&self) -> bool {
         self.graphql_response
             .as_ref()
@@ -259,7 +257,6 @@ impl CoprocessorRuntime {
             .unwrap_or(false)
     }
 
-    // TODO: provide real public SDL
     pub fn graphql_analysis_needs_sdl(&self) -> bool {
         self.graphql_analysis
             .as_ref()

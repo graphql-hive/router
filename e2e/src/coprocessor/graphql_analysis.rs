@@ -60,7 +60,7 @@ mod coprocessor_graphql_analysis_e2e_tests {
           "errors": [
             {
               "extensions": {
-                "code": "COPROCESSOR_FAILURE"
+                "code": "COPROCESSOR_FORBIDDEN_STAGE_MUTATION_ERROR"
               },
               "message": "coprocessor graphql.analysis stage cannot mutate 'body'"
             }

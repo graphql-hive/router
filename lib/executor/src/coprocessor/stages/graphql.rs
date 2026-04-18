@@ -186,14 +186,7 @@ impl Stage for GraphqlRequestStage {
                 .then_some(HeaderMapJsonRef(input.request_headers)),
             body: build_graphql_body_payload_ref(self.include.body, input.graphql_params),
             context: self.include.context.then_some(sonic_rs::Value::new()),
-            sdl: self
-                .include
-                .sdl
-                .then_some({
-                    // TODO: enforce SDL presence when include.sdl is enabled.
-                    input.sdl
-                })
-                .flatten(),
+            sdl: self.include.sdl.then_some(input.sdl).flatten(),
         };
 
         Ok(CoprocessorRequest {
@@ -265,14 +258,7 @@ impl Stage for GraphqlAnalysisStage {
                 .then_some(HeaderMapJsonRef(input.request.headers)),
             body: build_graphql_body_payload_ref(self.include.body, input.graphql_params),
             context: self.include.context.then_some(sonic_rs::Value::new()),
-            sdl: self
-                .include
-                .sdl
-                .then_some({
-                    // TODO: enforce SDL presence when include.sdl is enabled.
-                    input.sdl
-                })
-                .flatten(),
+            sdl: self.include.sdl.then_some(input.sdl).flatten(),
         };
 
         Ok(CoprocessorRequest {
@@ -354,14 +340,7 @@ impl Stage for GraphqlResponseStage {
                 .include
                 .status_code
                 .then_some(input.response.status().as_u16()),
-            sdl: self
-                .include
-                .sdl
-                .then_some({
-                    // TODO: enforce SDL presence when include.sdl is enabled.
-                    input.sdl
-                })
-                .flatten(),
+            sdl: self.include.sdl.then_some(input.sdl).flatten(),
         };
 
         Ok(CoprocessorRequest {

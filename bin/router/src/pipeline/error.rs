@@ -164,7 +164,6 @@ pub enum PipelineError {
     NoSupergraphAvailable,
 
     #[error(transparent)]
-    #[strum(serialize = "COPROCESSOR_FAILURE")]
     CoprocessorError(#[from] CoprocessorError),
 }
 
@@ -198,6 +197,7 @@ impl PipelineError {
             Self::JwtError(err) => err.error_code(),
             Self::PlanExecutionError(err) => err.error_code(),
             Self::ReadBodyStreamError(err) => err.error_code(),
+            Self::CoprocessorError(err) => err.error_code(),
             _ => self.into(),
         }
     }
@@ -255,7 +255,7 @@ impl PipelineError {
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
-            (Self::CoprocessorError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::CoprocessorError(err), _) => err.status_code(),
         }
     }
 }

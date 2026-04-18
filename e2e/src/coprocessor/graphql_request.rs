@@ -547,7 +547,7 @@ mod coprocessor_graphql_request_e2e_tests {
           "errors": [
             {
               "extensions": {
-                "code": "COPROCESSOR_FAILURE"
+                "code": "COPROCESSOR_INVALID_STAGE_BODY_ERROR"
               },
               "message": "invalid body returned by coprocessor graphql.request stage, expected 'query' must be a non-empty string: query is empty"
             }

@@ -46,8 +46,8 @@ mod coprocessor_failures_e2e_tests {
 
         assert_eq!(
             response.status().as_u16(),
-            502,
-            "router should return 502 when coprocessor fails"
+            500,
+            "router should return 500 when coprocessor fails"
         );
         request_stage_mock.assert_async().await;
     }
@@ -77,8 +77,8 @@ mod coprocessor_failures_e2e_tests {
 
         assert_eq!(
             response.status().as_u16(),
-            502,
-            "router should return 502 when coprocessor returns malformed JSON"
+            500,
+            "router should return 500 when coprocessor returns malformed JSON"
         );
         request_stage_mock.assert_async().await;
     }
@@ -114,8 +114,8 @@ mod coprocessor_failures_e2e_tests {
 
         assert_eq!(
             response.status().as_u16(),
-            502,
-            "router should return 502 when coprocessor returns unsupported version"
+            500,
+            "router should return 500 when coprocessor returns unsupported version"
         );
 
         request_stage_mock.assert_async().await;
@@ -152,8 +152,8 @@ mod coprocessor_failures_e2e_tests {
 
         assert_eq!(
             response.status().as_u16(),
-            502,
-            "router should return 502 when coprocessor returns invalid control value"
+            500,
+            "router should return 500 when coprocessor returns invalid control value"
         );
 
         request_stage_mock.assert_async().await;
