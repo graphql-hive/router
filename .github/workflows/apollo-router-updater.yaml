@@ -45,18 +45,18 @@ jobs:
 
       - name: Run updates
         if: steps.check.outputs.update == 'true'
-        run: cargo update -p apollo-router --precise ${{ steps.check.outputs.version }}
+        run: cargo update -p apollo-router --precise ${{ steps.check.outputs.latest_version }}
 
       - name: Create Pull Request
         if: steps.check.outputs.update == 'true'
         uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7
         with:
           token: ${{ secrets.BOT_GITHUB_TOKEN }}
-          commit-message: Update apollo-router to version ${{ steps.check.outputs.version }}
-          branch: apollo-router-update-${{ steps.check.outputs.version }}
+          commit-message: Update apollo-router to version ${{ steps.check.outputs.latest_version }}
+          branch: apollo-router-update-${{ steps.check.outputs.latest_version }}
           delete-branch: true
           title: ${{ steps.check.outputs.title }}
           body: |
-            Automatic update of apollo-router to version ${{ steps.check.outputs.version }}.
+            Automatic update of apollo-router to version ${{ steps.check.outputs.latest_version }}.
           assignees: kamilkisiela,dotansimha
           reviewers: kamilkisiela,dotansimha
