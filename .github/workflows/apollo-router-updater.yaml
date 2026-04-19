@@ -28,17 +28,20 @@ jobs:
         with:
           rust-src-dir: ./apollo-router-workspace
 
-      - name: setup node
-        uses: the-guild-org/shared-config/setup@v1
-        with:
-          node-version-file: .node-version
-
-      - name: Check for updates
+      - name: find updates
         id: check
         run: |
-          cd scripts/apollo-router-updater
-          npm install
-          npm start
+          LATEST_VERSION=$(cargo info -q apollo-router | grep "^version: " | awk '{print $2}')
+          echo "latest_version=$LATEST_VERSION"
+          echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+
+          CURRENT_VERSION=$(cargo tree -p apollo-router | grep apollo-router | awk '{print $2}' | sed 's/^v//')
+          echo "current_version=$CURRENT_VERSION"
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          NEED_UPDATE=$( [ "$LATEST_VERSION" != "$CURRENT_VERSION" ] && echo 'true' || echo 'false' )
+          echo "update=$NEED_UPDATE"
+          echo "update=$NEED_UPDATE" >> $GITHUB_OUTPUT
 
       - name: Run updates
         if: steps.check.outputs.update == 'true'
