@@ -31,7 +31,7 @@ jobs:
       - name: find updates
         id: check
         run: |
-          LATEST_VERSION=$(cargo info -q apollo-router | grep "^version: " | awk '{print $2}')
+          LATEST_VERSION=$(cargo info -registry crates-io -q apollo-router | grep "^version: " | awk '{print $2}')
           echo "latest_version=$LATEST_VERSION"
           echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
 
