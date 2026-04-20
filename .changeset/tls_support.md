@@ -2,6 +2,7 @@
 hive-router-config: minor
 hive-router-plan-executor: minor
 hive-router: minor
+hive-router-internal: patch
 ---
 
 # TLS Support
