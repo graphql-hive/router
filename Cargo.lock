@@ -2656,12 +2656,10 @@ version = "0.0.32"
 dependencies = [
  "config",
  "envconfig",
- "hive-console-sdk",
  "http",
  "human-size",
  "humantime",
  "humantime-serde",
- "ipnet",
  "jsonwebtoken",
  "once_cell",
  "regex-automata",
