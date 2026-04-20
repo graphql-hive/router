@@ -99,7 +99,6 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// When enabled, the router will use HTTP/2 prior knowledge to communicate
     /// with the subgraph over plain HTTP (without TLS).
     /// This is useful when the subgraph supports HTTP/2 but TLS is not required
-    /// (e.g., in a service mesh or internal network).
     pub http2_only: Option<bool>,
 }
 
@@ -151,7 +150,6 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// When enabled, the router will use HTTP/2 prior knowledge to communicate
     /// with subgraphs over plain HTTP (without TLS).
     /// This is useful when subgraphs support HTTP/2 but TLS is not required
-    /// (e.g., in a service mesh or internal network).
     #[serde(default)]
     pub http2_only: bool,
 }
