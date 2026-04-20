@@ -128,7 +128,7 @@ pub async fn collect_usage_report<'a>(
     };
 
     if let Err(err) = hive_usage_agent
-        .add_report(execution_report, req.into())
+        .add_report_with_request(execution_report, Some(req.into()))
         .await
     {
         tracing::error!("Failed to send usage report: {}", err);
