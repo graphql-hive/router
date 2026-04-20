@@ -62,8 +62,8 @@ jobs:
           image_name="apollo-router"
           github_org="graphql-hive"
           router_version=$(cargo tree -i apollo-router --quiet | head -n 1 | awk -F" v" '{print $2}')
-          plugin_version=$(grep '^version' Cargo.toml | sed 's/version *= *"\(.*\)"/\1/')
-          has_changes=$(git diff HEAD~ HEAD --name-only -- 'Cargo.toml' 'Cargo.lock')
+          plugin_version=$(grep '^version' ./bin/router/Cargo.toml | sed 's/version *= *"\(.*\)"/\1/')
+          has_changes=$(git diff HEAD~ HEAD --name-only -- './bin/router/Cargo.toml' 'Cargo.lock')
 
           echo "router_version: $router_version"
           echo "plugin_version: $plugin_version"
