@@ -25,7 +25,6 @@ jsonwebtoken = { workspace = true }
 retry-policies = { workspace = true}
 tracing = { workspace = true }
 regex-automata = { workspace = true }
-hive-console-sdk = { path = "../hive-console-sdk", version = "0.3.8" }
 once_cell = "1.21.3"
 
 schemars = { version = "1.0.4", features = ["url2"] }
