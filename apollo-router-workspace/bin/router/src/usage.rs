@@ -6,7 +6,6 @@ use apollo_router::services::*;
 use apollo_router::Context;
 use hive_console_sdk::agent::usage_agent::OperationType;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
-use hive_console_sdk::agent::usage_agent::RequestDetailsUrl;
 use core::ops::Drop;
 use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::UsageAgentExt;
@@ -38,7 +37,6 @@ struct OperationContext {
     pub(crate) operation_body: String,
     pub(crate) operation_name: Option<String>,
     pub(crate) dropped: bool,
-    pub(crate) request_details: RequestDetails,
 }
 
 #[derive(Clone, Debug)]
@@ -152,18 +150,6 @@ impl UsagePlugin {
                     .unwrap_or_default()
                     .as_secs()
                     * 1000,
-                request_details: RequestDetails {
-                                    headers: req.supergraph_request.headers()
-                                        .iter()
-                                        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-                                        .collect(),
-                                    method: req.supergraph_request.method().as_str().to_string(),
-                                    url: RequestDetailsUrl {
-                                        host: req.supergraph_request.uri().host().unwrap_or("localhost").to_string(),
-                                        port: req.supergraph_request.uri().port_u16().unwrap_or(80),
-                                        path: req.supergraph_request.uri().path().to_string(),
-                                    }
-                                }
             },
         );
     }
@@ -274,9 +260,17 @@ impl Plugin for UsagePlugin {
                     .map_future_with_request_data(
                         move |req: &supergraph::Request| {
                             Self::populate_context(config.clone(), req);
-                            req.context.clone()
+
+                            let request_details = RequestDetails {
+                                method: req.supergraph_request.method().clone(),
+                                url: req.supergraph_request.uri().clone(),
+                                headers: req.supergraph_request.headers().iter().map(|(k, v)| {
+                                    (k.to_string(), v.to_str().unwrap_or_default().to_string())
+                                }).collect(),
+                            };
+                            (request_details, req.context.clone())
                         },
-                        move |ctx: Context, fut| {
+                        move |(request_details, ctx): (RequestDetails, Context), fut| {
                             let agent = agent.clone();
                             let schema = schema.clone();
                             async move {
@@ -315,7 +309,6 @@ impl Plugin for UsagePlugin {
                                     operation_name,
                                     timestamp,
                                     operation_body,
-                                    request_details,
                                     ..
                                 } = operation_context;
 
@@ -337,8 +330,7 @@ impl Plugin for UsagePlugin {
                                                     operation_type: OperationType::Query,
                                                     operation_name,
                                                     persisted_document_hash,
-                                                    request_details, 
-                                                })
+                                                }, request_details)
                                                 .await;
                                             if let Err(e) = res {
                                                 tracing::error!("Error adding report: {}", e);
@@ -369,11 +361,11 @@ impl Plugin for UsagePlugin {
                                                         operation_name: operation_name.clone(),
                                                         persisted_document_hash:
                                                             persisted_document_hash.clone(),
-                                                    request_details: request_details.clone(), 
                                                     };
+                                                    let request_details = request_details.clone();
                                                     tokio::spawn(async move {
                                                         let res = agent
-                                                            .add_report(execution_report)
+                                                            .add_report(execution_report, request_details.clone())
                                                             .await;
                                                         if let Err(e) = res {
                                                             tracing::error!(

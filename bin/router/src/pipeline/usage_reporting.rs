@@ -7,7 +7,7 @@ use std::{
 use async_trait::async_trait;
 use graphql_tools::parser::schema::Document;
 use hive_console_sdk::agent::usage_agent::{
-    AgentError, ExecutionReport, OperationType, RequestDetails, UsageAgent, UsageAgentExt,
+    AgentError, ExecutionReport, OperationType, UsageAgent, UsageAgentExt,
 };
 use hive_router_config::{
     telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
@@ -16,6 +16,7 @@ use hive_router_config::{
 use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
 use hive_router_query_planner::state::supergraph_state::OperationKind;
+use ntex::web::HttpRequest;
 use rand::prelude::*;
 use tokio_util::sync::CancellationToken;
 
@@ -98,7 +99,7 @@ pub async fn collect_usage_report<'a>(
     hive_usage_agent: &UsageAgent,
     usage_config: &UsageReportingConfig,
     error_count: usize,
-    request_details: RequestDetails,
+    req: &HttpRequest,
 ) {
     let sample_rate = usage_config.sample_rate.as_f64();
     if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
@@ -124,10 +125,12 @@ pub async fn collect_usage_report<'a>(
         },
         operation_name: operation_name.map(|s| s.to_owned()),
         persisted_document_hash: None,
-        request_details,
     };
 
-    if let Err(err) = hive_usage_agent.add_report(execution_report).await {
+    if let Err(err) = hive_usage_agent
+        .add_report(execution_report, req.into())
+        .await
+    {
         tracing::error!("Failed to send usage report: {}", err);
     }
 }
