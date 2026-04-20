@@ -8,7 +8,7 @@ hive-apollo-router-plugin: major
 
 ## Dynamic Exclusions in Hive Router
 
-Hive Router now supports dynamic exclusions, allowing you to exclude specific requests from being processed by the router based on custom logic. This feature is useful for scenarios where you want to bypass certain requests, such as health checks or specific endpoints.
+Hive Router now supports dynamic exclusions, allowing you to exclude specific requests from usage reporting based on custom logic. This feature is useful for scenarios where you want to skip telemetry for certain requests, such as health checks or specific endpoints.
 Previously, it was only operation name based.
 
 ### Usage
@@ -21,7 +21,7 @@ The details about expression context is documented in the [Hive Router documenta
 
 ## Dynamic Exclusions in Apollo Router
 
-As in Hive Router, Apollo Router used to support only operation name based exclusions. With the new dynamic exclusions feature, you can now specify custom logic to exclude requests from being processed by the Apollo Router.
+As in Hive Router, Apollo Router used to support only operation name based exclusions. With the new dynamic exclusions feature, you can now specify custom logic to exclude requests from usage reporting.
 
 
 # New `add_report_with_request` method in Hive Console SDK

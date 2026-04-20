@@ -388,15 +388,45 @@ pub fn get_vrl_value_from_execution_report_and_request(
     request: Option<RequestDetails>,
 ) -> VrlValue {
     let mut map = BTreeMap::from([("default".into(), VrlValue::Boolean(false))]);
+    let mut request_map = BTreeMap::new();
 
     if let Some(request_details) = request {
-        map.insert("request".into(), VrlValue::from(request_details));
+        if let VrlValue::Object(request_object) = VrlValue::from(request_details) {
+            request_map.extend(request_object);
+        }
     }
 
+    request_map.insert(
+        "operation".into(),
+        VrlValue::Object(BTreeMap::from([
+            (
+                "name".into(),
+                report.operation_name.clone().unwrap_or_default().into(),
+            ),
+            (
+                "type".into(),
+                report
+                    .operation_type
+                    .as_ref()
+                    .map(|operation_type| match operation_type {
+                        OperationType::Query => "query",
+                        OperationType::Mutation => "mutation",
+                        OperationType::Subscription => "subscription",
+                    })
+                    .unwrap_or_default()
+                    .into(),
+            ),
+            ("query".into(), report.operation_body.clone().into()),
+        ])),
+    );
+
     if let Ok(timestamp_integer) = report.timestamp.try_into() {
-        // .request.timestamp
-        map.insert("timestamp".into(), VrlValue::Integer(timestamp_integer));
+        let timestamp_value = VrlValue::Integer(timestamp_integer);
+        request_map.insert("timestamp".into(), timestamp_value.clone());
+        map.insert("timestamp".into(), timestamp_value);
     }
+
+    map.insert("request".into(), VrlValue::Object(request_map));
 
     VrlValue::Object(map)
 }
@@ -654,7 +684,7 @@ mod tests {
             schema: Arc::new(schema),
             operation_body: operation_body.to_string(),
             operation_name: operation_name.map(|s| s.to_string()),
-            operation_type: Some(OperationType::Mutation),
+            operation_type: Some(operation_type),
             client_name: Some("test-client".to_string()),
             client_version: Some("1.0.0".to_string()),
             timestamp: 1625247600,

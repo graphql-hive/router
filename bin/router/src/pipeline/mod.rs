@@ -350,7 +350,7 @@ pub async fn graphql_request_handler(
                         "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
                     ),
                 shared_response.error_count(),
-                req,
+                Some(req.into()),
             )
             .await;
         }

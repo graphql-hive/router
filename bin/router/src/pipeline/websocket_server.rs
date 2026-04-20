@@ -1,9 +1,9 @@
+use hive_console_sdk::agent::usage_agent::RequestDetails;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
 use ntex::router::Path;
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
-use ntex::web::test::TestRequest;
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
@@ -503,13 +503,20 @@ async fn handle_text_frame(
                 };
 
                 if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-                    let mut req = TestRequest::post();
-                    for (key, value) in headers.iter() {
-                        if let Ok(val_str) = value.to_str() {
-                            req = req.header(key, val_str);
-                        }
-                    }
-                    req = req.uri(&ws_uri.to_string());
+                    let headers = headers
+                        .iter()
+                        .filter_map(|(name, value)| {
+                            value
+                                .to_str()
+                                .ok()
+                                .map(|val_str| (name.to_string(), val_str.to_string()))
+                        })
+                        .collect();
+                    let request_details = RequestDetails {
+                        method: Method::POST,
+                        url: (*ws_uri).clone(),
+                        headers,
+                    };
                     usage_reporting::collect_usage_report(
                         supergraph.supergraph_schema.clone(),
                         started_at.elapsed(),
@@ -527,7 +534,7 @@ async fn handle_text_frame(
                             .map(|c| &c.usage_reporting)
                             .expect("Expected Usage Reporting options to be present when Hive Usage Agent is initialized"),
                         shared_response.error_count(),
-                        &req.to_http_request()
+                        Some(request_details),
                     )
                     .await;
                 }

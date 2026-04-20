@@ -2600,7 +2600,6 @@ version = "0.0.31"
 dependencies = [
  "config",
  "envconfig",
- "hive-console-sdk",
  "http",
  "human-size",
  "humantime",

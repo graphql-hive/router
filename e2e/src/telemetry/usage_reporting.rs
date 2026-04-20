@@ -28,7 +28,8 @@ impl MockUsageEndpoint {
 
             for mut request in server.incoming_requests() {
                 let mut body = Vec::new();
-                let _ = request.as_reader().read_to_end(&mut body);
+                let mut reader = request.as_reader();
+                let _ = std::io::Read::read_to_end(&mut reader, &mut body);
 
                 if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&body) {
                     rt.block_on(async {
