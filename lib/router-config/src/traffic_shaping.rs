@@ -94,11 +94,12 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<ClientTLSConfig>,
 
-    /// Enables HTTP/2 cleartext (h2c) for requests to this subgraph.
+    /// Forces HTTP/2 for requests to subgraphs.
     ///
-    /// When enabled, the router will use HTTP/2 prior knowledge to communicate
-    /// with the subgraph over plain HTTP (without TLS).
-    /// This is useful when the subgraph supports HTTP/2 but TLS is not required
+    /// For plain HTTP, it will use HTTP/2 cleartext (h2c).
+    /// For HTTPS, it also requires HTTP/2.
+    /// This will make the subgraph requests never fall back to HTTP/1.1,
+    /// and will fail if the subgraph doesn't support HTTP/2.
     pub http2_only: Option<bool>,
 }
 
@@ -145,11 +146,12 @@ pub struct TrafficShapingExecutorGlobalConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<ClientTLSConfig>,
 
-    /// Enables HTTP/2 cleartext (h2c) for requests to subgraphs.
+    /// Forces HTTP/2 for requests to subgraphs.
     ///
-    /// When enabled, the router will use HTTP/2 prior knowledge to communicate
-    /// with subgraphs over plain HTTP (without TLS).
-    /// This is useful when subgraphs support HTTP/2 but TLS is not required
+    /// For plain HTTP, it will use HTTP/2 cleartext (h2c).
+    /// For HTTPS, it also requires HTTP/2.
+    /// This will make the subgraph requests never fall back to HTTP/1.1,
+    /// and will fail if the subgraph doesn't support HTTP/2.
     #[serde(default)]
     pub http2_only: bool,
 }
