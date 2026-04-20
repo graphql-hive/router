@@ -2,6 +2,7 @@
 hive-router-query-planner: patch
 hive-router-plan-executor: patch
 hive-router: patch
+node-addon: patch
 ---
 
 Fix query planner handling for combined `@skip` and `@include` conditions.
