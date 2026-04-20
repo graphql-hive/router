@@ -422,8 +422,8 @@ pub fn get_vrl_value_from_execution_report_and_request(
 
     if let Ok(timestamp_integer) = report.timestamp.try_into() {
         let timestamp_value = VrlValue::Integer(timestamp_integer);
-        request_map.insert("timestamp".into(), timestamp_value.clone());
         map.insert("timestamp".into(), timestamp_value);
+        request_map.insert("timestamp".into(), VrlValue::Integer(timestamp_integer));
     }
 
     map.insert("request".into(), VrlValue::Object(request_map));
