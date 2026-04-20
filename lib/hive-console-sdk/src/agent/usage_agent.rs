@@ -105,10 +105,12 @@ pub trait UsageAgentExt {
     }
     async fn flush(&self) -> Result<(), AgentError>;
     async fn start_flush_interval(&self, token: &CancellationToken);
-    async fn add_report(
+    async fn add_report(&self, execution_report: ExecutionReport) -> Result<(), AgentError>;
+
+    async fn add_report_with_request(
         &self,
         execution_report: ExecutionReport,
-        request: RequestDetails,
+        request: Option<RequestDetails>,
     ) -> Result<(), AgentError>;
 }
 
@@ -271,12 +273,13 @@ impl UsageAgentExt for UsageAgent {
         }
     }
 
-    async fn add_report(
+    async fn add_report_with_request(
         &self,
         execution_report: ExecutionReport,
-        request: RequestDetails,
+        request: Option<RequestDetails>,
     ) -> Result<(), AgentError> {
         let inner = self.inner();
+
         if let BooleanOrProgram::Program(exclude_program) = &inner.exclude {
             let result = exclude_program.execute(
                 get_vrl_value_from_execution_report_and_request(&execution_report, request),
@@ -294,11 +297,15 @@ impl UsageAgentExt for UsageAgent {
                 return Ok(());
             }
         }
+
         if let AddStatus::Full { drained } = inner.buffer.add(execution_report).await {
             inner.handle_drained(drained).await?;
         }
 
         Ok(())
+    }
+    async fn add_report(&self, execution_report: ExecutionReport) -> Result<(), AgentError> {
+        self.add_report_with_request(execution_report, None).await
     }
 }
 
@@ -307,7 +314,12 @@ impl<'req, TBody> From<&'req http::Request<TBody>> for RequestDetails {
         let headers = req
             .headers()
             .iter()
-            .filter_map(|(name, value)| value.to_str().ok().map(|val_str| (name.to_string(), val_str.to_string())))
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|val_str| (name.to_string(), val_str.to_string()))
+            })
             .collect();
 
         RequestDetails {
@@ -323,7 +335,12 @@ impl<'req> From<&'req ntex::web::HttpRequest> for RequestDetails {
         let headers = req
             .headers()
             .iter()
-            .filter_map(|(name, value)| value.to_str().ok().map(|val_str| (name.to_string(), val_str.to_string())))
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|val_str| (name.to_string(), val_str.to_string()))
+            })
             .collect();
 
         RequestDetails {
@@ -334,60 +351,54 @@ impl<'req> From<&'req ntex::web::HttpRequest> for RequestDetails {
     }
 }
 
+impl From<RequestDetails> for VrlValue {
+    fn from(details: RequestDetails) -> Self {
+        let mut headers_value: BTreeMap<KeyString, VrlValue> = BTreeMap::new();
+        for (header_name, header_value) in details.headers {
+            headers_value.insert(header_name.into(), header_value.into());
+        }
+
+        let headers_value = VrlValue::Object(headers_value);
+
+        // .request.url
+        let url_value = VrlValue::Object(BTreeMap::from([
+            ("host".into(), details.url.host().unwrap_or_default().into()),
+            ("path".into(), details.url.path().into()),
+            (
+                "port".into(),
+                details
+                    .url
+                    .port_u16()
+                    .map(|p| VrlValue::Integer(p.into()))
+                    .unwrap_or(VrlValue::Null),
+            ),
+        ]));
+
+        // .request
+        VrlValue::Object(BTreeMap::from([
+            ("method".into(), details.method.as_str().into()),
+            ("headers".into(), headers_value),
+            ("url".into(), url_value),
+        ]))
+    }
+}
+
 pub fn get_vrl_value_from_execution_report_and_request(
     report: &ExecutionReport,
-    request: RequestDetails,
+    request: Option<RequestDetails>,
 ) -> VrlValue {
-    let mut headers_value: BTreeMap<KeyString, VrlValue> = BTreeMap::new();
-    for (header_name, header_value) in request.headers {
-        headers_value.insert(header_name.into(), header_value.into());
+    let mut map = BTreeMap::from([("default".into(), VrlValue::Boolean(false))]);
+
+    if let Some(request_details) = request {
+        map.insert("request".into(), VrlValue::from(request_details));
     }
 
-    let headers_value = VrlValue::Object(headers_value);
+    if let Ok(timestamp_integer) = report.timestamp.try_into() {
+        // .request.timestamp
+        map.insert("timestamp".into(), VrlValue::Integer(timestamp_integer));
+    }
 
-    // .request.url
-    let url_value = VrlValue::Object(BTreeMap::from([
-        ("host".into(), request.url.host().unwrap_or_default().into()),
-        ("path".into(), request.url.path().into()),
-        (
-            "port".into(),
-            request
-                .url
-                .port_u16()
-                .map(|p| VrlValue::Integer(p.into()))
-                .unwrap_or(VrlValue::Null),
-        ),
-    ]));
-
-    // .request.operation
-    let operation_value = VrlValue::Object(BTreeMap::from([
-        (
-            "name".into(),
-            report.operation_name.as_deref().unwrap_or_default().into(),
-        ),
-        (
-            "type".into(),
-            match report.operation_type {
-                OperationType::Query => "query".into(),
-                OperationType::Mutation => "mutation".into(),
-                OperationType::Subscription => "subscription".into(),
-            },
-        ),
-        ("query".into(), report.operation_body.as_str().into()),
-    ]));
-
-    // .request
-    let request_value = VrlValue::Object(BTreeMap::from([
-        ("method".into(), request.method.as_str().into()),
-        ("headers".into(), headers_value),
-        ("url".into(), url_value),
-        ("operation".into(), operation_value),
-    ]));
-
-    VrlValue::Object(BTreeMap::from([
-        ("request".into(), request_value),
-        ("default".into(), VrlValue::Boolean(false)),
-    ]))
+    VrlValue::Object(map)
 }
 
 #[async_trait::async_trait]
@@ -607,7 +618,7 @@ mod tests {
                 .unwrap();
 
             usage_agent
-                .add_report(
+                .add_report_with_request(
                     ExecutionReport {
                         schema: Arc::new(schema),
                         operation_body: op.to_string(),
@@ -621,7 +632,7 @@ mod tests {
                         errors: 0,
                         persisted_document_hash: None,
                     },
-                    (&request).into(),
+                    Some((&request).into()),
                 )
                 .await?;
         }
@@ -673,7 +684,8 @@ mod tests {
     fn vrl_value_contains_operation_name() {
         let report = make_simple_report(Some("MyQuery"), OperationType::Query);
         let request = make_simple_request();
-        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
 
         let name = vrl_get(&value, &["request", "operation", "name"]);
         assert_eq!(name, &VrlValue::from("MyQuery"));
@@ -683,7 +695,8 @@ mod tests {
     fn vrl_value_contains_operation_type_query() {
         let report = make_simple_report(Some("Q"), OperationType::Query);
         let request = make_simple_request();
-        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
 
         let op_type = vrl_get(&value, &["request", "operation", "type"]);
         assert_eq!(op_type, &VrlValue::from("query"));
@@ -693,7 +706,8 @@ mod tests {
     fn vrl_value_contains_operation_type_mutation() {
         let report = make_simple_report(Some("M"), OperationType::Mutation);
         let request = make_simple_request();
-        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
 
         let op_type = vrl_get(&value, &["request", "operation", "type"]);
         assert_eq!(op_type, &VrlValue::from("mutation"));
@@ -703,7 +717,8 @@ mod tests {
     fn vrl_value_contains_operation_type_subscription() {
         let report = make_simple_report(Some("S"), OperationType::Subscription);
         let request = make_simple_request();
-        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
 
         let op_type = vrl_get(&value, &["request", "operation", "type"]);
         assert_eq!(op_type, &VrlValue::from("subscription"));
@@ -713,7 +728,8 @@ mod tests {
     fn vrl_value_contains_operation_body() {
         let report = make_simple_report(Some("Q"), OperationType::Query);
         let request = make_simple_request();
-        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
 
         let query = vrl_get(&value, &["request", "operation", "query"]);
         assert_eq!(query, &VrlValue::from("query { hello }"));
@@ -727,7 +743,8 @@ mod tests {
             .uri("http://localhost/graphql")
             .body(())
             .unwrap();
-        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
 
         let method = vrl_get(&value, &["request", "method"]);
         assert_eq!(method, &VrlValue::from("GET"));
@@ -741,7 +758,8 @@ mod tests {
             .uri("http://api.example.com:8080/v1/graphql")
             .body(())
             .unwrap();
-        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
 
         assert_eq!(
             vrl_get(&value, &["request", "url", "host"]),
@@ -767,7 +785,8 @@ mod tests {
             .body(())
             .unwrap();
         let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
-        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
 
         assert_eq!(
             vrl_get(&value, &["request", "headers", "x-custom-header"]),
@@ -783,7 +802,8 @@ mod tests {
     fn vrl_value_anonymous_operation_has_empty_name() {
         let report = make_simple_report(None, OperationType::Query);
         let request = make_simple_request();
-        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
 
         let name = vrl_get(&value, &["request", "operation", "name"]);
         assert_eq!(name, &VrlValue::from(""));
@@ -793,7 +813,8 @@ mod tests {
     fn vrl_value_has_default_false() {
         let report = make_simple_report(Some("Q"), OperationType::Query);
         let request = make_simple_request();
-        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
 
         let default_val = vrl_get(&value, &["default"]);
         assert_eq!(default_val, &VrlValue::Boolean(false));
@@ -825,7 +846,9 @@ mod tests {
             // This report should be excluded
             let report = make_simple_report(Some("ExcludeMe"), OperationType::Query);
             let request = make_simple_request();
-            usage_agent.add_report(report, (&request).into()).await?;
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
         }
 
         mock.assert_async().await;
@@ -856,7 +879,9 @@ mod tests {
 
             let report = make_simple_report(Some("KeepMe"), OperationType::Query);
             let request = make_simple_request();
-            usage_agent.add_report(report, (&request).into()).await?;
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
         }
 
         mock.assert_async().await;
@@ -887,7 +912,9 @@ mod tests {
 
             let report = make_simple_report(Some("OnMessage"), OperationType::Subscription);
             let request = make_simple_request();
-            usage_agent.add_report(report, (&request).into()).await?;
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
         }
 
         mock.assert_async().await;
@@ -923,7 +950,9 @@ mod tests {
                 .unwrap();
 
             let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
-            usage_agent.add_report(report, (&request).into()).await?;
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
         }
 
         mock.assert_async().await;
@@ -966,11 +995,15 @@ mod tests {
 
             // Excluded: IntrospectionQuery
             let report = make_simple_report(Some("IntrospectionQuery"), OperationType::Query);
-            usage_agent.add_report(report, (&request).into()).await?;
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
 
             // Excluded: any mutation
             let report = make_simple_report(Some("CreateUser"), OperationType::Mutation);
-            usage_agent.add_report(report, (&request).into()).await?;
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
         }
 
         mock.assert_async().await;
@@ -1012,7 +1045,9 @@ mod tests {
             let request = make_simple_request();
 
             let report = make_simple_report(Some("GetUsers"), OperationType::Query);
-            usage_agent.add_report(report, (&request).into()).await?;
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
         }
 
         mock.assert_async().await;
@@ -1047,7 +1082,9 @@ mod tests {
                 .unwrap();
 
             let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
-            usage_agent.add_report(report, (&request).into()).await?;
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
         }
 
         mock.assert_async().await;
@@ -1075,7 +1112,9 @@ mod tests {
 
             let report = make_simple_report(Some("AnyOp"), OperationType::Query);
             let request = make_simple_request();
-            usage_agent.add_report(report, (&request).into()).await?;
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
         }
 
         mock.assert_async().await;

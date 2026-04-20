@@ -318,7 +318,7 @@ impl Plugin for UsagePlugin {
                                     Err(e) => {
                                         tokio::spawn(async move {
                                             let res = agent
-                                                .add_report(ExecutionReport {
+                                                .add_report_with_request(ExecutionReport {
                                                     schema,
                                                     client_name,
                                                     client_version,
@@ -330,7 +330,7 @@ impl Plugin for UsagePlugin {
                                                     operation_type: OperationType::Query,
                                                     operation_name,
                                                     persisted_document_hash,
-                                                }, request_details)
+                                                }, Some(request_details))
                                                 .await;
                                             if let Err(e) = res {
                                                 tracing::error!("Error adding report: {}", e);
@@ -365,7 +365,7 @@ impl Plugin for UsagePlugin {
                                                     let request_details = request_details.clone();
                                                     tokio::spawn(async move {
                                                         let res = agent
-                                                            .add_report(execution_report, request_details.clone())
+                                                            .add_report_with_request(execution_report, Some(request_details.clone()))
                                                             .await;
                                                         if let Err(e) = res {
                                                             tracing::error!(
