@@ -118,11 +118,11 @@ pub async fn collect_usage_report<'a>(
         ok: error_count == 0,
         errors: error_count,
         operation_body: operation_body.to_owned(),
-        operation_type: match operation_kind {
-            Some(OperationKind::Mutation) => OperationType::Mutation,
-            Some(OperationKind::Subscription) => OperationType::Subscription,
-            _ => OperationType::Query,
-        },
+        operation_type: operation_kind.map(|k| match k {
+            OperationKind::Query => OperationType::Query,
+            OperationKind::Mutation => OperationType::Mutation,
+            OperationKind::Subscription => OperationType::Subscription,
+        }),
         operation_name: operation_name.map(|s| s.to_owned()),
         persisted_document_hash: None,
     };
@@ -146,13 +146,4 @@ impl BackgroundTask for UsageAgentTask {
     async fn run(&self, token: CancellationToken) {
         self.0.start_flush_interval(&token).await
     }
-}
-
-pub fn from_ntex_headers_to_map(headers: &ntex::http::HeaderMap) -> BTreeMap<String, String> {
-    headers
-        .iter()
-        .filter_map(|(name, value)| {
-            Some((name.as_str().to_string(), value.to_str().ok()?.to_string()))
-        })
-        .collect()
 }

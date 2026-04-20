@@ -4,7 +4,6 @@ use apollo_router::plugin::Plugin;
 use apollo_router::plugin::PluginInit;
 use apollo_router::services::*;
 use apollo_router::Context;
-use hive_console_sdk::agent::usage_agent::OperationType;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
 use core::ops::Drop;
 use futures::StreamExt;
@@ -324,12 +323,11 @@ impl Plugin for UsagePlugin {
                                                     client_version,
                                                     timestamp,
                                                     duration,
-                                                    ok: false,
                                                     errors: 1,
                                                     operation_body,
-                                                    operation_type: OperationType::Query,
                                                     operation_name,
                                                     persisted_document_hash,
+                                                    ..Default::default()
                                                 }, Some(request_details))
                                                 .await;
                                             if let Err(e) = res {
@@ -357,10 +355,9 @@ impl Plugin for UsagePlugin {
                                                         ok: !is_failure && !response_has_errors,
                                                         errors: response.errors.len(),
                                                         operation_body: operation_body.clone(),
-                                                    operation_type: OperationType::Query,
                                                         operation_name: operation_name.clone(),
-                                                        persisted_document_hash:
-                                                            persisted_document_hash.clone(),
+                                                        persisted_document_hash: persisted_document_hash.clone(),
+                                                        ..Default::default()
                                                     };
                                                     let request_details = request_details.clone();
                                                     tokio::spawn(async move {

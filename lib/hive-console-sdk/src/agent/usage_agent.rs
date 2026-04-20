@@ -29,7 +29,7 @@ pub enum OperationType {
     Subscription,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct ExecutionReport {
     pub schema: Arc<Document<'static, String>>,
     pub client_name: Option<String>,
@@ -40,7 +40,7 @@ pub struct ExecutionReport {
     pub errors: usize,
     pub operation_body: String,
     pub operation_name: Option<String>,
-    pub operation_type: OperationType,
+    pub operation_type: Option<OperationType>,
     pub persisted_document_hash: Option<String>,
 }
 
@@ -623,7 +623,7 @@ mod tests {
                         schema: Arc::new(schema),
                         operation_body: op.to_string(),
                         operation_name: Some("deleteProject".to_string()),
-                        operation_type: OperationType::Mutation,
+                        operation_type: Some(OperationType::Mutation),
                         client_name: Some(GRAPHQL_CLIENT_NAME.to_string()),
                         client_version: Some(GRAPHQL_CLIENT_VERSION.to_string()),
                         timestamp,
@@ -654,7 +654,7 @@ mod tests {
             schema: Arc::new(schema),
             operation_body: operation_body.to_string(),
             operation_name: operation_name.map(|s| s.to_string()),
-            operation_type,
+            operation_type: Some(OperationType::Mutation),
             client_name: Some("test-client".to_string()),
             client_version: Some("1.0.0".to_string()),
             timestamp: 1625247600,
