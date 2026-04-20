@@ -279,6 +279,7 @@ jobs:
   # Build and publish Rust crates and binaries
   test-rust:
     name: test
+    if: ${{ needs.find-changes.outputs.should_release == 'true' }}
     needs: find-changes
     runs-on: ubuntu-22.04
     steps:
