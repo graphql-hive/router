@@ -28,32 +28,35 @@ jobs:
         with:
           rust-src-dir: ./apollo-router-workspace
 
-      - name: setup node
-        uses: the-guild-org/shared-config/setup@v1
-        with:
-          node-version-file: .node-version
-
-      - name: Check for updates
+      - name: find updates
         id: check
         run: |
-          cd scripts/apollo-router-updater
-          npm install
-          npm start
+          LATEST_VERSION=$(curl -s -X GET https://crates.io/api/v1/crates/apollo-router | jq -r '.crate.max_version')
+          echo "latest_version=$LATEST_VERSION"
+          echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+
+          CURRENT_VERSION=$(cargo tree -p apollo-router | grep apollo-router | awk '{print $2}' | sed 's/^v//')
+          echo "current_version=$CURRENT_VERSION"
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          NEED_UPDATE=$( [ "$LATEST_VERSION" != "$CURRENT_VERSION" ] && echo 'true' || echo 'false' )
+          echo "update=$NEED_UPDATE"
+          echo "update=$NEED_UPDATE" >> $GITHUB_OUTPUT
 
       - name: Run updates
         if: steps.check.outputs.update == 'true'
-        run: cargo update -p apollo-router --precise ${{ steps.check.outputs.version }}
+        run: cargo update -p apollo-router --precise ${{ steps.check.outputs.latest_version }}
 
       - name: Create Pull Request
         if: steps.check.outputs.update == 'true'
         uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7
         with:
           token: ${{ secrets.BOT_GITHUB_TOKEN }}
-          commit-message: Update apollo-router to version ${{ steps.check.outputs.version }}
-          branch: apollo-router-update-${{ steps.check.outputs.version }}
+          commit-message: Update apollo-router to version ${{ steps.check.outputs.latest_version }}
+          branch: apollo-router-update-${{ steps.check.outputs.latest_version }}
           delete-branch: true
           title: ${{ steps.check.outputs.title }}
           body: |
-            Automatic update of apollo-router to version ${{ steps.check.outputs.version }}.
+            Automatic update of apollo-router to version ${{ steps.check.outputs.latest_version }}.
           assignees: kamilkisiela,dotansimha
           reviewers: kamilkisiela,dotansimha
