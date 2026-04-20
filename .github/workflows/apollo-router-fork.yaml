@@ -6,14 +6,14 @@ on:
       - main
     paths:
       - "apollo-router-workspace/**"
-      - ".github/workflows/apollo-router-release.yaml"
+      - ".github/workflows/apollo-router-fork.yaml"
       - ".github/workflows/apollo-router-updater.yaml"
   # For `main` changes, this pipeline will look for changes in Rust crates or plugin versioning, and
   # publish them only if changes are found and image does not exists in GH Packages.
   push:
     paths:
       - "apollo-router-workspace/**"
-      - ".github/workflows/apollo-router-release.yaml"
+      - ".github/workflows/apollo-router-fork.yaml"
       - ".github/workflows/apollo-router-updater.yaml"
     branches:
       - main
