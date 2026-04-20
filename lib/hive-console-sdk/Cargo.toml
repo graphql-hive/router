@@ -39,6 +39,8 @@ http = { workspace = true }
 bytes ={ workspace = true }
 sonic-rs = { workspace = true }
 humantime = { workspace = true }
+http-serde = "2.1.1"
+ntex = { workspace = true }
 
 [dev-dependencies]
 mockito = { workspace = true }

@@ -1,9 +1,9 @@
-use hive_console_sdk::agent::usage_agent::{RequestDetails, RequestDetailsUrl};
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
 use ntex::router::Path;
 use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
+use ntex::web::test::TestRequest;
 use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
 use ntex::{chain, rt};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
@@ -35,7 +35,6 @@ use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_planned_request;
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
-use crate::pipeline::usage_reporting::from_ntex_headers_to_map;
 use crate::pipeline::{
     hash_graphql_extensions, hash_graphql_variables, inbound_request_fingerprint,
     normalize::normalize_request_with_cache, parser::parse_operation_with_cache, usage_reporting,
@@ -449,8 +448,9 @@ async fn handle_text_frame(
                     SingleContentType::default(),
                     StreamContentType::default(),
                 );
+                let method = Method::POST;
                 let exec = |guard| execute_planned_request(
-                    &Method::POST,
+                    &method,
                     ws_uri,
                     &headers,
                     payload,
@@ -503,6 +503,13 @@ async fn handle_text_frame(
                 };
 
                 if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                    let mut req = TestRequest::post();
+                    for (key, value) in headers.iter() {
+                        if let Ok(val_str) = value.to_str() {
+                            req = req.header(key, val_str);
+                        }
+                    }
+                    req = req.uri(&ws_uri.to_string());
                     usage_reporting::collect_usage_report(
                         supergraph.supergraph_schema.clone(),
                         started_at.elapsed(),
@@ -520,15 +527,7 @@ async fn handle_text_frame(
                             .map(|c| &c.usage_reporting)
                             .expect("Expected Usage Reporting options to be present when Hive Usage Agent is initialized"),
                         shared_response.error_count(),
-                        RequestDetails {
-                            url: RequestDetailsUrl {
-                                host: ws_uri.host().unwrap_or_default().to_string(),
-                                port: ws_uri.port_u16().unwrap_or(80),
-                                path: ws_uri.path().to_string(),
-                            },
-                            method: Method::POST.to_string(),
-                            headers: from_ntex_headers_to_map(&headers),
-                        },
+                        &req.to_http_request()
                     )
                     .await;
                 }

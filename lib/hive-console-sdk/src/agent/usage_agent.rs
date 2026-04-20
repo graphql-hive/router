@@ -2,7 +2,6 @@ use async_dropper_simple::{AsyncDrop, AsyncDropper};
 use graphql_tools::parser::schema::Document;
 use recloser::AsyncRecloser;
 use reqwest_middleware::ClientWithMiddleware;
-use serde::{Deserialize, Serialize};
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
     sync::Arc,
@@ -30,20 +29,6 @@ pub enum OperationType {
     Subscription,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequestDetails {
-    pub headers: BTreeMap<String, String>,
-    pub method: String,
-    pub url: RequestDetailsUrl,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequestDetailsUrl {
-    pub host: String,
-    pub port: u16,
-    pub path: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct ExecutionReport {
     pub schema: Arc<Document<'static, String>>,
@@ -57,7 +42,6 @@ pub struct ExecutionReport {
     pub operation_name: Option<String>,
     pub operation_type: OperationType,
     pub persisted_document_hash: Option<String>,
-    pub request_details: RequestDetails,
 }
 
 typify::import_types!(schema = "./usage-report-v2.schema.json");
@@ -121,7 +105,11 @@ pub trait UsageAgentExt {
     }
     async fn flush(&self) -> Result<(), AgentError>;
     async fn start_flush_interval(&self, token: &CancellationToken);
-    async fn add_report(&self, execution_report: ExecutionReport) -> Result<(), AgentError>;
+    async fn add_report(
+        &self,
+        execution_report: ExecutionReport,
+        request: RequestDetails,
+    ) -> Result<(), AgentError>;
 }
 
 impl UsageAgentInner {
@@ -257,6 +245,13 @@ impl UsageAgentInner {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RequestDetails {
+    pub method: http::Method,
+    pub url: http::Uri,
+    pub headers: Vec<(String, String)>,
+}
+
 #[async_trait::async_trait]
 impl UsageAgentExt for UsageAgent {
     async fn flush(&self) -> Result<(), AgentError> {
@@ -276,11 +271,16 @@ impl UsageAgentExt for UsageAgent {
         }
     }
 
-    async fn add_report(&self, execution_report: ExecutionReport) -> Result<(), AgentError> {
+    async fn add_report(
+        &self,
+        execution_report: ExecutionReport,
+        request: RequestDetails,
+    ) -> Result<(), AgentError> {
         let inner = self.inner();
         if let BooleanOrProgram::Program(exclude_program) = &inner.exclude {
-            let result =
-                exclude_program.execute(get_vrl_value_from_execution_report(&execution_report))?;
+            let result = exclude_program.execute(
+                get_vrl_value_from_execution_report_and_request(&execution_report, request),
+            )?;
             let result_bool = bool::from_vrl_value(result)?;
             if result_bool {
                 tracing::debug!(
@@ -302,27 +302,60 @@ impl UsageAgentExt for UsageAgent {
     }
 }
 
-pub fn get_vrl_value_from_execution_report(report: &ExecutionReport) -> VrlValue {
+impl<'req, TBody> From<&'req http::Request<TBody>> for RequestDetails {
+    fn from(req: &'req http::Request<TBody>) -> Self {
+        let headers = req
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| value.to_str().ok().map(|val_str| (name.to_string(), val_str.to_string())))
+            .collect();
+
+        RequestDetails {
+            method: req.method().clone(),
+            url: req.uri().clone(),
+            headers,
+        }
+    }
+}
+
+impl<'req> From<&'req ntex::web::HttpRequest> for RequestDetails {
+    fn from(req: &'req ntex::web::HttpRequest) -> Self {
+        let headers = req
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| value.to_str().ok().map(|val_str| (name.to_string(), val_str.to_string())))
+            .collect();
+
+        RequestDetails {
+            method: req.method().clone(),
+            url: req.uri().clone(),
+            headers,
+        }
+    }
+}
+
+pub fn get_vrl_value_from_execution_report_and_request(
+    report: &ExecutionReport,
+    request: RequestDetails,
+) -> VrlValue {
     let mut headers_value: BTreeMap<KeyString, VrlValue> = BTreeMap::new();
-    for (header_name, header_value) in report.request_details.headers.iter() {
-        headers_value.insert(header_name.as_str().into(), header_value.as_str().into());
+    for (header_name, header_value) in request.headers {
+        headers_value.insert(header_name.into(), header_value.into());
     }
 
     let headers_value = VrlValue::Object(headers_value);
 
     // .request.url
     let url_value = VrlValue::Object(BTreeMap::from([
-        (
-            "host".into(),
-            report.request_details.url.host.as_str().into(),
-        ),
-        (
-            "path".into(),
-            report.request_details.url.path.as_str().into(),
-        ),
+        ("host".into(), request.url.host().unwrap_or_default().into()),
+        ("path".into(), request.url.path().into()),
         (
             "port".into(),
-            VrlValue::Integer(report.request_details.url.port.into()),
+            request
+                .url
+                .port_u16()
+                .map(|p| VrlValue::Integer(p.into()))
+                .unwrap_or(VrlValue::Null),
         ),
     ]));
 
@@ -345,10 +378,7 @@ pub fn get_vrl_value_from_execution_report(report: &ExecutionReport) -> VrlValue
 
     // .request
     let request_value = VrlValue::Object(BTreeMap::from([
-        (
-            "method".into(),
-            report.request_details.method.as_str().into(),
-        ),
+        ("method".into(), request.method.as_str().into()),
         ("headers".into(), headers_value),
         ("url".into(), url_value),
         ("operation".into(), operation_value),
@@ -371,19 +401,19 @@ impl AsyncDrop for UsageAgentInner {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, sync::Arc, time::Duration};
+    use std::{sync::Arc, time::Duration};
 
     use graphql_tools::parser::{parse_query, parse_schema};
     use reqwest::{
-        header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
+        header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
         Method,
     };
     use vrl::core::Value as VrlValue;
     use vrl::value::KeyString;
 
     use crate::agent::usage_agent::{
-        get_vrl_value_from_execution_report, ExecutionReport, OperationType, Report,
-        RequestDetails, RequestDetailsUrl, UsageAgent, UsageAgentExt,
+        get_vrl_value_from_execution_report_and_request, ExecutionReport, OperationType, Report,
+        UsageAgent, UsageAgentExt,
     };
 
     /// Helper to extract a nested VRL value from an Object using string keys.
@@ -570,29 +600,29 @@ mod tests {
                 .user_agent(user_agent.into())
                 .build()?;
 
+            let request = http::Request::builder()
+                .method(Method::POST)
+                .uri("http://localhost/graphql")
+                .body(())
+                .unwrap();
+
             usage_agent
-                .add_report(ExecutionReport {
-                    schema: Arc::new(schema),
-                    operation_body: op.to_string(),
-                    operation_name: Some("deleteProject".to_string()),
-                    operation_type: OperationType::Mutation,
-                    client_name: Some(GRAPHQL_CLIENT_NAME.to_string()),
-                    client_version: Some(GRAPHQL_CLIENT_VERSION.to_string()),
-                    timestamp,
-                    duration,
-                    ok: true,
-                    errors: 0,
-                    persisted_document_hash: None,
-                    request_details: RequestDetails {
-                        headers: Default::default(),
-                        method: "POST".to_string(),
-                        url: RequestDetailsUrl {
-                            host: "example.com".to_string(),
-                            port: 443,
-                            path: "/graphql".to_string(),
-                        },
+                .add_report(
+                    ExecutionReport {
+                        schema: Arc::new(schema),
+                        operation_body: op.to_string(),
+                        operation_name: Some("deleteProject".to_string()),
+                        operation_type: OperationType::Mutation,
+                        client_name: Some(GRAPHQL_CLIENT_NAME.to_string()),
+                        client_version: Some(GRAPHQL_CLIENT_VERSION.to_string()),
+                        timestamp,
+                        duration,
+                        ok: true,
+                        errors: 0,
+                        persisted_document_hash: None,
                     },
-                })
+                    (&request).into(),
+                )
                 .await?;
         }
 
@@ -604,11 +634,6 @@ mod tests {
     fn make_test_report(
         operation_name: Option<&str>,
         operation_type: OperationType,
-        method: &str,
-        headers: BTreeMap<String, String>,
-        host: &str,
-        port: u16,
-        path: &str,
         operation_body: &str,
     ) -> ExecutionReport {
         let schema: graphql_tools::static_graphql::schema::Document =
@@ -626,15 +651,6 @@ mod tests {
             ok: true,
             errors: 0,
             persisted_document_hash: None,
-            request_details: RequestDetails {
-                headers,
-                method: method.to_string(),
-                url: RequestDetailsUrl {
-                    host: host.to_string(),
-                    port,
-                    path: path.to_string(),
-                },
-            },
         }
     }
 
@@ -642,22 +658,22 @@ mod tests {
         operation_name: Option<&str>,
         operation_type: OperationType,
     ) -> ExecutionReport {
-        make_test_report(
-            operation_name,
-            operation_type,
-            "POST",
-            BTreeMap::new(),
-            "localhost",
-            80,
-            "/graphql",
-            "query { hello }",
-        )
+        make_test_report(operation_name, operation_type, "query { hello }")
+    }
+
+    fn make_simple_request() -> http::Request<()> {
+        http::Request::builder()
+            .method(Method::GET)
+            .uri("http://localhost/graphql")
+            .body(())
+            .unwrap()
     }
 
     #[test]
     fn vrl_value_contains_operation_name() {
         let report = make_simple_report(Some("MyQuery"), OperationType::Query);
-        let value = get_vrl_value_from_execution_report(&report);
+        let request = make_simple_request();
+        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
 
         let name = vrl_get(&value, &["request", "operation", "name"]);
         assert_eq!(name, &VrlValue::from("MyQuery"));
@@ -666,7 +682,8 @@ mod tests {
     #[test]
     fn vrl_value_contains_operation_type_query() {
         let report = make_simple_report(Some("Q"), OperationType::Query);
-        let value = get_vrl_value_from_execution_report(&report);
+        let request = make_simple_request();
+        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
 
         let op_type = vrl_get(&value, &["request", "operation", "type"]);
         assert_eq!(op_type, &VrlValue::from("query"));
@@ -675,7 +692,8 @@ mod tests {
     #[test]
     fn vrl_value_contains_operation_type_mutation() {
         let report = make_simple_report(Some("M"), OperationType::Mutation);
-        let value = get_vrl_value_from_execution_report(&report);
+        let request = make_simple_request();
+        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
 
         let op_type = vrl_get(&value, &["request", "operation", "type"]);
         assert_eq!(op_type, &VrlValue::from("mutation"));
@@ -684,7 +702,8 @@ mod tests {
     #[test]
     fn vrl_value_contains_operation_type_subscription() {
         let report = make_simple_report(Some("S"), OperationType::Subscription);
-        let value = get_vrl_value_from_execution_report(&report);
+        let request = make_simple_request();
+        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
 
         let op_type = vrl_get(&value, &["request", "operation", "type"]);
         assert_eq!(op_type, &VrlValue::from("subscription"));
@@ -693,7 +712,8 @@ mod tests {
     #[test]
     fn vrl_value_contains_operation_body() {
         let report = make_simple_report(Some("Q"), OperationType::Query);
-        let value = get_vrl_value_from_execution_report(&report);
+        let request = make_simple_request();
+        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
 
         let query = vrl_get(&value, &["request", "operation", "query"]);
         assert_eq!(query, &VrlValue::from("query { hello }"));
@@ -701,17 +721,13 @@ mod tests {
 
     #[test]
     fn vrl_value_contains_request_method() {
-        let report = make_test_report(
-            Some("Q"),
-            OperationType::Query,
-            "GET",
-            BTreeMap::new(),
-            "localhost",
-            80,
-            "/graphql",
-            "query { hello }",
-        );
-        let value = get_vrl_value_from_execution_report(&report);
+        let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+        let request = http::Request::builder()
+            .method(Method::GET)
+            .uri("http://localhost/graphql")
+            .body(())
+            .unwrap();
+        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
 
         let method = vrl_get(&value, &["request", "method"]);
         assert_eq!(method, &VrlValue::from("GET"));
@@ -719,17 +735,13 @@ mod tests {
 
     #[test]
     fn vrl_value_contains_url_details() {
-        let report = make_test_report(
-            Some("Q"),
-            OperationType::Query,
-            "POST",
-            BTreeMap::new(),
-            "api.example.com",
-            8080,
-            "/v1/graphql",
-            "query { hello }",
-        );
-        let value = get_vrl_value_from_execution_report(&report);
+        let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+        let request = http::Request::builder()
+            .method(Method::POST)
+            .uri("http://api.example.com:8080/v1/graphql")
+            .body(())
+            .unwrap();
+        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
 
         assert_eq!(
             vrl_get(&value, &["request", "url", "host"]),
@@ -747,21 +759,15 @@ mod tests {
 
     #[test]
     fn vrl_value_contains_headers() {
-        let mut headers = BTreeMap::new();
-        headers.insert("x-custom-header".to_string(), "custom-value".to_string());
-        headers.insert("authorization".to_string(), "Bearer token123".to_string());
-
-        let report = make_test_report(
-            Some("Q"),
-            OperationType::Query,
-            "POST",
-            headers,
-            "localhost",
-            80,
-            "/graphql",
-            "query { hello }",
-        );
-        let value = get_vrl_value_from_execution_report(&report);
+        let request = http::Request::builder()
+            .method(Method::POST)
+            .uri("http://localhost/graphql")
+            .header("x-custom-header", "custom-value")
+            .header("authorization", "Bearer token123")
+            .body(())
+            .unwrap();
+        let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
 
         assert_eq!(
             vrl_get(&value, &["request", "headers", "x-custom-header"]),
@@ -776,7 +782,8 @@ mod tests {
     #[test]
     fn vrl_value_anonymous_operation_has_empty_name() {
         let report = make_simple_report(None, OperationType::Query);
-        let value = get_vrl_value_from_execution_report(&report);
+        let request = make_simple_request();
+        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
 
         let name = vrl_get(&value, &["request", "operation", "name"]);
         assert_eq!(name, &VrlValue::from(""));
@@ -785,7 +792,8 @@ mod tests {
     #[test]
     fn vrl_value_has_default_false() {
         let report = make_simple_report(Some("Q"), OperationType::Query);
-        let value = get_vrl_value_from_execution_report(&report);
+        let request = make_simple_request();
+        let value = get_vrl_value_from_execution_report_and_request(&report, (&request).into());
 
         let default_val = vrl_get(&value, &["default"]);
         assert_eq!(default_val, &VrlValue::Boolean(false));
@@ -816,7 +824,8 @@ mod tests {
 
             // This report should be excluded
             let report = make_simple_report(Some("ExcludeMe"), OperationType::Query);
-            usage_agent.add_report(report).await?;
+            let request = make_simple_request();
+            usage_agent.add_report(report, (&request).into()).await?;
         }
 
         mock.assert_async().await;
@@ -846,7 +855,8 @@ mod tests {
                 .build()?;
 
             let report = make_simple_report(Some("KeepMe"), OperationType::Query);
-            usage_agent.add_report(report).await?;
+            let request = make_simple_request();
+            usage_agent.add_report(report, (&request).into()).await?;
         }
 
         mock.assert_async().await;
@@ -876,7 +886,8 @@ mod tests {
                 .build()?;
 
             let report = make_simple_report(Some("OnMessage"), OperationType::Subscription);
-            usage_agent.add_report(report).await?;
+            let request = make_simple_request();
+            usage_agent.add_report(report, (&request).into()).await?;
         }
 
         mock.assert_async().await;
@@ -904,19 +915,15 @@ mod tests {
                 .exclude_expression(r#".request.headers."x-internal" == "true""#.to_string())
                 .build()?;
 
-            let mut headers = BTreeMap::new();
-            headers.insert("x-internal".to_string(), "true".to_string());
-            let report = make_test_report(
-                Some("Q"),
-                OperationType::Query,
-                "POST",
-                headers,
-                "localhost",
-                80,
-                "/graphql",
-                "query { hello }",
-            );
-            usage_agent.add_report(report).await?;
+            let request = http::Request::builder()
+                .method(Method::POST)
+                .uri("http://localhost/graphql")
+                .header("x-internal", "true")
+                .body(())
+                .unwrap();
+
+            let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+            usage_agent.add_report(report, (&request).into()).await?;
         }
 
         mock.assert_async().await;
@@ -955,13 +962,15 @@ mod tests {
                 .exclude_expression(exclude_expr.to_string())
                 .build()?;
 
+            let request = make_simple_request();
+
             // Excluded: IntrospectionQuery
             let report = make_simple_report(Some("IntrospectionQuery"), OperationType::Query);
-            usage_agent.add_report(report).await?;
+            usage_agent.add_report(report, (&request).into()).await?;
 
             // Excluded: any mutation
             let report = make_simple_report(Some("CreateUser"), OperationType::Mutation);
-            usage_agent.add_report(report).await?;
+            usage_agent.add_report(report, (&request).into()).await?;
         }
 
         mock.assert_async().await;
@@ -1000,8 +1009,10 @@ mod tests {
                 .exclude_expression(exclude_expr.to_string())
                 .build()?;
 
+            let request = make_simple_request();
+
             let report = make_simple_report(Some("GetUsers"), OperationType::Query);
-            usage_agent.add_report(report).await?;
+            usage_agent.add_report(report, (&request).into()).await?;
         }
 
         mock.assert_async().await;
@@ -1029,17 +1040,14 @@ mod tests {
                 .exclude_expression(r#".request.url.path == "/internal/graphql""#.to_string())
                 .build()?;
 
-            let report = make_test_report(
-                Some("Q"),
-                OperationType::Query,
-                "POST",
-                BTreeMap::new(),
-                "localhost",
-                80,
-                "/internal/graphql",
-                "query { hello }",
-            );
-            usage_agent.add_report(report).await?;
+            let request = http::Request::builder()
+                .method(Method::POST)
+                .uri("http://localhost/internal/graphql")
+                .body(())
+                .unwrap();
+
+            let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+            usage_agent.add_report(report, (&request).into()).await?;
         }
 
         mock.assert_async().await;
@@ -1066,7 +1074,8 @@ mod tests {
                 .build()?;
 
             let report = make_simple_report(Some("AnyOp"), OperationType::Query);
-            usage_agent.add_report(report).await?;
+            let request = make_simple_request();
+            usage_agent.add_report(report, (&request).into()).await?;
         }
 
         mock.assert_async().await;

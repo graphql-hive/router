@@ -1,5 +1,4 @@
 use futures::StreamExt;
-use hive_console_sdk::agent::usage_agent::{RequestDetails, RequestDetailsUrl};
 use hive_router_internal::telemetry::traces::spans::{
     graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
 };
@@ -50,7 +49,6 @@ use crate::{
             write_graphql_operation_metric_identity, write_graphql_response_metric_status,
             write_request_body_size,
         },
-        usage_reporting::from_ntex_headers_to_map,
         validation::validate_operation_with_cache,
     },
     schema_state::SchemaState,
@@ -352,15 +350,7 @@ pub async fn graphql_request_handler(
                         "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
                     ),
                 shared_response.error_count(),
-                RequestDetails {
-                    headers: from_ntex_headers_to_map(req.headers()),
-                    method: req.method().to_string(),
-                    url: RequestDetailsUrl {
-                        host: req.connection_info().host().to_string(),
-                        port: req.uri().port_u16().unwrap_or(80),
-                        path: req.uri().path().to_string(),
-                    },
-                }
+                req,
             )
             .await;
         }
