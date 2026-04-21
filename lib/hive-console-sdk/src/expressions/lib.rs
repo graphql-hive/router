@@ -14,7 +14,6 @@ use vrl::{
 use crate::expressions::{
     error::{ExpressionCompileError, ExpressionExecutionError},
     functions::env::Env,
-    ProgramResolutionError,
 };
 
 static VRL_FUNCTIONS: LazyLock<Vec<Box<dyn Function>>> = LazyLock::new(|| {
@@ -343,4 +342,3 @@ impl<'a, 'b> VrlObjectBuilder<'a, 'b> {
         ChildState::Explore(child)
     }
 }
-

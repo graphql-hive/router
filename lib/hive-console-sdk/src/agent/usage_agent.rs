@@ -17,9 +17,9 @@ use crate::{
 };
 use crate::{
     agent::{buffer::Buffer, builder::UsageAgentBuilder},
-    expressions::values::boolean::{BooleanConversionError, BooleanOrProgram},
+    expressions::values::boolean::BooleanConversionError,
 };
-use vrl::{core::Value as VrlValue, value::KeyString};
+use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue, value::KeyString};
 
 #[derive(Debug, Clone, Default)]
 pub enum OperationType {
@@ -53,7 +53,7 @@ pub struct UsageAgentInner {
     pub(crate) client: ClientWithMiddleware,
     pub(crate) flush_interval: Duration,
     pub(crate) circuit_breaker: AsyncRecloser,
-    pub(crate) exclude: BooleanOrProgram,
+    pub(crate) exclude_expression: Option<VrlProgram>,
 }
 
 pub fn non_empty_string(value: Option<String>) -> Option<String> {
@@ -282,7 +282,7 @@ impl UsageAgentExt for UsageAgent {
     ) -> Result<(), AgentError> {
         let inner = self.inner();
 
-        if let BooleanOrProgram::Program(exclude_program) = &inner.exclude {
+        if let Some(exclude_program) = &inner.exclude_expression {
             let result = exclude_program.execute(
                 get_vrl_value_from_execution_report_and_request(&execution_report, request),
             )?;
