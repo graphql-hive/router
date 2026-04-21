@@ -388,8 +388,8 @@ async fn usage_reporting_complex_exclude_expression() {
                   endpoint: {usage_endpoint}
                   buffer_size: 1
                   flush_interval: 100ms
-                                    exclude:
-                                        expression: '{exclude_expr}'
+                  exclude:
+                    expression: '{exclude_expr}'
             "#,
         ))
         .with_subgraphs(&subgraphs)
