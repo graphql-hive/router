@@ -1,12 +1,12 @@
 use crate::consts::PLUGIN_VERSION;
+use apollo_router::Context;
 use apollo_router::layers::ServiceBuilderExt;
 use apollo_router::plugin::Plugin;
 use apollo_router::plugin::PluginInit;
 use apollo_router::services::*;
-use apollo_router::Context;
-use hive_console_sdk::agent::usage_agent::RequestDetails;
 use core::ops::Drop;
 use futures::StreamExt;
+use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_console_sdk::agent::usage_agent::UsageAgentExt;
 use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
 use hive_console_sdk::graphql_tools::parser::parse_schema;
@@ -41,6 +41,7 @@ struct OperationContext {
 #[derive(Clone, Debug)]
 struct OperationConfig {
     sample_rate: f64,
+    exclude: Option<Vec<String>>,
     client_name_header: String,
     client_version_header: String,
 }
@@ -50,6 +51,13 @@ pub struct UsagePlugin {
     agent: Option<UsageAgent>,
     schema: Arc<Document<'static, String>>,
     cancellation_token: Arc<CancellationToken>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum UsageReportingExclude {
+    Expression { expression: String },
+    OperationNames(Vec<String>),
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Default)]
@@ -76,7 +84,7 @@ pub struct Config {
     /// An expression in VRL to exclude certain operations from being sent to Hive Console.
     /// Returning `true` from this expression will exclude the operation, while `false` will include it.
     /// This expression is a VRL expression that has access to the request and operation details;
-    /// 
+    ///
     /// ```vrl
     ///  if (.request.operation.name == "ExcludeMe") {
     ///    true
@@ -84,7 +92,9 @@ pub struct Config {
     ///    false
     ///  }
     /// ```
-    exclude: Option<String>,
+    /// Use `exclude: { expression: "..." }` for expressions.
+    /// A list of operation names is also supported for backward compatibility.
+    exclude: Option<UsageReportingExclude>,
     client_name_header: Option<String>,
     client_version_header: Option<String>,
     /// A maximum number of operations to hold in a buffer before sending to GraphQL Hive
@@ -133,13 +143,29 @@ impl UsagePlugin {
             .clone()
             .unwrap_or_default();
 
+        let excluded_operation_names: HashSet<String> = config
+            .exclude
+            .unwrap_or_default()
+            .clone()
+            .into_iter()
+            .collect();
+
         let mut rng = rand::rng();
         let sampled = rng.random::<f64>() < config.sample_rate;
+        let mut dropped = !sampled;
+
+        if !dropped {
+            if let Some(name) = &operation_name {
+                if excluded_operation_names.contains(name) {
+                    dropped = true;
+                }
+            }
+        }
 
         let _ = context.insert(
             OPERATION_CONTEXT,
             OperationContext {
-                dropped: !sampled,
+                dropped,
                 client_name,
                 client_version,
                 operation_name,
@@ -211,8 +237,8 @@ impl Plugin for UsagePlugin {
                 agent = agent.flush_interval(Duration::from_secs(flush_interval));
             }
 
-            if let Some(exclude_expression) = user_config.exclude {
-                agent = agent.exclude_expression(exclude_expression);
+            if let Some(UsageReportingExclude::Expression { expression }) = &user_config.exclude {
+                agent = agent.exclude_expression(expression.clone());
             }
 
             let agent = agent.build().map_err(Box::new)?;
@@ -233,10 +259,18 @@ impl Plugin for UsagePlugin {
             .expect("Failed to parse schema")
             .into_static();
 
+        let exclude = match user_config.exclude {
+            Some(UsageReportingExclude::OperationNames(names)) => {
+                Some(UsageReportingExclude::OperationNames(names))
+            }
+            _ => None,
+        };
+
         Ok(UsagePlugin {
             schema: Arc::new(schema),
             config: OperationConfig {
                 sample_rate: user_config.sample_rate.unwrap_or(1.0),
+                exclude,
                 client_name_header: user_config
                     .client_name_header
                     .unwrap_or("graphql-client-name".to_string()),
@@ -263,9 +297,16 @@ impl Plugin for UsagePlugin {
                             let request_details = RequestDetails {
                                 method: req.supergraph_request.method().clone(),
                                 url: req.supergraph_request.uri().clone(),
-                                headers: req.supergraph_request.headers().iter().map(|(k, v)| {
-                                    (k.to_string(), v.to_str().unwrap_or_default().to_string())
-                                }).collect(),
+                                headers: req
+                                    .supergraph_request
+                                    .headers()
+                                    .iter()
+                                    .filter_map(|(k, v)| {
+                                        v.to_str()
+                                            .ok()
+                                            .map(|value| (k.to_string(), value.to_string()))
+                                    })
+                                    .collect(),
                             };
                             (request_details, req.context.clone())
                         },
@@ -400,7 +441,7 @@ impl Drop for UsagePlugin {
 #[cfg(test)]
 mod hive_usage_tests {
     use apollo_router::{
-        plugin::{test::MockSupergraphService, Plugin, PluginInit},
+        plugin::{Plugin, PluginInit, test::MockSupergraphService},
         services::supergraph,
     };
     use http::header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
@@ -412,6 +453,46 @@ mod hive_usage_tests {
     use crate::consts::PLUGIN_VERSION;
 
     use super::{Config, UsagePlugin};
+
+    #[test]
+    fn config_exclude_supports_expression_object() {
+        let config: Config = serde_json::from_value(json!({
+            "exclude": { "expression": ".request.operation.name == \"ExcludedOp\"" }
+        }))
+        .expect("config with expression object should deserialize");
+
+        assert!(matches!(config.exclude, Some(UsageReportingExclude::Expression { .. })));
+
+        if let Some(UsageReportingExclude::Expression { expression }) = config.exclude {
+            assert_eq!(
+                expression,
+                ".request.operation.name == \"ExcludedOp\"",
+                "expression should match the input"
+            );
+        } else {
+            panic!("Expected an expression exclude");
+        }
+    }
+
+    #[test]
+    fn config_exclude_supports_legacy_operation_list() {
+        let config: Config = serde_json::from_value(json!({
+            "exclude": ["ExcludedOp", "IntrospectionQuery"]
+        }))
+        .expect("config with legacy operation list should deserialize");
+
+        assert!(matches!(config.exclude, Some(UsageReportingExclude::OperationNames(_))));
+
+        if let Some(UsageReportingExclude::OperationNames(names)) = config.exclude {
+            assert_eq!(
+                names,
+                vec!["ExcludedOp".to_string(), "IntrospectionQuery".to_string()],
+                "operation names should match the input"
+            );
+        } else {
+            panic!("Expected an operation names exclude");
+        }
+    }
 
     lazy_static::lazy_static! {
         static ref SCHEMA_VALIDATOR: Validator =

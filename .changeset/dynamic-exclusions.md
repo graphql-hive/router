@@ -1,20 +1,34 @@
 ---
-hive-router: major
-hive-console-sdk: major
-hive-apollo-router-plugin: major
+hive-router: minor
+hive-console-sdk: minor
+hive-apollo-router-plugin: minor
 ---
 
-# Breaking Changes: Dynamic Exclusions
+# Dynamic Exclusions
 
 ## Dynamic Exclusions in Hive Router
 
 Hive Router now supports dynamic exclusions, allowing you to exclude specific requests from usage reporting based on custom logic. This feature is useful for scenarios where you want to skip telemetry for certain requests, such as health checks or specific endpoints.
-Previously, it was only operation name based.
+
+The previous operation-name list format is still supported for backward compatibility.
 
 ### Usage
 ```diff
 - exclude: ['ExcludedOp']
-+ exclude: '.request.operation.name == "ExcludedOp"'
++ exclude:
++   expression: '.request.operation.name == "ExcludedOp"'
+```
+
+Both of the following are valid and supported:
+
+```yaml
+# legacy format
+exclude:
+  - ExcludedOp
+
+# dynamic expression format
+exclude:
+  expression: '.request.operation.name == "ExcludedOp"'
 ```
 
 The details about expression context is documented in the [Hive Router documentation](https://the-guild.dev/graphql/hive/docs/router/configuration/expressions).
