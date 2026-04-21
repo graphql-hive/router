@@ -25,7 +25,7 @@ jobs:
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
       - name: install nextest
-        run: cargo install cargo-nextest --version $(cargo metadata --no-deps --format-version 1 | jq -r '.metadata["nextest-version"]') --locked
+        run: cargo install cargo-nextest --version $(grep '^cargo-nextest' Cargo.toml | sed 's/.*"\(.*\)".*/\1/') --locked
       - name: test all
         run: cargo test_all
         timeout-minutes: 5
@@ -40,7 +40,7 @@ jobs:
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
       - name: install nextest
-        run: cargo install cargo-nextest --version $(cargo metadata --no-deps --format-version 1 | jq -r '.metadata["nextest-version"]') --locked
+        run: cargo install cargo-nextest --version $(grep '^cargo-nextest' Cargo.toml | sed 's/.*"\(.*\)".*/\1/') --locked
       - name: test e2e
         run: cargo test_e2e
         timeout-minutes: 10
@@ -58,7 +58,7 @@ jobs:
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: install nextest
-        run: cargo install cargo-nextest --version $(cargo metadata --no-deps --format-version 1 | jq -r '.metadata["nextest-version"]') --locked
+        run: cargo install cargo-nextest --version $(grep '^cargo-nextest' Cargo.toml | sed 's/.*"\(.*\)".*/\1/') --locked
       - name: test plugin examples
         run: cargo test_plugin_examples
         timeout-minutes: 10
