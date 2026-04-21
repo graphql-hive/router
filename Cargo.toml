@@ -33,6 +33,9 @@ members = [
 resolver = "2"
 default-members = ["bin/router"]
 
+[workspace.metadata]
+nextest-version = "0.9.133"
+
 [profile.dev]
 debug = 2
 
