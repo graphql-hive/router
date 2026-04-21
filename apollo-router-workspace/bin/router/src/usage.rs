@@ -5,6 +5,7 @@ use apollo_router::plugin::Plugin;
 use apollo_router::plugin::PluginInit;
 use apollo_router::services::*;
 use core::ops::Drop;
+use std::collections::HashSet;
 use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_console_sdk::agent::usage_agent::UsageAgentExt;
@@ -260,9 +261,7 @@ impl Plugin for UsagePlugin {
             .into_static();
 
         let exclude = match user_config.exclude {
-            Some(UsageReportingExclude::OperationNames(names)) => {
-                Some(UsageReportingExclude::OperationNames(names))
-            }
+            Some(UsageReportingExclude::OperationNames(names)) => Some(names),
             _ => None,
         };
 
@@ -450,7 +449,7 @@ mod hive_usage_tests {
     use serde_json::json;
     use tower::ServiceExt;
 
-    use crate::consts::PLUGIN_VERSION;
+    use crate::{consts::PLUGIN_VERSION, usage::UsageReportingExclude};
 
     use super::{Config, UsagePlugin};
 
