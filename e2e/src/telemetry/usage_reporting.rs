@@ -176,8 +176,8 @@ async fn usage_reporting_excludes_by_operation_name() {
                   endpoint: {usage_endpoint}
                   buffer_size: 1
                   flush_interval: 100ms
-                                    exclude:
-                                        expression: '.request.operation.name == "ExcludedOp"'
+                  exclude:
+                    expression: '.request.operation.name == "ExcludedOp"'
             "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -224,8 +224,8 @@ async fn usage_reporting_does_not_exclude_non_matching_operations() {
                   endpoint: {usage_endpoint}
                   buffer_size: 1
                   flush_interval: 100ms
-                                    exclude:
-                                        expression: '.request.operation.name == "ExcludedOp"'
+                  exclude:
+                    expression: '.request.operation.name == "ExcludedOp"'
             "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -277,8 +277,8 @@ async fn usage_reporting_excludes_by_header() {
                   endpoint: {usage_endpoint}
                   buffer_size: 1
                   flush_interval: 100ms
-                                    exclude:
-                                        expression: '.request.headers."x-internal" == "true"'
+                  exclude:
+                    expression: '.request.headers."x-internal" == "true"'
             "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -332,8 +332,8 @@ async fn usage_reporting_sends_when_header_not_matching() {
                   endpoint: {usage_endpoint}
                   buffer_size: 1
                   flush_interval: 100ms
-                                    exclude:
-                                        expression: '.request.headers."x-internal" == "true"'
+                  exclude:
+                    expression: '.request.headers."x-internal" == "true"'
             "#,
         ))
         .with_subgraphs(&subgraphs)
