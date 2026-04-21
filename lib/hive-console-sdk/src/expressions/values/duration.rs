@@ -1,10 +1,7 @@
-use crate::expressions::{FromVrlValue, ValueOrProgram};
+use crate::expressions::FromVrlValue;
 use humantime::{parse_duration, DurationError};
 use std::{str::Utf8Error, time::Duration};
 use vrl::core::Value as VrlValue;
-
-/// Type alias for a Duration that can be either static or computed via expression
-pub type DurationOrProgram = ValueOrProgram<Duration>;
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum DurationParseErrorSource {

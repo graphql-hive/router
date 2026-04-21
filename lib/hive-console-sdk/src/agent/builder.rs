@@ -11,7 +11,6 @@ use crate::agent::buffer::Buffer;
 use crate::agent::usage_agent::{non_empty_string, AgentError, UsageAgent, UsageAgentInner};
 use crate::agent::utils::OperationProcessor;
 use crate::circuit_breaker;
-use crate::expressions::values::boolean::BooleanOrProgram;
 use crate::expressions::CompileExpression;
 use retry_policies::policies::ExponentialBackoff;
 
@@ -188,9 +187,9 @@ impl UsageAgentBuilder {
         let buffer = Buffer::new(self.buffer_size);
 
         let exclude = if let Some(expr) = self.exclude_expression {
-            BooleanOrProgram::Program(expr.compile_expression(None)?.into())
+            expr.compile_expression(None)?.into()
         } else {
-            BooleanOrProgram::Value(false)
+            None
         };
 
         Ok(UsageAgentInner {
@@ -200,7 +199,7 @@ impl UsageAgentBuilder {
             client,
             flush_interval: self.flush_interval,
             circuit_breaker,
-            exclude,
+            exclude_expression: exclude,
         })
     }
     pub fn exclude_expression(mut self, expression: String) -> Self {

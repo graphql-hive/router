@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use bytes::Bytes;
-use hive_router_internal::expressions::{lib::ToVrlValue, vrl::core::Value};
+use hive_router_internal::expressions::{vrl::core::Value, ToVrlValue};
 use http::Method;
 use ntex::http::HeaderMap as NtexHeaderMap;
 

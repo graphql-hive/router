@@ -5,8 +5,7 @@ use hive_router_config::traffic_shaping::{
     TrafficShapingRouterDedupeHeadersConfig, TrafficShapingRouterDedupeHeadersKeyword,
 };
 use hive_router_config::HiveRouterConfig;
-use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
-use hive_router_internal::expressions::ExpressionCompileError;
+use hive_router_internal::expressions::{BooleanOrProgram, ExpressionCompileError};
 use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
