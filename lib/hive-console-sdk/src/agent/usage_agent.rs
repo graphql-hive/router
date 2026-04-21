@@ -78,7 +78,9 @@ pub enum AgentError {
     TargetIdWithLegacyToken,
     #[error("invalid token provided")]
     InvalidToken,
-    #[error("invalid target id provided: {0}, it should be either a slug like \"$organizationSlug/$projectSlug/$targetSlug\" or an UUID")]
+    #[error(
+        "invalid target id provided: {0}, it should be either a slug like \"$organizationSlug/$projectSlug/$targetSlug\" or an UUID"
+    )]
     InvalidTargetId(String),
     #[error("unable to instantiate the http client for reports sending: {0}")]
     HTTPClientCreationError(reqwest::Error),
@@ -353,11 +355,20 @@ impl<'req> From<&'req ntex::web::HttpRequest> for RequestDetails {
 
 impl From<RequestDetails> for VrlValue {
     fn from(details: RequestDetails) -> Self {
-        let mut headers_value: BTreeMap<KeyString, VrlValue> = BTreeMap::new();
+        let mut merged_headers: BTreeMap<String, String> = BTreeMap::new();
         for (header_name, header_value) in details.headers {
-            headers_value.insert(header_name.into(), header_value.into());
+            if let Some(existing_value) = merged_headers.get_mut(&header_name) {
+                existing_value.push_str(", ");
+                existing_value.push_str(&header_value);
+            } else {
+                merged_headers.insert(header_name, header_value);
+            }
         }
 
+        let headers_value: BTreeMap<KeyString, VrlValue> = merged_headers
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect();
         let headers_value = VrlValue::Object(headers_value);
 
         // .request.url
@@ -825,6 +836,31 @@ mod tests {
         assert_eq!(
             vrl_get(&value, &["request", "headers", "authorization"]),
             &VrlValue::from("Bearer token123")
+        );
+    }
+
+    #[test]
+    fn vrl_value_joins_duplicate_header_values() {
+        let mut request = http::Request::builder()
+            .method(Method::POST)
+            .uri("http://localhost/graphql")
+            .body(())
+            .unwrap();
+
+        request
+            .headers_mut()
+            .append("x-scope", http::HeaderValue::from_static("one"));
+        request
+            .headers_mut()
+            .append("x-scope", http::HeaderValue::from_static("two"));
+
+        let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        assert_eq!(
+            vrl_get(&value, &["request", "headers", "x-scope"]),
+            &VrlValue::from("one, two")
         );
     }
 

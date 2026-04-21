@@ -25,11 +25,11 @@ impl ToVrlValue for sonic_rs::Value {
         }
 
         if let Some(u) = self.as_u64() {
-            // Note: This can overflow if the u64 value is larger than i64::MAX.
-            // VRL uses i64 for integers, so a choice has to be made.
-            // For now, we cast, accepting the risk of overflow. A more robust
-            // implementation might convert to a float, a string, or return an error.
-            return Value::Integer(u as i64);
+            if let Ok(value) = i64::try_from(u) {
+                return Value::Integer(value);
+            }
+
+            return Value::from_f64_or_zero(u as f64);
         }
 
         if let Some(f) = self.as_f64() {

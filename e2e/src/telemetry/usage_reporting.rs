@@ -176,7 +176,8 @@ async fn usage_reporting_excludes_by_operation_name() {
                   endpoint: {usage_endpoint}
                   buffer_size: 1
                   flush_interval: 100ms
-                  exclude: '.request.operation.name == "ExcludedOp"'
+                                    exclude:
+                                        expression: '.request.operation.name == "ExcludedOp"'
             "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -223,7 +224,8 @@ async fn usage_reporting_does_not_exclude_non_matching_operations() {
                   endpoint: {usage_endpoint}
                   buffer_size: 1
                   flush_interval: 100ms
-                  exclude: '.request.operation.name == "ExcludedOp"'
+                                    exclude:
+                                        expression: '.request.operation.name == "ExcludedOp"'
             "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -275,7 +277,8 @@ async fn usage_reporting_excludes_by_header() {
                   endpoint: {usage_endpoint}
                   buffer_size: 1
                   flush_interval: 100ms
-                  exclude: '.request.headers."x-internal" == "true"'
+                                    exclude:
+                                        expression: '.request.headers."x-internal" == "true"'
             "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -329,7 +332,8 @@ async fn usage_reporting_sends_when_header_not_matching() {
                   endpoint: {usage_endpoint}
                   buffer_size: 1
                   flush_interval: 100ms
-                  exclude: '.request.headers."x-internal" == "true"'
+                                    exclude:
+                                        expression: '.request.headers."x-internal" == "true"'
             "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -384,7 +388,8 @@ async fn usage_reporting_complex_exclude_expression() {
                   endpoint: {usage_endpoint}
                   buffer_size: 1
                   flush_interval: 100ms
-                  exclude: '{exclude_expr}'
+                                    exclude:
+                                        expression: '{exclude_expr}'
             "#,
         ))
         .with_subgraphs(&subgraphs)
@@ -430,6 +435,144 @@ async fn usage_reporting_complex_exclude_expression() {
         total_ops >= 1,
         "Expected at least one operation in reports for non-excluded query"
     );
+
+    drop(router);
+}
+
+/// Test backward compatibility with legacy operation-name list in usage_reporting.exclude.
+#[ntex::test]
+async fn usage_reporting_legacy_exclude_list_still_excludes() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+                        supergraph:
+                            source: file
+                            path: {supergraph_path}
+
+                        telemetry:
+                            hive:
+                                token: test-token
+                                usage_reporting:
+                                    enabled: true
+                                    endpoint: {usage_endpoint}
+                                    buffer_size: 1
+                                    flush_interval: 100ms
+                                    exclude:
+                                        - ExcludedOp
+                        "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_graphql_request("query ExcludedOp { users { id } }", None, None)
+        .await;
+    assert!(res.status().is_success());
+
+    mock.assert_no_reports(Duration::from_secs(2)).await;
+
+    drop(router);
+}
+
+/// Test backward compatibility with legacy list while allowing non-matching operations.
+#[ntex::test]
+async fn usage_reporting_legacy_exclude_list_allows_non_matching_operation() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+                        supergraph:
+                            source: file
+                            path: {supergraph_path}
+
+                        telemetry:
+                            hive:
+                                token: test-token
+                                usage_reporting:
+                                    enabled: true
+                                    endpoint: {usage_endpoint}
+                                    buffer_size: 1
+                                    flush_interval: 100ms
+                                    exclude:
+                                        - ExcludedOp
+                        "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_graphql_request("query AllowedOp { users { id } }", None, None)
+        .await;
+    assert!(res.status().is_success());
+
+    mock.wait_for_reports(1).await;
+
+    drop(router);
+}
+
+/// Test explicit expression object format for usage_reporting.exclude.
+#[ntex::test]
+async fn usage_reporting_exclude_expression_object_excludes() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+                        supergraph:
+                            source: file
+                            path: {supergraph_path}
+
+                        telemetry:
+                            hive:
+                                token: test-token
+                                usage_reporting:
+                                    enabled: true
+                                    endpoint: {usage_endpoint}
+                                    buffer_size: 1
+                                    flush_interval: 100ms
+                                    exclude:
+                                        expression: '.request.operation.name == "ExcludedOp"'
+                        "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_graphql_request("query ExcludedOp { users { id } }", None, None)
+        .await;
+    assert!(res.status().is_success());
+
+    mock.assert_no_reports(Duration::from_secs(2)).await;
 
     drop(router);
 }

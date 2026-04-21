@@ -10,7 +10,7 @@ use hive_console_sdk::agent::usage_agent::{
 };
 use hive_router_config::{
     telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
-    usage_reporting::UsageReportingConfig,
+    usage_reporting::{UsageReportingConfig, UsageReportingExclude},
 };
 use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
@@ -22,7 +22,9 @@ use crate::consts::ROUTER_VERSION;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UsageReportingError {
-    #[error("Usage Reporting - Access token is missing. Please provide it via 'HIVE_ACCESS_TOKEN' environment variable or under 'telemetry.hive.token' in the configuration.")]
+    #[error(
+        "Usage Reporting - Access token is missing. Please provide it via 'HIVE_ACCESS_TOKEN' environment variable or under 'telemetry.hive.token' in the configuration."
+    )]
     MissingAccessToken,
     #[error("Failed to initialize usage agent: {0}")]
     AgentCreationError(#[from] AgentError),
@@ -73,8 +75,8 @@ pub fn init_hive_usage_agent(
         agent_builder = agent_builder.target_id(target_id);
     }
 
-    if let Some(exclude_expr) = &usage_config.exclude {
-        agent_builder = agent_builder.exclude_expression(exclude_expr.to_string());
+    if let Some(UsageReportingExclude::Expression { expression }) = &usage_config.exclude {
+        agent_builder = agent_builder.exclude_expression(expression.clone());
     }
 
     let agent = agent_builder.build()?;
@@ -102,6 +104,13 @@ pub async fn collect_usage_report<'a>(
     let sample_rate = usage_config.sample_rate.as_f64();
     if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
         return;
+    }
+    if let Some(operation_name) = operation_name {
+        if let Some(UsageReportingExclude::OperationNames(excluded_names)) = &usage_config.exclude {
+            if excluded_names.iter().any(|name| name == operation_name) {
+                return;
+            }
+        }
     }
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
