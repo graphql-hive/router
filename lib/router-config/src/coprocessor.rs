@@ -141,7 +141,7 @@ pub struct CoprocessorRouterRequestIncludeConfig {
     #[serde(default)]
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    pub context: ContextSelection,
     #[serde(default)]
     pub headers: bool,
     #[serde(default)]
@@ -156,7 +156,7 @@ pub struct CoprocessorRouterResponseIncludeConfig {
     #[serde(default)]
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    pub context: ContextSelection,
     #[serde(default)]
     pub headers: bool,
     #[serde(default)]
@@ -169,7 +169,7 @@ pub struct CoprocessorGraphqlRequestIncludeConfig {
     #[serde(default)]
     pub body: GraphqlBodySelection,
     #[serde(default)]
-    pub context: bool,
+    pub context: ContextSelection,
     #[serde(default)]
     pub headers: bool,
     #[serde(default)]
@@ -186,7 +186,7 @@ pub struct CoprocessorGraphqlResponseIncludeConfig {
     #[serde(default)]
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    pub context: ContextSelection,
     #[serde(default)]
     pub headers: bool,
     #[serde(default)]
@@ -201,7 +201,7 @@ pub struct CoprocessorGraphqlAnalysisIncludeConfig {
     #[serde(default)]
     pub body: GraphqlBodySelection,
     #[serde(default)]
-    pub context: bool,
+    pub context: ContextSelection,
     #[serde(default)]
     pub headers: bool,
     #[serde(default)]
@@ -335,13 +335,108 @@ impl JsonSchema for GraphqlBodySelection {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ContextSelection {
+    all: bool,
+    keys: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+enum ContextSelectionRepr {
+    Bool(bool),
+    List(Vec<String>),
+}
+
+impl ContextSelection {
+    pub const fn all() -> Self {
+        Self {
+            all: true,
+            keys: Vec::new(),
+        }
+    }
+
+    pub const fn none() -> Self {
+        Self {
+            all: false,
+            keys: Vec::new(),
+        }
+    }
+
+    pub fn keys(keys: Vec<String>) -> Self {
+        Self { all: false, keys }
+    }
+
+    pub const fn is_all(&self) -> bool {
+        self.all
+    }
+
+    pub fn is_none(&self) -> bool {
+        !self.all && self.keys.is_empty()
+    }
+
+    pub fn is_some(&self) -> bool {
+        !self.is_none()
+    }
+
+    pub fn keys_slice(&self) -> &[String] {
+        &self.keys
+    }
+}
+
+impl Serialize for ContextSelection {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let repr = if self.is_all() {
+            ContextSelectionRepr::Bool(true)
+        } else if self.is_none() {
+            ContextSelectionRepr::Bool(false)
+        } else {
+            ContextSelectionRepr::List(self.keys.clone())
+        };
+
+        repr.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ContextSelection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let repr = ContextSelectionRepr::deserialize(deserializer)?;
+
+        Ok(match repr {
+            ContextSelectionRepr::Bool(true) => ContextSelection::all(),
+            ContextSelectionRepr::Bool(false) => ContextSelection::none(),
+            ContextSelectionRepr::List(keys) => ContextSelection::keys(keys),
+        })
+    }
+}
+
+impl JsonSchema for ContextSelection {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ContextSelection".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <ContextSelectionRepr as JsonSchema>::json_schema(generator)
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorExecutionRequestIncludeConfig {
     #[serde(default)]
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    pub context: ContextSelection,
     #[serde(default)]
     pub headers: bool,
     #[serde(default)]
@@ -358,7 +453,7 @@ pub struct CoprocessorExecutionResponseIncludeConfig {
     #[serde(default)]
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    pub context: ContextSelection,
     #[serde(default)]
     pub headers: bool,
     #[serde(default)]
@@ -373,7 +468,7 @@ pub struct CoprocessorSubgraphRequestIncludeConfig {
     #[serde(default)]
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    pub context: ContextSelection,
     #[serde(default)]
     pub headers: bool,
     #[serde(default)]
@@ -392,7 +487,7 @@ pub struct CoprocessorSubgraphResponseIncludeConfig {
     #[serde(default)]
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    pub context: ContextSelection,
     #[serde(default)]
     pub headers: bool,
     #[serde(default)]

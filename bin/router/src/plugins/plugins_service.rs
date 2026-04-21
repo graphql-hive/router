@@ -4,6 +4,7 @@ use hive_router_plan_executor::{
     hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpResponseHookPayload},
     plugin_context::PluginContext,
     plugin_trait::{EndControlFlow, StartControlFlow},
+    request_context::{RequestContextExt, SharedRequestContext},
 };
 use ntex::{
     service::{Service, ServiceCtx},
@@ -78,9 +79,16 @@ where
             return ctx.call(&self.service, req).await;
         }
 
+        let request_context = SharedRequestContext::default();
+        req.write_request_context(request_context);
+
         let coprocessor_runtime = shared_state
             .as_ref()
             .and_then(|shared_state| shared_state.coprocessor.as_ref());
+
+        let plugins = shared_state
+            .as_ref()
+            .and_then(|state| state.plugins.clone());
 
         if let Some(coprocessor_runtime) = coprocessor_runtime {
             match coprocessor_runtime.on_router_request(req).await {
@@ -88,10 +96,6 @@ where
                 ControlFlow::Continue(new_req) => req = new_req,
             }
         }
-
-        let plugins = shared_state
-            .as_ref()
-            .and_then(|state| state.plugins.clone());
 
         if let Some(plugins) = plugins.as_ref() {
             let plugin_context = Arc::new(PluginContext::default());

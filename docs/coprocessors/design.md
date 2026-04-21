@@ -243,6 +243,7 @@ Both values must be arrays of strings.
 
 ### Implementation notes (deferred)
 
+- Coprocessor context synchronization uses `std::sync::Mutex` as the single lock strategy.
 - Add strict serialization/deserialization for context progressive override keys in coprocessor context handling.
 - Keep the shape flat and namespaced; reject legacy nested `progressive_override` payloads.
 - Ensure `graphql.request` can send current context and apply returned context mutations.

@@ -19,6 +19,7 @@ use crate::coprocessor::stage::{
     CoprocessorResponseBody, HeaderMapJsonRef, Stage, StageResponsePayload,
 };
 use crate::plugins::hooks::on_graphql_params::GraphQLParams;
+use crate::request_context::{SelectedRequestContext, SharedRequestContext};
 
 pub struct GraphqlRequestStage {
     condition: Option<BooleanOrProgram>,
@@ -170,7 +171,14 @@ impl Stage for GraphqlRequestStage {
         &self,
         input: &Self::Input<'_>,
         id: &'a str,
+        context: &SharedRequestContext,
     ) -> Result<CoprocessorRequest<'a>, CoprocessorError> {
+        let context_snapshot = if self.include.context.is_none() {
+            None
+        } else {
+            Some(context.snapshot()?)
+        };
+
         let payload = GraphqlRequestPayload {
             version: COPROCESSOR_VERSION,
             stage: Self::STAGE_NAME,
@@ -185,7 +193,9 @@ impl Stage for GraphqlRequestStage {
                 .headers
                 .then_some(HeaderMapJsonRef(input.request_headers)),
             body: build_graphql_body_payload_ref(self.include.body, input.graphql_params),
-            context: self.include.context.then_some(sonic_rs::Value::new()),
+            context: context_snapshot
+                .as_ref()
+                .map(|ctx| ctx.as_selected(&self.include.context)),
             sdl: self.include.sdl.then_some(input.sdl).flatten(),
         };
 
@@ -242,7 +252,13 @@ impl Stage for GraphqlAnalysisStage {
         &self,
         input: &Self::Input<'_>,
         id: &'a str,
+        context: &SharedRequestContext,
     ) -> Result<CoprocessorRequest<'a>, CoprocessorError> {
+        let context_snapshot = if self.include.context.is_none() {
+            None
+        } else {
+            Some(context.snapshot()?)
+        };
         let payload = GraphqlAnalysisPayload {
             version: COPROCESSOR_VERSION,
             stage: Self::STAGE_NAME,
@@ -257,7 +273,9 @@ impl Stage for GraphqlAnalysisStage {
                 .headers
                 .then_some(HeaderMapJsonRef(input.request.headers)),
             body: build_graphql_body_payload_ref(self.include.body, input.graphql_params),
-            context: self.include.context.then_some(sonic_rs::Value::new()),
+            context: context_snapshot
+                .as_ref()
+                .map(|ctx| ctx.as_selected(&self.include.context)),
             sdl: self.include.sdl.then_some(input.sdl).flatten(),
         };
 
@@ -312,7 +330,13 @@ impl Stage for GraphqlResponseStage {
         &self,
         input: &Self::Input<'_>,
         id: &'a str,
+        context: &SharedRequestContext,
     ) -> Result<CoprocessorRequest<'a>, CoprocessorError> {
+        let context_snapshot = if self.include.context.is_none() {
+            None
+        } else {
+            Some(context.snapshot()?)
+        };
         let body = if self.include.body {
             match input.response.body() {
                 ResponseBody::Body(Body::Bytes(bytes)) => Some(
@@ -335,7 +359,9 @@ impl Stage for GraphqlResponseStage {
                 .headers
                 .then(|| HeaderMapJsonRef(input.response.headers())),
             body,
-            context: self.include.context.then_some(sonic_rs::Value::new()),
+            context: context_snapshot
+                .as_ref()
+                .map(|ctx| ctx.as_selected(&self.include.context)),
             status_code: self
                 .include
                 .status_code
@@ -389,7 +415,7 @@ struct GraphqlRequestPayload<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<GraphqlBodyPayloadRef<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    context: Option<sonic_rs::Value>,
+    context: Option<SelectedRequestContext<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sdl: Option<&'a str>,
 }
@@ -404,7 +430,7 @@ struct GraphqlResponsePayload<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    context: Option<sonic_rs::Value>,
+    context: Option<SelectedRequestContext<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     status_code: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -425,7 +451,7 @@ struct GraphqlAnalysisPayload<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<GraphqlBodyPayloadRef<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    context: Option<sonic_rs::Value>,
+    context: Option<SelectedRequestContext<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sdl: Option<&'a str>,
 }

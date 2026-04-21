@@ -55,6 +55,7 @@ hyper-util = { version = "0.1.16", features = [
 itoa = "1.0.15"
 ryu = "1.0.20"
 indexmap = "2.10.0"
+phf = { version = "0.11.3", features = ["macros"] }
 bumpalo = "3.19.0"
 sonic-simd = "0.1.2"
 async-stream = "0.3.6"

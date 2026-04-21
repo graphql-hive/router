@@ -19,6 +19,7 @@ use std::str::FromStr;
 
 use crate::coprocessor::error::CoprocessorError;
 use crate::coprocessor::protocol::{CoprocessorControl, COPROCESSOR_VERSION};
+use crate::request_context::SharedRequestContext;
 
 /// Outbound HTTP request sent to coprocessor service.
 pub struct CoprocessorRequest<'a> {
@@ -54,6 +55,7 @@ pub trait Stage {
         &self,
         input: &Self::Input<'_>,
         id: &'a str,
+        context: &SharedRequestContext,
     ) -> Result<CoprocessorRequest<'a>, CoprocessorError>;
 
     fn parse_response<'a>(
@@ -181,6 +183,8 @@ pub struct StageResponsePayload<'a> {
     pub(crate) headers: Option<StageResponseHeaders<'a>>,
     #[serde(borrow)]
     pub(crate) body: Option<LazyValue<'a>>,
+    #[serde(borrow)]
+    pub(crate) context: Option<LazyValue<'a>>,
 }
 
 pub fn compile_condition(

@@ -15,6 +15,7 @@ use hive_router_plan_executor::hooks::on_graphql_parse::{
 };
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
+use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::utils::parsing::{
     safe_parse_operation, safe_parse_operation_with_token_limit,
 };
@@ -67,7 +68,7 @@ pub struct GraphQLParserPayload {
     pub parsed_operation: Arc<Document<'static, String>>,
     pub minified_document: Arc<String>,
     pub operation_name: Option<String>,
-    pub operation_type: &'static str,
+    pub operation_type: OperationKind,
     pub cache_key: u64,
     pub cache_key_string: String,
     pub hive_operation_hash: Arc<String>,
@@ -77,7 +78,7 @@ impl<'a> From<&'a GraphQLParserPayload> for GraphQLSpanOperationIdentity<'a> {
     fn from(op_id: &'a GraphQLParserPayload) -> Self {
         GraphQLSpanOperationIdentity {
             name: op_id.operation_name.as_deref(),
-            operation_type: op_id.operation_type,
+            operation_type: op_id.operation_type.as_str(),
             client_document_hash: &op_id.cache_key_string,
         }
     }
@@ -228,21 +229,24 @@ pub async fn parse_operation_with_cache(
                     Definition::Operation(op) => Some(op),
                     _ => None,
                 }) {
-                Some(OperationDefinition::Query(def)) => {
-                    ("query", def.name.as_ref().map(|s| s.to_string()))
-                }
-                Some(OperationDefinition::Mutation(def)) => {
-                    ("mutation", def.name.as_ref().map(|s| s.to_string()))
-                }
-                Some(OperationDefinition::Subscription(def)) => {
-                    ("subscription", def.name.as_ref().map(|s| s.to_string()))
-                }
-                Some(OperationDefinition::SelectionSet(_)) => ("query", None),
+                Some(OperationDefinition::Query(def)) => (
+                    OperationKind::Query,
+                    def.name.as_ref().map(|s| s.to_string()),
+                ),
+                Some(OperationDefinition::Mutation(def)) => (
+                    OperationKind::Mutation,
+                    def.name.as_ref().map(|s| s.to_string()),
+                ),
+                Some(OperationDefinition::Subscription(def)) => (
+                    OperationKind::Subscription,
+                    def.name.as_ref().map(|s| s.to_string()),
+                ),
+                Some(OperationDefinition::SelectionSet(_)) => (OperationKind::Query, None),
                 None => {
                     // This should not happen as we must have at least one operation definition
                     // but just in case, we handle it gracefully,
                     // the error will be caught later in the pipeline, specifically in the validation stage
-                    ("query", None)
+                    (OperationKind::Query, None)
                 }
             };
 

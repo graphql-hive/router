@@ -32,13 +32,13 @@ use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
 use crate::{
-    context::ExecutionContext,
     execution::{
         client_request_details::ClientRequestDetails,
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
+    execution_context::ExecutionContext,
     executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     headers::{
         plan::HeaderRulesPlan,
@@ -1390,11 +1390,11 @@ fn select_fetch_variables<'a>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        context::ExecutionContext,
         execution::{
             client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
             plan::Executor,
         },
+        execution_context::ExecutionContext,
         headers::plan::HeaderRulesPlan,
         introspection::schema::SchemaMetadata,
         response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},

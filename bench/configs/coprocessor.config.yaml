@@ -16,3 +16,4 @@ coprocessor:
         include:
           headers: true
           method: true
+          context: true

@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod coprocessor_router_response_e2e_tests {
     use sonic_rs::json;
+    use sonic_rs::JsonValueTrait;
 
     use crate::testkit::{
         coprocessor::TestCoprocessor, ClientResponseExt, TestRouter, TestSubgraphs,
@@ -85,6 +86,62 @@ mod coprocessor_router_response_e2e_tests {
         }
         "#);
 
+        response_stage_mock.assert_async().await;
+    }
+
+    #[ntex::test]
+    async fn includes_graphql_operation_context() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let mut coprocessor = TestCoprocessor::new().await;
+        let host = coprocessor.host_with_port();
+
+        let response_stage_mock = coprocessor
+            .mock_stage_with_matcher("router.response", |payload| {
+                payload
+                    .pointer(&["context", "hive::operation::name"])
+                    .and_then(|value| value.as_str())
+                    == Some("MyRouterResponseContext")
+                    && payload
+                        .pointer(&["context", "hive::operation::kind"])
+                        .and_then(|value| value.as_str())
+                        == Some("query")
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"version": 1, "control": "continue"}).to_string())
+            .expect(1)
+            .create();
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                  source: file
+                  path: supergraph.graphql
+                coprocessor:
+                  url: http://{host}/coprocessor
+                  protocol: http1
+                  stages:
+                    router:
+                      response:
+                        include:
+                          context: true
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let response = router
+            .send_graphql_request(
+                "query MyRouterResponseContext { topProducts { name } }",
+                None,
+                None,
+            )
+            .await;
+
+        let _ = response;
         response_stage_mock.assert_async().await;
     }
 }

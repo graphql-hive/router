@@ -112,7 +112,7 @@ impl BackgroundTask for CallbackServer {
 }
 
 async fn graphql_endpoint_handler(
-    request: HttpRequest,
+    mut request: HttpRequest,
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
@@ -124,7 +124,7 @@ async fn graphql_endpoint_handler(
         .capture_request(&request);
 
     let response =
-        graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone()).await;
+        graphql_endpoint_dispatch(&mut request, body_stream, schema_state, app_state.clone()).await;
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -148,7 +148,7 @@ async fn graphql_endpoint_handler(
 }
 
 async fn graphql_endpoint_dispatch(
-    request: &HttpRequest,
+    request: &mut HttpRequest,
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
