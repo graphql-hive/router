@@ -66,7 +66,7 @@ impl Serialize for SelectedRequestContext<'_> {
         let mut map = serializer.serialize_map(Some(keys.len()))?;
 
         for key in keys {
-            if key.starts_with(OperationContext::PREFIX) {
+            if key.starts_with(OperationContext::DOMAIN_PREFIX) {
                 self.context.operation.serialize_entry(key, &mut map)?;
                 continue;
             }

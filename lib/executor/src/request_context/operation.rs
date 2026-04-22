@@ -54,9 +54,17 @@ impl OperationContext {
 }
 
 impl RequestContextDomain for OperationContext {
-    const PREFIX: &'static str = "hive::operation::";
+    const DOMAIN_PREFIX: &'static str = "hive::operation::";
+
+    fn is_applicable(&self, key: &str) -> bool {
+        key.starts_with(Self::DOMAIN_PREFIX)
+    }
 
     fn set_key_value(&mut self, key: &str, value: Value) -> Result<(), RequestContextError> {
+        // TODO: add mutability check
+        // return Err(RequestContextError::ForbiddenReservedMutation {
+        //     key: key.to_string(),
+        // });
         match key {
             OPERATION_NAME_KEY => {
                 self.set_name_value(value)?;
@@ -97,13 +105,6 @@ impl RequestContextDomain for OperationContext {
                 Ok(())
             }
             _ => Ok(()),
-        }
-    }
-
-    fn is_mutable(key: &str) -> Option<bool> {
-        match key {
-            OPERATION_NAME_KEY | OPERATION_KIND_KEY => Some(false),
-            _ => None,
         }
     }
 }

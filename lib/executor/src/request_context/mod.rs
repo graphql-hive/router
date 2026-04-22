@@ -16,13 +16,11 @@ pub use web::RequestContextExt;
 const HIVE_PREFIX: &str = "hive::";
 
 pub(crate) trait RequestContextDomain {
-    const PREFIX: &'static str;
+    const DOMAIN_PREFIX: &'static str;
+    fn is_applicable(&self, key: &str) -> bool;
     fn set_key_value(&mut self, key: &str, value: Value) -> Result<(), RequestContextError>;
     fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error>;
     fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error>;
-    fn is_mutable(key: &str) -> Option<bool>
-    where
-        Self: Sized;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -118,21 +116,6 @@ impl RequestContext {
             selection,
         }
     }
-
-    fn set_reserved_internal(
-        &mut self,
-        key: &str,
-        value: ResponseValue,
-    ) -> Result<(), RequestContextError> {
-        if key.starts_with(OperationContext::PREFIX) {
-            self.operation.set_key_value(key, value.as_ref().into())?;
-            return Ok(());
-        }
-
-        Err(RequestContextError::UnknownReservedKey {
-            key: key.to_string(),
-        })
-    }
 }
 
 impl RequestContextFacade<'_> {
@@ -140,30 +123,22 @@ impl RequestContextFacade<'_> {
         RequestContextFacade { context }
     }
 
-    pub fn set(&mut self, key: &str, value: ResponseValue<'_>) -> Result<(), RequestContextError> {
-        if key.starts_with(HIVE_PREFIX) {
-            let Some(mutable) = OperationContext::is_mutable(key) else {
-                return Err(RequestContextError::UnknownReservedKey {
-                    key: key.to_string(),
-                });
-            };
-
-            if !mutable {
-                return Err(RequestContextError::ForbiddenReservedMutation {
-                    key: key.to_string(),
-                });
-            }
-
-            return self.context.set_reserved_internal(key, value);
+    fn set(&mut self, key: &str, value: ResponseValue<'_>) -> Result<(), RequestContextError> {
+        if !key.starts_with(HIVE_PREFIX) {
+            self.context.custom.apply(key, value);
+            return Ok(());
         }
 
-        self.context.custom.apply(key, value);
+        if self.context.operation.is_applicable(key) {
+            self.context
+                .operation
+                .set_key_value(key, value.as_ref().into())?;
+            return Ok(());
+        }
 
-        Ok(())
-    }
-
-    pub fn unset(&mut self, key: &str) -> Result<(), RequestContextError> {
-        self.set(key, ResponseValue::Null)
+        return Err(RequestContextError::UnknownReservedKey {
+            key: key.to_string(),
+        });
     }
 
     pub fn apply_patch(&mut self, patch: RequestContextPatch) -> Result<(), RequestContextError> {
