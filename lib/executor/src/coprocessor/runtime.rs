@@ -156,7 +156,7 @@ impl<A: Stage> StageRuntime<A> {
                 let patch: RequestContextPatch =
                     sonic_rs::from_str(context_patch.as_ref()).map_err(RequestContextError::Json)?;
                 let mut context = shared_context.lock()?;
-                context.facade().apply_patch(patch)?;
+                context.for_coprocessor().apply_patch(patch)?;
             }
 
             if performed_mutations.body || performed_mutations.headers || performed_mutations.context {

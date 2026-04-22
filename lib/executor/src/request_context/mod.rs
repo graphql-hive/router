@@ -6,12 +6,15 @@ use serde::ser::SerializeMap;
 use sonic_rs::Value;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+mod coprocessor_api;
 mod deser;
 mod error;
 mod operation;
+mod plugin_api;
 mod progressive_override;
 mod web;
 
+pub use coprocessor_api::RequestContextPatch;
 pub use error::RequestContextError;
 pub use web::RequestContextExt;
 
@@ -100,15 +103,6 @@ impl SharedRequestContext {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct RequestContextPatch<'a> {
-    entries: Vec<(&'a str, ResponseValue<'a>)>,
-}
-
-pub struct RequestContextFacade<'a> {
-    context: &'a mut RequestContext,
-}
-
 pub struct SelectedRequestContext<'a> {
     context: &'a RequestContext,
     selection: &'a ContextSelection,
@@ -119,10 +113,6 @@ impl RequestContext {
         Self::default()
     }
 
-    pub fn facade(&mut self) -> RequestContextFacade<'_> {
-        RequestContextFacade::new(self)
-    }
-
     pub fn as_selected<'a>(
         &'a self,
         selection: &'a ContextSelection,
@@ -131,44 +121,5 @@ impl RequestContext {
             context: self,
             selection,
         }
-    }
-}
-
-impl RequestContextFacade<'_> {
-    pub fn new(context: &mut RequestContext) -> RequestContextFacade<'_> {
-        RequestContextFacade { context }
-    }
-
-    fn set(&mut self, key: &str, value: ResponseValue<'_>) -> Result<(), RequestContextError> {
-        if !key.starts_with(HIVE_PREFIX) {
-            self.context.custom.apply(key, value);
-            return Ok(());
-        }
-
-        if self.context.operation.is_applicable(key) {
-            self.context
-                .operation
-                .set_key_value(key, value.as_ref().into())?;
-            return Ok(());
-        }
-
-        if self.context.progressive_override.is_applicable(key) {
-            self.context
-                .progressive_override
-                .set_key_value(key, value.as_ref().into())?;
-            return Ok(());
-        }
-
-        Err(RequestContextError::UnknownReservedKey {
-            key: key.to_string(),
-        })
-    }
-
-    pub fn apply_patch(&mut self, patch: RequestContextPatch) -> Result<(), RequestContextError> {
-        for (key, value) in patch.entries {
-            self.set(key, value)?;
-        }
-
-        Ok(())
     }
 }
