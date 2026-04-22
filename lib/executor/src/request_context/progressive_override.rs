@@ -4,7 +4,9 @@ use serde::ser::SerializeMap;
 use sonic_rs::{JsonValueTrait, Value};
 
 use crate::request_context::{
-    deser::RequestContextValueExt, RequestContextDomain, RequestContextError,
+    deser::RequestContextValueExt,
+    plugin_api::{RequestContextPluginRead, RequestContextPluginWrite},
+    RequestContextDomain, RequestContextError,
 };
 
 pub(crate) const UNRESOLVED_LABELS_KEY: &str = "hive::progressive_override::unresolved_labels";
@@ -32,6 +34,47 @@ impl ProgressiveOverrideContext {
 
         self.labels_to_override = Some(labels);
         Ok(())
+    }
+}
+
+pub struct RequestContextProgressiveOverrideRead<'a> {
+    context: &'a ProgressiveOverrideContext,
+}
+
+impl RequestContextProgressiveOverrideRead<'_> {
+    pub fn unresolved_labels(&self) -> Option<&HashSet<String>> {
+        self.context.unresolved_labels.as_ref()
+    }
+
+    pub fn labels_to_override(&self) -> Option<&HashSet<String>> {
+        self.context.labels_to_override.as_ref()
+    }
+}
+
+pub struct RequestContextProgressiveOverrideWrite<'a> {
+    context: &'a mut ProgressiveOverrideContext,
+}
+
+impl RequestContextProgressiveOverrideWrite<'_> {
+    pub fn set_labels_to_override(&mut self, labels: Option<HashSet<String>>) -> &mut Self {
+        self.context.labels_to_override = labels;
+        self
+    }
+}
+
+impl RequestContextPluginRead {
+    pub fn progressive_override(&self) -> RequestContextProgressiveOverrideRead<'_> {
+        RequestContextProgressiveOverrideRead {
+            context: &self.snapshot.progressive_override,
+        }
+    }
+}
+
+impl RequestContextPluginWrite<'_> {
+    pub fn progressive_override(&mut self) -> RequestContextProgressiveOverrideWrite<'_> {
+        RequestContextProgressiveOverrideWrite {
+            context: &mut self.context.progressive_override,
+        }
     }
 }
 

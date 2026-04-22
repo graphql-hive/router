@@ -2,7 +2,9 @@ use hive_router_query_planner::state::supergraph_state::OperationKind;
 use serde::ser::SerializeMap;
 use sonic_rs::Value;
 
-use crate::request_context::{RequestContextDomain, RequestContextError};
+use crate::request_context::{
+    plugin_api::RequestContextPluginRead, RequestContextDomain, RequestContextError,
+};
 
 pub(crate) const OPERATION_NAME_KEY: &str = "hive::operation::name";
 pub(crate) const OPERATION_KIND_KEY: &str = "hive::operation::kind";
@@ -17,6 +19,28 @@ impl OperationContext {
     pub fn update(&mut self, name: Option<String>, kind: Option<OperationKind>) {
         self.name = name;
         self.kind = kind;
+    }
+}
+
+pub struct RequestContextOperationRead<'a> {
+    context: &'a OperationContext,
+}
+
+impl RequestContextOperationRead<'_> {
+    pub fn name(&self) -> Option<&String> {
+        self.context.name.as_ref()
+    }
+
+    pub fn kind(&self) -> Option<&OperationKind> {
+        self.context.kind.as_ref()
+    }
+}
+
+impl RequestContextPluginRead {
+    pub fn operation(&self) -> RequestContextOperationRead<'_> {
+        RequestContextOperationRead {
+            context: &self.snapshot.operation,
+        }
     }
 }
 
