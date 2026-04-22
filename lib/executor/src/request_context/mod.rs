@@ -159,9 +159,9 @@ impl RequestContextFacade<'_> {
             return Ok(());
         }
 
-        return Err(RequestContextError::UnknownReservedKey {
+        Err(RequestContextError::UnknownReservedKey {
             key: key.to_string(),
-        });
+        })
     }
 
     pub fn apply_patch(&mut self, patch: RequestContextPatch) -> Result<(), RequestContextError> {
