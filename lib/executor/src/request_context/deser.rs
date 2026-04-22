@@ -1,5 +1,3 @@
-use crate::request_context::operation::OperationContext;
-use crate::request_context::progressive_override::ProgressiveOverrideContext;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
@@ -60,10 +58,14 @@ impl Serialize for RequestContext {
         let mut len = self.custom.size();
         len += self.operation.serialized_len();
         len += self.progressive_override.serialized_len();
+        len += self.authentication.serialized_len();
+        len += self.telemetry.serialized_len();
 
         let mut map = serializer.serialize_map(Some(len))?;
         self.operation.serialize_all(&mut map)?;
         self.progressive_override.serialize_all(&mut map)?;
+        self.authentication.serialize_all(&mut map)?;
+        self.telemetry.serialize_all(&mut map)?;
         for (key, value) in self.custom.iter() {
             map.serialize_entry(key, value)?;
         }
@@ -85,15 +87,25 @@ impl Serialize for SelectedRequestContext<'_> {
         let mut map = serializer.serialize_map(Some(keys.len()))?;
 
         for key in keys {
-            if key.starts_with(OperationContext::DOMAIN_PREFIX) {
+            if self.context.operation.is_applicable(key) {
                 self.context.operation.serialize_entry(key, &mut map)?;
                 continue;
             }
 
-            if key.starts_with(ProgressiveOverrideContext::DOMAIN_PREFIX) {
+            if self.context.progressive_override.is_applicable(key) {
                 self.context
                     .progressive_override
                     .serialize_entry(key, &mut map)?;
+                continue;
+            }
+
+            if self.context.authentication.is_applicable(key) {
+                self.context.authentication.serialize_entry(key, &mut map)?;
+                continue;
+            }
+
+            if self.context.telemetry.is_applicable(key) {
+                self.context.telemetry.serialize_entry(key, &mut map)?;
                 continue;
             }
 

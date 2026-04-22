@@ -1,17 +1,22 @@
-use crate::response::value::Value as ResponseValue;
+use crate::{
+    request_context::telemetry_context::TelemetryContext, response::value::Value as ResponseValue,
+};
+use authentication_context::AuthenticationContext;
 use hive_router_config::coprocessor::ContextSelection;
-use operation::OperationContext;
-use progressive_override::ProgressiveOverrideContext;
+use operation_context::OperationContext;
+use progressive_override_context::ProgressiveOverrideContext;
 use serde::ser::SerializeMap;
 use sonic_rs::Value;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+mod authentication_context;
 mod coprocessor_api;
 mod deser;
 mod error;
-mod operation;
+mod operation_context;
 mod plugin_api;
-mod progressive_override;
+mod progressive_override_context;
+mod telemetry_context;
 mod web;
 
 pub use coprocessor_api::RequestContextPatch;
@@ -46,6 +51,8 @@ pub(crate) trait RequestContextDomain {
 pub struct RequestContext {
     pub operation: OperationContext,
     pub progressive_override: ProgressiveOverrideContext,
+    pub authentication: AuthenticationContext,
+    pub telemetry: TelemetryContext,
     pub custom: CustomContext,
 }
 

@@ -41,6 +41,7 @@ use crate::{
     pipeline::{
         active_subscriptions::SubscriptionEvent,
         authorization::enforce_operation_authorization,
+        client_identification::identify_client,
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
         error::PipelineError,
@@ -69,6 +70,7 @@ use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseSt
 
 pub mod active_subscriptions;
 pub mod authorization;
+mod client_identification;
 pub mod coerce_variables;
 pub mod cors;
 pub mod csrf_prevention;
@@ -144,29 +146,11 @@ pub async fn graphql_request_handler(
         http_server_request_span.record_body_size(body_bytes.len());
 
         let mut request_headers = req.headers().clone();
-
-        let client_name = req
-            .headers()
-            .get(
-                &shared_state
-                    .router_config
-                    .telemetry
-                    .client_identification
-                    .name_header,
-            )
-            .and_then(|v| v.to_str().ok());
-        let client_version = req
-            .headers()
-            .get(
-                &shared_state
-                    .router_config
-                    .telemetry
-                    .client_identification
-                    .version_header,
-            )
-            .and_then(|v| v.to_str().ok());
-
         let request_context = req.read_request_context()?;
+
+        let client = identify_client(&request_headers, &request_context, &shared_state.router_config.telemetry.client_identification)?;
+        let client_name = client.name.as_deref();
+        let client_version = client.version.as_deref();
 
         let mut plugin_req_state = None;
 
@@ -475,6 +459,7 @@ pub async fn execute_planned_request<'exec>(
         },
         None => JwtRequestDetails::Unauthenticated,
     };
+    jwt_request_details.update_request_context(request_context)?;
 
     let variable_payload =
         coerce_request_variables(supergraph, &mut graphql_params.variables, normalize_payload)?;
