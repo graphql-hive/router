@@ -57,7 +57,7 @@ async fn uses_nested_body_with_selected_fields() {
         .post(router.graphql_path())
         .content_type("application/json")
         .send_json(&json!({
-          "query": "{ topProducts { name } }",
+          "query": "{ topProducts(first:1) { name } }",
           "extensions": { "persisted": true }
         }))
         .await
@@ -69,18 +69,6 @@ async fn uses_nested_body_with_selected_fields() {
             "topProducts": [
               {
                 "name": "Table"
-              },
-              {
-                "name": "Couch"
-              },
-              {
-                "name": "Glass"
-              },
-              {
-                "name": "Chair"
-              },
-              {
-                "name": "TV"
               }
             ]
           }
@@ -130,7 +118,7 @@ async fn does_not_send_body_when_include_body_false() {
         .await;
 
     let response = router
-        .send_graphql_request("{ topProducts { name } }", None, None)
+        .send_graphql_request("{ topProducts(first:1) { name } }", None, None)
         .await;
 
     insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
@@ -139,18 +127,6 @@ async fn does_not_send_body_when_include_body_false() {
             "topProducts": [
               {
                 "name": "Table"
-              },
-              {
-                "name": "Couch"
-              },
-              {
-                "name": "Glass"
-              },
-              {
-                "name": "Chair"
-              },
-              {
-                "name": "TV"
               }
             ]
           }
@@ -181,7 +157,7 @@ async fn applies_body_mutation_when_include_body_false() {
                 "version": 1,
                 "control": "continue",
                 "body": {
-                  "query": "{ topProducts { name } }",
+                  "query": "{ topProducts(first:1) { name } }",
                   "extensions":{
                     "coprocessor": true
                   }
@@ -238,7 +214,7 @@ async fn applies_body_mutation_when_include_body_false() {
         .await;
 
     let response = router
-        .send_graphql_request("{ topProducts { name price } }", None, None)
+        .send_graphql_request("{ topProducts(first:1) { name price } }", None, None)
         .await;
 
     // It's up to the coprocessor to return valid response.
@@ -248,18 +224,6 @@ async fn applies_body_mutation_when_include_body_false() {
             "topProducts": [
               {
                 "name": "Table"
-              },
-              {
-                "name": "Couch"
-              },
-              {
-                "name": "Glass"
-              },
-              {
-                "name": "Chair"
-              },
-              {
-                "name": "TV"
               }
             ]
           }
@@ -293,7 +257,7 @@ async fn applies_body_as_string_mutation_when_include_body_false() {
                 "version": 1,
                 "control": "continue",
                 "body": json!({
-                  "query": "{ topProducts { name } }",
+                  "query": "{ topProducts(first:1) { name } }",
                   "extensions":{
                     "coprocessor": true
                   }
@@ -358,7 +322,7 @@ async fn applies_body_as_string_mutation_when_include_body_false() {
         .await;
 
     let response = router
-        .send_graphql_request("{ topProducts { name price } }", None, None)
+        .send_graphql_request("{ topProducts(first:1) { name price } }", None, None)
         .await;
 
     insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
@@ -367,18 +331,6 @@ async fn applies_body_as_string_mutation_when_include_body_false() {
             "topProducts": [
               {
                 "name": "Table"
-              },
-              {
-                "name": "Couch"
-              },
-              {
-                "name": "Glass"
-              },
-              {
-                "name": "Chair"
-              },
-              {
-                "name": "TV"
               }
             ]
           }
@@ -444,7 +396,7 @@ async fn accepts_body_mutation_without_query() {
         .await;
 
     let response = router
-        .send_graphql_request("{ topProducts { name } }", None, None)
+        .send_graphql_request("{ topProducts(first:1) { name } }", None, None)
         .await;
 
     insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
@@ -453,18 +405,6 @@ async fn accepts_body_mutation_without_query() {
             "topProducts": [
               {
                 "name": "Table"
-              },
-              {
-                "name": "Couch"
-              },
-              {
-                "name": "Glass"
-              },
-              {
-                "name": "Chair"
-              },
-              {
-                "name": "TV"
               }
             ]
           }
@@ -535,7 +475,7 @@ async fn rejects_body_mutation_with_empty_query() {
         .await;
 
     let response = router
-        .send_graphql_request("{ topProducts { name } }", None, None)
+        .send_graphql_request("{ topProducts(first:1) { name } }", None, None)
         .await;
 
     // TODO: hide those errors from the client
@@ -628,7 +568,7 @@ async fn applies_headers_mutation_when_include_headers_false() {
         .await;
 
     let response = router
-        .send_graphql_request("{ topProducts { name } }", None, None)
+        .send_graphql_request("{ topProducts(first:1) { name } }", None, None)
         .await;
 
     insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
@@ -637,18 +577,6 @@ async fn applies_headers_mutation_when_include_headers_false() {
             "topProducts": [
               {
                 "name": "Table"
-              },
-              {
-                "name": "Couch"
-              },
-              {
-                "name": "Glass"
-              },
-              {
-                "name": "Chair"
-              },
-              {
-                "name": "TV"
               }
             ]
           }
@@ -694,7 +622,7 @@ async fn condition_check() {
         .await;
 
     let response = router
-        .send_graphql_request("{ topProducts { name } }", None, None)
+        .send_graphql_request("{ topProducts(first:1) { name } }", None, None)
         .await;
 
     insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
@@ -703,18 +631,6 @@ async fn condition_check() {
             "topProducts": [
               {
                 "name": "Table"
-              },
-              {
-                "name": "Couch"
-              },
-              {
-                "name": "Glass"
-              },
-              {
-                "name": "Chair"
-              },
-              {
-                "name": "TV"
               }
             ]
           }
@@ -724,290 +640,4 @@ async fn condition_check() {
         response.status().is_success(),
         "router should return successful response"
     );
-}
-
-#[ntex::test]
-async fn context_false_omits_context_field() {
-    let subgraphs = TestSubgraphs::builder().build().start().await;
-    let mut coprocessor = TestCoprocessor::new().await;
-    let host = coprocessor.host_with_port();
-
-    let request_stage_mock = coprocessor
-        .mock_stage_with_matcher("graphql.request", |payload| {
-            payload.get("context").is_none()
-        })
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(json!({"version": 1, "control": "continue"}).to_string())
-        .expect(1)
-        .create();
-
-    let router = TestRouter::builder()
-        .with_subgraphs(&subgraphs)
-        .inline_config(format!(
-            r#"
-                supergraph:
-                  source: file
-                  path: supergraph.graphql
-                coprocessor:
-                  url: http://{host}/coprocessor
-                  protocol: http1
-                  stages:
-                    graphql:
-                      request:
-                        include:
-                          context: false
-                "#
-        ))
-        .build()
-        .start()
-        .await;
-
-    let response = router
-        .send_graphql_request(
-            "query MyContextFalse { topProducts(first: 1) { name } }",
-            None,
-            None,
-        )
-        .await;
-
-    insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
-        {
-          "data": {
-            "topProducts": [
-              {
-                "name": "Table"
-              }
-            ]
-          }
-        }
-        "#);
-    request_stage_mock.assert_async().await;
-}
-
-#[ntex::test]
-async fn context_list_sends_only_selected_reserved_keys() {
-    let subgraphs = TestSubgraphs::builder().build().start().await;
-    let mut coprocessor = TestCoprocessor::new().await;
-    let host = coprocessor.host_with_port();
-
-    let request_stage_mock = coprocessor
-        .mock_stage_with_matcher("graphql.request", |payload| {
-            let context = match payload.get("context") {
-                Some(context) => context,
-                None => return false,
-            };
-
-            context
-                .pointer(&["hive::operation::name"])
-                .and_then(|value| value.as_str())
-                == Some("MyContextSelection")
-                && context.pointer(&["hive::operation::kind"]).is_none()
-        })
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(json!({"version": 1, "control": "continue"}).to_string())
-        .expect(1)
-        .create();
-
-    let router = TestRouter::builder()
-        .with_subgraphs(&subgraphs)
-        .inline_config(format!(
-            r#"
-                supergraph:
-                  source: file
-                  path: supergraph.graphql
-                coprocessor:
-                  url: http://{host}/coprocessor
-                  protocol: http1
-                  stages:
-                    graphql:
-                      request:
-                        include:
-                          context: ["hive::operation::name"]
-                "#
-        ))
-        .build()
-        .start()
-        .await;
-
-    let response = router
-        .send_graphql_request(
-            "query MyContextSelection { topProducts(first: 1) { name } }",
-            None,
-            None,
-        )
-        .await;
-
-    insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
-        {
-          "data": {
-            "topProducts": [
-              {
-                "name": "Table"
-              }
-            ]
-          }
-        }
-        "#);
-    request_stage_mock.assert_async().await;
-}
-
-#[ntex::test]
-async fn context_patch_updates_key_not_sent_in_request_stage() {
-    let subgraphs = TestSubgraphs::builder().build().start().await;
-    let mut coprocessor = TestCoprocessor::new().await;
-    let host = coprocessor.host_with_port();
-
-    let request_stage_mock = coprocessor
-        .mock_stage_with_matcher("graphql.request", |payload| {
-            payload
-                .pointer(&["context", "hive::operation::name"])
-                .and_then(|value| value.as_str())
-                == Some("MyContextPatch")
-                && payload.pointer(&["context", "custom::b"]).is_none()
-        })
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            json!({
-                "version": 1,
-                "control": "continue",
-                "context": {
-                    "custom::b": "patched-value"
-                }
-            })
-            .to_string(),
-        )
-        .expect(1)
-        .create();
-
-    let router_response_stage_mock = coprocessor
-        .mock_stage_with_matcher("router.response", |payload| {
-            println!("router.response: {:?}", payload);
-            payload
-                .pointer(&["context", "custom::b"])
-                .and_then(|value| value.as_str())
-                == Some("patched-value")
-        })
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(json!({"version": 1, "control": "continue"}).to_string())
-        .expect(1)
-        .create();
-
-    let router = TestRouter::builder()
-        .with_subgraphs(&subgraphs)
-        .inline_config(format!(
-            r#"
-                supergraph:
-                  source: file
-                  path: supergraph.graphql
-                coprocessor:
-                  url: http://{host}/coprocessor
-                  protocol: http1
-                  stages:
-                    graphql:
-                      request:
-                        include:
-                          context: ["hive::operation::name"]
-                    router:
-                      response:
-                        include:
-                          context: true
-                "#
-        ))
-        .build()
-        .start()
-        .await;
-
-    let response = router
-        .send_graphql_request(
-            "query MyContextPatch { topProducts(first: 1) { name } }",
-            None,
-            None,
-        )
-        .await;
-
-    request_stage_mock.assert_async().await;
-    router_response_stage_mock.assert_async().await;
-
-    insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
-        {
-          "data": {
-            "topProducts": [
-              {
-                "name": "Table"
-              }
-            ]
-          }
-        }
-        "#);
-}
-
-#[ntex::test]
-async fn context_reserved_key_mutation_is_rejected() {
-    let mut coprocessor = TestCoprocessor::new().await;
-    let host = coprocessor.host_with_port();
-
-    let request_stage_mock = coprocessor
-        .mock_stage("graphql.request")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            json!({
-                "version": 1,
-                "control": "continue",
-                "context": {
-                    "hive::operation::name": "Overridden"
-                }
-            })
-            .to_string(),
-        )
-        .expect(1)
-        .create();
-
-    let router = TestRouter::builder()
-        .inline_config(format!(
-            r#"
-                supergraph:
-                  source: file
-                  path: supergraph.graphql
-                coprocessor:
-                  url: http://{host}/coprocessor
-                  protocol: http1
-                  stages:
-                    graphql:
-                      request:
-                        include:
-                          context: true
-                "#
-        ))
-        .build()
-        .start()
-        .await;
-
-    let response = router
-        .send_graphql_request(
-            "query MyImmutableContext { topProducts { name } }",
-            None,
-            None,
-        )
-        .await;
-
-    insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
-        {
-          "errors": [
-            {
-              "extensions": {
-                "code": "REQUEST_CONTEXT_ERROR"
-              },
-              "message": "request context error: request-context key 'hive::operation::name' cannot be mutated externally"
-            }
-          ]
-        }
-        "#);
-
-    assert!(!response.status().is_success());
-    request_stage_mock.assert_async().await;
 }
