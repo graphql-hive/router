@@ -1,6 +1,7 @@
 use crate::response::value::Value as ResponseValue;
 use hive_router_config::coprocessor::ContextSelection;
 use operation::OperationContext;
+use progressive_override::ProgressiveOverrideContext;
 use serde::ser::SerializeMap;
 use sonic_rs::Value;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -8,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 mod deser;
 mod error;
 mod operation;
+mod progressive_override;
 mod web;
 
 pub use error::RequestContextError;
@@ -21,11 +23,25 @@ pub(crate) trait RequestContextDomain {
     fn set_key_value(&mut self, key: &str, value: Value) -> Result<(), RequestContextError>;
     fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error>;
     fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error>;
+    fn serialized_len(&self) -> usize;
+
+    fn forbidden_mutation(&self, key: &str) -> Result<(), RequestContextError> {
+        Err(RequestContextError::ForbiddenReservedMutation {
+            key: key.to_string(),
+        })
+    }
+
+    fn unknown_key(&self, key: &str) -> Result<(), RequestContextError> {
+        Err(RequestContextError::UnknownReservedKey {
+            key: key.to_string(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct RequestContext {
     pub operation: OperationContext,
+    pub progressive_override: ProgressiveOverrideContext,
     pub custom: CustomContext,
 }
 
@@ -132,6 +148,13 @@ impl RequestContextFacade<'_> {
         if self.context.operation.is_applicable(key) {
             self.context
                 .operation
+                .set_key_value(key, value.as_ref().into())?;
+            return Ok(());
+        }
+
+        if self.context.progressive_override.is_applicable(key) {
+            self.context
+                .progressive_override
                 .set_key_value(key, value.as_ref().into())?;
             return Ok(());
         }

@@ -50,7 +50,7 @@ use crate::{
         introspection_policy::handle_introspection_policy,
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::{parse_operation_with_cache, ParseResult},
-        progressive_override::request_override_context,
+        progressive_override::RequestOverrideContext,
         query_plan::{plan_operation_with_cache, QueryPlanResult},
         request_extensions::{
             write_graphql_operation_metric_identity, write_graphql_response_metric_status,
@@ -237,6 +237,12 @@ pub async fn graphql_request_handler(
         let request_context = req.read_request_context()?;
         request_context.update(|ctx| {
           ctx.operation.update(parser_payload.operation_name.clone(), Some(parser_payload.operation_type.clone()));
+
+          // Set initial state for progressive overrides in request context
+          let progressive_overrides = &supergraph.planner.supergraph.progressive_overrides;
+          if !progressive_overrides.flags.is_empty() {
+            ctx.progressive_override.unresolved_labels = Some(progressive_overrides.flags.clone());
+          }
         })?;
 
         if let Some(coprocessor_runtime) = shared_state.coprocessor.as_ref() {
@@ -590,11 +596,6 @@ pub async fn execute_pipeline<'exec>(
     let cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-    let progressive_override_ctx = request_override_context(
-        &shared_state.override_labels_evaluator,
-        &client_request_details,
-    )?;
-
     let (normalize_payload, authorization_errors) = enforce_operation_authorization(
         &shared_state.router_config,
         normalize_payload,
@@ -602,6 +603,12 @@ pub async fn execute_pipeline<'exec>(
         &supergraph.metadata,
         &variable_payload,
         &client_request_details.jwt,
+    )?;
+
+    let mut progressive_override_ctx = RequestOverrideContext::new(
+        &shared_state.override_labels_evaluator,
+        &client_request_details,
+        request_context,
     )?;
 
     if let Some(coprocessor_runtime) = shared_state.coprocessor.as_ref() {
@@ -628,7 +635,11 @@ pub async fn execute_pipeline<'exec>(
             )
             .await?
         {
-            ControlFlow::Continue(_) => {}
+            ControlFlow::Continue(performed_mutations) => {
+                if performed_mutations.context {
+                    progressive_override_ctx.update_from(request_context)?;
+                }
+            }
             ControlFlow::Break(response) => {
                 let body = match response.body() {
                     ResponseBody::Body(Body::Bytes(bytes)) => bytes.to_vec(),

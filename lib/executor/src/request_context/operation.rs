@@ -1,10 +1,8 @@
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use serde::ser::SerializeMap;
-use sonic_rs::{JsonValueTrait, Value};
+use sonic_rs::Value;
 
-use crate::request_context::{
-    deser::RequestContextValueExt, RequestContextDomain, RequestContextError,
-};
+use crate::request_context::{RequestContextDomain, RequestContextError};
 
 pub(crate) const OPERATION_NAME_KEY: &str = "hive::operation::name";
 pub(crate) const OPERATION_KIND_KEY: &str = "hive::operation::kind";
@@ -20,37 +18,6 @@ impl OperationContext {
         self.name = name;
         self.kind = kind;
     }
-
-    fn set_name_value(&mut self, value: Value) -> Result<(), RequestContextError> {
-        if value.is_null() {
-            self.name = None;
-            return Ok(());
-        }
-
-        let value = value.expect_str(OPERATION_NAME_KEY, "string or null")?;
-        self.name = Some(value.to_string());
-
-        Ok(())
-    }
-
-    fn set_kind_value(&mut self, value: Value) -> Result<(), RequestContextError> {
-        if value.is_null() {
-            self.kind = None;
-            return Ok(());
-        }
-
-        let value = value.expect_str(OPERATION_KIND_KEY, "string or null")?;
-        self.kind =
-            Some(
-                value
-                    .try_into()
-                    .map_err(|_| RequestContextError::InvalidOperationKind {
-                        value: value.to_string(),
-                    })?,
-            );
-
-        Ok(())
-    }
 }
 
 impl RequestContextDomain for OperationContext {
@@ -60,23 +27,15 @@ impl RequestContextDomain for OperationContext {
         key.starts_with(Self::DOMAIN_PREFIX)
     }
 
-    fn set_key_value(&mut self, key: &str, value: Value) -> Result<(), RequestContextError> {
-        // TODO: add mutability check
-        // return Err(RequestContextError::ForbiddenReservedMutation {
-        //     key: key.to_string(),
-        // });
+    fn serialized_len(&self) -> usize {
+        usize::from(self.name.is_some()) + usize::from(self.kind.is_some())
+    }
+
+    fn set_key_value(&mut self, key: &str, _value: Value) -> Result<(), RequestContextError> {
         match key {
-            OPERATION_NAME_KEY => {
-                self.set_name_value(value)?;
-                Ok(())
-            }
-            OPERATION_KIND_KEY => {
-                self.set_kind_value(value)?;
-                Ok(())
-            }
-            _ => Err(RequestContextError::UnknownReservedKey {
-                key: key.to_string(),
-            }),
+            OPERATION_NAME_KEY => self.forbidden_mutation(key),
+            OPERATION_KIND_KEY => self.forbidden_mutation(key),
+            _ => self.unknown_key(key),
         }
     }
 

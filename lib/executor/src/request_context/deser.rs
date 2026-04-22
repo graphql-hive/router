@@ -1,9 +1,10 @@
 use crate::request_context::operation::OperationContext;
+use crate::request_context::progressive_override::ProgressiveOverrideContext;
 use crate::response::value::Value as ResponseValue;
 use serde::de::{MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use sonic_rs::{JsonValueTrait, Value};
+use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 use std::fmt;
 
 use super::{RequestContext, RequestContextPatch, SelectedRequestContext};
@@ -15,6 +16,11 @@ pub trait RequestContextValueExt {
         key: &'static str,
         expected: &'static str,
     ) -> Result<&'a str, RequestContextError>;
+    fn expect_array<'a>(
+        &'a self,
+        key: &'static str,
+        expected: &'static str,
+    ) -> Result<&'a [Value], RequestContextError>;
 }
 
 impl RequestContextValueExt for Value {
@@ -32,6 +38,21 @@ impl RequestContextValueExt for Value {
 
         Ok(value)
     }
+
+    fn expect_array<'a>(
+        &'a self,
+        key: &'static str,
+        allowed_types: &'static str,
+    ) -> Result<&'a [Value], RequestContextError> {
+        let value =
+            self.as_array()
+                .ok_or_else(|| RequestContextError::ReservedKeyTypeMismatch {
+                    key: key.to_string(),
+                    expected: allowed_types,
+                })?;
+
+        Ok(value.as_slice())
+    }
 }
 
 impl Serialize for RequestContext {
@@ -40,11 +61,12 @@ impl Serialize for RequestContext {
         S: Serializer,
     {
         let mut len = self.custom.size();
-        len += usize::from(self.operation.name.is_some());
-        len += usize::from(self.operation.kind.is_some());
+        len += self.operation.serialized_len();
+        len += self.progressive_override.serialized_len();
 
         let mut map = serializer.serialize_map(Some(len))?;
         self.operation.serialize_all(&mut map)?;
+        self.progressive_override.serialize_all(&mut map)?;
         for (key, value) in self.custom.iter() {
             map.serialize_entry(key, value)?;
         }
@@ -68,6 +90,13 @@ impl Serialize for SelectedRequestContext<'_> {
         for key in keys {
             if key.starts_with(OperationContext::DOMAIN_PREFIX) {
                 self.context.operation.serialize_entry(key, &mut map)?;
+                continue;
+            }
+
+            if key.starts_with(ProgressiveOverrideContext::DOMAIN_PREFIX) {
+                self.context
+                    .progressive_override
+                    .serialize_entry(key, &mut map)?;
                 continue;
             }
 
