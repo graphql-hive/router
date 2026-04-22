@@ -333,6 +333,7 @@ async fn handle_text_frame(
                             match_info: ws_path,
                         },
                         context: plugin_context.clone(),
+                        request_context: request_context.clone(),
                     })
                 } else {
                     None

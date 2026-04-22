@@ -6,6 +6,7 @@ use ntex::{
 use crate::{
     plugin_context::PluginContext,
     plugin_trait::{EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
+    request_context::RequestContextPluginApi,
 };
 
 pub struct OnHttpRequestHookPayload<'req> {
@@ -65,6 +66,7 @@ pub struct OnHttpRequestHookPayload<'req> {
     /// }
     /// ```
     pub context: &'req PluginContext,
+    pub request_context: RequestContextPluginApi,
 }
 
 impl<'req> StartHookPayload<OnHttpResponseHookPayload<'req>, Response>
@@ -82,6 +84,7 @@ pub type OnHttpRequestHookResult<'req> = StartHookResult<
 pub struct OnHttpResponseHookPayload<'req> {
     pub response: web::WebResponse,
     pub context: &'req PluginContext,
+    pub request_context: RequestContextPluginApi,
 }
 
 impl<'req> OnHttpResponseHookPayload<'req> {

@@ -16,6 +16,7 @@ mod web;
 
 pub use coprocessor_api::RequestContextPatch;
 pub use error::RequestContextError;
+pub use plugin_api::RequestContextPluginApi;
 pub use web::RequestContextExt;
 
 const HIVE_PREFIX: &str = "hive::";

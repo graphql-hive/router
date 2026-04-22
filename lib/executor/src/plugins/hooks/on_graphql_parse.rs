@@ -7,6 +7,7 @@ use crate::{
     hooks::on_graphql_params::GraphQLParams,
     plugin_context::{PluginContext, RouterHttpRequest},
     plugin_trait::{CacheHint, EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
+    request_context::RequestContextPluginApi,
 };
 
 pub struct OnGraphQLParseStartHookPayload<'exec> {
@@ -25,6 +26,7 @@ pub struct OnGraphQLParseStartHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
+    pub request_context: RequestContextPluginApi,
     /// The GraphQL parameters parsed from the HTTP request body by the router.
     /// This includes the `query`, `operationName`, `variables`, and `extensions`
     /// [Learn more about GraphQL-over-HTTP params](https://graphql.org/learn/serving-over-http/#request-format)
@@ -52,6 +54,7 @@ pub struct OnGraphQLParseEndHookPayload {
     /// - If this is `CacheHint::Hit`, it means the parsing process didn't happen because the result was retrieved from the cache.
     /// - If this is `CacheHint::Miss`, it means the parsing process happened and the result was not retrieved from the cache.
     pub cache_hint: CacheHint,
+    pub request_context: RequestContextPluginApi,
 }
 
 impl EndHookPayload<Response> for OnGraphQLParseEndHookPayload {}

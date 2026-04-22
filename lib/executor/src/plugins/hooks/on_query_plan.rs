@@ -10,6 +10,7 @@ use crate::{
     execution::plan::PlanExecutionOutput,
     plugin_context::{PluginContext, RouterHttpRequest},
     plugin_trait::{CacheHint, EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
+    request_context::RequestContextPluginApi,
 };
 
 pub struct OnQueryPlanStartHookPayload<'exec> {
@@ -28,6 +29,7 @@ pub struct OnQueryPlanStartHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
+    pub request_context: RequestContextPluginApi,
     /// The GraphQL Document AST that will be used for query planning.
     pub filtered_operation_for_plan: &'exec OperationDefinition,
     /// The cancellation token that can be used to check if the request has been cancelled by the client or not.
@@ -55,6 +57,7 @@ pub struct OnQueryPlanEndHookPayload {
     /// - If this is `CacheHint::Hit`, it means the query planning process didn't happen because the result was retrieved from the cache.
     /// - If this is `CacheHint::Miss`, it means the query planning process happened and the result was not retrieved from the cache.
     pub cache_hint: CacheHint,
+    pub request_context: RequestContextPluginApi,
 }
 
 impl EndHookPayload<PlanExecutionOutput> for OnQueryPlanEndHookPayload {}

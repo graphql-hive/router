@@ -42,6 +42,7 @@ pub async fn validate_operation_with_cache(
             let mut start_payload = OnGraphQLValidationStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
+                request_context: plugin_req_state.request_context.for_plugin(),
                 schema: validation_schema,
                 document: validation_operation,
                 validation_plan,
@@ -113,7 +114,14 @@ pub async fn validate_operation_with_cache(
         };
 
         if !on_end_callbacks.is_empty() {
-            let mut end_payload = OnGraphQLValidationEndHookPayload { errors, cache_hint };
+            let mut end_payload = OnGraphQLValidationEndHookPayload {
+                errors,
+                cache_hint,
+                request_context: plugin_req_state
+                    .as_ref()
+                    .map(|state| state.request_context.for_plugin())
+                    .unwrap(),
+            };
             for callback in on_end_callbacks {
                 let result = callback(end_payload);
                 end_payload = result.payload;

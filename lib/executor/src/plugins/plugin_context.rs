@@ -13,6 +13,7 @@ use ntex::router::Path;
 use ntex::{http::HeaderMap, web::HttpRequest};
 
 use crate::plugin_trait::RouterPluginBoxed;
+use crate::request_context::SharedRequestContext;
 
 pub struct RouterHttpRequest<'req> {
     pub uri: &'req Uri,
@@ -202,6 +203,7 @@ pub struct PluginRequestState<'req> {
     pub plugins: Arc<Vec<RouterPluginBoxed>>,
     pub router_http_request: RouterHttpRequest<'req>,
     pub context: Arc<PluginContext>,
+    pub request_context: SharedRequestContext,
 }
 
 #[cfg(test)]

@@ -166,6 +166,8 @@ pub async fn graphql_request_handler(
             )
             .and_then(|v| v.to_str().ok());
 
+        let request_context = req.read_request_context()?;
+
         let mut plugin_req_state = None;
 
         if let (Some(plugins), Some(plugin_context)) = (
@@ -176,6 +178,7 @@ pub async fn graphql_request_handler(
                 plugins: plugins.clone(),
                 router_http_request: req.deref().into(),
                 context: plugin_context.clone(),
+                request_context: request_context.clone(),
             });
         }
 
@@ -234,7 +237,6 @@ pub async fn graphql_request_handler(
             return Ok(response);
         }
 
-        let request_context = req.read_request_context()?;
         request_context.update(|ctx| {
           ctx.operation.update(parser_payload.operation_name.clone(), Some(parser_payload.operation_type.clone()));
 

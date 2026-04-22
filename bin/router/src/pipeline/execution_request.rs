@@ -350,6 +350,7 @@ impl<'a> OperationPreparation<'a> {
                 OnGraphQLParamsStartHookPayload {
                     router_http_request: &plugin_req_state.router_http_request,
                     context: &plugin_req_state.context,
+                    request_context: plugin_req_state.request_context.for_plugin(),
                     body: self.body.clone(),
                     graphql_params: None,
                 };
@@ -407,6 +408,7 @@ impl<'a> OperationPreparation<'a> {
             let mut payload = OnGraphQLParamsEndHookPayload {
                 graphql_params: operation.graphql_params,
                 context: &plugin_req_state.context,
+                request_context: plugin_req_state.request_context.for_plugin(),
             };
 
             for callback in graphql_params_end_callbacks {

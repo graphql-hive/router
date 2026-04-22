@@ -10,6 +10,7 @@ use crate::plugin_context::{PluginContext, RouterHttpRequest};
 use crate::plugin_trait::{
     EndHookPayload, EndHookResult, FromGraphQLErrorToResponse, StartHookPayload, StartHookResult,
 };
+use crate::request_context::RequestContextPluginApi;
 use crate::response::graphql_error::GraphQLError;
 use crate::response::value::Value;
 
@@ -29,6 +30,7 @@ pub struct OnExecuteStartHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
+    pub request_context: RequestContextPluginApi,
     /// The query plan generated for the incoming GraphQL request.
     /// It includes the details of how the router plans to execute the request across the subgraphs.
     pub query_plan: &'exec QueryPlan,
@@ -137,6 +139,7 @@ pub struct OnExecuteEndHookPayload<'exec> {
     /// This will be sent to the client as the "extensions" field in the GraphQL response.
     /// Plugins can modify this map before proceeding, and the modified map will be sent to the client.
     pub extensions: HashMap<String, sonic_rs::Value>,
+    pub request_context: RequestContextPluginApi,
 
     /// An estimate of the response size in bytes.
     /// This is calculated based on the subgraph responses

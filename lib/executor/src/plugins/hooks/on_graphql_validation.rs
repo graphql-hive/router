@@ -10,6 +10,7 @@ use ntex::http::Response;
 use crate::{
     plugin_context::{PluginContext, RouterHttpRequest},
     plugin_trait::{CacheHint, EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
+    request_context::RequestContextPluginApi,
 };
 
 pub struct OnGraphQLValidationStartHookPayload<'exec> {
@@ -28,6 +29,7 @@ pub struct OnGraphQLValidationStartHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
+    pub request_context: RequestContextPluginApi,
     /// The GraphQL Schema that the document will be validated against.
     /// This is not the same with the supergraph. This is the public schema exposed by the router to the clients, which is generated from the supergraph and can be modified by the plugins.
     /// The plugins can replace the input schema to be used for validation
@@ -116,6 +118,7 @@ impl<'exec> OnGraphQLValidationStartHookPayload<'exec> {
 pub struct OnGraphQLValidationEndHookPayload {
     pub errors: Arc<Vec<ValidationError>>,
     pub cache_hint: CacheHint,
+    pub request_context: RequestContextPluginApi,
 }
 
 impl EndHookPayload<Response> for OnGraphQLValidationEndHookPayload {}

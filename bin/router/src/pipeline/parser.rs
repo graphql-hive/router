@@ -102,6 +102,7 @@ pub async fn parse_operation_with_cache(
             let mut start_payload = OnGraphQLParseStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
+                request_context: plugin_req_state.request_context.for_plugin(),
                 graphql_params,
             };
             for plugin in plugin_req_state.plugins.as_ref() {
@@ -202,6 +203,10 @@ pub async fn parse_operation_with_cache(
             let mut end_payload = OnGraphQLParseEndHookPayload {
                 document: parsed_operation,
                 cache_hint,
+                request_context: plugin_req_state
+                    .as_ref()
+                    .map(|state| state.request_context.for_plugin())
+                    .unwrap(),
             };
             for callback in on_end_callbacks {
                 let result = callback(end_payload);

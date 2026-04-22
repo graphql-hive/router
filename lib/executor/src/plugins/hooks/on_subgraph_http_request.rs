@@ -9,6 +9,7 @@ use crate::{
     plugin_trait::{
         from_graphql_error_to_bytes, EndHookPayload, FromGraphQLErrorToResponse, StartHookPayload,
     },
+    request_context::RequestContextPluginApi,
     response::graphql_error::GraphQLError,
 };
 
@@ -37,6 +38,7 @@ pub struct OnSubgraphHttpRequestHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
+    pub request_context: RequestContextPluginApi,
 }
 
 impl<'exec> StartHookPayload<OnSubgraphHttpResponseHookPayload<'exec>, SubgraphHttpResponse>
@@ -57,6 +59,7 @@ pub struct OnSubgraphHttpResponseHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
+    pub request_context: RequestContextPluginApi,
     /// The HTTP response received from the subgraph for the HTTP request sent by the router.
     /// Plugins can modify the response before it is sent back to the client.
     pub response: SubgraphHttpResponse,

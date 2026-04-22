@@ -49,6 +49,7 @@ pub async fn plan_operation_with_cache(
             let mut start_payload = OnQueryPlanStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
+                request_context: plugin_req_state.request_context.for_plugin(),
                 filtered_operation_for_plan,
                 cancellation_token,
                 planner: &supergraph.planner,
@@ -146,6 +147,10 @@ pub async fn plan_operation_with_cache(
             let mut end_payload = OnQueryPlanEndHookPayload {
                 query_plan: plan,
                 cache_hint,
+                request_context: plugin_req_state
+                    .as_ref()
+                    .map(|state| state.request_context.for_plugin())
+                    .unwrap(),
             };
             for callback in on_end_callbacks {
                 let result = callback(end_payload);

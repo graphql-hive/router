@@ -355,6 +355,7 @@ async fn execute_query_plan_with_data<'exec>(
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
+            request_context: plugin_req_state.request_context.for_plugin(),
             query_plan: opts.query_plan,
             operation_for_plan: &opts.operation_for_plan,
             data,
@@ -430,6 +431,11 @@ async fn execute_query_plan_with_data<'exec>(
             errors,
             extensions,
             response_size_estimate,
+            request_context: opts
+                .plugin_req_state
+                .as_ref()
+                .map(|state| state.request_context.for_plugin())
+                .unwrap(),
         };
 
         for callback in on_end_callbacks {

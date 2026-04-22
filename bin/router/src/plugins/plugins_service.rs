@@ -80,7 +80,7 @@ where
         }
 
         let request_context = SharedRequestContext::default();
-        req.write_request_context(request_context);
+        req.write_request_context(request_context.clone());
 
         let coprocessor_runtime = shared_state
             .as_ref()
@@ -104,6 +104,7 @@ where
             let mut start_payload = OnHttpRequestHookPayload {
                 router_http_request: req,
                 context: &plugin_context,
+                request_context: request_context.for_plugin(),
             };
 
             let mut on_end_callbacks = Vec::with_capacity(plugins.len());
@@ -137,6 +138,7 @@ where
                 let mut end_payload = OnHttpResponseHookPayload {
                     response,
                     context: &plugin_context,
+                    request_context: request_context.for_plugin(),
                 };
 
                 for callback in on_end_callbacks.into_iter().rev() {
