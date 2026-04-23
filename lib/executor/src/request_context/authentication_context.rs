@@ -30,7 +30,7 @@ impl RequestContextAuthenticationRead<'_> {
     }
 }
 
-impl RequestContextPluginRead {
+impl<Caps> RequestContextPluginRead<Caps> {
     pub fn authentication(&self) -> RequestContextAuthenticationRead<'_> {
         RequestContextAuthenticationRead {
             context: &self.snapshot.authentication,

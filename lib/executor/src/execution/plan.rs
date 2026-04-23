@@ -55,6 +55,7 @@ use crate::{
     },
     plugin_context::PluginRequestState,
     plugin_trait::{EndControlFlow, StartControlFlow},
+    plugins::hooks,
     projection::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
@@ -355,7 +356,9 @@ async fn execute_query_plan_with_data<'exec>(
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
-            request_context: plugin_req_state.request_context.for_plugin(),
+            request_context: plugin_req_state
+                .request_context
+                .for_plugin::<hooks::OnExecute>(),
             query_plan: opts.query_plan,
             operation_for_plan: &opts.operation_for_plan,
             data,
@@ -434,7 +437,7 @@ async fn execute_query_plan_with_data<'exec>(
             request_context: opts
                 .plugin_req_state
                 .as_ref()
-                .map(|state| state.request_context.for_plugin())
+                .map(|state| state.request_context.for_plugin::<hooks::OnExecute>())
                 .unwrap(),
         };
 

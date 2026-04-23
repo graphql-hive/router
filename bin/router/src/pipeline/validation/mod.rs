@@ -14,6 +14,7 @@ use hive_router_plan_executor::hooks::on_graphql_validation::{
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
+use hive_router_plan_executor::plugins::hooks;
 use tracing::{error, trace, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 pub mod max_aliases_rule;
@@ -42,7 +43,9 @@ pub async fn validate_operation_with_cache(
             let mut start_payload = OnGraphQLValidationStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
-                request_context: plugin_req_state.request_context.for_plugin(),
+                request_context: plugin_req_state
+                    .request_context
+                    .for_plugin::<hooks::OnGraphqlValidation>(),
                 schema: validation_schema,
                 document: validation_operation,
                 validation_plan,
@@ -119,7 +122,11 @@ pub async fn validate_operation_with_cache(
                 cache_hint,
                 request_context: plugin_req_state
                     .as_ref()
-                    .map(|state| state.request_context.for_plugin())
+                    .map(|state| {
+                        state
+                            .request_context
+                            .for_plugin::<hooks::OnGraphqlValidation>()
+                    })
                     .unwrap(),
             };
             for callback in on_end_callbacks {

@@ -100,6 +100,7 @@ impl SharedRequestContext {
     pub fn lock(&self) -> Result<MutexGuard<'_, RequestContext>, RequestContextError> {
         self.0.lock().map_err(|_| RequestContextError::LockPoison)
     }
+
     pub fn snapshot(&self) -> Result<RequestContext, RequestContextError> {
         Ok(self.lock()?.clone())
     }

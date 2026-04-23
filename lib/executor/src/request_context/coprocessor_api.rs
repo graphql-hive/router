@@ -41,6 +41,13 @@ impl RequestContextCoprocessorApi<'_> {
             return Ok(());
         }
 
+        if self.context.authentication.is_applicable(key) {
+            self.context
+                .authentication
+                .set_key_value(key, value.as_ref().into())?;
+            return Ok(());
+        }
+
         Err(RequestContextError::UnknownReservedKey {
             key: key.to_string(),
         })

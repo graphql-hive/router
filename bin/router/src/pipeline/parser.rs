@@ -15,6 +15,7 @@ use hive_router_plan_executor::hooks::on_graphql_parse::{
 };
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
+use hive_router_plan_executor::plugins::hooks;
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::utils::parsing::{
     safe_parse_operation, safe_parse_operation_with_token_limit,
@@ -102,7 +103,9 @@ pub async fn parse_operation_with_cache(
             let mut start_payload = OnGraphQLParseStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
-                request_context: plugin_req_state.request_context.for_plugin(),
+                request_context: plugin_req_state
+                    .request_context
+                    .for_plugin::<hooks::OnGraphqlParse>(),
                 graphql_params,
             };
             for plugin in plugin_req_state.plugins.as_ref() {
@@ -205,7 +208,7 @@ pub async fn parse_operation_with_cache(
                 cache_hint,
                 request_context: plugin_req_state
                     .as_ref()
-                    .map(|state| state.request_context.for_plugin())
+                    .map(|state| state.request_context.for_plugin::<hooks::OnGraphqlParse>())
                     .unwrap(),
             };
             for callback in on_end_callbacks {

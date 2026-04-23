@@ -3,11 +3,21 @@ use std::collections::HashSet;
 use serde::ser::SerializeMap;
 use sonic_rs::{JsonValueTrait, Value};
 
-use crate::request_context::{
-    deser::RequestContextValueExt,
-    plugin_api::{RequestContextPluginRead, RequestContextPluginWrite},
-    RequestContextDomain, RequestContextError,
+use crate::{
+    hooks,
+    request_context::{
+        deser::RequestContextValueExt,
+        plugin_api::{RequestContextPluginRead, RequestContextPluginWrite},
+        RequestContextDomain, RequestContextError,
+    },
 };
+
+pub trait CanWriteProgressiveOverride {}
+impl CanWriteProgressiveOverride for hooks::OnQueryPlan {}
+impl CanWriteProgressiveOverride for hooks::OnHttpRequest {}
+impl CanWriteProgressiveOverride for hooks::OnGraphqlParams {}
+impl CanWriteProgressiveOverride for hooks::OnGraphqlParse {}
+impl CanWriteProgressiveOverride for hooks::OnGraphqlValidation {}
 
 pub(crate) const UNRESOLVED_LABELS_KEY: &str = "hive::progressive_override::unresolved_labels";
 pub(crate) const LABELS_TO_OVERRIDE_KEY: &str = "hive::progressive_override::labels_to_override";
@@ -62,7 +72,7 @@ impl RequestContextProgressiveOverrideWrite<'_> {
     }
 }
 
-impl RequestContextPluginRead {
+impl<Caps> RequestContextPluginRead<Caps> {
     pub fn progressive_override(&self) -> RequestContextProgressiveOverrideRead<'_> {
         RequestContextProgressiveOverrideRead {
             context: &self.snapshot.progressive_override,
@@ -70,7 +80,7 @@ impl RequestContextPluginRead {
     }
 }
 
-impl RequestContextPluginWrite<'_> {
+impl<Caps: CanWriteProgressiveOverride> RequestContextPluginWrite<'_, Caps> {
     pub fn progressive_override(&mut self) -> RequestContextProgressiveOverrideWrite<'_> {
         RequestContextProgressiveOverrideWrite {
             context: &mut self.context.progressive_override,

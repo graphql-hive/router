@@ -9,6 +9,7 @@ use hive_router_plan_executor::hooks::on_graphql_params::{
 };
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{EndControlFlow, StartControlFlow};
+use hive_router_plan_executor::plugins::hooks;
 use http::{header::CONTENT_TYPE, Method};
 use ntex::util::Bytes;
 use ntex::web::types::Query;
@@ -350,7 +351,9 @@ impl<'a> OperationPreparation<'a> {
                 OnGraphQLParamsStartHookPayload {
                     router_http_request: &plugin_req_state.router_http_request,
                     context: &plugin_req_state.context,
-                    request_context: plugin_req_state.request_context.for_plugin(),
+                    request_context: plugin_req_state
+                        .request_context
+                        .for_plugin::<hooks::OnGraphqlParams>(),
                     body: self.body.clone(),
                     graphql_params: None,
                 };
@@ -408,7 +411,9 @@ impl<'a> OperationPreparation<'a> {
             let mut payload = OnGraphQLParamsEndHookPayload {
                 graphql_params: operation.graphql_params,
                 context: &plugin_req_state.context,
-                request_context: plugin_req_state.request_context.for_plugin(),
+                request_context: plugin_req_state
+                    .request_context
+                    .for_plugin::<hooks::OnGraphqlParams>(),
             };
 
             for callback in graphql_params_end_callbacks {

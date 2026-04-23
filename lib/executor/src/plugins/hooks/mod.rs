@@ -9,3 +9,36 @@ pub mod on_query_plan;
 pub mod on_subgraph_execute;
 pub mod on_subgraph_http_request;
 pub mod on_supergraph_load;
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+pub trait PluginMarker: sealed::Sealed {}
+
+pub struct OnHttpRequest;
+pub struct OnGraphqlParams;
+pub struct OnGraphqlParse;
+pub struct OnGraphqlValidation;
+pub struct OnQueryPlan;
+pub struct OnExecute;
+pub struct OnSubgraphExecute;
+pub struct OnSubgraphHttp;
+
+impl sealed::Sealed for OnHttpRequest {}
+impl sealed::Sealed for OnGraphqlParams {}
+impl sealed::Sealed for OnGraphqlParse {}
+impl sealed::Sealed for OnGraphqlValidation {}
+impl sealed::Sealed for OnQueryPlan {}
+impl sealed::Sealed for OnExecute {}
+impl sealed::Sealed for OnSubgraphExecute {}
+impl sealed::Sealed for OnSubgraphHttp {}
+
+impl PluginMarker for OnHttpRequest {}
+impl PluginMarker for OnGraphqlParams {}
+impl PluginMarker for OnGraphqlParse {}
+impl PluginMarker for OnGraphqlValidation {}
+impl PluginMarker for OnQueryPlan {}
+impl PluginMarker for OnExecute {}
+impl PluginMarker for OnSubgraphExecute {}
+impl PluginMarker for OnSubgraphHttp {}

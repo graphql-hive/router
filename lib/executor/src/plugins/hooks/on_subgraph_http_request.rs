@@ -13,6 +13,8 @@ use crate::{
     response::graphql_error::GraphQLError,
 };
 
+type RequestContextApi = RequestContextPluginApi<super::OnSubgraphHttp>;
+
 pub struct OnSubgraphHttpRequestHookPayload<'exec> {
     /// The name of the subgraph for which the HTTP request is being sent.
     pub subgraph_name: &'exec str,
@@ -38,7 +40,7 @@ pub struct OnSubgraphHttpRequestHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
-    pub request_context: RequestContextPluginApi,
+    pub request_context: RequestContextApi,
 }
 
 impl<'exec> StartHookPayload<OnSubgraphHttpResponseHookPayload<'exec>, SubgraphHttpResponse>
@@ -59,7 +61,7 @@ pub struct OnSubgraphHttpResponseHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
-    pub request_context: RequestContextPluginApi,
+    pub request_context: RequestContextApi,
     /// The HTTP response received from the subgraph for the HTTP request sent by the router.
     /// Plugins can modify the response before it is sent back to the client.
     pub response: SubgraphHttpResponse,

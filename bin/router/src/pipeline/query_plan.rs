@@ -14,6 +14,7 @@ use hive_router_plan_executor::hooks::on_query_plan::{
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
+use hive_router_plan_executor::plugins::hooks;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
@@ -49,7 +50,9 @@ pub async fn plan_operation_with_cache(
             let mut start_payload = OnQueryPlanStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
-                request_context: plugin_req_state.request_context.for_plugin(),
+                request_context: plugin_req_state
+                    .request_context
+                    .for_plugin::<hooks::OnQueryPlan>(),
                 filtered_operation_for_plan,
                 cancellation_token,
                 planner: &supergraph.planner,
@@ -149,7 +152,7 @@ pub async fn plan_operation_with_cache(
                 cache_hint,
                 request_context: plugin_req_state
                     .as_ref()
-                    .map(|state| state.request_context.for_plugin())
+                    .map(|state| state.request_context.for_plugin::<hooks::OnQueryPlan>())
                     .unwrap(),
             };
             for callback in on_end_callbacks {

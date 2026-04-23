@@ -13,6 +13,8 @@ use crate::{
     request_context::RequestContextPluginApi,
 };
 
+type RequestContextApi = RequestContextPluginApi<super::OnGraphqlValidation>;
+
 pub struct OnGraphQLValidationStartHookPayload<'exec> {
     /// The incoming HTTP request to the router for which the GraphQL execution is happening.
     /// It includes all the details of the request such as headers, body, etc.
@@ -29,7 +31,7 @@ pub struct OnGraphQLValidationStartHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
-    pub request_context: RequestContextPluginApi,
+    pub request_context: RequestContextApi,
     /// The GraphQL Schema that the document will be validated against.
     /// This is not the same with the supergraph. This is the public schema exposed by the router to the clients, which is generated from the supergraph and can be modified by the plugins.
     /// The plugins can replace the input schema to be used for validation
@@ -118,7 +120,7 @@ impl<'exec> OnGraphQLValidationStartHookPayload<'exec> {
 pub struct OnGraphQLValidationEndHookPayload {
     pub errors: Arc<Vec<ValidationError>>,
     pub cache_hint: CacheHint,
-    pub request_context: RequestContextPluginApi,
+    pub request_context: RequestContextApi,
 }
 
 impl EndHookPayload<Response> for OnGraphQLValidationEndHookPayload {}

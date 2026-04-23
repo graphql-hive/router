@@ -36,7 +36,7 @@ impl RequestContextOperationRead<'_> {
     }
 }
 
-impl RequestContextPluginRead {
+impl<Caps> RequestContextPluginRead<Caps> {
     pub fn operation(&self) -> RequestContextOperationRead<'_> {
         RequestContextOperationRead {
             context: &self.snapshot.operation,

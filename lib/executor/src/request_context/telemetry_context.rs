@@ -28,7 +28,7 @@ impl RequestContextTelemetryRead<'_> {
     }
 }
 
-impl RequestContextPluginRead {
+impl<Caps> RequestContextPluginRead<Caps> {
     pub fn telemetry(&self) -> RequestContextTelemetryRead<'_> {
         RequestContextTelemetryRead {
             context: &self.snapshot.telemetry,

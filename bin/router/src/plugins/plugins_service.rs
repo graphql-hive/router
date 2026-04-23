@@ -4,6 +4,7 @@ use hive_router_plan_executor::{
     hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpResponseHookPayload},
     plugin_context::PluginContext,
     plugin_trait::{EndControlFlow, StartControlFlow},
+    plugins::hooks,
     request_context::{RequestContextExt, SharedRequestContext},
 };
 use ntex::{
@@ -104,7 +105,7 @@ where
             let mut start_payload = OnHttpRequestHookPayload {
                 router_http_request: req,
                 context: &plugin_context,
-                request_context: request_context.for_plugin(),
+                request_context: request_context.for_plugin::<hooks::OnHttpRequest>(),
             };
 
             let mut on_end_callbacks = Vec::with_capacity(plugins.len());
@@ -138,7 +139,7 @@ where
                 let mut end_payload = OnHttpResponseHookPayload {
                     response,
                     context: &plugin_context,
-                    request_context: request_context.for_plugin(),
+                    request_context: request_context.for_plugin::<hooks::OnHttpRequest>(),
                 };
 
                 for callback in on_end_callbacks.into_iter().rev() {
