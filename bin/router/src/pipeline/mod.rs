@@ -142,21 +142,21 @@ pub async fn graphql_request_handler(
         let client_name = req
             .headers()
             .get(
-                &shared_state
+                shared_state
                     .router_config
                     .telemetry
                     .client_identification
-                    .name_header,
+                    .name_header.get_header_ref(),
             )
             .and_then(|v| v.to_str().ok());
         let client_version = req
             .headers()
             .get(
-                &shared_state
+                shared_state
                     .router_config
                     .telemetry
                     .client_identification
-                    .version_header,
+                    .version_header.get_header_ref(),
             )
             .and_then(|v| v.to_str().ok());
 

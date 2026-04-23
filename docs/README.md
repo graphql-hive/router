@@ -21,7 +21,7 @@
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"ip_header":null,"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
 |[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
@@ -134,6 +134,7 @@ subscriptions:
 supergraph: {}
 telemetry:
   client_identification:
+    ip_header: null
     name_header: graphql-client-name
     version_header: graphql-client-version
   hive: null
@@ -2221,7 +2222,7 @@ max_retries: 10
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
+|[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"ip_header":null,"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
 |[**hive**](#telemetryhive)|`object`, `null`|||
 |[**metrics**](#telemetrymetrics)|`object`|Configures metrics collection, processing, and export.<br/>Default: `{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}}`<br/>||
 |[**resource**](#telemetryresource)|`object`|Default: `{"attributes":{}}`<br/>||
@@ -2232,6 +2233,7 @@ max_retries: 10
 
 ```yaml
 client_identification:
+  ip_header: null
   name_header: graphql-client-name
   version_header: graphql-client-version
 hive: null
@@ -2308,13 +2310,15 @@ tracing:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**name\_header**|`string`|Default: `"graphql-client-name"`<br/>||
-|**version\_header**|`string`|Default: `"graphql-client-version"`<br/>||
+|**ip\_header**||Defines how the client IP address is determined.<br/><br/>Important: HTTP headers like `x-forwarded-for` can be spoofed by clients.<br/>Use it only with trusted proxies.<br/><br/>It's null by default and uses the socket peer address.<br/><br/>Use the left-most value from the specified header:<br/>```ignore<br/>ip_header: "x-forwarded-for"<br/>```<br/><br/>If peer socket address is trusted, meaning it's part of `trusted_proxies` list,<br/>Router evaluates values from right to left and picks the first non-trusted value.<br/>If all values are trusted, uses the left-most value.<br/>```ignore<br/>ip_header:<br/>  name: "x-forwarded-for"<br/>  trusted_proxies:<br/>    - 10.0.0.0/8<br/>    - 127.0.0.1/32<br/>```<br/>||
+|**name\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"graphql-client-name"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
+|**version\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"graphql-client-version"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
+ip_header: null
 name_header: graphql-client-name
 version_header: graphql-client-version
 

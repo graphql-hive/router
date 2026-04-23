@@ -153,7 +153,14 @@ async fn graphql_endpoint_dispatch(
     let parent_ctx = app_state
         .telemetry_context
         .extract_context(&HeaderExtractor(request.headers()));
-    let root_http_request_span = HttpServerRequestSpan::from_request(request);
+    let root_http_request_span = HttpServerRequestSpan::from_request(
+        request,
+        &app_state
+            .router_config
+            .telemetry
+            .client_identification
+            .ip_header,
+    );
     let _ = root_http_request_span.set_parent(parent_ctx);
 
     async {
