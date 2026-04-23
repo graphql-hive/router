@@ -9,19 +9,26 @@ use super::RequestContextError;
 pub(crate) const OPERATION_NAME_KEY: &str = "hive::operation::name";
 pub(crate) const OPERATION_KIND_KEY: &str = "hive::operation::kind";
 
+/// Context domain for GraphQL operation metadata.
+///
+/// This domain stores details about the operation extracted from the request.
 #[derive(Debug, Clone, Default)]
 pub struct OperationContext {
+    /// The name of the GraphQL operation.
     pub name: Option<String>,
+    /// The kind of the GraphQL operation ("query", "mutation", "subscription").
     pub kind: Option<OperationKind>,
 }
 
 impl OperationContext {
+    /// Updates the operation metadata in a single call.
     pub fn update(&mut self, name: Option<String>, kind: Option<OperationKind>) {
         self.name = name;
         self.kind = kind;
     }
 }
 
+/// A read-only view of the operation metadata for plugins.
 pub struct RequestContextOperationRead<'a> {
     context: &'a OperationContext,
 }
@@ -36,7 +43,8 @@ impl RequestContextOperationRead<'_> {
     }
 }
 
-impl<Plugin> RequestContextPluginRead<Plugin> {
+impl<Hook> RequestContextPluginRead<Hook> {
+    /// Returns the operation metadata for reads.
     pub fn operation(&self) -> RequestContextOperationRead<'_> {
         RequestContextOperationRead {
             context: &self.snapshot.operation,
@@ -46,10 +54,6 @@ impl<Plugin> RequestContextPluginRead<Plugin> {
 
 impl RequestContextDomain for OperationContext {
     const DOMAIN_PREFIX: &'static str = "hive::operation::";
-
-    fn is_applicable(&self, key: &str) -> bool {
-        key.starts_with(Self::DOMAIN_PREFIX)
-    }
 
     fn serialized_len(&self) -> usize {
         usize::from(self.name.is_some()) + usize::from(self.kind.is_some())

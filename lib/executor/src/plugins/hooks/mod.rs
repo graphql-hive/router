@@ -14,7 +14,7 @@ mod sealed {
     pub trait Sealed {}
 }
 
-pub trait PluginMarker: sealed::Sealed {}
+pub trait HookMarker: sealed::Sealed {}
 
 pub struct OnHttpRequest;
 pub struct OnGraphqlParams;
@@ -34,11 +34,11 @@ impl sealed::Sealed for OnExecute {}
 impl sealed::Sealed for OnSubgraphExecute {}
 impl sealed::Sealed for OnSubgraphHttp {}
 
-impl PluginMarker for OnHttpRequest {}
-impl PluginMarker for OnGraphqlParams {}
-impl PluginMarker for OnGraphqlParse {}
-impl PluginMarker for OnGraphqlValidation {}
-impl PluginMarker for OnQueryPlan {}
-impl PluginMarker for OnExecute {}
-impl PluginMarker for OnSubgraphExecute {}
-impl PluginMarker for OnSubgraphHttp {}
+impl HookMarker for OnHttpRequest {}
+impl HookMarker for OnGraphqlParams {}
+impl HookMarker for OnGraphqlParse {}
+impl HookMarker for OnGraphqlValidation {}
+impl HookMarker for OnQueryPlan {}
+impl HookMarker for OnExecute {}
+impl HookMarker for OnSubgraphExecute {}
+impl HookMarker for OnSubgraphHttp {}

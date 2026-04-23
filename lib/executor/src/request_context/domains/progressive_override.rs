@@ -19,9 +19,12 @@ impl CanWriteProgressiveOverride for hooks::OnGraphqlValidation {}
 pub(crate) const UNRESOLVED_LABELS_KEY: &str = "hive::progressive_override::unresolved_labels";
 pub(crate) const LABELS_TO_OVERRIDE_KEY: &str = "hive::progressive_override::labels_to_override";
 
+/// Context domain for progressive overrides.
 #[derive(Debug, Clone, Default)]
 pub struct ProgressiveOverrideContext {
+    /// The set of labels that require an external decision
     pub unresolved_labels: Option<HashSet<String>>,
+    /// The set of labels that should be overridden for this request
     pub labels_to_override: Option<HashSet<String>>,
 }
 
@@ -44,32 +47,39 @@ impl ProgressiveOverrideContext {
     }
 }
 
+/// A read-only view of progressive override state for plugins.
 pub struct RequestContextProgressiveOverrideRead<'a> {
     context: &'a ProgressiveOverrideContext,
 }
 
 impl RequestContextProgressiveOverrideRead<'_> {
+    /// Returns the set of unresolved labels that require a decision.
     pub fn unresolved_labels(&self) -> Option<&HashSet<String>> {
         self.context.unresolved_labels.as_ref()
     }
 
+    /// Returns the set of labels currently marked to be overridden.
     pub fn labels_to_override(&self) -> Option<&HashSet<String>> {
         self.context.labels_to_override.as_ref()
     }
 }
 
+/// A writable interface for progressive override state for plugins.
 pub struct RequestContextProgressiveOverrideWrite<'a> {
     context: &'a mut ProgressiveOverrideContext,
 }
 
 impl RequestContextProgressiveOverrideWrite<'_> {
+    /// Sets the labels that should be overridden for the current request.
+    /// Providing `None` is equivalent to an empty set, so no overrides.
     pub fn set_labels_to_override(&mut self, labels: Option<HashSet<String>>) -> &mut Self {
         self.context.labels_to_override = labels;
         self
     }
 }
 
-impl<Plugin> RequestContextPluginRead<Plugin> {
+impl<Hook> RequestContextPluginRead<Hook> {
+    /// Returns the progressive override read API.
     pub fn progressive_override(&self) -> RequestContextProgressiveOverrideRead<'_> {
         RequestContextProgressiveOverrideRead {
             context: &self.snapshot.progressive_override,
@@ -77,7 +87,9 @@ impl<Plugin> RequestContextPluginRead<Plugin> {
     }
 }
 
-impl<Plugin: CanWriteProgressiveOverride> RequestContextPluginWrite<'_, Plugin> {
+impl<Hook: CanWriteProgressiveOverride> RequestContextPluginWrite<'_, Hook> {
+    /// Returns the progressive override write API.
+    /// Only available in hooks that implement `CanWriteProgressiveOverride`.
     pub fn progressive_override(&mut self) -> RequestContextProgressiveOverrideWrite<'_> {
         RequestContextProgressiveOverrideWrite {
             context: &mut self.context.progressive_override,
@@ -87,10 +99,6 @@ impl<Plugin: CanWriteProgressiveOverride> RequestContextPluginWrite<'_, Plugin> 
 
 impl RequestContextDomain for ProgressiveOverrideContext {
     const DOMAIN_PREFIX: &'static str = "hive::progressive_override::";
-
-    fn is_applicable(&self, key: &str) -> bool {
-        key.starts_with(Self::DOMAIN_PREFIX)
-    }
 
     fn serialized_len(&self) -> usize {
         usize::from(self.unresolved_labels.is_some())

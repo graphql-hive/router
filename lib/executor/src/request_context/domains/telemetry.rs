@@ -8,12 +8,17 @@ use super::RequestContextError;
 pub(crate) const CLIENT_NAME_KEY: &str = "hive::telemetry::client_name";
 pub(crate) const CLIENT_VERSION_KEY: &str = "hive::telemetry::client_version";
 
+/// Context domain for telemetry metadata.
+/// This domain stores client identification.
 #[derive(Debug, Clone, Default)]
 pub struct TelemetryContext {
+    /// The name of the client application
     pub client_name: Option<String>,
+    /// The version of the client application
     pub client_version: Option<String>,
 }
 
+/// A read-only view of telemetry metadata for plugins.
 pub struct RequestContextTelemetryRead<'a> {
     context: &'a TelemetryContext,
 }
@@ -29,6 +34,7 @@ impl RequestContextTelemetryRead<'_> {
 }
 
 impl<Plugin> RequestContextPluginRead<Plugin> {
+    /// Returns the telemetry metadata for reads.
     pub fn telemetry(&self) -> RequestContextTelemetryRead<'_> {
         RequestContextTelemetryRead {
             context: &self.snapshot.telemetry,
@@ -38,10 +44,6 @@ impl<Plugin> RequestContextPluginRead<Plugin> {
 
 impl RequestContextDomain for TelemetryContext {
     const DOMAIN_PREFIX: &'static str = "hive::telemetry::";
-
-    fn is_applicable(&self, key: &str) -> bool {
-        key.starts_with(Self::DOMAIN_PREFIX)
-    }
 
     fn serialized_len(&self) -> usize {
         usize::from(self.client_name.is_some()) + usize::from(self.client_version.is_some())

@@ -10,27 +10,34 @@ use super::RequestContextError;
 pub(crate) const JWT_SCOPES_KEY: &str = "hive::authentication::jwt_scopes";
 pub(crate) const JWT_STATUS_KEY: &str = "hive::authentication::jwt_status";
 
+/// Context domain for authentication state.
 #[derive(Debug, Clone, Default)]
 pub struct AuthenticationContext {
+    /// Scopes extracted from the current authenticated user's JWT.
     pub jwt_scopes: Option<HashSet<String>>,
+    /// Authentication status. If `Some(true)`, the request has been verified as authenticated.
     pub jwt_status: Option<bool>,
 }
 
+/// A read-only view of authentication state for plugins.
 pub struct RequestContextAuthenticationRead<'a> {
     context: &'a AuthenticationContext,
 }
 
 impl RequestContextAuthenticationRead<'_> {
+    /// Returns the authenticated user's scopes if present.
     pub fn jwt_scopes(&self) -> Option<&HashSet<String>> {
         self.context.jwt_scopes.as_ref()
     }
 
+    /// Returns the authentication status if known.
     pub fn jwt_status(&self) -> Option<&bool> {
         self.context.jwt_status.as_ref()
     }
 }
 
 impl<Plugin> RequestContextPluginRead<Plugin> {
+    /// Returns the authentication read API.
     pub fn authentication(&self) -> RequestContextAuthenticationRead<'_> {
         RequestContextAuthenticationRead {
             context: &self.snapshot.authentication,
@@ -40,10 +47,6 @@ impl<Plugin> RequestContextPluginRead<Plugin> {
 
 impl RequestContextDomain for AuthenticationContext {
     const DOMAIN_PREFIX: &'static str = "hive::authentication::";
-
-    fn is_applicable(&self, key: &str) -> bool {
-        key.starts_with(Self::DOMAIN_PREFIX)
-    }
 
     fn serialized_len(&self) -> usize {
         usize::from(self.jwt_scopes.is_some()) + usize::from(self.jwt_status.is_some())

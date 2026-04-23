@@ -2,49 +2,64 @@ use std::{marker::PhantomData, sync::MutexGuard};
 
 use super::super::domains::{RequestContext, SharedRequestContext};
 use super::super::RequestContextError;
-use crate::hooks::PluginMarker;
+use crate::hooks::HookMarker;
 
 impl SharedRequestContext {
-    pub fn for_plugin<Plugin: PluginMarker>(&self) -> RequestContextPluginApi<Plugin> {
+    /// Returns a scoped API handle for plugins.
+    /// The `Hook` generic determines the available capabilities (read/write permissions)
+    /// based on the current plugin's hook.
+    pub fn for_plugin<Hook: HookMarker>(&self) -> RequestContextPluginApi<Hook> {
         RequestContextPluginApi::new(self.clone())
     }
 }
 
+/// A type-safe API for router plugins to interact with the request context.
+/// The `Hook` generic is a marker type (`OnQueryPlan`) used to enforce
+/// hook-specific permissions at compile time.
 #[derive(Clone)]
-pub struct RequestContextPluginApi<Plugin> {
+pub struct RequestContextPluginApi<Hook> {
     context: SharedRequestContext,
-    _plugin: PhantomData<Plugin>,
+    _hook: PhantomData<Hook>,
 }
 
-pub struct RequestContextPluginRead<Plugin> {
+/// A read-only snapshot of the request context.
+/// Holding this struct allows plugins to perform async work (across `.await`)
+/// without blocking other plugins or the main execution flow.
+pub struct RequestContextPluginRead<Hook> {
     pub(crate) snapshot: RequestContext,
-    pub(crate) _plugin: PhantomData<Plugin>,
+    pub(crate) _hook: PhantomData<Hook>,
 }
 
-pub struct RequestContextPluginWrite<'a, Plugin> {
+/// A synchronous write guard for the request context.
+/// This struct holds a [MutexGuard] in the context.
+/// To avoid deadlocks or long-lived pipeline blocks,
+/// it should never be held across `.await`.
+pub struct RequestContextPluginWrite<'a, Hook> {
     pub(crate) context: MutexGuard<'a, RequestContext>,
-    pub(crate) _plugin: PhantomData<Plugin>,
+    pub(crate) _hook: PhantomData<Hook>,
 }
 
-impl<Plugin: PluginMarker> RequestContextPluginApi<Plugin> {
-    fn new(context: SharedRequestContext) -> RequestContextPluginApi<Plugin> {
+impl<Hook: HookMarker> RequestContextPluginApi<Hook> {
+    fn new(context: SharedRequestContext) -> RequestContextPluginApi<Hook> {
         RequestContextPluginApi {
             context,
-            _plugin: PhantomData,
+            _hook: PhantomData,
         }
     }
 
-    pub fn read(&self) -> Result<RequestContextPluginRead<Plugin>, RequestContextError> {
+    /// Creates a read-only snapshot of the current context.
+    pub fn read(&self) -> Result<RequestContextPluginRead<Hook>, RequestContextError> {
         Ok(RequestContextPluginRead {
             snapshot: self.context.snapshot()?,
-            _plugin: PhantomData,
+            _hook: PhantomData,
         })
     }
 
-    pub fn write(&self) -> Result<RequestContextPluginWrite<'_, Plugin>, RequestContextError> {
+    /// Acquires a write lock on the context.
+    pub fn write(&self) -> Result<RequestContextPluginWrite<'_, Hook>, RequestContextError> {
         Ok(RequestContextPluginWrite {
             context: self.context.lock()?,
-            _plugin: PhantomData,
+            _hook: PhantomData,
         })
     }
 }
