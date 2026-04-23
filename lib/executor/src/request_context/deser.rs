@@ -2,8 +2,9 @@ use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 
+use super::domains::RequestContextDomain;
+use super::error::RequestContextError;
 use super::{RequestContext, SelectedRequestContext};
-use crate::request_context::{RequestContextDomain, RequestContextError};
 
 pub trait RequestContextValueExt {
     fn expect_str<'a>(

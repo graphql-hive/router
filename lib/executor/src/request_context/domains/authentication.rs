@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use serde::ser::SerializeMap;
 use sonic_rs::Value;
 
-use crate::request_context::{
-    plugin_api::RequestContextPluginRead, RequestContextDomain, RequestContextError,
-};
+use super::super::api::plugin::RequestContextPluginRead;
+use super::RequestContextDomain;
+use super::RequestContextError;
 
 pub(crate) const JWT_SCOPES_KEY: &str = "hive::authentication::jwt_scopes";
 pub(crate) const JWT_STATUS_KEY: &str = "hive::authentication::jwt_status";
@@ -30,7 +30,7 @@ impl RequestContextAuthenticationRead<'_> {
     }
 }
 
-impl<Caps> RequestContextPluginRead<Caps> {
+impl<Plugin> RequestContextPluginRead<Plugin> {
     pub fn authentication(&self) -> RequestContextAuthenticationRead<'_> {
         RequestContextAuthenticationRead {
             context: &self.snapshot.authentication,
@@ -58,29 +58,15 @@ impl RequestContextDomain for AuthenticationContext {
     }
 
     fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error> {
-        if let Some(value) = &self.jwt_scopes {
-            map.serialize_entry(JWT_SCOPES_KEY, value)?;
-        }
-        if let Some(value) = &self.jwt_status {
-            map.serialize_entry(JWT_STATUS_KEY, value)?;
-        }
+        self.serialize_optional_entry(map, JWT_SCOPES_KEY, self.jwt_scopes.as_ref())?;
+        self.serialize_optional_entry(map, JWT_STATUS_KEY, self.jwt_status.as_ref())?;
         Ok(())
     }
 
     fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error> {
         match key {
-            JWT_SCOPES_KEY => {
-                if let Some(value) = &self.jwt_scopes {
-                    map.serialize_entry(JWT_SCOPES_KEY, value)?;
-                }
-                Ok(())
-            }
-            JWT_STATUS_KEY => {
-                if let Some(value) = &self.jwt_status {
-                    map.serialize_entry(JWT_STATUS_KEY, value)?;
-                }
-                Ok(())
-            }
+            JWT_SCOPES_KEY => self.serialize_optional_entry(map, key, self.jwt_scopes.as_ref()),
+            JWT_STATUS_KEY => self.serialize_optional_entry(map, key, self.jwt_status.as_ref()),
             _ => Ok(()),
         }
     }

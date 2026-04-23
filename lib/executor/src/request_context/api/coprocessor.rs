@@ -1,6 +1,6 @@
-use crate::request_context::{
-    RequestContext, RequestContextDomain, RequestContextError, HIVE_PREFIX,
-};
+use super::super::domains::{RequestContext, RequestContextDomain, HIVE_PREFIX};
+use super::super::error::RequestContextError;
+
 use crate::response::value::Value as ResponseValue;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};

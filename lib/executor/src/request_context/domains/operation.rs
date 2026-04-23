@@ -2,9 +2,9 @@ use hive_router_query_planner::state::supergraph_state::OperationKind;
 use serde::ser::SerializeMap;
 use sonic_rs::Value;
 
-use crate::request_context::{
-    plugin_api::RequestContextPluginRead, RequestContextDomain, RequestContextError,
-};
+use super::super::api::plugin::RequestContextPluginRead;
+use super::RequestContextDomain;
+use super::RequestContextError;
 
 pub(crate) const OPERATION_NAME_KEY: &str = "hive::operation::name";
 pub(crate) const OPERATION_KIND_KEY: &str = "hive::operation::kind";
@@ -36,7 +36,7 @@ impl RequestContextOperationRead<'_> {
     }
 }
 
-impl<Caps> RequestContextPluginRead<Caps> {
+impl<Plugin> RequestContextPluginRead<Plugin> {
     pub fn operation(&self) -> RequestContextOperationRead<'_> {
         RequestContextOperationRead {
             context: &self.snapshot.operation,
@@ -64,29 +64,15 @@ impl RequestContextDomain for OperationContext {
     }
 
     fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error> {
-        if let Some(name) = &self.name {
-            map.serialize_entry(OPERATION_NAME_KEY, name)?;
-        }
-        if let Some(kind) = &self.kind {
-            map.serialize_entry(OPERATION_KIND_KEY, &kind.to_string())?;
-        }
+        self.serialize_optional_entry(map, OPERATION_NAME_KEY, self.name.as_ref())?;
+        self.serialize_optional_entry(map, OPERATION_KIND_KEY, self.kind.as_ref())?;
         Ok(())
     }
 
     fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error> {
         match key {
-            OPERATION_NAME_KEY => {
-                if let Some(name) = &self.name {
-                    map.serialize_entry(OPERATION_NAME_KEY, name)?;
-                }
-                Ok(())
-            }
-            OPERATION_KIND_KEY => {
-                if let Some(kind) = &self.kind {
-                    map.serialize_entry(OPERATION_KIND_KEY, &kind.to_string())?;
-                }
-                Ok(())
-            }
+            OPERATION_NAME_KEY => self.serialize_optional_entry(map, key, self.name.as_ref()),
+            OPERATION_KIND_KEY => self.serialize_optional_entry(map, key, self.kind.as_ref()),
             _ => Ok(()),
         }
     }

@@ -3,14 +3,11 @@ use std::collections::HashSet;
 use serde::ser::SerializeMap;
 use sonic_rs::{JsonValueTrait, Value};
 
-use crate::{
-    hooks,
-    request_context::{
-        deser::RequestContextValueExt,
-        plugin_api::{RequestContextPluginRead, RequestContextPluginWrite},
-        RequestContextDomain, RequestContextError,
-    },
-};
+use super::super::api::plugin::{RequestContextPluginRead, RequestContextPluginWrite};
+use super::super::deser::RequestContextValueExt;
+use super::RequestContextDomain;
+use super::RequestContextError;
+use crate::hooks;
 
 pub trait CanWriteProgressiveOverride {}
 impl CanWriteProgressiveOverride for hooks::OnQueryPlan {}
@@ -72,7 +69,7 @@ impl RequestContextProgressiveOverrideWrite<'_> {
     }
 }
 
-impl<Caps> RequestContextPluginRead<Caps> {
+impl<Plugin> RequestContextPluginRead<Plugin> {
     pub fn progressive_override(&self) -> RequestContextProgressiveOverrideRead<'_> {
         RequestContextProgressiveOverrideRead {
             context: &self.snapshot.progressive_override,
@@ -80,7 +77,7 @@ impl<Caps> RequestContextPluginRead<Caps> {
     }
 }
 
-impl<Caps: CanWriteProgressiveOverride> RequestContextPluginWrite<'_, Caps> {
+impl<Plugin: CanWriteProgressiveOverride> RequestContextPluginWrite<'_, Plugin> {
     pub fn progressive_override(&mut self) -> RequestContextProgressiveOverrideWrite<'_> {
         RequestContextProgressiveOverrideWrite {
             context: &mut self.context.progressive_override,
@@ -109,28 +106,22 @@ impl RequestContextDomain for ProgressiveOverrideContext {
     }
 
     fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error> {
-        if let Some(unresolved_labels) = &self.unresolved_labels {
-            map.serialize_entry(UNRESOLVED_LABELS_KEY, unresolved_labels)?;
-        }
-        if let Some(labels_to_override) = &self.labels_to_override {
-            map.serialize_entry(LABELS_TO_OVERRIDE_KEY, labels_to_override)?;
-        }
+        self.serialize_optional_entry(map, UNRESOLVED_LABELS_KEY, self.unresolved_labels.as_ref())?;
+        self.serialize_optional_entry(
+            map,
+            LABELS_TO_OVERRIDE_KEY,
+            self.labels_to_override.as_ref(),
+        )?;
         Ok(())
     }
 
     fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error> {
         match key {
             UNRESOLVED_LABELS_KEY => {
-                if let Some(unresolved_labels) = &self.unresolved_labels {
-                    map.serialize_entry(UNRESOLVED_LABELS_KEY, unresolved_labels)?;
-                }
-                Ok(())
+                self.serialize_optional_entry(map, key, self.unresolved_labels.as_ref())
             }
             LABELS_TO_OVERRIDE_KEY => {
-                if let Some(labels_to_override) = &self.labels_to_override {
-                    map.serialize_entry(LABELS_TO_OVERRIDE_KEY, labels_to_override)?;
-                }
-                Ok(())
+                self.serialize_optional_entry(map, key, self.labels_to_override.as_ref())
             }
             _ => Ok(()),
         }

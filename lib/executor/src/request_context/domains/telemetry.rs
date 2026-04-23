@@ -1,9 +1,9 @@
 use serde::ser::SerializeMap;
 use sonic_rs::Value;
 
-use crate::request_context::{
-    plugin_api::RequestContextPluginRead, RequestContextDomain, RequestContextError,
-};
+use super::super::api::plugin::RequestContextPluginRead;
+use super::RequestContextDomain;
+use super::RequestContextError;
 
 pub(crate) const CLIENT_NAME_KEY: &str = "hive::telemetry::client_name";
 pub(crate) const CLIENT_VERSION_KEY: &str = "hive::telemetry::client_version";
@@ -28,7 +28,7 @@ impl RequestContextTelemetryRead<'_> {
     }
 }
 
-impl<Caps> RequestContextPluginRead<Caps> {
+impl<Plugin> RequestContextPluginRead<Plugin> {
     pub fn telemetry(&self) -> RequestContextTelemetryRead<'_> {
         RequestContextTelemetryRead {
             context: &self.snapshot.telemetry,
@@ -56,28 +56,16 @@ impl RequestContextDomain for TelemetryContext {
     }
 
     fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error> {
-        if let Some(value) = &self.client_name {
-            map.serialize_entry(CLIENT_NAME_KEY, value)?;
-        }
-        if let Some(value) = &self.client_version {
-            map.serialize_entry(CLIENT_VERSION_KEY, value)?;
-        }
+        self.serialize_optional_entry(map, CLIENT_NAME_KEY, self.client_name.as_ref())?;
+        self.serialize_optional_entry(map, CLIENT_VERSION_KEY, self.client_version.as_ref())?;
         Ok(())
     }
 
     fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error> {
         match key {
-            CLIENT_NAME_KEY => {
-                if let Some(value) = &self.client_name {
-                    map.serialize_entry(CLIENT_NAME_KEY, value)?;
-                }
-                Ok(())
-            }
+            CLIENT_NAME_KEY => self.serialize_optional_entry(map, key, self.client_name.as_ref()),
             CLIENT_VERSION_KEY => {
-                if let Some(value) = &self.client_version {
-                    map.serialize_entry(CLIENT_VERSION_KEY, value)?;
-                }
-                Ok(())
+                self.serialize_optional_entry(map, key, self.client_version.as_ref())
             }
             _ => Ok(()),
         }
