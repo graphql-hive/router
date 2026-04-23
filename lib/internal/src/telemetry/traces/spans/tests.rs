@@ -6,18 +6,71 @@ use super::graphql::{
 };
 use super::http_request::{HttpClientRequestSpan, HttpInflightRequestSpan, HttpServerRequestSpan};
 use crate::graphql::ObservedError;
+use crate::telemetry::traces::spans::http_request::HttpServerSpanRequest;
 use bytes::Bytes;
-use http::header::{HOST, USER_AGENT};
-use http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
+use hive_router_config::telemetry::{ClientIpHeaderConfig, ClientIpHeaderTrustedProxiesConfig};
+use http::header::{FORWARDED, HOST, USER_AGENT};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version};
 use http_body_util::Full;
+use ntex::http::HeaderMap as NtexHeaderMap;
 use ntex::util::Bytes as NtexBytes;
+use ntex::web::test::TestRequest;
 use std::collections::{BTreeMap, HashMap};
+use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tracing::field::{Field, Visit};
 use tracing::subscriber::with_default;
 use tracing::Span;
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 use tracing_subscriber::Registry;
+
+const XFF: HeaderName = HeaderName::from_static("x-forwarded-for");
+
+struct HttpRequestMock {
+    req: ntex::web::HttpRequest,
+    // peer_addr is stored separately as TestRequest never passes it to HttpRequest.
+    // It's gone and we need it to test trusted_proxies thingy.
+    peer_addr: Option<SocketAddr>,
+}
+
+impl HttpRequestMock {
+    fn with_peer_addr(mut self, peer_addr: SocketAddr) -> Self {
+        self.peer_addr = Some(peer_addr);
+        self
+    }
+}
+
+impl From<TestRequest> for HttpRequestMock {
+    fn from(req: TestRequest) -> Self {
+        Self {
+            req: req.to_http_request(),
+            peer_addr: None,
+        }
+    }
+}
+
+impl HttpServerSpanRequest for HttpRequestMock {
+    fn headers(&self) -> &NtexHeaderMap {
+        self.req.headers()
+    }
+
+    fn method(&self) -> &Method {
+        self.req.method()
+    }
+
+    fn uri(&self) -> &Uri {
+        self.req.uri()
+    }
+
+    fn version(&self) -> Version {
+        self.req.version()
+    }
+
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        self.peer_addr
+    }
+}
 
 #[derive(Clone, Default)]
 struct RecordingLayer {
@@ -36,6 +89,14 @@ impl RecordingLayer {
     fn assert_recorded_value(&self, span: &Span, key: &str, expected: &str) {
         let id = span.id().expect("span id").into_u64();
         assert_eq!(self.value(id, key).as_deref(), Some(expected));
+    }
+
+    fn assert_not_recorded(&self, span: &Span, key: &str) {
+        let id = span.id().expect("span id").into_u64();
+        assert!(
+            self.value(id, key).is_none(),
+            "Expected '{key}' not to be recorded"
+        );
     }
 }
 
@@ -123,6 +184,22 @@ fn assert_fields(span: &Span, expected_fields: &[&str]) {
     );
 }
 
+fn ip_header_config(header: &str) -> Option<ClientIpHeaderConfig> {
+    Some(ClientIpHeaderConfig::HeaderName(header.into()))
+}
+
+fn trusted_ip_header_config(
+    header: &str,
+    trusted_proxies: Vec<&str>,
+) -> Option<ClientIpHeaderConfig> {
+    Some(ClientIpHeaderConfig::TrustedProxies(
+        ClientIpHeaderTrustedProxiesConfig {
+            name: header.into(),
+            trusted_proxies: trusted_proxies.into_iter().map(Into::into).collect(),
+        },
+    ))
+}
+
 #[test]
 fn test_http_server_request_span() {
     let layer = RecordingLayer::default();
@@ -130,13 +207,14 @@ fn test_http_server_request_span() {
     let response_body = "response body";
 
     with_default(subscriber, || {
-        let req = ntex::web::test::TestRequest::with_uri("/graphql")
+        let req = TestRequest::with_uri("/graphql")
             .header(HOST, "localhost:8080")
             .header(USER_AGENT, "test-agent")
+            .header(XFF, "192.168.0.1, 192.168.0.2, 192.168.0.3:420")
             .to_http_request();
         let body = NtexBytes::from("test body");
 
-        let span = HttpServerRequestSpan::from_request(&req);
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(XFF.as_str()));
         span.record_body_size(body.len());
         assert_fields(
             &span,
@@ -157,6 +235,10 @@ fn test_http_server_request_span() {
                 attributes::HTTP_RESPONSE_STATUS_CODE,
                 attributes::HTTP_RESPONSE_BODY_SIZE,
                 attributes::HTTP_ROUTE,
+                attributes::CLIENT_ADDRESS,
+                attributes::CLIENT_PORT,
+                attributes::NETWORK_PEER_ADDRESS,
+                attributes::NETWORK_PEER_PORT,
             ],
         );
 
@@ -170,13 +252,277 @@ fn test_http_server_request_span() {
             &response_body.len().to_string(),
         );
         layer.assert_recorded_value(&span, attributes::OTEL_STATUS_CODE, "Ok");
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "192.168.0.1");
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
 
-        let span = HttpServerRequestSpan::from_request(&req);
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(XFF.as_str()));
         span.record_internal_server_error();
 
         layer.assert_recorded_value(&span, attributes::HTTP_RESPONSE_STATUS_CODE, "500");
         layer.assert_recorded_value(&span, attributes::OTEL_STATUS_CODE, "Error");
         layer.assert_recorded_value(&span, attributes::ERROR_TYPE, "500");
+    });
+}
+
+#[test]
+fn test_http_server_request_span_client_address_from_various_values() {
+    let layer = RecordingLayer::default();
+    let subscriber = Registry::default().with(layer.clone());
+
+    with_default(subscriber, || {
+        let realistic_with_port = TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(XFF, "10.0.0.1:1234, 172.16.1.42:443")
+            .to_http_request();
+        let span = HttpServerRequestSpan::from_request(
+            &realistic_with_port,
+            &ip_header_config(XFF.as_str()),
+        );
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "10.0.0.1");
+        layer.assert_recorded_value(&span, attributes::CLIENT_PORT, "1234");
+
+        let realistic_without_port = TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(XFF, "10.0.0.1, 172.16.1.42")
+            .to_http_request();
+        let span = HttpServerRequestSpan::from_request(
+            &realistic_without_port,
+            &ip_header_config(XFF.as_str()),
+        );
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "10.0.0.1");
+
+        let realistic_ipv6_with_port = TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(XFF, "[2001:db8::1]:8080, [2001:db8::2]:8443")
+            .to_http_request();
+        let span = HttpServerRequestSpan::from_request(
+            &realistic_ipv6_with_port,
+            &ip_header_config(XFF.as_str()),
+        );
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "2001:db8::1");
+        layer.assert_recorded_value(&span, attributes::CLIENT_PORT, "8080");
+
+        let realistic_ipv6_without_port = TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(XFF, "2001:db8::1, 2001:db8::2")
+            .to_http_request();
+        let span = HttpServerRequestSpan::from_request(
+            &realistic_ipv6_without_port,
+            &ip_header_config(XFF.as_str()),
+        );
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "2001:db8::1");
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+
+        let unrealistic_malformed_ipv6_with_port = TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(XFF, "2001:db8::2:8443")
+            .to_http_request();
+        let span = HttpServerRequestSpan::from_request(
+            &unrealistic_malformed_ipv6_with_port,
+            &ip_header_config(XFF.as_str()),
+        );
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "2001:db8::2:8443");
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+
+        let unrealistic_empty = TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(XFF, ", ,")
+            .to_http_request();
+        let span = HttpServerRequestSpan::from_request(
+            &unrealistic_empty,
+            &ip_header_config(XFF.as_str()),
+        );
+        layer.assert_not_recorded(&span, attributes::CLIENT_ADDRESS);
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+    });
+}
+
+#[test]
+fn test_http_server_request_span_client_address_with_trusted_proxies() {
+    let layer = RecordingLayer::default();
+    let subscriber = Registry::default().with(layer.clone());
+    let peer_addr = SocketAddr::from_str("10.0.0.2:8080").unwrap();
+    let peer_ip = peer_addr.ip().to_string();
+    let peer_port = peer_addr.port().to_string();
+
+    with_default(subscriber, || {
+        let req = HttpRequestMock::from(
+            TestRequest::with_uri("/graphql")
+                .header(HOST, "localhost:8080")
+                .header(XFF, "198.51.100.7, 10.0.0.2"),
+        )
+        .with_peer_addr(peer_addr);
+
+        let span = HttpServerRequestSpan::from_request(
+            &req,
+            &trusted_ip_header_config(XFF.as_str(), vec!["10.0.0.0/8"]),
+        );
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "198.51.100.7");
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+
+        let all_trusted = HttpRequestMock::from(
+            TestRequest::with_uri("/graphql")
+                .header(HOST, "localhost:8080")
+                .header(XFF, "10.1.1.1, 10.2.2.2"),
+        )
+        .with_peer_addr(peer_addr);
+
+        let span = HttpServerRequestSpan::from_request(
+            &all_trusted,
+            &trusted_ip_header_config(XFF.as_str(), vec!["10.0.0.0/8"]),
+        );
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "10.1.1.1");
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+
+        let mixed_invalid = HttpRequestMock::from(
+            TestRequest::with_uri("/graphql")
+                .header(HOST, "localhost:8080")
+                .header(XFF, "garbage, 198.51.100.7, 10.0.0.2"),
+        )
+        .with_peer_addr(peer_addr);
+
+        let span = HttpServerRequestSpan::from_request(
+            &mixed_invalid,
+            &trusted_ip_header_config(XFF.as_str(), vec!["10.0.0.0/8"]),
+        );
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "198.51.100.7");
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+
+        let non_ip_tokens = HttpRequestMock::from(
+            TestRequest::with_uri("/graphql")
+                .header(HOST, "localhost:8080")
+                .header(XFF, "foo:300, local"),
+        )
+        .with_peer_addr(peer_addr);
+
+        let span = HttpServerRequestSpan::from_request(
+            &non_ip_tokens,
+            &trusted_ip_header_config(XFF.as_str(), vec!["10.0.0.0/8"]),
+        );
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, peer_ip.as_str());
+        layer.assert_recorded_value(&span, attributes::CLIENT_PORT, peer_port.as_str());
+    });
+}
+
+#[test]
+fn test_http_server_request_span_client_address_from_forwarded() {
+    let layer = RecordingLayer::default();
+    let subscriber = Registry::default().with(layer.clone());
+
+    with_default(subscriber, || {
+        let req = TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(FORWARDED, "for=198.51.100.7;proto=https, for=10.0.0.2")
+            .to_http_request();
+
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(FORWARDED.as_str()));
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "198.51.100.7");
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+
+        let req = TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(FORWARDED, r#"for="198.51.100.7:1234";proto=https"#)
+            .to_http_request();
+
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(FORWARDED.as_str()));
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "198.51.100.7");
+        layer.assert_recorded_value(&span, attributes::CLIENT_PORT, "1234");
+
+        let req = TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(FORWARDED, r#"for="[2001:db8::1]:8080";proto=https"#)
+            .to_http_request();
+
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(FORWARDED.as_str()));
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "2001:db8::1");
+        layer.assert_recorded_value(&span, attributes::CLIENT_PORT, "8080");
+
+        let req = TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(FORWARDED, "for=_hidden, proto=https")
+            .to_http_request();
+
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(FORWARDED.as_str()));
+
+        layer.assert_not_recorded(&span, attributes::CLIENT_ADDRESS);
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+    });
+}
+
+#[test]
+fn test_http_server_request_span_client_address_from_forwarded_trusted_proxies() {
+    let layer = RecordingLayer::default();
+    let subscriber = Registry::default().with(layer.clone());
+    let peer_addr = SocketAddr::from_str("10.0.0.2:8080").unwrap();
+    let peer_ip = peer_addr.ip().to_string();
+
+    with_default(subscriber, || {
+        let req = HttpRequestMock::from(
+            TestRequest::with_uri("/graphql")
+                .header(HOST, "localhost:8080")
+                .header(FORWARDED, "for=198.51.100.7;proto=https, for=10.0.0.2"),
+        )
+        .with_peer_addr(peer_addr);
+
+        let span = HttpServerRequestSpan::from_request(
+            &req,
+            &trusted_ip_header_config(FORWARDED.as_str(), vec!["10.0.0.0/8"]),
+        );
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "198.51.100.7");
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+
+        let all_trusted = HttpRequestMock::from(
+            TestRequest::with_uri("/graphql")
+                .header(HOST, "localhost:8080")
+                .header(FORWARDED, "for=10.1.1.1, for=10.2.2.2"),
+        )
+        .with_peer_addr(peer_addr);
+
+        let span = HttpServerRequestSpan::from_request(
+            &all_trusted,
+            &trusted_ip_header_config(FORWARDED.as_str(), vec!["10.0.0.0/8"]),
+        );
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "10.1.1.1");
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+
+        let with_port = HttpRequestMock::from(
+            TestRequest::with_uri("/graphql")
+                .header(HOST, "localhost:8080")
+                .header(FORWARDED, r#"for="198.51.100.7:4444", for=10.0.0.2"#),
+        )
+        .with_peer_addr(peer_addr);
+
+        let span = HttpServerRequestSpan::from_request(
+            &with_port,
+            &trusted_ip_header_config(FORWARDED.as_str(), vec!["10.0.0.0/8"]),
+        );
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "198.51.100.7");
+        layer.assert_recorded_value(&span, attributes::CLIENT_PORT, "4444");
+
+        let invalid_tokens = HttpRequestMock::from(
+            TestRequest::with_uri("/graphql")
+                .header(HOST, "localhost:8080")
+                .header(FORWARDED, "for=_hidden, for=10.0.0.2"),
+        )
+        .with_peer_addr(peer_addr);
+
+        let span = HttpServerRequestSpan::from_request(
+            &invalid_tokens,
+            &trusted_ip_header_config(FORWARDED.as_str(), vec!["10.0.0.0/8"]),
+        );
+
+        layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, peer_ip.as_str());
+        layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
     });
 }
 

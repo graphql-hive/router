@@ -1,13 +1,50 @@
 use bytes::Bytes;
+use hive_router_config::{primitives::ip_network::IpNetwork, telemetry::ClientIpHeaderConfig};
 use http::{
-    header::{HOST, USER_AGENT},
-    HeaderMap, Method, Response, StatusCode, Uri,
+    header::{FORWARDED, HOST, USER_AGENT},
+    HeaderMap, HeaderName, Method, Response, StatusCode, Uri, Version,
 };
 use http_body_util::Full;
 use hyper::body::Body;
-use ntex::http::body::MessageBody;
+use ntex::http::{body::MessageBody, HeaderMap as NtexHeaderMap};
 use std::borrow::{Borrow, Cow};
+use std::net::{IpAddr, SocketAddr};
 use tracing::{field::Empty, info_span, record_all, Level, Span};
+
+/// Minimal request interface required to build an HTTP server span.
+///
+/// This keeps `HttpServerRequestSpan::from_request` decoupled from
+/// `ntex::web::HttpRequest` and allows tests to provide a mock request carrying
+/// a peer address.
+pub trait HttpServerSpanRequest {
+    fn headers(&self) -> &NtexHeaderMap;
+    fn method(&self) -> &Method;
+    fn uri(&self) -> &Uri;
+    fn version(&self) -> Version;
+    fn peer_addr(&self) -> Option<SocketAddr>;
+}
+
+impl HttpServerSpanRequest for ntex::web::HttpRequest {
+    fn headers(&self) -> &NtexHeaderMap {
+        self.headers()
+    }
+
+    fn method(&self) -> &Method {
+        self.method()
+    }
+
+    fn uri(&self) -> &Uri {
+        self.uri()
+    }
+
+    fn version(&self) -> Version {
+        self.version()
+    }
+
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        self.peer_addr()
+    }
+}
 
 use crate::http::{HttpMethodAsStr, HttpUriAsStr, HttpVersionAsStr};
 use crate::telemetry::traces::{
@@ -37,7 +74,10 @@ impl Borrow<Span> for HttpServerRequestSpan {
 }
 
 impl HttpServerRequestSpan {
-    pub fn from_request(request: &ntex::web::HttpRequest) -> Self {
+    pub fn from_request<Req: HttpServerSpanRequest>(
+        request: &Req,
+        client_ip_header_config: &Option<ClientIpHeaderConfig>,
+    ) -> Self {
         if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
@@ -61,6 +101,14 @@ impl HttpServerRequestSpan {
         let url = Cow::Borrowed(request.uri());
         let protocol_version = request.version().as_static_str();
         let url_scheme = url.scheme_static_str();
+        let peer = request.peer_addr();
+        let peer_address = peer.map(|p| p.ip().to_string());
+        let peer_port = peer.map(|p| p.port());
+        let (client_address, client_port) =
+            match resolve_client_address(request, client_ip_header_config) {
+                Some(client) => (Some(client.ip_raw.to_string()), client.port),
+                None => (peer_address.clone(), peer_port),
+            };
 
         // We follow the HTTP server span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server
@@ -86,6 +134,11 @@ impl HttpServerRequestSpan {
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
             "http.route" = url.path(),
+            // Client
+            "client.address" = client_address,
+            "client.port" = client_port,
+            "network.peer.address" = peer_address,
+            "network.peer.port" = peer_port,
         );
 
         Self { span }
@@ -345,5 +398,142 @@ impl HttpInflightRequestSpan {
             "otel.status_code" = "Error",
             "error.type" = 500,
         );
+    }
+}
+
+fn resolve_client_address<'a, Req: HttpServerSpanRequest>(
+    request: &'a Req,
+    config: &Option<ClientIpHeaderConfig>,
+) -> Option<ParsedAddr<'a>> {
+    let config = config.as_ref()?;
+
+    match config {
+        ClientIpHeaderConfig::HeaderName(name) => {
+            let header = request
+                .headers()
+                .get(name.get_header_ref())?
+                .to_str()
+                .ok()?;
+
+            // Finds the left-most valid address
+            ParsedAddr::from(name.get_header_ref(), header).next()
+        }
+
+        ClientIpHeaderConfig::TrustedProxies(cfg) => {
+            let peer_ip = request.peer_addr()?.ip();
+
+            // If the peer IP is not trusted, then we can't determine the client address
+            if !ParsedAddr::is_trusted(peer_ip, &cfg.trusted_proxies) {
+                return None;
+            }
+
+            let header = request
+                .headers()
+                .get(cfg.name.get_header_ref())?
+                .to_str()
+                .ok()?;
+
+            let mut addrs = ParsedAddr::from(cfg.name.get_header_ref(), header);
+            let first = addrs.next()?;
+
+            addrs
+                // We go from right to left
+                .rev()
+                // to find the first non-trusted address
+                .find(|addr| !ParsedAddr::is_trusted(addr.parsed_ip, &cfg.trusted_proxies))
+                // and all are trusted, we treat the first as the client address
+                .unwrap_or(first)
+                .into()
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ParsedAddr<'a> {
+    // We keep the str version of IP to avoid the cost of `Display::fmt` of IpAddr
+    ip_raw: &'a str,
+    parsed_ip: IpAddr,
+    port: Option<u16>,
+}
+
+impl<'a> ParsedAddr<'a> {
+    #[inline]
+    fn parse_address(raw: &str) -> Option<ParsedAddr<'_>> {
+        let raw = raw.trim();
+
+        if raw.is_empty() {
+            return None;
+        }
+
+        // Normal IP - `192.168.1.1` or `::1`
+        // We aim to find it first, as it's the most common case.
+        if let Ok(ip) = raw.parse::<IpAddr>() {
+            return Some(ParsedAddr {
+                ip_raw: raw,
+                parsed_ip: ip,
+                port: None,
+            });
+        }
+
+        // IPv6 with brackets - `[::1]` or `[::1]:8080`
+        if let Some(rest) = raw.strip_prefix('[') {
+            let (addr, rest) = rest.split_once(']')?;
+
+            let port = rest
+                .strip_prefix(':')
+                .map(str::parse::<u16>)
+                .transpose()
+                .ok()?;
+
+            return Some(ParsedAddr {
+                ip_raw: addr,
+                parsed_ip: addr.parse().ok()?,
+                port,
+            });
+        }
+
+        // IPv4 with port
+        let (addr, port) = raw.rsplit_once(':')?;
+
+        // If the address contains `:`, then it's not a valid IPv4 or IPv6 address.
+        if addr.contains(':') {
+            return None;
+        }
+
+        Some(ParsedAddr {
+            ip_raw: addr,
+            parsed_ip: addr.parse().ok()?,
+            port: Some(port.parse().ok()?),
+        })
+    }
+
+    #[inline]
+    fn from(
+        name: &HeaderName,
+        value: &'a str,
+    ) -> impl DoubleEndedIterator<Item = ParsedAddr<'a>> + 'a {
+        let is_forwarded = name == FORWARDED;
+
+        value.split(',').filter_map(move |part| {
+            let value = if is_forwarded {
+                // Forwarded header values are of the form:
+                // `for=client-ip;proto=http;by=proxy-ip`
+                part.split(';').find_map(|kv| {
+                    let (key, value) = kv.trim().split_once('=')?;
+
+                    key.eq_ignore_ascii_case("for")
+                        .then_some(value.trim().trim_matches('"'))
+                })?
+            } else {
+                part
+            };
+
+            Self::parse_address(value)
+        })
+    }
+
+    #[inline]
+    fn is_trusted(ip: IpAddr, proxies: &[IpNetwork]) -> bool {
+        proxies.iter().any(|network| network.contains(&ip))
     }
 }

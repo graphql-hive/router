@@ -91,12 +91,16 @@ async fn test_otlp_http_export_with_graphql_request() {
       Kind: Server
       Status: message='' code='1'
       Attributes:
+        client.address: [address]
+        client.port: [port]
         hive.kind: http.server
         http.request.body.size: 45
         http.request.method: POST
         http.response.body.size: 86
         http.response.status_code: 200
         http.route: /graphql
+        network.peer.address: [address]
+        network.peer.port: [port]
         network.protocol.version: 1.1
         server.address: localhost
         server.port: [port]
@@ -348,12 +352,16 @@ async fn test_otlp_grpc_export_with_graphql_request() {
       Kind: Server
       Status: message='' code='1'
       Attributes:
+        client.address: [address]
+        client.port: [port]
         hive.kind: http.server
         http.request.body.size: 45
         http.request.method: POST
         http.response.body.size: 86
         http.response.status_code: 200
         http.route: /graphql
+        network.peer.address: [address]
+        network.peer.port: [port]
         network.protocol.version: 1.1
         server.address: localhost
         server.port: [port]

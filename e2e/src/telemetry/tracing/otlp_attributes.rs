@@ -67,6 +67,8 @@ async fn test_deprecated_span_attributes() {
       Kind: Server
       Status: message='' code='1'
       Attributes:
+        client.address: [address]
+        client.port: [port]
         hive.kind: http.server
         http.flavor: 1.1
         http.host: localhost
@@ -78,6 +80,8 @@ async fn test_deprecated_span_attributes() {
         http.status_code: 200
         http.target: /graphql
         http.url: /graphql
+        network.peer.address: [address]
+        network.peer.port: [port]
         server.port: [port]
         target: hive-router
     "
@@ -197,6 +201,8 @@ async fn test_spec_and_deprecated_span_attributes() {
       Kind: Server
       Status: message='' code='1'
       Attributes:
+        client.address: [address]
+        client.port: [port]
         hive.kind: http.server
         http.flavor: 1.1
         http.host: localhost
@@ -212,6 +218,8 @@ async fn test_spec_and_deprecated_span_attributes() {
         http.status_code: 200
         http.target: /graphql
         http.url: /graphql
+        network.peer.address: [address]
+        network.peer.port: [port]
         network.protocol.version: 1.1
         server.address: localhost
         server.port: [port]
