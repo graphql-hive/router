@@ -33,7 +33,7 @@ impl RequestContextTelemetryRead<'_> {
     }
 }
 
-impl<Plugin> RequestContextPluginRead<Plugin> {
+impl<Hook> RequestContextPluginRead<Hook> {
     /// Returns the telemetry metadata for reads.
     pub fn telemetry(&self) -> RequestContextTelemetryRead<'_> {
         RequestContextTelemetryRead {

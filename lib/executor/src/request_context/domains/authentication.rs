@@ -36,7 +36,7 @@ impl RequestContextAuthenticationRead<'_> {
     }
 }
 
-impl<Plugin> RequestContextPluginRead<Plugin> {
+impl<Hook> RequestContextPluginRead<Hook> {
     /// Returns the authentication read API.
     pub fn authentication(&self) -> RequestContextAuthenticationRead<'_> {
         RequestContextAuthenticationRead {
