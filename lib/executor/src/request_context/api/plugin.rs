@@ -58,7 +58,7 @@ impl<Hook: HookMarker> RequestContextPluginApi<Hook> {
     /// Acquires a write lock on the context.
     pub fn write(&self) -> Result<RequestContextPluginWrite<'_, Hook>, RequestContextError> {
         Ok(RequestContextPluginWrite {
-            context: self.context.lock()?,
+            context: self.context.read_lock()?,
             _hook: PhantomData,
         })
     }

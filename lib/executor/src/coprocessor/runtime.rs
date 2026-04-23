@@ -155,7 +155,7 @@ impl<A: Stage> StageRuntime<A> {
                 let context_patch = A::parse_json_body(&context_patch_json)?;
                 let patch: RequestContextPatch =
                     sonic_rs::from_str(context_patch.as_ref()).map_err(RequestContextError::Json)?;
-                let mut context = shared_context.lock()?;
+                let mut context = shared_context.read_lock()?;
                 context.for_coprocessor().apply_patch(patch)?;
             }
 

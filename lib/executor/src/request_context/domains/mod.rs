@@ -191,16 +191,16 @@ impl CustomContext {
 pub struct SharedRequestContext(Arc<Mutex<RequestContext>>);
 
 impl SharedRequestContext {
-    pub fn lock(&self) -> Result<MutexGuard<'_, RequestContext>, RequestContextError> {
+    pub fn read_lock(&self) -> Result<MutexGuard<'_, RequestContext>, RequestContextError> {
         self.0.lock().map_err(|_| RequestContextError::LockPoison)
     }
 
     pub fn snapshot(&self) -> Result<RequestContext, RequestContextError> {
-        Ok(self.lock()?.clone())
+        Ok(self.read_lock()?.clone())
     }
 
     pub fn update(&self, f: impl FnOnce(&mut RequestContext)) -> Result<(), RequestContextError> {
-        let mut context = self.lock()?;
+        let mut context = self.read_lock()?;
         f(&mut context);
         Ok(())
     }
