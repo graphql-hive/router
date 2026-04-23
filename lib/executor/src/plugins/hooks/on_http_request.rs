@@ -6,7 +6,10 @@ use ntex::{
 use crate::{
     plugin_context::PluginContext,
     plugin_trait::{EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
+    request_context::RequestContextPluginApi,
 };
+
+type RequestContextApi = RequestContextPluginApi<super::OnHttpRequest>;
 
 pub struct OnHttpRequestHookPayload<'req> {
     /// The raw incoming HTTP request to the router
@@ -35,7 +38,7 @@ pub struct OnHttpRequestHookPayload<'req> {
     /// use hive_router::{
     ///     plugins::hooks::{
     ///         on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
-    ///         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult}    
+    ///         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult}
     ///     },
     ///     plugin_context::PluginContext,
     ///     async_trait::async_trait,
@@ -65,6 +68,7 @@ pub struct OnHttpRequestHookPayload<'req> {
     /// }
     /// ```
     pub context: &'req PluginContext,
+    pub request_context: RequestContextApi,
 }
 
 impl<'req> StartHookPayload<OnHttpResponseHookPayload<'req>, Response>
@@ -82,6 +86,7 @@ pub type OnHttpRequestHookResult<'req> = StartHookResult<
 pub struct OnHttpResponseHookPayload<'req> {
     pub response: web::WebResponse,
     pub context: &'req PluginContext,
+    pub request_context: RequestContextApi,
 }
 
 impl<'req> OnHttpResponseHookPayload<'req> {

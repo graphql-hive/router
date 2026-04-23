@@ -1,0 +1,16 @@
+use hive_router::{
+    configure_global_allocator, error::RouterInitError, init_rustls_crypto_provider, ntex,
+    router_entrypoint, PluginRegistry, RouterGlobalAllocator,
+};
+
+use progressive_override_launchdarkly_plugin_example::plugin::ProgressiveOverrideLaunchDarklyPlugin;
+
+configure_global_allocator!();
+
+#[hive_router::main]
+async fn main() -> Result<(), RouterInitError> {
+    init_rustls_crypto_provider();
+
+    router_entrypoint(PluginRegistry::new().register::<ProgressiveOverrideLaunchDarklyPlugin>())
+        .await
+}

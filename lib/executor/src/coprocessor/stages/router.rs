@@ -14,12 +14,13 @@ use ntex::http::{
 use ntex::util::Bytes as NtexBytes;
 use ntex::web::{self, DefaultError};
 
-use crate::coprocessor::error::CoprocessorError;
 use crate::coprocessor::protocol::COPROCESSOR_VERSION;
 use crate::coprocessor::stage::{
     compile_condition, evaluate_condition, CoprocessorRequest, CoprocessorRequestBody,
     CoprocessorResponseBody, HeaderMapJsonRef, Stage, StageResponsePayload,
 };
+use crate::request_context::SelectedRequestContext;
+use crate::{coprocessor::error::CoprocessorError, request_context::SharedRequestContext};
 
 pub struct RouterRequestStage {
     condition: Option<BooleanOrProgram>,
@@ -118,7 +119,13 @@ impl Stage for RouterRequestStage {
         &self,
         input: &Self::Input<'_>,
         id: &'a str,
+        context: &SharedRequestContext,
     ) -> Result<CoprocessorRequest<'a>, CoprocessorError> {
+        let context_snapshot = if self.include.context.is_none() {
+            None
+        } else {
+            Some(context.snapshot()?)
+        };
         let body = if self.include.body {
             Some(
                 CoprocessorRequestBody::from(input.request_body.as_deref().unwrap_or_default())
@@ -143,7 +150,9 @@ impl Stage for RouterRequestStage {
                 .headers
                 .then(|| HeaderMapJsonRef(input.request.headers())),
             body,
-            context: self.include.context.then_some(sonic_rs::Value::new()),
+            context: context_snapshot
+                .as_ref()
+                .map(|ctx| ctx.as_selected(&self.include.context)),
         };
 
         Ok(CoprocessorRequest {
@@ -207,7 +216,13 @@ impl Stage for RouterResponseStage {
         &self,
         input: &Self::Input<'_>,
         id: &'a str,
+        context: &SharedRequestContext,
     ) -> Result<CoprocessorRequest<'a>, CoprocessorError> {
+        let context_snapshot = if self.include.context.is_none() {
+            None
+        } else {
+            Some(context.snapshot()?)
+        };
         let body = if self.include.body {
             match input.response.response().body() {
                 ResponseBody::Body(Body::Bytes(bytes)) => Some(
@@ -230,7 +245,9 @@ impl Stage for RouterResponseStage {
                 .headers
                 .then(|| HeaderMapJsonRef(input.response.response().headers())),
             body,
-            context: self.include.context.then_some(sonic_rs::Value::new()),
+            context: context_snapshot
+                .as_ref()
+                .map(|ctx| ctx.as_selected(&self.include.context)),
             status_code: self
                 .include
                 .status_code
@@ -293,7 +310,7 @@ struct RouterRequestPayload<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    context: Option<sonic_rs::Value>,
+    context: Option<SelectedRequestContext<'a>>,
 }
 
 #[derive(serde::Serialize)]
@@ -306,7 +323,7 @@ struct RouterResponsePayload<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    context: Option<sonic_rs::Value>,
+    context: Option<SelectedRequestContext<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     status_code: Option<u16>,
 }

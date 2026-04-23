@@ -1,9 +1,10 @@
 use bytes::Bytes as HyperBytes;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use hive_router_config::coprocessor::{
-    CoprocessorGraphqlRequestIncludeConfig, CoprocessorGraphqlResponseIncludeConfig,
-    CoprocessorHookConfig, CoprocessorRouterRequestIncludeConfig,
-    CoprocessorRouterResponseIncludeConfig, GraphqlBodySelection,
+    ContextSelection, CoprocessorGraphqlRequestIncludeConfig,
+    CoprocessorGraphqlResponseIncludeConfig, CoprocessorHookConfig,
+    CoprocessorRouterRequestIncludeConfig, CoprocessorRouterResponseIncludeConfig,
+    GraphqlBodySelection,
 };
 use hive_router_plan_executor::coprocessor::stage::Stage;
 use hive_router_plan_executor::coprocessor::stages::graphql::{
@@ -13,6 +14,7 @@ use hive_router_plan_executor::coprocessor::stages::router::{
     RouterRequestInput, RouterRequestStage, RouterResponseInput, RouterResponseStage,
 };
 use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
+use hive_router_plan_executor::request_context::SharedRequestContext;
 use ntex::http::header::{HeaderName, HeaderValue};
 use ntex::http::StatusCode;
 use ntex::util::Bytes as NtexBytes;
@@ -32,13 +34,19 @@ const GRAPHQL_BREAK_RESPONSE_JSON: &[u8] = br#"{"version":1,"control":{"break":2
 fn run_stage<'a, 'b, S>(
     stage: &S,
     mut input: S::Input<'a>,
+    context: &'a SharedRequestContext,
     response_bytes: &'b HyperBytes,
     id: &'a str,
 ) where
     S: Stage,
 {
-    let request = <S as Stage>::build_request(black_box(stage), black_box(&input), black_box(id))
-        .expect("build_request should succeed");
+    let request = <S as Stage>::build_request(
+        black_box(stage),
+        black_box(&input),
+        black_box(id),
+        black_box(context),
+    )
+    .expect("build_request should succeed");
     black_box(request);
 
     let parsed = <S as Stage>::parse_response(black_box(stage), black_box(response_bytes))
@@ -138,7 +146,7 @@ fn bench_router_request_stage(c: &mut Criterion) {
         condition: None,
         include: CoprocessorRouterRequestIncludeConfig {
             body: true,
-            context: true,
+            context: ContextSelection::all(),
             headers: true,
             method: true,
             path: true,
@@ -153,11 +161,13 @@ fn bench_router_request_stage(c: &mut Criterion) {
             || make_web_request(ntex::http::Method::GET, "/graphql", b"", 8),
             |req| {
                 let input = RouterRequestInput::new(req, None);
+                let context = SharedRequestContext::default();
                 let response_bytes = HyperBytes::from_static(MINIMAL_CONTINUE_RESPONSE_JSON);
                 let id = "id";
                 run_stage(
                     black_box(&minimal_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -172,11 +182,13 @@ fn bench_router_request_stage(c: &mut Criterion) {
             || make_web_request(ntex::http::Method::POST, "/graphql", BODY, 32),
             |req| {
                 let input = RouterRequestInput::new(req, Some(NtexBytes::from_static(BODY)));
+                let context = SharedRequestContext::default();
                 let response_bytes = HyperBytes::from_static(CONTINUE_RESPONSE_JSON);
                 let id = "id";
                 run_stage(
                     black_box(&full_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -190,11 +202,13 @@ fn bench_router_request_stage(c: &mut Criterion) {
             || make_web_request(ntex::http::Method::GET, "/graphql", b"", 8),
             |req| {
                 let input = RouterRequestInput::new(req, None);
+                let context = SharedRequestContext::default();
                 let response_bytes = HyperBytes::from_static(MINIMAL_BREAK_RESPONSE_JSON);
                 let id = "id";
                 run_stage(
                     black_box(&minimal_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -209,11 +223,13 @@ fn bench_router_request_stage(c: &mut Criterion) {
             || make_web_request(ntex::http::Method::POST, "/graphql", BODY, 32),
             |req| {
                 let input = RouterRequestInput::new(req, Some(NtexBytes::from_static(BODY)));
+                let context = SharedRequestContext::default();
                 let response_bytes = HyperBytes::from_static(BREAK_RESPONSE_JSON);
                 let id = "id";
                 run_stage(
                     black_box(&full_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -236,7 +252,7 @@ fn bench_router_response_stage(c: &mut Criterion) {
         condition: None,
         include: CoprocessorRouterResponseIncludeConfig {
             body: true,
-            context: true,
+            context: ContextSelection::all(),
             headers: true,
             status_code: true,
         },
@@ -250,11 +266,13 @@ fn bench_router_response_stage(c: &mut Criterion) {
             || make_web_response(ntex::http::StatusCode::OK, "", 8),
             |response| {
                 let input = RouterResponseInput::new(response);
+                let context = SharedRequestContext::default();
                 let response_bytes = HyperBytes::from_static(MINIMAL_CONTINUE_RESPONSE_JSON);
                 let id = "id";
                 run_stage(
                     black_box(&minimal_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -274,11 +292,13 @@ fn bench_router_response_stage(c: &mut Criterion) {
             },
             |response| {
                 let input = RouterResponseInput::new(response);
+                let context = SharedRequestContext::default();
                 let response_bytes = HyperBytes::from_static(CONTINUE_RESPONSE_JSON);
                 let id = "id";
                 run_stage(
                     black_box(&full_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -292,11 +312,13 @@ fn bench_router_response_stage(c: &mut Criterion) {
             || make_web_response(ntex::http::StatusCode::OK, "", 8),
             |response| {
                 let input = RouterResponseInput::new(response);
+                let context = SharedRequestContext::default();
                 let response_bytes = HyperBytes::from_static(MINIMAL_BREAK_RESPONSE_JSON);
                 let id = "id";
                 run_stage(
                     black_box(&minimal_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -316,11 +338,13 @@ fn bench_router_response_stage(c: &mut Criterion) {
             },
             |response| {
                 let input = RouterResponseInput::new(response);
+                let context = SharedRequestContext::default();
                 let response_bytes = HyperBytes::from_static(BREAK_RESPONSE_JSON);
                 let id = "id";
                 run_stage(
                     black_box(&full_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -342,7 +366,7 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
         condition: None,
         include: CoprocessorGraphqlRequestIncludeConfig {
             body: GraphqlBodySelection::all(),
-            context: true,
+            context: ContextSelection::all(),
             headers: true,
             method: true,
             path: true,
@@ -359,6 +383,7 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
             |request| {
                 let mut request_headers = request.headers().clone();
                 let mut graphql_params = GraphQLParams::default();
+                let context = SharedRequestContext::default();
                 let input = GraphqlRequestInput::new(
                     &request,
                     &mut request_headers,
@@ -371,6 +396,7 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
                 run_stage(
                     black_box(&minimal_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -385,6 +411,7 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
             |request| {
                 let mut request_headers = request.headers().clone();
                 let mut graphql_params = make_graphql_params();
+                let context = SharedRequestContext::default();
                 let input = GraphqlRequestInput::new(
                     &request,
                     &mut request_headers,
@@ -397,6 +424,7 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
                 run_stage(
                     black_box(&full_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -411,6 +439,7 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
             |request| {
                 let mut request_headers = request.headers().clone();
                 let mut graphql_params = GraphQLParams::default();
+                let context = SharedRequestContext::default();
                 let input = GraphqlRequestInput::new(
                     &request,
                     &mut request_headers,
@@ -423,6 +452,7 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
                 run_stage(
                     black_box(&minimal_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -437,6 +467,7 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
             |request| {
                 let mut request_headers = request.headers().clone();
                 let mut graphql_params = make_graphql_params();
+                let context = SharedRequestContext::default();
                 let input = GraphqlRequestInput::new(
                     &request,
                     &mut request_headers,
@@ -449,6 +480,7 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
                 run_stage(
                     black_box(&full_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -470,7 +502,7 @@ fn bench_graphql_response_stage(c: &mut Criterion) {
         condition: None,
         include: CoprocessorGraphqlResponseIncludeConfig {
             body: true,
-            context: true,
+            context: ContextSelection::all(),
             headers: true,
             sdl: false,
             status_code: true,
@@ -486,6 +518,7 @@ fn bench_graphql_response_stage(c: &mut Criterion) {
         b.iter_batched(
             || make_graphql_http_response(StatusCode::OK, b"{\"data\":{}}", 8),
             |graphql_response| {
+                let context = SharedRequestContext::default();
                 let input = GraphqlResponseInput::new(graphql_response, &request, None);
 
                 let response_bytes = HyperBytes::from_static(MINIMAL_CONTINUE_RESPONSE_JSON);
@@ -493,6 +526,7 @@ fn bench_graphql_response_stage(c: &mut Criterion) {
                 run_stage(
                     black_box(&minimal_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -505,6 +539,7 @@ fn bench_graphql_response_stage(c: &mut Criterion) {
         b.iter_batched(
             || make_graphql_http_response(StatusCode::OK, b"{\"data\":{\"hello\":\"world\"}}", 32),
             |graphql_response| {
+                let context = SharedRequestContext::default();
                 let input = GraphqlResponseInput::new(graphql_response, &request, None);
 
                 let response_bytes = HyperBytes::from_static(CONTINUE_RESPONSE_JSON);
@@ -512,6 +547,7 @@ fn bench_graphql_response_stage(c: &mut Criterion) {
                 run_stage(
                     black_box(&full_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -524,6 +560,7 @@ fn bench_graphql_response_stage(c: &mut Criterion) {
         b.iter_batched(
             || make_graphql_http_response(StatusCode::OK, b"{\"data\":{}}", 8),
             |graphql_response| {
+                let context = SharedRequestContext::default();
                 let input = GraphqlResponseInput::new(graphql_response, &request, None);
 
                 let response_bytes = HyperBytes::from_static(MINIMAL_BREAK_RESPONSE_JSON);
@@ -531,6 +568,7 @@ fn bench_graphql_response_stage(c: &mut Criterion) {
                 run_stage(
                     black_box(&minimal_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );
@@ -543,6 +581,7 @@ fn bench_graphql_response_stage(c: &mut Criterion) {
         b.iter_batched(
             || make_graphql_http_response(StatusCode::OK, b"{\"data\":{\"hello\":\"world\"}}", 32),
             |graphql_response| {
+                let context = SharedRequestContext::default();
                 let input = GraphqlResponseInput::new(graphql_response, &request, None);
 
                 let response_bytes = HyperBytes::from_static(GRAPHQL_BREAK_RESPONSE_JSON);
@@ -550,6 +589,7 @@ fn bench_graphql_response_stage(c: &mut Criterion) {
                 run_stage(
                     black_box(&full_stage),
                     black_box(input),
+                    black_box(&context),
                     black_box(&response_bytes),
                     black_box(id),
                 );

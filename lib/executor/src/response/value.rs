@@ -4,7 +4,7 @@ use serde::{
     de::{self, Deserializer, MapAccess, SeqAccess, Visitor},
     ser::{SerializeMap, SerializeSeq},
 };
-use sonic_rs::{JsonNumberTrait, ValueRef};
+use sonic_rs::{JsonNumberTrait, Value as SonicValue, ValueRef};
 use std::{
     borrow::Cow,
     fmt::Display,
@@ -25,6 +25,12 @@ pub enum Value<'a> {
     String(Cow<'a, str>),
     Array(Vec<Value<'a>>),
     Object(Vec<(&'a str, Value<'a>)>),
+}
+
+impl<'a> AsRef<Value<'a>> for Value<'a> {
+    fn as_ref(&self) -> &Value<'a> {
+        self
+    }
 }
 
 impl Hash for Value<'_> {
@@ -377,6 +383,40 @@ impl serde::Serialize for Value<'_> {
                 }
                 map.end()
             }
+        }
+    }
+}
+
+impl From<&Value<'_>> for SonicValue {
+    fn from(value: &Value) -> Self {
+        match value {
+            Value::Null => SonicValue::new_null(),
+            Value::Bool(b) => (*b).into(),
+            Value::F64(f) => match SonicValue::new_f64(*f) {
+                Some(num) => num,
+                None => SonicValue::new_null(),
+            },
+            Value::I64(n) => (*n).into(),
+            Value::U64(n) => (*n).into(),
+            Value::Array(l) => {
+                let mut array_value = SonicValue::new_array_with(l.len());
+
+                for val in l.iter() {
+                    array_value.append_value(val.into());
+                }
+
+                array_value
+            }
+            Value::Object(o) => {
+                let mut object_value = SonicValue::new_object_with(o.len());
+
+                for (k, v) in o.iter() {
+                    object_value.insert(k, v.into());
+                }
+
+                object_value
+            }
+            Value::String(s) => SonicValue::from(s.as_ref()),
         }
     }
 }

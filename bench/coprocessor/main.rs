@@ -14,7 +14,8 @@ use tokio::{fs, net::UnixListener};
 
 const DEFAULT_SOCKET_PATH: &str = "/tmp/hive-bench-coprocessor.sock";
 const DEFAULT_COPROCESSOR_PATH: &str = "/coprocessor";
-const CONTINUE_RESPONSE: &[u8] = br#"{"version":1,"control":"continue"}"#;
+const CONTINUE_RESPONSE: &[u8] =
+    br#"{"version":1,"control":"continue","context":{"custom::a":"bench-coprocessor"}}"#;
 
 #[tokio::main]
 async fn main() {
@@ -79,9 +80,13 @@ async fn handle_request(
         return Ok(response(StatusCode::NOT_FOUND, &[]));
     }
 
-    let mut body = request.into_body();
-    while let Some(Ok(_)) = body.frame().await {}
-
+    let _ = match request.into_body().collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(err) => {
+            eprintln!("failed to read request body: {err}");
+            return Ok(response(StatusCode::BAD_REQUEST, &[]));
+        }
+    };
     Ok(response(StatusCode::OK, CONTINUE_RESPONSE))
 }
 

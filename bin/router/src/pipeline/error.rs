@@ -10,6 +10,7 @@ use hive_router_plan_executor::{
     },
     headers::errors::HeaderRuleRuntimeError,
     hooks::on_graphql_error::handle_graphql_errors_with_plugins,
+    request_context::RequestContextError,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
@@ -165,6 +166,9 @@ pub enum PipelineError {
 
     #[error(transparent)]
     CoprocessorError(#[from] CoprocessorError),
+
+    #[error("Request context error")]
+    RequestContextError(#[from] RequestContextError),
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -205,6 +209,7 @@ impl PipelineError {
     pub fn graphql_error_message(&self) -> String {
         match self {
             Self::PlannerError(_) => "Unexpected error".to_string(),
+            Self::CoprocessorError(_) => "Internal server error".to_string(),
             _ => self.to_string(),
         }
     }
@@ -256,6 +261,7 @@ impl PipelineError {
             (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
             (Self::CoprocessorError(err), _) => err.status_code(),
+            (Self::RequestContextError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

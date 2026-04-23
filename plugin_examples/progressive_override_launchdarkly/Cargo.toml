@@ -1,0 +1,21 @@
+[package]
+name = "progressive-override-launchdarkly-plugin-example"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+authors = ["The Guild"]
+repository = "https://github.com/graphql-hive/router"
+homepage = "https://github.com/graphql-hive/router"
+publish = false
+
+[lib]
+
+[[bin]]
+name = "hive_router_with_progressive_override_launchdarkly"
+path = "src/main.rs"
+
+[dependencies]
+hive-router = { version = "*", path = "../../bin/router" }
+launchdarkly-server-sdk = "3"
+serde = { workspace = true }
+tokio = { workspace = true }

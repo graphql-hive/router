@@ -21,6 +21,9 @@ use crate::coprocessor::stages::router::{
 };
 use crate::execution::plan::FailedExecutionResult;
 use crate::plugins::hooks::on_graphql_params::GraphQLParams;
+use crate::request_context::{
+    RequestContextError, RequestContextExt, RequestContextPatch, SharedRequestContext,
+};
 use crate::response::graphql_error::GraphQLError;
 
 pub struct CoprocessorRuntime {
@@ -36,6 +39,7 @@ pub struct CoprocessorRuntime {
 pub struct PerformedMutations {
     pub body: bool,
     pub headers: bool,
+    pub context: bool,
 }
 
 struct StageRuntime<S: Stage> {
@@ -66,8 +70,9 @@ impl<A: Stage> StageRuntime<A> {
     async fn execute<'a>(
         &self,
         input: &mut A::Input<'a>,
+        shared_context: &SharedRequestContext,
     ) -> Result<ControlFlow<web::HttpResponse, PerformedMutations>, CoprocessorError> {
-        let result = self.execute_internal(input).await;
+        let result = self.execute_internal(input, shared_context).await;
 
         if result.is_err() {
             let stage_name = self.stage.stage_name();
@@ -81,6 +86,7 @@ impl<A: Stage> StageRuntime<A> {
     async fn execute_internal<'a>(
         &self,
         input: &mut A::Input<'a>,
+        shared_context: &SharedRequestContext,
     ) -> Result<ControlFlow<web::HttpResponse, PerformedMutations>, CoprocessorError> {
         let mut performed_mutations = PerformedMutations::default();
 
@@ -101,20 +107,14 @@ impl<A: Stage> StageRuntime<A> {
           // Build stage payload and call the coprocessor
           // TODO: Include `request_id` in coprocessor payloads for log correlation
           //       once Dotan's logging PR is merged.
-          let request = self.stage.build_request(input, &id).map_err(|err| {
-              error!(%err, coprocessor.stage = stage_name, "Coprocessor failed to build request");
-              err
-          })?;
+          let request = self.stage.build_request(input, &id, shared_context)?;
             debug!(
                 coprocessor.id = %id,
                 coprocessor.stage = stage_name,
                 "Sending coprocessor request"
             );
 
-            let response = self.client.send(request.body).await.map_err(|err| {
-                error!(%err, coprocessor.id = %id, coprocessor.stage = stage_name, "Coprocessor request failed");
-                err
-            })?;
+            let response = self.client.send(request.body).await?;
 
             metrics.record_duration(stage_name, start.elapsed().as_secs_f64());
 
@@ -123,10 +123,7 @@ impl<A: Stage> StageRuntime<A> {
             }
 
             // Parse the response
-            let mut parsed = self.stage.parse_response(response.body()).map_err(|err| {
-                error!(%err, coprocessor.id = %id, coprocessor.stage = stage_name, "Coprocessor failed to parse response");
-                err
-            })?;
+            let mut parsed = self.stage.parse_response(response.body())?;
 
             if parsed.body.is_some() {
                 performed_mutations.body = true;
@@ -134,7 +131,6 @@ impl<A: Stage> StageRuntime<A> {
             if parsed.headers.is_some() {
                 performed_mutations.headers = true;
             }
-
             // Handle possible break decision first
             match self.stage.break_output(parsed) {
                 Ok(ControlFlow::Continue(p)) => {
@@ -150,32 +146,41 @@ impl<A: Stage> StageRuntime<A> {
                     return Ok(ControlFlow::Break(response));
                 }
                 Err(err) => {
-                    error!(%err, coprocessor.id = %id, coprocessor.stage = stage_name, "Coprocessor failed to break output");
                     return Err(err);
                 }
             }
 
-            if performed_mutations.body || performed_mutations.headers {
-                info!(
+            if let Some(context_patch_json) = parsed.context.take() {
+                performed_mutations.context = true;
+                let context_patch = A::parse_json_body(&context_patch_json)?;
+                let patch: RequestContextPatch =
+                    sonic_rs::from_str(context_patch.as_ref()).map_err(RequestContextError::Json)?;
+                let mut context = shared_context.read_lock()?;
+                context.for_coprocessor().apply_patch(patch)?;
+            }
+
+            if performed_mutations.body || performed_mutations.headers || performed_mutations.context {
+                debug!(
                     coprocessor.id = %id,
                     coprocessor.stage = stage_name,
                     body = performed_mutations.body,
                     headers = performed_mutations.headers,
+                    context = performed_mutations.context,
                     "Coprocessor mutated the request"
                 );
             }
 
             // Apply mutations only when flow continues
-            self.stage.apply_mutations(parsed, input).map_err(|err| {
-                error!(%err, coprocessor.id = %id, coprocessor.stage = stage_name, "Coprocessor failed to apply mutations");
-                err
-            })?;
+            self.stage.apply_mutations(parsed, input)?;
 
             // Continue the pipeline.
             Ok(ControlFlow::Continue(performed_mutations))
         }
         .instrument(span)
         .await
+        .inspect_err(|err| {
+          error!(%err, coprocessor.id = %id, coprocessor.stage = stage_name, "Coprocessor failure");
+        })
     }
 }
 
@@ -245,27 +250,6 @@ impl CoprocessorRuntime {
         })
     }
 
-    pub fn graphql_request_needs_sdl(&self) -> bool {
-        self.graphql_request
-            .as_ref()
-            .map(|stage| stage.stage.include_sdl())
-            .unwrap_or(false)
-    }
-
-    pub fn graphql_response_needs_sdl(&self) -> bool {
-        self.graphql_response
-            .as_ref()
-            .map(|stage| stage.stage.include_sdl())
-            .unwrap_or(false)
-    }
-
-    pub fn graphql_analysis_needs_sdl(&self) -> bool {
-        self.graphql_analysis
-            .as_ref()
-            .map(|stage| stage.stage.include_sdl())
-            .unwrap_or(false)
-    }
-
     pub async fn on_router_request(
         &self,
         mut req: web::WebRequest<DefaultError>,
@@ -294,15 +278,27 @@ impl CoprocessorRuntime {
             None
         };
 
-        let mut input = RouterRequestInput::new(req, request_body);
+        let shared_context = match req.read_request_context() {
+            Ok(context) => context,
+            Err(error) => {
+                let error = CoprocessorError::from(error);
+                let response =
+                    build_router_stage_error_response(error.status_code(), error.error_code());
+                return ControlFlow::Break(req.into_response(response));
+            }
+        };
 
-        match stage.execute(&mut input).await.unwrap_or_else(|err| {
+        let mut input = RouterRequestInput::new(req, request_body);
+        match stage
+            .execute(&mut input, &shared_context)
+            .await
+            .unwrap_or_else(|err| {
             error!(%err, coprocessor.stage = stage.stage.stage_name(), "coprocessor stage failed");
             ControlFlow::Break(build_router_stage_error_response(
                 err.status_code(),
                 err.error_code(),
             ))
-        }) {
+            }) {
             ControlFlow::Continue(_) => {
                 // On continue, restore the original body only when coprocessor did not replace it
                 input.restore_request_body_if_unchanged();
@@ -320,10 +316,20 @@ impl CoprocessorRuntime {
             return response;
         };
 
+        let shared_context = match response.request().read_request_context() {
+            Ok(context) => context,
+            Err(error) => {
+                let error = CoprocessorError::from(error);
+                let fallback =
+                    build_router_stage_error_response(error.status_code(), error.error_code());
+                return response.into_response(fallback);
+            }
+        };
+
         let mut input = RouterResponseInput::new(response);
 
         match stage
-            .execute(&mut input)
+            .execute(&mut input, &shared_context)
             .await
             .unwrap_or_else(|err| error_to_break(stage, err))
         {
@@ -337,45 +343,56 @@ impl CoprocessorRuntime {
         request: &web::HttpRequest,
         request_headers: &mut HeaderMap,
         graphql_request: &mut GraphQLParams,
-        sdl: Option<&str>,
+        sdl_fn: impl FnOnce() -> Arc<str>,
     ) -> Result<ControlFlow<web::HttpResponse, PerformedMutations>, CoprocessorError> {
         let Some(stage) = &self.graphql_request else {
             return Ok(ControlFlow::Continue(Default::default()));
         };
 
-        let mut input = GraphqlRequestInput::new(request, request_headers, graphql_request, sdl);
-        stage.execute(&mut input).await
-    }
-
-    pub async fn on_graphql_response(
-        &self,
-        response: web::HttpResponse,
-        request: &web::HttpRequest,
-        sdl: Option<&str>,
-    ) -> Result<ControlFlow<web::HttpResponse, web::HttpResponse>, CoprocessorError> {
-        let Some(stage) = &self.graphql_response else {
-            return Ok(ControlFlow::Continue(response));
-        };
-
-        let mut input = GraphqlResponseInput::new(response, request, sdl);
-        Ok(stage
-            .execute(&mut input)
-            .await?
-            .map_continue(|_| input.response))
+        let shared_context = request.read_request_context()?;
+        let sdl = stage.stage.include_sdl().then(sdl_fn);
+        let mut input =
+            GraphqlRequestInput::new(request, request_headers, graphql_request, sdl.as_deref());
+        stage.execute(&mut input, &shared_context).await
     }
 
     pub async fn on_graphql_analysis(
         &self,
         request: MutableRequestState<'_>,
         graphql_request: &GraphQLParams,
-        sdl: Option<&str>,
+        context: &SharedRequestContext,
+        sdl_fn: impl FnOnce() -> Arc<str>,
     ) -> Result<ControlFlow<web::HttpResponse, PerformedMutations>, CoprocessorError> {
         let Some(stage) = &self.graphql_analysis else {
             return Ok(ControlFlow::Continue(Default::default()));
         };
 
-        let mut input = GraphqlAnalysisInput::new(request, graphql_request, sdl);
-        stage.execute(&mut input).await
+        let sdl = stage.stage.include_sdl().then(sdl_fn);
+        let mut input = GraphqlAnalysisInput::new(request, graphql_request, sdl.as_deref());
+        stage.execute(&mut input, context).await
+    }
+
+    pub async fn on_graphql_response(
+        &self,
+        response: web::HttpResponse,
+        request: &web::HttpRequest,
+        // We return `Option<T>` instead of `T`, because of error handling of the caller.
+        // If I would return `T`, the caller would have to be wrapped with duplicated
+        // error handling logic.
+        // With `Option<T>`, the coprocessor runtime handles the case where sdl is not available.
+        sdl_fn: impl FnOnce() -> Option<Arc<str>>,
+    ) -> Result<ControlFlow<web::HttpResponse, web::HttpResponse>, CoprocessorError> {
+        let Some(stage) = &self.graphql_response else {
+            return Ok(ControlFlow::Continue(response));
+        };
+
+        let sdl = stage.stage.include_sdl().then(sdl_fn).flatten();
+        let shared_context = request.read_request_context()?;
+        let mut input = GraphqlResponseInput::new(response, request, sdl.as_deref());
+        Ok(stage
+            .execute(&mut input, &shared_context)
+            .await?
+            .map_continue(|_| input.response))
     }
 }
 

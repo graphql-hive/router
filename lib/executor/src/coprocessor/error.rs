@@ -5,6 +5,8 @@ use http::uri::InvalidUri;
 use ntex::http::error::PayloadError;
 use strum::IntoStaticStr;
 
+use crate::request_context::RequestContextError;
+
 #[derive(thiserror::Error, Debug, IntoStaticStr)]
 pub enum CoprocessorError {
     #[error("coprocessor protocol '{0:?}' is not supported")]
@@ -109,6 +111,14 @@ pub enum CoprocessorError {
         stage: &'static str,
         field: &'static str,
     },
+
+    #[error("coprocessor {stage} stage cannot mutate context key '{key}'")]
+    #[strum(serialize = "COPROCESSOR_FORBIDDEN_CONTEXT_MUTATION_ERROR")]
+    ForbiddenContextMutation { stage: &'static str, key: String },
+
+    #[error("request context error: {0}")]
+    #[strum(serialize = "REQUEST_CONTEXT_ERROR")]
+    RequestContextError(#[from] RequestContextError),
 
     #[error("invalid body returned by coprocessor {stage} stage, expected {expected}: {reason}")]
     #[strum(serialize = "COPROCESSOR_INVALID_STAGE_BODY_ERROR")]
