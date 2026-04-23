@@ -52,13 +52,60 @@ pub(crate) trait RequestContextDomain {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct RequestContext {
-    pub operation: OperationContext,
-    pub progressive_override: ProgressiveOverrideContext,
-    pub authentication: AuthenticationContext,
-    pub telemetry: TelemetryContext,
-    pub custom: CustomContext,
+macro_rules! reserved_domains {
+    ($($name:ident: $type:ty),* $(,)?) => {
+        #[derive(Debug, Clone, Default)]
+        pub struct RequestContext {
+            $(pub $name: $type,)*
+            pub custom: CustomContext,
+        }
+
+        impl RequestContext {
+            pub(crate) fn try_set_reserved_key(
+                &mut self,
+                key: &str,
+                value: Value,
+            ) -> Result<bool, RequestContextError> {
+                $(
+                    if self.$name.is_applicable(key) {
+                        self.$name.set_key_value(key, value)?;
+                        return Ok(true);
+                    }
+                )*
+                Ok(false)
+            }
+
+            pub(crate) fn reserved_serialized_len(&self) -> usize {
+                0 $(+ self.$name.serialized_len())*
+            }
+
+            pub(crate) fn serialize_all_reserved<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error> {
+                $(self.$name.serialize_all(map)?;)*
+                Ok(())
+            }
+
+            pub(crate) fn try_serialize_reserved_entry<S: SerializeMap>(
+                &self,
+                key: &str,
+                map: &mut S,
+            ) -> Result<bool, S::Error> {
+                $(
+                    if self.$name.is_applicable(key) {
+                        self.$name.serialize_entry(key, map)?;
+                        return Ok(true);
+                    }
+                )*
+                Ok(false)
+            }
+        }
+    };
+}
+
+reserved_domains! {
+    operation: OperationContext,
+    progressive_override: ProgressiveOverrideContext,
+    authentication: AuthenticationContext,
+    telemetry: TelemetryContext,
 }
 
 #[derive(Debug, Clone, Default)]

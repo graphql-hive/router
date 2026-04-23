@@ -1,4 +1,4 @@
-use super::super::domains::{RequestContext, RequestContextDomain, HIVE_PREFIX};
+use super::super::domains::{RequestContext, HIVE_PREFIX};
 use super::super::error::RequestContextError;
 
 use crate::response::value::Value as ResponseValue;
@@ -27,24 +27,10 @@ impl RequestContextCoprocessorApi<'_> {
             return Ok(());
         }
 
-        if self.context.operation.is_applicable(key) {
-            self.context
-                .operation
-                .set_key_value(key, value.as_ref().into())?;
-            return Ok(());
-        }
-
-        if self.context.progressive_override.is_applicable(key) {
-            self.context
-                .progressive_override
-                .set_key_value(key, value.as_ref().into())?;
-            return Ok(());
-        }
-
-        if self.context.authentication.is_applicable(key) {
-            self.context
-                .authentication
-                .set_key_value(key, value.as_ref().into())?;
+        if self
+            .context
+            .try_set_reserved_key(key, value.as_ref().into())?
+        {
             return Ok(());
         }
 

@@ -2,7 +2,6 @@ use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 
-use super::domains::RequestContextDomain;
 use super::error::RequestContextError;
 use super::{RequestContext, SelectedRequestContext};
 
@@ -56,17 +55,10 @@ impl Serialize for RequestContext {
     where
         S: Serializer,
     {
-        let mut len = self.custom.size();
-        len += self.operation.serialized_len();
-        len += self.progressive_override.serialized_len();
-        len += self.authentication.serialized_len();
-        len += self.telemetry.serialized_len();
+        let len = self.custom.size() + self.reserved_serialized_len();
 
         let mut map = serializer.serialize_map(Some(len))?;
-        self.operation.serialize_all(&mut map)?;
-        self.progressive_override.serialize_all(&mut map)?;
-        self.authentication.serialize_all(&mut map)?;
-        self.telemetry.serialize_all(&mut map)?;
+        self.serialize_all_reserved(&mut map)?;
         for (key, value) in self.custom.iter() {
             map.serialize_entry(key, value)?;
         }
@@ -88,25 +80,7 @@ impl Serialize for SelectedRequestContext<'_> {
         let mut map = serializer.serialize_map(Some(keys.len()))?;
 
         for key in keys {
-            if self.context.operation.is_applicable(key) {
-                self.context.operation.serialize_entry(key, &mut map)?;
-                continue;
-            }
-
-            if self.context.progressive_override.is_applicable(key) {
-                self.context
-                    .progressive_override
-                    .serialize_entry(key, &mut map)?;
-                continue;
-            }
-
-            if self.context.authentication.is_applicable(key) {
-                self.context.authentication.serialize_entry(key, &mut map)?;
-                continue;
-            }
-
-            if self.context.telemetry.is_applicable(key) {
-                self.context.telemetry.serialize_entry(key, &mut map)?;
+            if self.context.try_serialize_reserved_entry(key, &mut map)? {
                 continue;
             }
 
