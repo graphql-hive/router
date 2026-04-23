@@ -55,10 +55,6 @@ impl<Hook> RequestContextPluginRead<Hook> {
 impl RequestContextDomain for OperationContext {
     const DOMAIN_PREFIX: &'static str = "hive::operation::";
 
-    fn serialized_len(&self) -> usize {
-        usize::from(self.name.is_some()) + usize::from(self.kind.is_some())
-    }
-
     fn set_key_value(&mut self, key: &str, _value: Value) -> Result<(), RequestContextError> {
         match key {
             OPERATION_NAME_KEY => self.forbidden_mutation(key),
@@ -67,17 +63,8 @@ impl RequestContextDomain for OperationContext {
         }
     }
 
-    fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error> {
-        self.serialize_optional_entry(map, OPERATION_NAME_KEY, self.name.as_ref())?;
-        self.serialize_optional_entry(map, OPERATION_KIND_KEY, self.kind.as_ref())?;
-        Ok(())
-    }
-
-    fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error> {
-        match key {
-            OPERATION_NAME_KEY => self.serialize_optional_entry(map, key, self.name.as_ref()),
-            OPERATION_KIND_KEY => self.serialize_optional_entry(map, key, self.kind.as_ref()),
-            _ => Ok(()),
-        }
-    }
+    super::impl_domain_serde!(
+        OPERATION_NAME_KEY => name,
+        OPERATION_KIND_KEY => kind,
+    );
 }

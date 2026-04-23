@@ -100,11 +100,6 @@ impl<Hook: CanWriteProgressiveOverride> RequestContextPluginWrite<'_, Hook> {
 impl RequestContextDomain for ProgressiveOverrideContext {
     const DOMAIN_PREFIX: &'static str = "hive::progressive_override::";
 
-    fn serialized_len(&self) -> usize {
-        usize::from(self.unresolved_labels.is_some())
-            + usize::from(self.labels_to_override.is_some())
-    }
-
     fn set_key_value(&mut self, key: &str, value: Value) -> Result<(), RequestContextError> {
         match key {
             UNRESOLVED_LABELS_KEY => self.forbidden_mutation(key),
@@ -113,25 +108,8 @@ impl RequestContextDomain for ProgressiveOverrideContext {
         }
     }
 
-    fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error> {
-        self.serialize_optional_entry(map, UNRESOLVED_LABELS_KEY, self.unresolved_labels.as_ref())?;
-        self.serialize_optional_entry(
-            map,
-            LABELS_TO_OVERRIDE_KEY,
-            self.labels_to_override.as_ref(),
-        )?;
-        Ok(())
-    }
-
-    fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error> {
-        match key {
-            UNRESOLVED_LABELS_KEY => {
-                self.serialize_optional_entry(map, key, self.unresolved_labels.as_ref())
-            }
-            LABELS_TO_OVERRIDE_KEY => {
-                self.serialize_optional_entry(map, key, self.labels_to_override.as_ref())
-            }
-            _ => Ok(()),
-        }
-    }
+    super::impl_domain_serde!(
+        UNRESOLVED_LABELS_KEY => unresolved_labels,
+        LABELS_TO_OVERRIDE_KEY => labels_to_override,
+    );
 }

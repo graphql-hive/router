@@ -74,6 +74,36 @@ pub(crate) trait RequestContextDomain {
     }
 }
 
+/// Implements serialization for a domain struct using the provided key-value pairs.
+macro_rules! impl_domain_serde {
+    ($( $key_const:ident => $field:ident ),+ $(,)?) => {
+        // Goes over each field and counts how many are present
+        fn serialized_len(&self) -> usize {
+            0 $(+ usize::from(self.$field.is_some()))+
+        }
+
+        // Serializes all present fields into the map.
+        fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error> {
+            $(
+                self.serialize_optional_entry(map, $key_const, self.$field.as_ref())?;
+            )+
+            Ok(())
+        }
+
+        // Serializes a single field by key, if present.
+        fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error> {
+            match key {
+                $(
+                    $key_const => self.serialize_optional_entry(map, key, self.$field.as_ref()),
+                )+
+                _ => Ok(()),
+            }
+        }
+    };
+}
+
+pub(crate) use impl_domain_serde;
+
 macro_rules! reserved_domains {
     ($($name:ident: $type:ty),* $(,)?) => {
         /// The root request context structure.

@@ -48,10 +48,6 @@ impl<Hook> RequestContextPluginRead<Hook> {
 impl RequestContextDomain for AuthenticationContext {
     const DOMAIN_PREFIX: &'static str = "hive::authentication::";
 
-    fn serialized_len(&self) -> usize {
-        usize::from(self.jwt_scopes.is_some()) + usize::from(self.jwt_status.is_some())
-    }
-
     fn set_key_value(&mut self, key: &str, _value: Value) -> Result<(), RequestContextError> {
         match key {
             JWT_SCOPES_KEY => self.forbidden_mutation(key),
@@ -60,17 +56,8 @@ impl RequestContextDomain for AuthenticationContext {
         }
     }
 
-    fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error> {
-        self.serialize_optional_entry(map, JWT_SCOPES_KEY, self.jwt_scopes.as_ref())?;
-        self.serialize_optional_entry(map, JWT_STATUS_KEY, self.jwt_status.as_ref())?;
-        Ok(())
-    }
-
-    fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error> {
-        match key {
-            JWT_SCOPES_KEY => self.serialize_optional_entry(map, key, self.jwt_scopes.as_ref()),
-            JWT_STATUS_KEY => self.serialize_optional_entry(map, key, self.jwt_status.as_ref()),
-            _ => Ok(()),
-        }
-    }
+    super::impl_domain_serde!(
+        JWT_SCOPES_KEY => jwt_scopes,
+        JWT_STATUS_KEY => jwt_status,
+    );
 }

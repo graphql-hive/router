@@ -45,10 +45,6 @@ impl<Hook> RequestContextPluginRead<Hook> {
 impl RequestContextDomain for TelemetryContext {
     const DOMAIN_PREFIX: &'static str = "hive::telemetry::";
 
-    fn serialized_len(&self) -> usize {
-        usize::from(self.client_name.is_some()) + usize::from(self.client_version.is_some())
-    }
-
     fn set_key_value(&mut self, key: &str, _value: Value) -> Result<(), RequestContextError> {
         match key {
             CLIENT_NAME_KEY => self.forbidden_mutation(key),
@@ -57,19 +53,8 @@ impl RequestContextDomain for TelemetryContext {
         }
     }
 
-    fn serialize_all<S: SerializeMap>(&self, map: &mut S) -> Result<(), S::Error> {
-        self.serialize_optional_entry(map, CLIENT_NAME_KEY, self.client_name.as_ref())?;
-        self.serialize_optional_entry(map, CLIENT_VERSION_KEY, self.client_version.as_ref())?;
-        Ok(())
-    }
-
-    fn serialize_entry<S: SerializeMap>(&self, key: &str, map: &mut S) -> Result<(), S::Error> {
-        match key {
-            CLIENT_NAME_KEY => self.serialize_optional_entry(map, key, self.client_name.as_ref()),
-            CLIENT_VERSION_KEY => {
-                self.serialize_optional_entry(map, key, self.client_version.as_ref())
-            }
-            _ => Ok(()),
-        }
-    }
+    super::impl_domain_serde!(
+        CLIENT_NAME_KEY => client_name,
+        CLIENT_VERSION_KEY => client_version,
+    );
 }
