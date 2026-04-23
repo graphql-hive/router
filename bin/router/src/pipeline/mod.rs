@@ -14,6 +14,7 @@ use hive_router_plan_executor::{
     headers::response::ResponseHeaderAggregator,
     hooks::{on_graphql_params::GraphQLParams, on_supergraph_load::SupergraphData},
     plugin_context::{PluginContext, PluginRequestState},
+    request_context::{RequestContextExt, SharedRequestContext},
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -29,7 +30,7 @@ use sonic_rs::{JsonContainerTrait, JsonType, JsonValueTrait, Value};
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
-    ops::ControlFlow,
+    ops::{ControlFlow, Deref},
     sync::Arc,
     time::Instant,
 };
@@ -40,6 +41,7 @@ use crate::{
     pipeline::{
         active_subscriptions::SubscriptionEvent,
         authorization::enforce_operation_authorization,
+        client_identification::identify_client,
         coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
         csrf_prevention::perform_csrf_prevention,
         error::PipelineError,
@@ -49,7 +51,7 @@ use crate::{
         introspection_policy::handle_introspection_policy,
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::{parse_operation_with_cache, ParseResult},
-        progressive_override::request_override_context,
+        progressive_override::RequestOverrideContext,
         query_plan::{plan_operation_with_cache, QueryPlanResult},
         request_extensions::{
             write_graphql_operation_metric_identity, write_graphql_response_metric_status,
@@ -68,6 +70,7 @@ use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseSt
 
 pub mod active_subscriptions;
 pub mod authorization;
+mod client_identification;
 pub mod coerce_variables;
 pub mod cors;
 pub mod csrf_prevention;
@@ -93,7 +96,7 @@ pub mod websocket_server;
 
 #[inline]
 pub async fn graphql_request_handler(
-    req: &HttpRequest,
+    req: &mut HttpRequest,
     body_stream: web::types::Payload,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
@@ -143,27 +146,11 @@ pub async fn graphql_request_handler(
         http_server_request_span.record_body_size(body_bytes.len());
 
         let mut request_headers = req.headers().clone();
+        let request_context = req.read_request_context()?;
 
-        let client_name = req
-            .headers()
-            .get(
-                &shared_state
-                    .router_config
-                    .telemetry
-                    .client_identification
-                    .name_header,
-            )
-            .and_then(|v| v.to_str().ok());
-        let client_version = req
-            .headers()
-            .get(
-                &shared_state
-                    .router_config
-                    .telemetry
-                    .client_identification
-                    .version_header,
-            )
-            .and_then(|v| v.to_str().ok());
+        let client = identify_client(&request_headers, &request_context, &shared_state.router_config.telemetry.client_identification)?;
+        let client_name = client.name.as_deref();
+        let client_version = client.version.as_deref();
 
         let mut plugin_req_state = None;
 
@@ -173,8 +160,9 @@ pub async fn graphql_request_handler(
         ) {
             plugin_req_state = Some(PluginRequestState {
                 plugins: plugins.clone(),
-                router_http_request: req.into(),
+                router_http_request: req.deref().into(),
                 context: plugin_context.clone(),
+                request_context: request_context.clone(),
             });
         }
 
@@ -233,6 +221,16 @@ pub async fn graphql_request_handler(
             return Ok(response);
         }
 
+        request_context.update(|ctx| {
+          ctx.operation.update(parser_payload.operation_name.clone(), Some(parser_payload.operation_type.clone()));
+
+          // Set initial state for progressive overrides in request context
+          let progressive_overrides = &supergraph.planner.supergraph.progressive_overrides;
+          if !progressive_overrides.flags.is_empty() {
+            ctx.progressive_override.unresolved_labels = Some(progressive_overrides.flags.clone());
+          }
+        })?;
+
         if let Some(coprocessor_runtime) = shared_state.coprocessor.as_ref() {
             let graphql_sdl = if coprocessor_runtime.graphql_request_needs_sdl() {
                 schema_state
@@ -282,8 +280,21 @@ pub async fn graphql_request_handler(
         write_graphql_operation_metric_identity(
             req,
             normalize_payload.operation_indentity.name.clone(),
-            Some(normalize_payload.operation_indentity.operation_type),
+            Some(normalize_payload.operation_indentity.operation_type.as_str()),
         );
+
+        // Update the request context if the operation name or type has changed
+        if
+          parser_payload.operation_name.as_ref() != normalize_payload.operation_indentity.name.as_ref() ||
+          parser_payload.operation_type != normalize_payload.operation_indentity.operation_type
+        {
+          request_context.update(|ctx| {
+            ctx.operation.update(
+              normalize_payload.operation_indentity.name.clone(),
+              Some(normalize_payload.operation_indentity.operation_type.clone())
+            );
+          })?;
+        }
 
         if req.method() == Method::GET {
             if let Some(OperationKind::Mutation) =
@@ -336,6 +347,8 @@ pub async fn graphql_request_handler(
             None
         };
 
+        let request_context = req.read_request_context()?;
+
         let exec = |guard| execute_planned_request(
             req.method(),
             req.uri(),
@@ -347,6 +360,7 @@ pub async fn graphql_request_handler(
             schema_state,
             operation_span,
             plugin_req_state,
+            &request_context,
             response_mode,
             guard,
         );
@@ -426,6 +440,7 @@ pub async fn execute_planned_request<'exec>(
     schema_state: &'exec Arc<SchemaState>,
     operation_span: GraphQLOperationSpan,
     plugin_req_state: Option<PluginRequestState<'exec>>,
+    request_context: &SharedRequestContext,
     response_mode: &'exec ResponseMode,
     guard: Option<SharedRouterResponseGuard>,
 ) -> Result<SharedRouterResponse, PipelineError> {
@@ -444,6 +459,7 @@ pub async fn execute_planned_request<'exec>(
         },
         None => JwtRequestDetails::Unauthenticated,
     };
+    jwt_request_details.update_request_context(request_context)?;
 
     let variable_payload =
         coerce_request_variables(supergraph, &mut graphql_params.variables, normalize_payload)?;
@@ -475,6 +491,7 @@ pub async fn execute_planned_request<'exec>(
         schema_state,
         operation_span,
         plugin_req_state,
+        request_context,
     )
     .await?
     {
@@ -557,6 +574,7 @@ pub async fn execute_pipeline<'exec>(
     schema_state: &Arc<SchemaState>,
     operation_span: GraphQLOperationSpan,
     plugin_req_state: Option<PluginRequestState<'exec>>,
+    request_context: &SharedRequestContext,
 ) -> Result<QueryPlanExecutionResult, PipelineError> {
     if normalize_payload.operation_for_introspection.is_some() {
         handle_introspection_policy(&shared_state.introspection_policy, &client_request_details)?;
@@ -565,11 +583,6 @@ pub async fn execute_pipeline<'exec>(
     let cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-    let progressive_override_ctx = request_override_context(
-        &shared_state.override_labels_evaluator,
-        &client_request_details,
-    )?;
-
     let (normalize_payload, authorization_errors) = enforce_operation_authorization(
         &shared_state.router_config,
         normalize_payload,
@@ -577,6 +590,12 @@ pub async fn execute_pipeline<'exec>(
         &supergraph.metadata,
         &variable_payload,
         &client_request_details.jwt,
+    )?;
+
+    let mut progressive_override_ctx = RequestOverrideContext::new(
+        &shared_state.override_labels_evaluator,
+        &client_request_details,
+        request_context,
     )?;
 
     if let Some(coprocessor_runtime) = shared_state.coprocessor.as_ref() {
@@ -598,11 +617,16 @@ pub async fn execute_pipeline<'exec>(
                     headers: Arc::make_mut(&mut client_request_details.headers),
                 },
                 graphql_params,
+                request_context,
                 graphql_sdl.as_deref(),
             )
             .await?
         {
-            ControlFlow::Continue(_) => {}
+            ControlFlow::Continue(performed_mutations) => {
+                if performed_mutations.context {
+                    progressive_override_ctx.update_from(request_context)?;
+                }
+            }
             ControlFlow::Break(response) => {
                 let body = match response.body() {
                     ResponseBody::Body(Body::Bytes(bytes)) => bytes.to_vec(),

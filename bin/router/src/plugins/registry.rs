@@ -134,6 +134,8 @@ mod tests {
         },
         plugin_context::{PluginContext, RouterHttpRequest},
         plugin_trait::{RouterPlugin, StartHookPayload},
+        plugins::hooks,
+        request_context::SharedRequestContext,
     };
     use ntex::router::Path;
 
@@ -260,11 +262,13 @@ mod tests {
             match_info: &path,
         };
         let plugin_context = PluginContext::default();
+        let request_context = SharedRequestContext::default();
         let mut plugin_names: Vec<String> = vec![];
         for plugin in plugins.iter() {
             let payload = OnGraphQLParamsStartHookPayload {
                 router_http_request: &fake_request,
                 context: &plugin_context,
+                request_context: request_context.for_plugin::<hooks::OnGraphqlParams>(),
                 body: Default::default(),
                 graphql_params: None,
             };

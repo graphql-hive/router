@@ -4,6 +4,8 @@ use hive_router_plan_executor::{
     hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpResponseHookPayload},
     plugin_context::PluginContext,
     plugin_trait::{EndControlFlow, StartControlFlow},
+    plugins::hooks,
+    request_context::{RequestContextExt, SharedRequestContext},
 };
 use ntex::{
     service::{Service, ServiceCtx},
@@ -78,9 +80,16 @@ where
             return ctx.call(&self.service, req).await;
         }
 
+        let request_context = SharedRequestContext::default();
+        req.write_request_context(request_context.clone());
+
         let coprocessor_runtime = shared_state
             .as_ref()
             .and_then(|shared_state| shared_state.coprocessor.as_ref());
+
+        let plugins = shared_state
+            .as_ref()
+            .and_then(|state| state.plugins.clone());
 
         if let Some(coprocessor_runtime) = coprocessor_runtime {
             match coprocessor_runtime.on_router_request(req).await {
@@ -89,10 +98,6 @@ where
             }
         }
 
-        let plugins = shared_state
-            .as_ref()
-            .and_then(|state| state.plugins.clone());
-
         if let Some(plugins) = plugins.as_ref() {
             let plugin_context = Arc::new(PluginContext::default());
             req.extensions_mut().insert(plugin_context.clone());
@@ -100,6 +105,7 @@ where
             let mut start_payload = OnHttpRequestHookPayload {
                 router_http_request: req,
                 context: &plugin_context,
+                request_context: request_context.for_plugin::<hooks::OnHttpRequest>(),
             };
 
             let mut on_end_callbacks = Vec::with_capacity(plugins.len());
@@ -133,6 +139,7 @@ where
                 let mut end_payload = OnHttpResponseHookPayload {
                     response,
                     context: &plugin_context,
+                    request_context: request_context.for_plugin::<hooks::OnHttpRequest>(),
                 };
 
                 for callback in on_end_callbacks.into_iter().rev() {

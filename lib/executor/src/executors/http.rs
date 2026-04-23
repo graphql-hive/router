@@ -10,6 +10,7 @@ use crate::hooks::on_subgraph_http_request::{
 };
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
+use crate::plugins::hooks;
 use crate::response::subgraph_response::SubgraphResponse;
 use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
@@ -318,6 +319,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 execution_request,
                 deduplicate_request,
                 context: &plugin_req_state.context,
+                request_context: plugin_req_state
+                    .request_context
+                    .for_plugin::<hooks::OnSubgraphHttp>(),
             };
             for plugin in plugin_req_state.plugins.as_ref() {
                 let result = plugin.on_subgraph_http_request(start_payload).await;
@@ -441,6 +445,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         if !on_end_callbacks.is_empty() {
             let mut end_payload = OnSubgraphHttpResponseHookPayload {
                 context: &plugin_req_state.as_ref().unwrap().context,
+                request_context: plugin_req_state
+                    .as_ref()
+                    .map(|state| state.request_context.for_plugin::<hooks::OnSubgraphHttp>())
+                    .unwrap(),
                 response,
                 deduplication_hint,
             };

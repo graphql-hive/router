@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod context;
+#[cfg(test)]
 mod failures;
 #[cfg(test)]
 mod graphql_analysis;

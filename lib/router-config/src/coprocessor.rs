@@ -11,8 +11,15 @@ use crate::primitives::value_or_expression::ValueOrExpression;
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorConfig {
+    /// Endpoint for the external coprocessor service.
+    ///
+    /// Supported formats:
+    /// - `http://host[:port][/path]`
+    /// - `unix:///absolute/path/to/socket.sock`
+    /// - `unix:///absolute/path/to/socket.sock?path=/request/path`
     pub url: CoprocessorEndpoint,
 
+    /// Transport protocol used to call the coprocessor service.
     pub protocol: CoprocessorProtocol,
 
     #[serde(
@@ -21,9 +28,13 @@ pub struct CoprocessorConfig {
         serialize_with = "humantime_serde::serialize"
     )]
     #[schemars(with = "String")]
+    /// Per-stage timeout for a coprocessor call.
+    ///
+    /// Defaults to `1s`.
     pub timeout: Duration,
 
     #[serde(default)]
+    /// Stage-specific configuration.
     pub stages: CoprocessorStagesConfig,
 }
 
@@ -70,8 +81,11 @@ fn default_coprocessor_timeout() -> Duration {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CoprocessorProtocol {
+    /// HTTP/1.1 over TCP.
     Http1,
+    /// HTTP/2 over TLS (currently unsupported and rejected).
     Http2,
+    /// HTTP/2 cleartext over TCP.
     H2c,
 }
 
@@ -79,12 +93,16 @@ pub enum CoprocessorProtocol {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorStagesConfig {
     #[serde(default)]
+    /// Hooks around the router HTTP boundary (`router.request` / `router.response`).
     pub router: CoprocessorRouterStageConfig,
     #[serde(default)]
+    /// Hooks around GraphQL processing (`graphql.request` / `graphql.analysis` / `graphql.response`).
     pub graphql: CoprocessorGraphqlStageConfig,
     #[serde(default)]
+    /// Hooks around execution (`execution.request` / `execution.response`).
     pub execution: CoprocessorExecutionStageConfig,
     #[serde(default)]
+    /// Hooks around outbound subgraph calls (`subgraph.request` / `subgraph.response`).
     pub subgraph: CoprocessorSubgraphStageConfig,
 }
 
@@ -92,8 +110,10 @@ pub struct CoprocessorStagesConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorRouterStageConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Configuration for `router.request` hook.
     pub request: Option<CoprocessorHookConfig<CoprocessorRouterRequestIncludeConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Configuration for `router.response` hook.
     pub response: Option<CoprocessorHookConfig<CoprocessorRouterResponseIncludeConfig>>,
 }
 
@@ -101,10 +121,13 @@ pub struct CoprocessorRouterStageConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorGraphqlStageConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Configuration for `graphql.request` hook.
     pub request: Option<CoprocessorHookConfig<CoprocessorGraphqlRequestIncludeConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Configuration for `graphql.analysis` hook.
     pub analysis: Option<CoprocessorHookConfig<CoprocessorGraphqlAnalysisIncludeConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Configuration for `graphql.response` hook.
     pub response: Option<CoprocessorHookConfig<CoprocessorGraphqlResponseIncludeConfig>>,
 }
 
@@ -112,8 +135,10 @@ pub struct CoprocessorGraphqlStageConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorExecutionStageConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Configuration for `execution.request` hook.
     pub request: Option<CoprocessorHookConfig<CoprocessorExecutionRequestIncludeConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Configuration for `execution.response` hook.
     pub response: Option<CoprocessorHookConfig<CoprocessorExecutionResponseIncludeConfig>>,
 }
 
@@ -121,8 +146,10 @@ pub struct CoprocessorExecutionStageConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorSubgraphStageConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Configuration for `subgraph.request` hook.
     pub request: Option<CoprocessorHookConfig<CoprocessorSubgraphRequestIncludeConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Configuration for `subgraph.response` hook.
     pub response: Option<CoprocessorHookConfig<CoprocessorSubgraphResponseIncludeConfig>>,
 }
 
@@ -130,8 +157,12 @@ pub struct CoprocessorSubgraphStageConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorHookConfig<I: Default> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Optional condition expression.
+    ///
+    /// The hook runs only when this expression evaluates to `true`.
     pub condition: Option<ValueOrExpression<bool>>,
     #[serde(default)]
+    /// Selects which fields are included in the coprocessor payload for this hook.
     pub include: I,
 }
 
@@ -139,14 +170,24 @@ pub struct CoprocessorHookConfig<I: Default> {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorRouterRequestIncludeConfig {
     #[serde(default)]
+    /// Include the inbound HTTP request body.
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    /// Include request context.
+    ///
+    /// Values:
+    /// - `false`: no context
+    /// - `true`: full context
+    /// - list: selected context keys
+    pub context: ContextSelection,
     #[serde(default)]
+    /// Include inbound HTTP request headers.
     pub headers: bool,
     #[serde(default)]
+    /// Include inbound HTTP request method.
     pub method: bool,
     #[serde(default)]
+    /// Include inbound HTTP request path.
     pub path: bool,
 }
 
@@ -154,12 +195,21 @@ pub struct CoprocessorRouterRequestIncludeConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorRouterResponseIncludeConfig {
     #[serde(default)]
+    /// Include outbound HTTP response body.
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    /// Include request context.
+    ///
+    /// Values:
+    /// - `false`: no context
+    /// - `true`: full context
+    /// - list: selected context keys
+    pub context: ContextSelection,
     #[serde(default)]
+    /// Include outbound HTTP response headers.
     pub headers: bool,
     #[serde(default)]
+    /// Include outbound HTTP response status code.
     pub status_code: bool,
 }
 
@@ -167,16 +217,29 @@ pub struct CoprocessorRouterResponseIncludeConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorGraphqlRequestIncludeConfig {
     #[serde(default)]
+    /// Include GraphQL request body fields.
+    ///
+    /// Accepts `true`, `false`, or a list of fields.
     pub body: GraphqlBodySelection,
     #[serde(default)]
-    pub context: bool,
+    /// Include request context.
+    ///
+    /// Values:
+    /// - `false`: no context
+    /// - `true`: full context
+    /// - list: selected context keys
+    pub context: ContextSelection,
     #[serde(default)]
+    /// Include request headers.
     pub headers: bool,
     #[serde(default)]
+    /// Include request method.
     pub method: bool,
     #[serde(default)]
+    /// Include request path.
     pub path: bool,
     #[serde(default)]
+    /// Include the current public schema SDL.
     pub sdl: bool,
 }
 
@@ -184,14 +247,24 @@ pub struct CoprocessorGraphqlRequestIncludeConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorGraphqlResponseIncludeConfig {
     #[serde(default)]
+    /// Include GraphQL response body.
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    /// Include request context.
+    ///
+    /// Values:
+    /// - `false`: no context
+    /// - `true`: full context
+    /// - list: selected context keys
+    pub context: ContextSelection,
     #[serde(default)]
+    /// Include response headers.
     pub headers: bool,
     #[serde(default)]
+    /// Include response status code.
     pub status_code: bool,
     #[serde(default)]
+    /// Include the current public schema SDL.
     pub sdl: bool,
 }
 
@@ -199,33 +272,60 @@ pub struct CoprocessorGraphqlResponseIncludeConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorGraphqlAnalysisIncludeConfig {
     #[serde(default)]
+    /// Include GraphQL request body fields.
+    ///
+    /// Accepts `true`, `false`, or a list of fields.
     pub body: GraphqlBodySelection,
     #[serde(default)]
-    pub context: bool,
+    /// Include request context.
+    ///
+    /// Values:
+    /// - `false`: no context
+    /// - `true`: full context
+    /// - list: selected context keys
+    pub context: ContextSelection,
     #[serde(default)]
+    /// Include request headers.
     pub headers: bool,
     #[serde(default)]
+    /// Include request method.
     pub method: bool,
     #[serde(default)]
+    /// Include request path.
     pub path: bool,
     #[serde(default)]
+    /// Include the current public schema SDL.
     pub sdl: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GraphqlBodyField {
+    /// Include the GraphQL query string.
     Query,
+    /// Include the GraphQL operation name.
     OperationName,
+    /// Include GraphQL variables.
     Variables,
+    /// Include GraphQL extensions.
     Extensions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Selection set for GraphQL body fields included in coprocessor payloads.
+///
+/// Serialized forms:
+/// - `true` => all body fields
+/// - `false` => no body fields
+/// - list => selected body fields
 pub struct GraphqlBodySelection {
+    /// Include `query`.
     pub query: bool,
+    /// Include `operationName`.
     pub operation_name: bool,
+    /// Include `variables`.
     pub variables: bool,
+    /// Include `extensions`.
     pub extensions: bool,
 }
 
@@ -335,20 +435,132 @@ impl JsonSchema for GraphqlBodySelection {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// Selection of request-context entries included in coprocessor payloads.
+///
+/// Serialized forms:
+/// - `true` => include full context
+/// - `false` => include no context
+/// - list => include only selected context keys
+pub struct ContextSelection {
+    all: bool,
+    keys: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+enum ContextSelectionRepr {
+    Bool(bool),
+    List(Vec<String>),
+}
+
+impl ContextSelection {
+    pub const fn all() -> Self {
+        Self {
+            all: true,
+            keys: Vec::new(),
+        }
+    }
+
+    pub const fn none() -> Self {
+        Self {
+            all: false,
+            keys: Vec::new(),
+        }
+    }
+
+    pub fn keys(keys: Vec<String>) -> Self {
+        Self { all: false, keys }
+    }
+
+    pub const fn is_all(&self) -> bool {
+        self.all
+    }
+
+    pub fn is_none(&self) -> bool {
+        !self.all && self.keys.is_empty()
+    }
+
+    pub fn is_some(&self) -> bool {
+        !self.is_none()
+    }
+
+    pub fn keys_slice(&self) -> &[String] {
+        &self.keys
+    }
+}
+
+impl Serialize for ContextSelection {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let repr = if self.is_all() {
+            ContextSelectionRepr::Bool(true)
+        } else if self.is_none() {
+            ContextSelectionRepr::Bool(false)
+        } else {
+            ContextSelectionRepr::List(self.keys.clone())
+        };
+
+        repr.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ContextSelection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let repr = ContextSelectionRepr::deserialize(deserializer)?;
+
+        Ok(match repr {
+            ContextSelectionRepr::Bool(true) => ContextSelection::all(),
+            ContextSelectionRepr::Bool(false) => ContextSelection::none(),
+            ContextSelectionRepr::List(keys) => ContextSelection::keys(keys),
+        })
+    }
+}
+
+impl JsonSchema for ContextSelection {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ContextSelection".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <ContextSelectionRepr as JsonSchema>::json_schema(generator)
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorExecutionRequestIncludeConfig {
     #[serde(default)]
+    /// Include execution request body.
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    /// Include request context.
+    ///
+    /// Values:
+    /// - `false`: no context
+    /// - `true`: full context
+    /// - list: selected context keys
+    pub context: ContextSelection,
     #[serde(default)]
+    /// Include request headers.
     pub headers: bool,
     #[serde(default)]
+    /// Include request method.
     pub method: bool,
     #[serde(default)]
+    /// Include request path.
     pub path: bool,
     #[serde(default)]
+    /// Include the current public schema SDL.
     pub sdl: bool,
 }
 
@@ -356,14 +568,24 @@ pub struct CoprocessorExecutionRequestIncludeConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorExecutionResponseIncludeConfig {
     #[serde(default)]
+    /// Include execution response body.
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    /// Include request context.
+    ///
+    /// Values:
+    /// - `false`: no context
+    /// - `true`: full context
+    /// - list: selected context keys
+    pub context: ContextSelection,
     #[serde(default)]
+    /// Include response headers.
     pub headers: bool,
     #[serde(default)]
+    /// Include response status code.
     pub status_code: bool,
     #[serde(default)]
+    /// Include the current public schema SDL.
     pub sdl: bool,
 }
 
@@ -371,18 +593,30 @@ pub struct CoprocessorExecutionResponseIncludeConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorSubgraphRequestIncludeConfig {
     #[serde(default)]
+    /// Include outbound subgraph request body.
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    /// Include request context.
+    ///
+    /// Values:
+    /// - `false`: no context
+    /// - `true`: full context
+    /// - list: selected context keys
+    pub context: ContextSelection,
     #[serde(default)]
+    /// Include outbound subgraph request headers.
     pub headers: bool,
     #[serde(default)]
+    /// Include outbound subgraph request method.
     pub method: bool,
     #[serde(default)]
+    /// Include outbound subgraph request URI.
     pub uri: bool,
     #[serde(default)]
+    /// Include the current public schema SDL.
     pub sdl: bool,
     #[serde(default)]
+    /// Include target subgraph service name.
     pub service_name: bool,
 }
 
@@ -390,26 +624,41 @@ pub struct CoprocessorSubgraphRequestIncludeConfig {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorSubgraphResponseIncludeConfig {
     #[serde(default)]
+    /// Include subgraph response body.
     pub body: bool,
     #[serde(default)]
-    pub context: bool,
+    /// Include request context.
+    ///
+    /// Values:
+    /// - `false`: no context
+    /// - `true`: full context
+    /// - list: selected context keys
+    pub context: ContextSelection,
     #[serde(default)]
+    /// Include subgraph response headers.
     pub headers: bool,
     #[serde(default)]
+    /// Include subgraph response status code.
     pub status_code: bool,
     #[serde(default)]
+    /// Include the current public schema SDL.
     pub sdl: bool,
     #[serde(default)]
+    /// Include target subgraph service name.
     pub service_name: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Target endpoint for coprocessor communication.
 pub enum CoprocessorEndpoint {
     Http {
+        /// HTTP endpoint URL in `http://host[:port][/path]` form.
         url: String,
     },
     Unix {
+        /// Absolute path to Unix domain socket file.
         socket_path: String,
+        /// Request path to use when talking over Unix socket.
         request_path: String,
     },
 }

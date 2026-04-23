@@ -5,6 +5,8 @@ use hive_router_internal::expressions::{lib::ToVrlValue, vrl::core::Value};
 use http::Method;
 use ntex::http::HeaderMap as NtexHeaderMap;
 
+use crate::request_context::{RequestContextError, SharedRequestContext};
+
 pub struct OperationDetails<'exec> {
     pub name: Option<&'exec str>,
     pub query: &'exec str,
@@ -27,6 +29,26 @@ pub enum JwtRequestDetails {
         scopes: Option<Vec<String>>,
     },
     Unauthenticated,
+}
+
+impl JwtRequestDetails {
+    pub fn update_request_context(
+        &self,
+        request_context: &SharedRequestContext,
+    ) -> Result<(), RequestContextError> {
+        request_context.update(|ctx| match self {
+            JwtRequestDetails::Authenticated { scopes, .. } => {
+                ctx.authentication.jwt_status = Some(true);
+                ctx.authentication.jwt_scopes = scopes
+                    .as_ref()
+                    .map(|scopes| scopes.iter().cloned().collect());
+            }
+            JwtRequestDetails::Unauthenticated => {
+                ctx.authentication.jwt_scopes = None;
+                ctx.authentication.jwt_status = Some(false);
+            }
+        })
+    }
 }
 
 impl From<&ClientRequestDetails<'_>> for Value {

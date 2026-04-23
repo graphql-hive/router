@@ -32,13 +32,13 @@ use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
 use crate::{
-    context::ExecutionContext,
     execution::{
         client_request_details::ClientRequestDetails,
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
+    execution_context::ExecutionContext,
     executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     headers::{
         plan::HeaderRulesPlan,
@@ -55,6 +55,7 @@ use crate::{
     },
     plugin_context::PluginRequestState,
     plugin_trait::{EndControlFlow, StartControlFlow},
+    plugins::hooks,
     projection::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
@@ -355,6 +356,9 @@ async fn execute_query_plan_with_data<'exec>(
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
+            request_context: plugin_req_state
+                .request_context
+                .for_plugin::<hooks::OnExecute>(),
             query_plan: opts.query_plan,
             operation_for_plan: &opts.operation_for_plan,
             data,
@@ -430,6 +434,11 @@ async fn execute_query_plan_with_data<'exec>(
             errors,
             extensions,
             response_size_estimate,
+            request_context: opts
+                .plugin_req_state
+                .as_ref()
+                .map(|state| state.request_context.for_plugin::<hooks::OnExecute>())
+                .unwrap(),
         };
 
         for callback in on_end_callbacks {
@@ -1390,11 +1399,11 @@ fn select_fetch_variables<'a>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        context::ExecutionContext,
         execution::{
             client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
             plan::Executor,
         },
+        execution_context::ExecutionContext,
         headers::plan::HeaderRulesPlan,
         introspection::schema::SchemaMetadata,
         response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},

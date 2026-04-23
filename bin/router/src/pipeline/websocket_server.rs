@@ -26,6 +26,7 @@ use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::plugin_context::{
     PluginContext, PluginRequestState, RouterHttpRequest,
 };
+use hive_router_plan_executor::request_context::{RequestContextExt, SharedRequestContext};
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 
@@ -57,6 +58,10 @@ pub async fn ws_index(
         .map(|_| WS_SUBPROTOCOL);
 
     let plugin_context = req.extensions().get::<Arc<PluginContext>>().cloned();
+    let request_context = match req.read_request_context() {
+        Ok(ctx) => ctx,
+        Err(_) => return Ok(HttpResponse::BadRequest().finish()),
+    };
 
     ws::start(
         req,
@@ -65,6 +70,7 @@ pub async fn ws_index(
             let schema_state = schema_state.clone();
             let shared_state = shared_state.clone();
             let plugin_context = plugin_context.clone();
+            let request_context = request_context.clone();
             async move {
                 ws_service(
                     accepted_subprotocol.is_some(),
@@ -72,6 +78,7 @@ pub async fn ws_index(
                     schema_state,
                     shared_state,
                     plugin_context,
+                    request_context,
                 )
                 .await
             }
@@ -86,6 +93,7 @@ async fn ws_service(
     schema_state: Arc<SchemaState>,
     shared_state: Arc<RouterSharedState>,
     plugin_context: Option<Arc<PluginContext>>,
+    request_context: SharedRequestContext,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
     if !has_accepted_subprotocol {
@@ -128,6 +136,7 @@ async fn ws_service(
         let schema_state = schema_state.clone();
         let shared_state = shared_state.clone();
         let plugin_context = plugin_context.clone();
+        let request_context = request_context.clone();
         let ws_uri = ws_uri.clone();
         let ws_path = ws_path.clone();
         async move {
@@ -139,6 +148,7 @@ async fn ws_service(
                     &schema_state,
                     &shared_state,
                     plugin_context,
+                    &request_context,
                     &ws_uri,
                     &ws_path,
                 )
@@ -193,6 +203,7 @@ async fn handle_text_frame(
     schema_state: &Arc<SchemaState>,
     shared_state: &Arc<RouterSharedState>,
     plugin_context: Option<Arc<PluginContext>>,
+    request_context: &SharedRequestContext,
     ws_uri: &http::Uri,
     ws_path: &Path<http::Uri>,
 ) -> Option<ws::Message> {
@@ -322,6 +333,7 @@ async fn handle_text_frame(
                             match_info: ws_path,
                         },
                         context: plugin_context.clone(),
+                        request_context: request_context.clone(),
                     })
                 } else {
                     None
@@ -449,6 +461,7 @@ async fn handle_text_frame(
                     SingleContentType::default(),
                     StreamContentType::default(),
                 );
+
                 let exec = |guard| execute_planned_request(
                     &Method::POST,
                     ws_uri,
@@ -460,6 +473,7 @@ async fn handle_text_frame(
                     schema_state,
                     operation_span,
                     plugin_req_state,
+                    request_context,
                     &response_mode,
                     guard,
                 );

@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use hive_router_config::override_labels::{LabelOverrideValue, OverrideLabelsConfig};
 use hive_router_internal::expressions::CompileExpression;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
+use hive_router_plan_executor::request_context::RequestContextError;
+use hive_router_plan_executor::request_context::SharedRequestContext;
 use hive_router_query_planner::{
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
     state::supergraph_state::SupergraphState,
@@ -39,6 +41,8 @@ pub enum LabelEvaluationError {
         "VRL expression for override label '{label}' did not evaluate to a boolean. Got: {got}"
     )]
     ExpressionWrongType { label: String, got: String },
+    #[error(transparent)]
+    RequestContext(#[from] RequestContextError),
 }
 
 /// Contains the request-specific context for progressive overrides.
@@ -51,27 +55,76 @@ pub struct RequestOverrideContext {
     pub percentage_value: u64,
 }
 
-#[inline]
-pub fn request_override_context<'exec>(
-    override_labels_evaluator: &OverrideLabelsEvaluator,
-    client_request_details: &ClientRequestDetails<'exec>,
-) -> Result<RequestOverrideContext, LabelEvaluationError> {
-    let active_flags = override_labels_evaluator.evaluate(client_request_details)?;
+impl RequestOverrideContext {
+    #[inline]
+    pub fn new<'exec>(
+        override_labels_evaluator: &OverrideLabelsEvaluator,
+        client_request_details: &ClientRequestDetails<'exec>,
+        request_context: &SharedRequestContext,
+    ) -> Result<Self, LabelEvaluationError> {
+        let progressive_override_state = request_context.snapshot()?.progressive_override;
 
-    // Generate the random percentage value for this request.
-    // Percentage is 0 - 100_000_000_000 (100*PERCENTAGE_SCALE_FACTOR)
-    // 0 = 0%
-    // 100_000_000_000 = 100%
-    // 50_000_000_000 = 50%
-    // 50_123_456_789 = 50.12345678%
-    let percentage_value: u64 = rand::rng().random_range(0..=(100 * PERCENTAGE_SCALE_FACTOR));
+        let active_flags = override_labels_evaluator.evaluate(
+            progressive_override_state.labels_to_override.as_ref(),
+            client_request_details,
+        )?;
 
-    let override_context = RequestOverrideContext {
-        active_flags,
-        percentage_value,
-    };
+        if !active_flags.is_empty() {
+            request_context.update(|ctx| {
+                ctx.progressive_override.labels_to_override = Some(active_flags.clone());
+                ctx.progressive_override.unresolved_labels =
+                    match ctx.progressive_override.unresolved_labels.as_ref() {
+                        Some(labels) => {
+                            let diff: HashSet<_> =
+                                labels.difference(&active_flags).cloned().collect();
 
-    Ok(override_context)
+                            if diff.is_empty() {
+                                None
+                            } else {
+                                Some(diff)
+                            }
+                        }
+                        None => None,
+                    }
+            })?;
+        }
+
+        // Generate the random percentage value for this request.
+        // Percentage is 0 - 100_000_000_000 (100*PERCENTAGE_SCALE_FACTOR)
+        // 0 = 0%
+        // 100_000_000_000 = 100%
+        // 50_000_000_000 = 50%
+        // 50_123_456_789 = 50.12345678%
+        let percentage_value: u64 = rand::rng().random_range(0..=(100 * PERCENTAGE_SCALE_FACTOR));
+
+        let override_context = RequestOverrideContext {
+            active_flags,
+            percentage_value,
+        };
+
+        Ok(override_context)
+    }
+
+    pub fn update_from(
+        &mut self,
+        request_context: &SharedRequestContext,
+    ) -> Result<(), RequestContextError> {
+        let active_labels = request_context
+            .snapshot()?
+            .progressive_override
+            .labels_to_override;
+
+        match active_labels {
+            Some(labels) => {
+                self.active_flags = labels;
+            }
+            None => {
+                self.active_flags = HashSet::default();
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl From<&RequestOverrideContext> for PlannerOverrideContext {
@@ -154,9 +207,14 @@ impl OverrideLabelsEvaluator {
 
     pub(crate) fn evaluate<'exec>(
         &self,
+        // Labels that have already been resolved either by plugins or coprocessors
+        resolved_labels: Option<&HashSet<String>>,
         client_request: &ClientRequestDetails<'exec>,
     ) -> Result<HashSet<String>, LabelEvaluationError> {
-        let mut active_flags = self.static_enabled_labels.clone();
+        let mut active_flags = match resolved_labels {
+            Some(set) => set.union(&self.static_enabled_labels).cloned().collect(),
+            None => self.static_enabled_labels.clone(),
+        };
 
         if self.expressions.is_empty() {
             return Ok(active_flags);
@@ -173,6 +231,12 @@ impl OverrideLabelsEvaluator {
         let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
 
         for (label, expression) in &self.expressions {
+            // There's a chance the label was already resolved by a plugin or coprocessor
+            // so no need to re-evaluate it
+            if active_flags.contains(label) {
+                continue;
+            }
+
             match expression.resolve(&mut ctx) {
                 Ok(evaluated_value) => match evaluated_value {
                     VrlValue::Boolean(true) => {

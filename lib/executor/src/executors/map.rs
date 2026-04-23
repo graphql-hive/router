@@ -38,6 +38,7 @@ use crate::{
     },
     plugin_context::PluginRequestState,
     plugin_trait::{EndControlFlow, StartControlFlow},
+    plugins::hooks,
     response::subgraph_response::SubgraphResponse,
 };
 
@@ -177,6 +178,9 @@ impl SubgraphExecutorMap {
             let mut start_payload = OnSubgraphExecuteStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
+                request_context: plugin_req_state
+                    .request_context
+                    .for_plugin::<hooks::OnSubgraphExecute>(),
                 subgraph_name,
                 executor,
                 execution_request,
@@ -215,6 +219,9 @@ impl SubgraphExecutorMap {
             if let Some(plugin_req_state) = plugin_req_state.as_ref() {
                 let mut end_payload = OnSubgraphExecuteEndHookPayload {
                     context: &plugin_req_state.context,
+                    request_context: plugin_req_state
+                        .request_context
+                        .for_plugin::<hooks::OnSubgraphExecute>(),
                     execution_result,
                 };
 

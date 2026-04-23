@@ -27,6 +27,7 @@ members = [
   "plugin_examples/plugin_template",
   "plugin_examples/jwt_cookie",
   "plugin_examples/feature_flags",
+  "plugin_examples/progressive_override_launchdarkly",
   "plugin_examples/non_standard_request",
   "plugin_examples/incoming_request_deduplication",
   "plugin_examples/error_mapping"
