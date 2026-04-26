@@ -13,11 +13,13 @@ use ntex::{
     web::{self, test},
     ws::WsConnection,
 };
+use rcgen::generate_simple_self_signed;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
 use std::{
     any::Any,
     future::Future,
+    io::Write,
     marker::PhantomData,
     net::SocketAddr,
     path::PathBuf,
@@ -1093,4 +1095,71 @@ pub async fn wait_until_mock_matched(mock: &Mock) -> Result<(), String> {
             return Err(format!("timeout after {:?}", now.elapsed()));
         }
     }
+}
+
+pub struct GeneratedKeyPair {
+    pub cert_file: NamedTempFile,
+    pub cert_file_path: String,
+    pub cert_pem: String,
+    pub key_file: NamedTempFile,
+    pub key_file_path: String,
+    pub key_pem: String,
+}
+
+pub async fn generate_keypair() -> GeneratedKeyPair {
+    let cert_key = generate_simple_self_signed(vec![
+        "127.0.0.1".to_string(),
+        "localhost".to_string(),
+        "0.0.0.0".to_string(),
+    ])
+    .expect("Failed to generate self-signed certificate");
+
+    let mut cert_file =
+        NamedTempFile::new().expect("Failed to create temporary file for certificate");
+    let cert = cert_key.cert;
+    let cert_pem = cert.pem();
+    let _ = cert_file
+        .write(cert_pem.as_bytes())
+        .expect("Failed to write certificate to temporary file");
+
+    let mut key_file =
+        NamedTempFile::new().expect("Failed to create temporary file for private key");
+    let key = cert_key.signing_key;
+    let key_pem = key.serialize_pem();
+    let _ = key_file
+        .write(key_pem.as_bytes())
+        .expect("Failed to write private key to temporary file");
+
+    GeneratedKeyPair {
+        cert_file_path: cert_file
+            .path()
+            .to_str()
+            .expect("Failed to convert cert file path to string")
+            .to_string(),
+        cert_file,
+        cert_pem,
+        key_file_path: key_file
+            .path()
+            .to_str()
+            .expect("Failed to convert key file path to string")
+            .to_string(),
+        key_file,
+        key_pem,
+    }
+}
+
+pub async fn generate_tls_subgraph() -> (TestSubgraphs<Started>, GeneratedKeyPair) {
+    let generated_key_pair = generate_keypair().await;
+    let rustls_config = RustlsConfig::from_pem_file(
+        &generated_key_pair.cert_file_path,
+        &generated_key_pair.key_file_path,
+    )
+    .await
+    .expect("Failed to create RustlsConfig from PEM files");
+    let subgraphs = TestSubgraphs::builder()
+        .with_rustls_config(rustls_config)
+        .build()
+        .start()
+        .await;
+    (subgraphs, generated_key_pair)
 }

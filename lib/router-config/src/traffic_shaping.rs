@@ -100,7 +100,7 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// For HTTPS, it also requires HTTP/2.
     /// This will make the subgraph requests never fall back to HTTP/1.1,
     /// and will fail if the subgraph doesn't support HTTP/2.
-    pub http2_only: Option<bool>,
+    pub allow_only_http2: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -153,7 +153,7 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// This will make the subgraph requests never fall back to HTTP/1.1,
     /// and will fail if the subgraph doesn't support HTTP/2.
     #[serde(default)]
-    pub http2_only: bool,
+    pub allow_only_http2: bool,
 }
 
 fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
@@ -185,7 +185,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             dedupe_enabled: default_dedupe_enabled(),
             request_timeout: default_request_timeout(),
             tls: None,
-            http2_only: false,
+            allow_only_http2: false,
         }
     }
 }

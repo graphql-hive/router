@@ -22,7 +22,7 @@
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"http2_only":false,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
 |[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -202,8 +202,8 @@ telemetry:
       trace_context: true
 traffic_shaping:
   all:
+    allow_only_http2: false
     dedupe_enabled: true
-    http2_only: false
     pool_idle_timeout: 50s
     request_timeout: 30s
   max_connections_per_host: 100
@@ -3117,7 +3117,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"dedupe_enabled":true,"http2_only":false,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
+|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"allow_only_http2":false,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}`<br/>||
 |[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
@@ -3127,8 +3127,8 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 
 ```yaml
 all:
+  allow_only_http2: false
   dedupe_enabled: true
-  http2_only: false
   pool_idle_timeout: 50s
   request_timeout: 30s
 max_connections_per_host: 100
@@ -3151,8 +3151,8 @@ The default configuration that will be applied to all subgraphs, unless overridd
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**allow\_only\_http2**|`boolean`|Forces HTTP/2 for requests to subgraphs.<br/><br/>For plain HTTP, it will use HTTP/2 cleartext (h2c).<br/>For HTTPS, it also requires HTTP/2.<br/>This will make the subgraph requests never fall back to HTTP/1.1,<br/>and will fail if the subgraph doesn't support HTTP/2.<br/>Default: `false`<br/>||
 |**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
-|**http2\_only**|`boolean`|Forces HTTP/2 for requests to subgraphs.<br/><br/>For plain HTTP, it will use HTTP/2 cleartext (h2c).<br/>For HTTPS, it also requires HTTP/2.<br/>This will make the subgraph requests never fall back to HTTP/1.1,<br/>and will fail if the subgraph doesn't support HTTP/2.<br/>Default: `false`<br/>||
 |**pool\_idle\_timeout**|`string`|Timeout for idle sockets being kept-alive.<br/>Default: `"50s"`<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>Default: `"30s"`<br/>||
 |[**tls**](#traffic_shapingalltls)|`object`, `null`|||
@@ -3161,8 +3161,8 @@ The default configuration that will be applied to all subgraphs, unless overridd
 **Example**
 
 ```yaml
+allow_only_http2: false
 dedupe_enabled: true
-http2_only: false
 pool_idle_timeout: 50s
 request_timeout: 30s
 
@@ -3279,8 +3279,8 @@ Optional per-subgraph configurations that will override the default configuratio
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**allow\_only\_http2**|`boolean`, `null`|Forces HTTP/2 for requests to subgraphs.<br/><br/>For plain HTTP, it will use HTTP/2 cleartext (h2c).<br/>For HTTPS, it also requires HTTP/2.<br/>This will make the subgraph requests never fall back to HTTP/1.1,<br/>and will fail if the subgraph doesn't support HTTP/2.<br/>||
 |**dedupe\_enabled**|`boolean`, `null`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>||
-|**http2\_only**|`boolean`, `null`|Forces HTTP/2 for requests to subgraphs.<br/><br/>For plain HTTP, it will use HTTP/2 cleartext (h2c).<br/>For HTTPS, it also requires HTTP/2.<br/>This will make the subgraph requests never fall back to HTTP/1.1,<br/>and will fail if the subgraph doesn't support HTTP/2.<br/>||
 |**pool\_idle\_timeout**|`string`, `null`|Timeout for idle sockets being kept-alive.<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
 |[**tls**](#traffic_shapingsubgraphsadditionalpropertiestls)|`object`, `null`|||

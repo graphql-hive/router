@@ -1,79 +1,11 @@
 #[cfg(test)]
 mod http2_tests {
-    use std::io::Write;
-
-    use axum_server::tls_rustls::RustlsConfig;
     use hive_router::init_rustls_crypto_provider;
-    use rcgen::generate_simple_self_signed;
     use sonic_rs::json;
-    use tempfile::NamedTempFile;
 
-    use crate::testkit::{ClientResponseExt, Started, TestRouter, TestSubgraphs};
-
-    struct GeneratedKeyPair {
-        _cert_file: NamedTempFile,
-        cert_file_path: String,
-        cert_pem: String,
-        _key_file: NamedTempFile,
-        key_file_path: String,
-    }
-
-    async fn generate_keypair() -> GeneratedKeyPair {
-        let cert_key = generate_simple_self_signed(vec![
-            "127.0.0.1".to_string(),
-            "localhost".to_string(),
-            "0.0.0.0".to_string(),
-        ])
-        .expect("Failed to generate self-signed certificate");
-
-        let mut cert_file =
-            NamedTempFile::new().expect("Failed to create temporary file for certificate");
-        let cert = cert_key.cert;
-        let cert_pem = cert.pem();
-        cert_file
-            .write(cert_pem.as_bytes())
-            .expect("Failed to write certificate to temporary file");
-
-        let mut key_file =
-            NamedTempFile::new().expect("Failed to create temporary file for private key");
-        let key = cert_key.signing_key;
-        let key_str = key.serialize_pem();
-        key_file
-            .write(key_str.as_bytes())
-            .expect("Failed to write private key to temporary file");
-
-        GeneratedKeyPair {
-            cert_file_path: cert_file
-                .path()
-                .to_str()
-                .expect("Failed to convert cert file path to string")
-                .to_string(),
-            _cert_file: cert_file,
-            cert_pem,
-            key_file_path: key_file
-                .path()
-                .to_str()
-                .expect("Failed to convert key file path to string")
-                .to_string(),
-            _key_file: key_file,
-        }
-    }
-
-    async fn generate_tls_subgraph() -> (TestSubgraphs<Started>, GeneratedKeyPair) {
-        let generated_key_pair = generate_keypair().await;
-        let rustls_config = RustlsConfig::from_pem_file(
-            &generated_key_pair.cert_file_path,
-            &generated_key_pair.key_file_path,
-        )
-        .await
-        .expect("Failed to create RustlsConfig from PEM files");
-        let subgraphs = TestSubgraphs::builder()
-            .with_rustls_config(rustls_config)
-            .build()
-            .start()
-            .await;
-        (subgraphs, generated_key_pair)
-    }
+    use crate::testkit::{
+        generate_keypair, generate_tls_subgraph, ClientResponseExt, TestRouter, TestSubgraphs,
+    };
 
     /// Verify that a client can communicate with the router using HTTP/2 over TLS.
     /// The reqwest client with rustls and http2 features will negotiate h2 via ALPN.
@@ -307,7 +239,7 @@ mod http2_tests {
         );
     }
 
-    /// Verify that h2c (HTTP/2 cleartext) works when http2_only is enabled globally for all subgraphs.
+    /// Verify that h2c (HTTP/2 cleartext) works when allow_only_http2 is enabled globally for all subgraphs.
     #[ntex::test]
     async fn h2c_router_to_subgraph_global_config() {
         let subgraphs = TestSubgraphs::builder()
@@ -325,7 +257,7 @@ mod http2_tests {
                 path: supergraph.graphql
             traffic_shaping:
                 all:
-                    http2_only: true
+                    allow_only_http2: true
                 "#
                 .to_string(),
             )
@@ -358,7 +290,7 @@ mod http2_tests {
         );
     }
 
-    /// Verify that h2c works when http2_only is enabled for a specific subgraph.
+    /// Verify that h2c works when allow_only_http2 is enabled for a specific subgraph.
     #[ntex::test]
     async fn h2c_router_to_subgraph_per_subgraph_config() {
         let subgraphs = TestSubgraphs::builder()
@@ -377,7 +309,7 @@ mod http2_tests {
             traffic_shaping:
                 subgraphs:
                     accounts:
-                        http2_only: true
+                        allow_only_http2: true
                 "#
                 .to_string(),
             )
@@ -410,7 +342,7 @@ mod http2_tests {
         );
     }
 
-    /// Verify that without http2_only flag, plain HTTP to an h2c subgraph fails
+    /// Verify that without allow_only_http2 flag, plain HTTP to an h2c subgraph fails
     /// (the router defaults to HTTP/1.1 and the h2c-only subgraph rejects it).
     #[ntex::test]
     async fn h2c_subgraph_rejects_http1_without_flag() {
