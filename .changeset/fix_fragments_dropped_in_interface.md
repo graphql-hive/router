@@ -1,6 +1,7 @@
 ---
 hive-router-query-planner: patch
 hive-router-plan-executor: patch
+node-addon: patch
 hive-router: patch
 ---
 
