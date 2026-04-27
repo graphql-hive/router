@@ -2330,7 +2330,7 @@ version_header: graphql-client-version
 |**target**||A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
 |**token**||Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
 |[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":false,"endpoint":"https://api.graphql-hive.com/otel/v1/traces"}`<br/>||
-|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
+|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":null,"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2409,7 +2409,7 @@ scheduled_delay: 5s
 |**connect\_timeout**|`string`|A timeout for only the connect phase of a request to Hive Console<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
 |**enabled**|`boolean`|Default: `false`<br/>||
 |**endpoint**|`string`|For self-hosting, you can override `/usage` endpoint (defaults to `https://app.graphql-hive.com/usage`).<br/>Default: `"https://app.graphql-hive.com/usage"`<br/>||
-|[**exclude**](#telemetryhiveusage_reportingexclude)|`string[]`|A list of operations (by name) to be ignored by Hive.<br/>Default: <br/>||
+|**exclude**||An expression in VRL to exclude certain operations from being sent to Hive Console.<br/>Returning `true` from this expression will exclude the operation, while `false` will include it.<br/>This expression is a VRL expression that has access to the request and operation details;<br/><br/>```vrl<br/> if (.request.operation.name == "ExcludeMe") {<br/>   true<br/> } else {<br/>   false<br/> }<br/>```<br/>Backward compatible with both:<br/>- an expression object: `{ expression: "..." }`<br/>- a list of operation names<br/>||
 |**flush\_interval**|`string`|Frequency of flushing the buffer to the server<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
 |**request\_timeout**|`string`|A timeout for the entire request to Hive Console<br/>Default: 15 seconds<br/>Default: `"15s"`<br/>||
 |**sample\_rate**|`string`|Sample rate to determine sampling.<br/>0% = never being sent<br/>50% = half of the requests being sent<br/>100% = always being sent<br/>Default: 100%<br/>Default: `"100%"`<br/>||
@@ -2423,23 +2423,13 @@ buffer_size: 1000
 connect_timeout: 5s
 enabled: false
 endpoint: https://app.graphql-hive.com/usage
-exclude: []
+exclude: null
 flush_interval: 5s
 request_timeout: 15s
 sample_rate: 100%
 
 ```
 
-<a name="telemetryhiveusage_reportingexclude"></a>
-##### telemetry\.hive\.usage\_reporting\.exclude\[\]: array
-
-A list of operations (by name) to be ignored by Hive.
-Example: ["IntrospectionQuery", "MeQuery"]
-
-
-**Items**
-
-**Item Type:** `string`  
 <a name="telemetrymetrics"></a>
 ### telemetry\.metrics: object
 

@@ -334,6 +334,7 @@ pub async fn graphql_request_handler(
                 client_name,
                 client_version,
                 normalize_payload.operation_for_plan.name.as_deref(),
+                normalize_payload.operation_for_plan.operation_kind.as_ref(),
                 &parser_payload.minified_document,
                 hive_usage_agent,
                 shared_state
@@ -349,6 +350,7 @@ pub async fn graphql_request_handler(
                         "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
                     ),
                 shared_response.error_count(),
+                Some(req.into()),
             )
             .await;
         }

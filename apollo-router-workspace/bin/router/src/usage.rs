@@ -1,11 +1,13 @@
 use crate::consts::PLUGIN_VERSION;
+use apollo_router::Context;
 use apollo_router::layers::ServiceBuilderExt;
 use apollo_router::plugin::Plugin;
 use apollo_router::plugin::PluginInit;
 use apollo_router::services::*;
-use apollo_router::Context;
 use core::ops::Drop;
+use std::collections::HashSet;
 use futures::StreamExt;
+use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_console_sdk::agent::usage_agent::UsageAgentExt;
 use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
 use hive_console_sdk::graphql_tools::parser::parse_schema;
@@ -14,7 +16,6 @@ use http::HeaderValue;
 use rand::Rng;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -53,6 +54,13 @@ pub struct UsagePlugin {
     cancellation_token: Arc<CancellationToken>,
 }
 
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum UsageReportingExclude {
+    Expression { expression: String },
+    OperationNames(Vec<String>),
+}
+
 #[derive(Clone, Debug, Deserialize, JsonSchema, Default)]
 pub struct Config {
     /// Default: true
@@ -74,8 +82,20 @@ pub struct Config {
     /// 1.0 = 100% chance of being sent.
     /// Default: 1.0
     sample_rate: Option<f64>,
-    /// A list of operations (by name) to be ignored by GraphQL Hive.
-    exclude: Option<Vec<String>>,
+    /// An expression in VRL to exclude certain operations from being sent to Hive Console.
+    /// Returning `true` from this expression will exclude the operation, while `false` will include it.
+    /// This expression is a VRL expression that has access to the request and operation details;
+    ///
+    /// ```vrl
+    ///  if (.request.operation.name == "ExcludeMe") {
+    ///    true
+    ///  } else {
+    ///    false
+    ///  }
+    /// ```
+    /// Use `exclude: { expression: "..." }` for expressions.
+    /// A list of operation names is also supported for backward compatibility.
+    exclude: Option<UsageReportingExclude>,
     client_name_header: Option<String>,
     client_version_header: Option<String>,
     /// A maximum number of operations to hold in a buffer before sending to GraphQL Hive
@@ -218,6 +238,10 @@ impl Plugin for UsagePlugin {
                 agent = agent.flush_interval(Duration::from_secs(flush_interval));
             }
 
+            if let Some(UsageReportingExclude::Expression { expression }) = &user_config.exclude {
+                agent = agent.exclude_expression(expression.clone());
+            }
+
             let agent = agent.build().map_err(Box::new)?;
 
             let cancellation_token_for_interval = cancellation_token.clone();
@@ -236,11 +260,16 @@ impl Plugin for UsagePlugin {
             .expect("Failed to parse schema")
             .into_static();
 
+        let exclude = match user_config.exclude {
+            Some(UsageReportingExclude::OperationNames(names)) => Some(names),
+            _ => None,
+        };
+
         Ok(UsagePlugin {
             schema: Arc::new(schema),
             config: OperationConfig {
                 sample_rate: user_config.sample_rate.unwrap_or(1.0),
-                exclude: user_config.exclude,
+                exclude,
                 client_name_header: user_config
                     .client_name_header
                     .unwrap_or("graphql-client-name".to_string()),
@@ -263,9 +292,24 @@ impl Plugin for UsagePlugin {
                     .map_future_with_request_data(
                         move |req: &supergraph::Request| {
                             Self::populate_context(config.clone(), req);
-                            req.context.clone()
+
+                            let request_details = RequestDetails {
+                                method: req.supergraph_request.method().clone(),
+                                url: req.supergraph_request.uri().clone(),
+                                headers: req
+                                    .supergraph_request
+                                    .headers()
+                                    .iter()
+                                    .filter_map(|(k, v)| {
+                                        v.to_str()
+                                            .ok()
+                                            .map(|value| (k.to_string(), value.to_string()))
+                                    })
+                                    .collect(),
+                            };
+                            (request_details, req.context.clone())
                         },
-                        move |ctx: Context, fut| {
+                        move |(request_details, ctx): (RequestDetails, Context), fut| {
                             let agent = agent.clone();
                             let schema = schema.clone();
                             async move {
@@ -313,18 +357,18 @@ impl Plugin for UsagePlugin {
                                     Err(e) => {
                                         tokio::spawn(async move {
                                             let res = agent
-                                                .add_report(ExecutionReport {
+                                                .add_report_with_request(ExecutionReport {
                                                     schema,
                                                     client_name,
                                                     client_version,
                                                     timestamp,
                                                     duration,
-                                                    ok: false,
                                                     errors: 1,
                                                     operation_body,
                                                     operation_name,
                                                     persisted_document_hash,
-                                                })
+                                                    ..Default::default()
+                                                }, Some(request_details))
                                                 .await;
                                             if let Err(e) = res {
                                                 tracing::error!("Error adding report: {}", e);
@@ -352,12 +396,13 @@ impl Plugin for UsagePlugin {
                                                         errors: response.errors.len(),
                                                         operation_body: operation_body.clone(),
                                                         operation_name: operation_name.clone(),
-                                                        persisted_document_hash:
-                                                            persisted_document_hash.clone(),
+                                                        persisted_document_hash: persisted_document_hash.clone(),
+                                                        ..Default::default()
                                                     };
+                                                    let request_details = request_details.clone();
                                                     tokio::spawn(async move {
                                                         let res = agent
-                                                            .add_report(execution_report)
+                                                            .add_report_with_request(execution_report, Some(request_details.clone()))
                                                             .await;
                                                         if let Err(e) = res {
                                                             tracing::error!(
@@ -395,7 +440,7 @@ impl Drop for UsagePlugin {
 #[cfg(test)]
 mod hive_usage_tests {
     use apollo_router::{
-        plugin::{test::MockSupergraphService, Plugin, PluginInit},
+        plugin::{Plugin, PluginInit, test::MockSupergraphService},
         services::supergraph,
     };
     use http::header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
@@ -404,9 +449,49 @@ mod hive_usage_tests {
     use serde_json::json;
     use tower::ServiceExt;
 
-    use crate::consts::PLUGIN_VERSION;
+    use crate::{consts::PLUGIN_VERSION, usage::UsageReportingExclude};
 
     use super::{Config, UsagePlugin};
+
+    #[test]
+    fn config_exclude_supports_expression_object() {
+        let config: Config = serde_json::from_value(json!({
+            "exclude": { "expression": ".request.operation.name == \"ExcludedOp\"" }
+        }))
+        .expect("config with expression object should deserialize");
+
+        assert!(matches!(config.exclude, Some(UsageReportingExclude::Expression { .. })));
+
+        if let Some(UsageReportingExclude::Expression { expression }) = config.exclude {
+            assert_eq!(
+                expression,
+                ".request.operation.name == \"ExcludedOp\"",
+                "expression should match the input"
+            );
+        } else {
+            panic!("Expected an expression exclude");
+        }
+    }
+
+    #[test]
+    fn config_exclude_supports_legacy_operation_list() {
+        let config: Config = serde_json::from_value(json!({
+            "exclude": ["ExcludedOp", "IntrospectionQuery"]
+        }))
+        .expect("config with legacy operation list should deserialize");
+
+        assert!(matches!(config.exclude, Some(UsageReportingExclude::OperationNames(_))));
+
+        if let Some(UsageReportingExclude::OperationNames(names)) = config.exclude {
+            assert_eq!(
+                names,
+                vec!["ExcludedOp".to_string(), "IntrospectionQuery".to_string()],
+                "operation names should match the input"
+            );
+        } else {
+            panic!("Expected an operation names exclude");
+        }
+    }
 
     lazy_static::lazy_static! {
         static ref SCHEMA_VALIDATOR: Validator =

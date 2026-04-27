@@ -5,14 +5,16 @@ use std::{
 
 use async_trait::async_trait;
 use graphql_tools::parser::schema::Document;
-use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgentExt};
-use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
+use hive_console_sdk::agent::usage_agent::{
+    AgentError, ExecutionReport, OperationType, RequestDetails, UsageAgent, UsageAgentExt,
+};
 use hive_router_config::{
     telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
-    usage_reporting::UsageReportingConfig,
+    usage_reporting::{UsageReportingConfig, UsageReportingExclude},
 };
 use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
+use hive_router_query_planner::state::supergraph_state::OperationKind;
 use rand::prelude::*;
 use tokio_util::sync::CancellationToken;
 
@@ -20,7 +22,9 @@ use crate::consts::ROUTER_VERSION;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UsageReportingError {
-    #[error("Usage Reporting - Access token is missing. Please provide it via 'HIVE_ACCESS_TOKEN' environment variable or under 'telemetry.hive.token' in the configuration.")]
+    #[error(
+        "Usage Reporting - Access token is missing. Please provide it via 'HIVE_ACCESS_TOKEN' environment variable or under 'telemetry.hive.token' in the configuration."
+    )]
     MissingAccessToken,
     #[error("Failed to initialize usage agent: {0}")]
     AgentCreationError(#[from] AgentError),
@@ -71,6 +75,10 @@ pub fn init_hive_usage_agent(
         agent_builder = agent_builder.target_id(target_id);
     }
 
+    if let Some(UsageReportingExclude::Expression { expression }) = &usage_config.exclude {
+        agent_builder = agent_builder.exclude_expression(expression.clone());
+    }
+
     let agent = agent_builder.build()?;
 
     bg_tasks_manager.register_task(UsageAgentTask(agent.clone()));
@@ -86,17 +94,23 @@ pub async fn collect_usage_report<'a>(
     client_name: Option<&str>,
     client_version: Option<&str>,
     operation_name: Option<&'a str>,
+    operation_kind: Option<&'a OperationKind>,
     operation_body: &'a str,
     hive_usage_agent: &UsageAgent,
     usage_config: &UsageReportingConfig,
     error_count: usize,
+    request_details: Option<RequestDetails>,
 ) {
     let sample_rate = usage_config.sample_rate.as_f64();
     if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
         return;
     }
-    if operation_name.is_some_and(|op_name| usage_config.exclude.iter().any(|s| s == op_name)) {
-        return;
+    if let Some(operation_name) = operation_name {
+        if let Some(UsageReportingExclude::OperationNames(excluded_names)) = &usage_config.exclude {
+            if excluded_names.iter().any(|name| name == operation_name) {
+                return;
+            }
+        }
     }
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -111,11 +125,19 @@ pub async fn collect_usage_report<'a>(
         ok: error_count == 0,
         errors: error_count,
         operation_body: operation_body.to_owned(),
+        operation_type: operation_kind.map(|k| match k {
+            OperationKind::Query => OperationType::Query,
+            OperationKind::Mutation => OperationType::Mutation,
+            OperationKind::Subscription => OperationType::Subscription,
+        }),
         operation_name: operation_name.map(|s| s.to_owned()),
         persisted_document_hash: None,
     };
 
-    if let Err(err) = hive_usage_agent.add_report(execution_report).await {
+    if let Err(err) = hive_usage_agent
+        .add_report_with_request(execution_report, request_details)
+        .await
+    {
         tracing::error!("Failed to send usage report: {}", err);
     }
 }

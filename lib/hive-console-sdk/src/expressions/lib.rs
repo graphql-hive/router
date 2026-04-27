@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
-use std::time::Duration;
 
-use hive_router_config::traffic_shaping::DurationOrExpression;
 use vrl::{
     compiler::{compile as vrl_compile, Program as VrlProgram, TargetValue as VrlTargetValue},
     core::Value as VrlValue,
@@ -15,7 +13,6 @@ use vrl::{
 use crate::expressions::{
     error::{ExpressionCompileError, ExpressionExecutionError},
     functions::env::Env,
-    ProgramResolutionError,
 };
 
 static VRL_FUNCTIONS: LazyLock<Vec<Box<dyn Function>>> = LazyLock::new(|| {
@@ -102,58 +99,5 @@ impl ExecutableProgram for VrlProgram {
         let mut ctx = VrlContext::new(&mut target, &mut state, &VRL_TIMEZONE);
 
         Ok(self.resolve(&mut ctx)?)
-    }
-}
-
-/// Generic enum for a value that can be either static or computed via VRL expression
-#[derive(Clone)]
-pub enum ValueOrProgram<T> {
-    /// A statically-known value
-    Value(T),
-    /// A VRL program that computes the value at runtime
-    Program(Box<VrlProgram>),
-}
-
-impl<T> ValueOrProgram<T>
-where
-    T: FromVrlValue + Clone,
-{
-    /// Resolve this ValueOrProgram to a concrete value
-    ///
-    /// If this is a static value, returns it immediately.
-    /// If this is a program, executes it against the provided context and converts the result.
-    ///
-    /// - `vrl_context_fn` - A function that returns the VRL value context for expression execution
-    #[inline]
-    pub fn resolve<F>(&self, vrl_context_fn: F) -> Result<T, ProgramResolutionError<T::Error>>
-    where
-        F: FnOnce() -> VrlValue,
-    {
-        match self {
-            ValueOrProgram::Value(v) => Ok(v.clone()),
-            ValueOrProgram::Program(vrl_program) => {
-                let vrl_context = vrl_context_fn();
-                let result_value = vrl_program
-                    .execute(vrl_context)
-                    .map_err(ProgramResolutionError::ExecutionFailed)?;
-
-                T::from_vrl_value(result_value).map_err(ProgramResolutionError::ConversionFailed)
-            }
-        }
-    }
-}
-
-impl ValueOrProgram<Duration> {
-    pub fn compile(
-        config: &DurationOrExpression,
-        fns: Option<&[Box<dyn Function>]>,
-    ) -> Result<Self, ExpressionCompileError> {
-        match config {
-            DurationOrExpression::Duration(dur) => Ok(ValueOrProgram::Value(*dur)),
-            DurationOrExpression::Expression { expression } => {
-                let program = expression.as_str().compile_expression(fns)?;
-                Ok(ValueOrProgram::Program(Box::new(program)))
-            }
-        }
     }
 }

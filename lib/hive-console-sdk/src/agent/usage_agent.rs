@@ -3,17 +3,33 @@ use graphql_tools::parser::schema::Document;
 use recloser::AsyncRecloser;
 use reqwest_middleware::ClientWithMiddleware;
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, BTreeMap, HashMap},
     sync::Arc,
     time::Duration,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::{buffer::AddStatus, utils::OperationProcessor};
-use crate::agent::{buffer::Buffer, builder::UsageAgentBuilder};
+use crate::expressions::lib::FromVrlValue;
+use crate::{
+    agent::{buffer::AddStatus, utils::OperationProcessor},
+    expressions::ExecutableProgram,
+};
+use crate::{
+    agent::{buffer::Buffer, builder::UsageAgentBuilder},
+    expressions::values::boolean::BooleanConversionError,
+};
+use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue, value::KeyString};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
+pub enum OperationType {
+    #[default]
+    Query,
+    Mutation,
+    Subscription,
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct ExecutionReport {
     pub schema: Arc<Document<'static, String>>,
     pub client_name: Option<String>,
@@ -24,6 +40,7 @@ pub struct ExecutionReport {
     pub errors: usize,
     pub operation_body: String,
     pub operation_name: Option<String>,
+    pub operation_type: Option<OperationType>,
     pub persisted_document_hash: Option<String>,
 }
 
@@ -36,6 +53,7 @@ pub struct UsageAgentInner {
     pub(crate) client: ClientWithMiddleware,
     pub(crate) flush_interval: Duration,
     pub(crate) circuit_breaker: AsyncRecloser,
+    pub(crate) exclude_expression: Option<VrlProgram>,
 }
 
 pub fn non_empty_string(value: Option<String>) -> Option<String> {
@@ -60,7 +78,9 @@ pub enum AgentError {
     TargetIdWithLegacyToken,
     #[error("invalid token provided")]
     InvalidToken,
-    #[error("invalid target id provided: {0}, it should be either a slug like \"$organizationSlug/$projectSlug/$targetSlug\" or an UUID")]
+    #[error(
+        "invalid target id provided: {0}, it should be either a slug like \"$organizationSlug/$projectSlug/$targetSlug\" or an UUID"
+    )]
     InvalidTargetId(String),
     #[error("unable to instantiate the http client for reports sending: {0}")]
     HTTPClientCreationError(reqwest::Error),
@@ -70,6 +90,12 @@ pub enum AgentError {
     CircuitBreakerRejected,
     #[error("unable to send report: {0}")]
     Unknown(String),
+    #[error("failed to compile exclude expression: {0}")]
+    ExcludeExpressionCompileError(#[from] crate::expressions::ExpressionCompileError),
+    #[error("failed to execute exclude expression: {0}")]
+    ExcludeExpressionExecutionError(#[from] crate::expressions::ExpressionExecutionError),
+    #[error("failed to convert exclude expression result to boolean: {0}")]
+    ExcludeExpressionResultConversionError(#[from] BooleanConversionError),
 }
 
 pub type UsageAgent = Arc<AsyncDropper<UsageAgentInner>>;
@@ -82,6 +108,12 @@ pub trait UsageAgentExt {
     async fn flush(&self) -> Result<(), AgentError>;
     async fn start_flush_interval(&self, token: &CancellationToken);
     async fn add_report(&self, execution_report: ExecutionReport) -> Result<(), AgentError>;
+
+    async fn add_report_with_request(
+        &self,
+        execution_report: ExecutionReport,
+        request: Option<RequestDetails>,
+    ) -> Result<(), AgentError>;
 }
 
 impl UsageAgentInner {
@@ -217,6 +249,13 @@ impl UsageAgentInner {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RequestDetails {
+    pub method: http::Method,
+    pub url: http::Uri,
+    pub headers: Vec<(String, String)>,
+}
+
 #[async_trait::async_trait]
 impl UsageAgentExt for UsageAgent {
     async fn flush(&self) -> Result<(), AgentError> {
@@ -236,13 +275,171 @@ impl UsageAgentExt for UsageAgent {
         }
     }
 
-    async fn add_report(&self, execution_report: ExecutionReport) -> Result<(), AgentError> {
-        if let AddStatus::Full { drained } = self.inner().buffer.add(execution_report).await {
-            self.inner().handle_drained(drained).await?;
+    async fn add_report_with_request(
+        &self,
+        execution_report: ExecutionReport,
+        request: Option<RequestDetails>,
+    ) -> Result<(), AgentError> {
+        let inner = self.inner();
+
+        if let Some(exclude_program) = &inner.exclude_expression {
+            let result = exclude_program.execute(
+                get_vrl_value_from_execution_report_and_request(&execution_report, request),
+            )?;
+            let result_bool = bool::from_vrl_value(result)?;
+            if result_bool {
+                tracing::debug!(
+                    "Excluding report for operation \"{}\" based on exclude expression evaluation",
+                    execution_report
+                        .operation_name
+                        .clone()
+                        .or_else(|| Some("anonymous".to_string()))
+                        .unwrap()
+                );
+                return Ok(());
+            }
+        }
+
+        if let AddStatus::Full { drained } = inner.buffer.add(execution_report).await {
+            inner.handle_drained(drained).await?;
         }
 
         Ok(())
     }
+    async fn add_report(&self, execution_report: ExecutionReport) -> Result<(), AgentError> {
+        self.add_report_with_request(execution_report, None).await
+    }
+}
+
+impl<'req, TBody> From<&'req http::Request<TBody>> for RequestDetails {
+    fn from(req: &'req http::Request<TBody>) -> Self {
+        let headers = req
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|val_str| (name.to_string(), val_str.to_string()))
+            })
+            .collect();
+
+        RequestDetails {
+            method: req.method().clone(),
+            url: req.uri().clone(),
+            headers,
+        }
+    }
+}
+
+impl<'req> From<&'req ntex::web::HttpRequest> for RequestDetails {
+    fn from(req: &'req ntex::web::HttpRequest) -> Self {
+        let headers = req
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|val_str| (name.to_string(), val_str.to_string()))
+            })
+            .collect();
+
+        RequestDetails {
+            method: req.method().clone(),
+            url: req.uri().clone(),
+            headers,
+        }
+    }
+}
+
+impl From<RequestDetails> for VrlValue {
+    fn from(details: RequestDetails) -> Self {
+        let mut merged_headers: BTreeMap<String, String> = BTreeMap::new();
+        for (header_name, header_value) in details.headers {
+            if let Some(existing_value) = merged_headers.get_mut(&header_name) {
+                existing_value.push_str(", ");
+                existing_value.push_str(&header_value);
+            } else {
+                merged_headers.insert(header_name, header_value);
+            }
+        }
+
+        let headers_value: BTreeMap<KeyString, VrlValue> = merged_headers
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect();
+        let headers_value = VrlValue::Object(headers_value);
+
+        // .request.url
+        let url_value = VrlValue::Object(BTreeMap::from([
+            ("host".into(), details.url.host().unwrap_or_default().into()),
+            ("path".into(), details.url.path().into()),
+            (
+                "port".into(),
+                details
+                    .url
+                    .port_u16()
+                    .map(|p| VrlValue::Integer(p.into()))
+                    .unwrap_or(VrlValue::Null),
+            ),
+        ]));
+
+        // .request
+        VrlValue::Object(BTreeMap::from([
+            ("method".into(), details.method.as_str().into()),
+            ("headers".into(), headers_value),
+            ("url".into(), url_value),
+        ]))
+    }
+}
+
+pub fn get_vrl_value_from_execution_report_and_request(
+    report: &ExecutionReport,
+    request: Option<RequestDetails>,
+) -> VrlValue {
+    let mut map = BTreeMap::from([("default".into(), VrlValue::Boolean(false))]);
+    let mut request_map = BTreeMap::new();
+
+    if let Some(request_details) = request {
+        if let VrlValue::Object(request_object) = VrlValue::from(request_details) {
+            request_map.extend(request_object);
+        }
+    }
+
+    request_map.insert(
+        "operation".into(),
+        VrlValue::Object(BTreeMap::from([
+            (
+                "name".into(),
+                report.operation_name.clone().unwrap_or_default().into(),
+            ),
+            (
+                "type".into(),
+                report
+                    .operation_type
+                    .as_ref()
+                    .map(|operation_type| match operation_type {
+                        OperationType::Query => "query",
+                        OperationType::Mutation => "mutation",
+                        OperationType::Subscription => "subscription",
+                    })
+                    .unwrap_or_default()
+                    .into(),
+            ),
+            ("query".into(), report.operation_body.clone().into()),
+        ])),
+    );
+
+    if let Ok(timestamp_integer) = report.timestamp.try_into() {
+        let timestamp_value = VrlValue::Integer(timestamp_integer);
+        map.insert("timestamp".into(), timestamp_value);
+        request_map.insert("timestamp".into(), VrlValue::Integer(timestamp_integer));
+    }
+
+    map.insert("request".into(), VrlValue::Object(request_map));
+
+    VrlValue::Object(map)
 }
 
 #[async_trait::async_trait]
@@ -259,9 +456,34 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use graphql_tools::parser::{parse_query, parse_schema};
-    use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+    use reqwest::{
+        header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
+        Method,
+    };
+    use vrl::core::Value as VrlValue;
+    use vrl::value::KeyString;
 
-    use crate::agent::usage_agent::{ExecutionReport, Report, UsageAgent, UsageAgentExt};
+    use crate::agent::usage_agent::{
+        get_vrl_value_from_execution_report_and_request, ExecutionReport, OperationType, Report,
+        UsageAgent, UsageAgentExt,
+    };
+
+    /// Helper to extract a nested VRL value from an Object using string keys.
+    fn vrl_get<'a>(value: &'a VrlValue, keys: &[&str]) -> &'a VrlValue {
+        let mut current = value;
+        for key in keys {
+            match current {
+                VrlValue::Object(map) => {
+                    let ks: KeyString = (*key).into();
+                    current = map
+                        .get(&ks)
+                        .unwrap_or_else(|| panic!("key '{}' not found", key));
+                }
+                _ => panic!("expected Object at key '{}'", key),
+            }
+        }
+        current
+    }
 
     const CONTENT_TYPE_VALUE: &'static str = "application/json";
     const GRAPHQL_CLIENT_NAME: &'static str = "Hive Client";
@@ -430,24 +652,558 @@ mod tests {
                 .user_agent(user_agent.into())
                 .build()?;
 
+            let request = http::Request::builder()
+                .method(Method::POST)
+                .uri("http://localhost/graphql")
+                .body(())
+                .unwrap();
+
             usage_agent
-                .add_report(ExecutionReport {
-                    schema: Arc::new(schema),
-                    operation_body: op.to_string(),
-                    operation_name: Some("deleteProject".to_string()),
-                    client_name: Some(GRAPHQL_CLIENT_NAME.to_string()),
-                    client_version: Some(GRAPHQL_CLIENT_VERSION.to_string()),
-                    timestamp,
-                    duration,
-                    ok: true,
-                    errors: 0,
-                    persisted_document_hash: None,
-                })
+                .add_report_with_request(
+                    ExecutionReport {
+                        schema: Arc::new(schema),
+                        operation_body: op.to_string(),
+                        operation_name: Some("deleteProject".to_string()),
+                        operation_type: Some(OperationType::Mutation),
+                        client_name: Some(GRAPHQL_CLIENT_NAME.to_string()),
+                        client_version: Some(GRAPHQL_CLIENT_VERSION.to_string()),
+                        timestamp,
+                        duration,
+                        ok: true,
+                        errors: 0,
+                        persisted_document_hash: None,
+                    },
+                    Some((&request).into()),
+                )
                 .await?;
         }
 
         mock.assert_async().await;
 
         Ok(())
+    }
+
+    fn make_test_report(
+        operation_name: Option<&str>,
+        operation_type: OperationType,
+        operation_body: &str,
+    ) -> ExecutionReport {
+        let schema: graphql_tools::static_graphql::schema::Document =
+            parse_schema("type Query { hello: String }").unwrap();
+
+        ExecutionReport {
+            schema: Arc::new(schema),
+            operation_body: operation_body.to_string(),
+            operation_name: operation_name.map(|s| s.to_string()),
+            operation_type: Some(operation_type),
+            client_name: Some("test-client".to_string()),
+            client_version: Some("1.0.0".to_string()),
+            timestamp: 1625247600,
+            duration: Duration::from_millis(10),
+            ok: true,
+            errors: 0,
+            persisted_document_hash: None,
+        }
+    }
+
+    fn make_simple_report(
+        operation_name: Option<&str>,
+        operation_type: OperationType,
+    ) -> ExecutionReport {
+        make_test_report(operation_name, operation_type, "query { hello }")
+    }
+
+    fn make_simple_request() -> http::Request<()> {
+        http::Request::builder()
+            .method(Method::GET)
+            .uri("http://localhost/graphql")
+            .body(())
+            .unwrap()
+    }
+
+    #[test]
+    fn vrl_value_contains_operation_name() {
+        let report = make_simple_report(Some("MyQuery"), OperationType::Query);
+        let request = make_simple_request();
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        let name = vrl_get(&value, &["request", "operation", "name"]);
+        assert_eq!(name, &VrlValue::from("MyQuery"));
+    }
+
+    #[test]
+    fn vrl_value_contains_operation_type_query() {
+        let report = make_simple_report(Some("Q"), OperationType::Query);
+        let request = make_simple_request();
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        let op_type = vrl_get(&value, &["request", "operation", "type"]);
+        assert_eq!(op_type, &VrlValue::from("query"));
+    }
+
+    #[test]
+    fn vrl_value_contains_operation_type_mutation() {
+        let report = make_simple_report(Some("M"), OperationType::Mutation);
+        let request = make_simple_request();
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        let op_type = vrl_get(&value, &["request", "operation", "type"]);
+        assert_eq!(op_type, &VrlValue::from("mutation"));
+    }
+
+    #[test]
+    fn vrl_value_contains_operation_type_subscription() {
+        let report = make_simple_report(Some("S"), OperationType::Subscription);
+        let request = make_simple_request();
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        let op_type = vrl_get(&value, &["request", "operation", "type"]);
+        assert_eq!(op_type, &VrlValue::from("subscription"));
+    }
+
+    #[test]
+    fn vrl_value_contains_operation_body() {
+        let report = make_simple_report(Some("Q"), OperationType::Query);
+        let request = make_simple_request();
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        let query = vrl_get(&value, &["request", "operation", "query"]);
+        assert_eq!(query, &VrlValue::from("query { hello }"));
+    }
+
+    #[test]
+    fn vrl_value_contains_request_method() {
+        let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+        let request = http::Request::builder()
+            .method(Method::GET)
+            .uri("http://localhost/graphql")
+            .body(())
+            .unwrap();
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        let method = vrl_get(&value, &["request", "method"]);
+        assert_eq!(method, &VrlValue::from("GET"));
+    }
+
+    #[test]
+    fn vrl_value_contains_url_details() {
+        let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+        let request = http::Request::builder()
+            .method(Method::POST)
+            .uri("http://api.example.com:8080/v1/graphql")
+            .body(())
+            .unwrap();
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        assert_eq!(
+            vrl_get(&value, &["request", "url", "host"]),
+            &VrlValue::from("api.example.com")
+        );
+        assert_eq!(
+            vrl_get(&value, &["request", "url", "port"]),
+            &VrlValue::Integer(8080)
+        );
+        assert_eq!(
+            vrl_get(&value, &["request", "url", "path"]),
+            &VrlValue::from("/v1/graphql")
+        );
+    }
+
+    #[test]
+    fn vrl_value_contains_headers() {
+        let request = http::Request::builder()
+            .method(Method::POST)
+            .uri("http://localhost/graphql")
+            .header("x-custom-header", "custom-value")
+            .header("authorization", "Bearer token123")
+            .body(())
+            .unwrap();
+        let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        assert_eq!(
+            vrl_get(&value, &["request", "headers", "x-custom-header"]),
+            &VrlValue::from("custom-value")
+        );
+        assert_eq!(
+            vrl_get(&value, &["request", "headers", "authorization"]),
+            &VrlValue::from("Bearer token123")
+        );
+    }
+
+    #[test]
+    fn vrl_value_joins_duplicate_header_values() {
+        let mut request = http::Request::builder()
+            .method(Method::POST)
+            .uri("http://localhost/graphql")
+            .body(())
+            .unwrap();
+
+        request
+            .headers_mut()
+            .append("x-scope", http::HeaderValue::from_static("one"));
+        request
+            .headers_mut()
+            .append("x-scope", http::HeaderValue::from_static("two"));
+
+        let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        assert_eq!(
+            vrl_get(&value, &["request", "headers", "x-scope"]),
+            &VrlValue::from("one, two")
+        );
+    }
+
+    #[test]
+    fn vrl_value_anonymous_operation_has_empty_name() {
+        let report = make_simple_report(None, OperationType::Query);
+        let request = make_simple_request();
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        let name = vrl_get(&value, &["request", "operation", "name"]);
+        assert_eq!(name, &VrlValue::from(""));
+    }
+
+    #[test]
+    fn vrl_value_has_default_false() {
+        let report = make_simple_report(Some("Q"), OperationType::Query);
+        let request = make_simple_request();
+        let value =
+            get_vrl_value_from_execution_report_and_request(&report, Some((&request).into()));
+
+        let default_val = vrl_get(&value, &["default"]);
+        assert_eq!(default_val, &VrlValue::Boolean(false));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exclude_expression_filters_by_operation_name() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let token = "Token";
+        let mut server = mockito::Server::new_async().await;
+        let server_url = server.url();
+
+        // The mock expects exactly 0 requests because the operation should be excluded
+        let mock = server
+            .mock("POST", "/200")
+            .expect(0)
+            .with_status(200)
+            .create_async()
+            .await;
+
+        {
+            let usage_agent = UsageAgent::builder()
+                .token(token.into())
+                .endpoint(format!("{}/200", server_url))
+                .buffer_size(1) // flush on every report
+                .exclude_expression(r#".request.operation.name == "ExcludeMe""#.to_string())
+                .build()?;
+
+            // This report should be excluded
+            let report = make_simple_report(Some("ExcludeMe"), OperationType::Query);
+            let request = make_simple_request();
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
+        }
+
+        mock.assert_async().await;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exclude_expression_allows_non_matching_operations(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let token = "Token";
+        let mut server = mockito::Server::new_async().await;
+        let server_url = server.url();
+
+        // This operation should NOT be excluded, so we expect 1 request (via async drop flush)
+        let mock = server
+            .mock("POST", "/200")
+            .expect(1)
+            .with_status(200)
+            .create_async()
+            .await;
+
+        {
+            let usage_agent = UsageAgent::builder()
+                .token(token.into())
+                .endpoint(format!("{}/200", server_url))
+                .exclude_expression(r#".request.operation.name == "ExcludeMe""#.to_string())
+                .build()?;
+
+            let report = make_simple_report(Some("KeepMe"), OperationType::Query);
+            let request = make_simple_request();
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
+        }
+
+        mock.assert_async().await;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exclude_expression_filters_by_operation_type() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let token = "Token";
+        let mut server = mockito::Server::new_async().await;
+        let server_url = server.url();
+
+        let mock = server
+            .mock("POST", "/200")
+            .expect(0)
+            .with_status(200)
+            .create_async()
+            .await;
+
+        {
+            let usage_agent = UsageAgent::builder()
+                .token(token.into())
+                .endpoint(format!("{}/200", server_url))
+                .buffer_size(1)
+                .exclude_expression(r#".request.operation.type == "subscription""#.to_string())
+                .build()?;
+
+            let report = make_simple_report(Some("OnMessage"), OperationType::Subscription);
+            let request = make_simple_request();
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
+        }
+
+        mock.assert_async().await;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exclude_expression_filters_by_header() -> Result<(), Box<dyn std::error::Error>> {
+        let token = "Token";
+        let mut server = mockito::Server::new_async().await;
+        let server_url = server.url();
+
+        let mock = server
+            .mock("POST", "/200")
+            .expect(0)
+            .with_status(200)
+            .create_async()
+            .await;
+
+        {
+            let usage_agent = UsageAgent::builder()
+                .token(token.into())
+                .endpoint(format!("{}/200", server_url))
+                .buffer_size(1)
+                .exclude_expression(r#".request.headers."x-internal" == "true""#.to_string())
+                .build()?;
+
+            let request = http::Request::builder()
+                .method(Method::POST)
+                .uri("http://localhost/graphql")
+                .header("x-internal", "true")
+                .body(())
+                .unwrap();
+
+            let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
+        }
+
+        mock.assert_async().await;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exclude_expression_complex_conditional() -> Result<(), Box<dyn std::error::Error>> {
+        let token = "Token";
+        let mut server = mockito::Server::new_async().await;
+        let server_url = server.url();
+
+        // The expression excludes IntrospectionQuery OR any mutation
+        let exclude_expr = r#"
+            if (.request.operation.name == "IntrospectionQuery") {
+                true
+            } else if (.request.operation.type == "mutation") {
+                true
+            } else {
+                false
+            }
+        "#;
+
+        let mock = server
+            .mock("POST", "/200")
+            .expect(0)
+            .with_status(200)
+            .create_async()
+            .await;
+
+        {
+            let usage_agent = UsageAgent::builder()
+                .token(token.into())
+                .endpoint(format!("{}/200", server_url))
+                .buffer_size(1)
+                .exclude_expression(exclude_expr.to_string())
+                .build()?;
+
+            let request = make_simple_request();
+
+            // Excluded: IntrospectionQuery
+            let report = make_simple_report(Some("IntrospectionQuery"), OperationType::Query);
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
+
+            // Excluded: any mutation
+            let report = make_simple_report(Some("CreateUser"), OperationType::Mutation);
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
+        }
+
+        mock.assert_async().await;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exclude_expression_allows_through_complex_conditional(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let token = "Token";
+        let mut server = mockito::Server::new_async().await;
+        let server_url = server.url();
+
+        let exclude_expr = r#"
+            if (.request.operation.name == "IntrospectionQuery") {
+                true
+            } else if (.request.operation.type == "mutation") {
+                true
+            } else {
+                false
+            }
+        "#;
+
+        // A normal query should NOT be excluded
+        let mock = server
+            .mock("POST", "/200")
+            .expect(1)
+            .with_status(200)
+            .create_async()
+            .await;
+
+        {
+            let usage_agent = UsageAgent::builder()
+                .token(token.into())
+                .endpoint(format!("{}/200", server_url))
+                .exclude_expression(exclude_expr.to_string())
+                .build()?;
+
+            let request = make_simple_request();
+
+            let report = make_simple_report(Some("GetUsers"), OperationType::Query);
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
+        }
+
+        mock.assert_async().await;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exclude_expression_filters_by_url_path() -> Result<(), Box<dyn std::error::Error>> {
+        let token = "Token";
+        let mut server = mockito::Server::new_async().await;
+        let server_url = server.url();
+
+        let mock = server
+            .mock("POST", "/200")
+            .expect(0)
+            .with_status(200)
+            .create_async()
+            .await;
+
+        {
+            let usage_agent = UsageAgent::builder()
+                .token(token.into())
+                .endpoint(format!("{}/200", server_url))
+                .buffer_size(1)
+                .exclude_expression(r#".request.url.path == "/internal/graphql""#.to_string())
+                .build()?;
+
+            let request = http::Request::builder()
+                .method(Method::POST)
+                .uri("http://localhost/internal/graphql")
+                .body(())
+                .unwrap();
+
+            let report = make_test_report(Some("Q"), OperationType::Query, "query { hello }");
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
+        }
+
+        mock.assert_async().await;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn no_exclude_expression_sends_all_reports() -> Result<(), Box<dyn std::error::Error>> {
+        let token = "Token";
+        let mut server = mockito::Server::new_async().await;
+        let server_url = server.url();
+
+        let mock = server
+            .mock("POST", "/200")
+            .expect(1)
+            .with_status(200)
+            .create_async()
+            .await;
+
+        {
+            let usage_agent = UsageAgent::builder()
+                .token(token.into())
+                .endpoint(format!("{}/200", server_url))
+                .build()?;
+
+            let report = make_simple_report(Some("AnyOp"), OperationType::Query);
+            let request = make_simple_request();
+            usage_agent
+                .add_report_with_request(report, Some((&request).into()))
+                .await?;
+        }
+
+        mock.assert_async().await;
+        Ok(())
+    }
+
+    #[test]
+    fn builder_rejects_invalid_exclude_expression() {
+        let result = UsageAgent::builder()
+            .token("Token".into())
+            .exclude_expression("this is not valid VRL }{".to_string())
+            .build();
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn builder_ignores_empty_exclude_expression() {
+        let result = UsageAgent::builder()
+            .token("Token".into())
+            .exclude_expression("".to_string())
+            .build();
+
+        assert!(result.is_ok());
     }
 }

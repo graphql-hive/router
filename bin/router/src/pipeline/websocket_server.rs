@@ -1,3 +1,4 @@
+use hive_console_sdk::agent::usage_agent::RequestDetails;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
@@ -447,8 +448,9 @@ async fn handle_text_frame(
                     SingleContentType::default(),
                     StreamContentType::default(),
                 );
+                let method = Method::POST;
                 let exec = |guard| execute_planned_request(
-                    &Method::POST,
+                    &method,
                     ws_uri,
                     &headers,
                     payload,
@@ -501,12 +503,27 @@ async fn handle_text_frame(
                 };
 
                 if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                    let headers = headers
+                        .iter()
+                        .filter_map(|(name, value)| {
+                            value
+                                .to_str()
+                                .ok()
+                                .map(|val_str| (name.to_string(), val_str.to_string()))
+                        })
+                        .collect();
+                    let request_details = RequestDetails {
+                        method: Method::POST,
+                        url: (*ws_uri).clone(),
+                        headers,
+                    };
                     usage_reporting::collect_usage_report(
                         supergraph.supergraph_schema.clone(),
                         started_at.elapsed(),
                         client_name,
                         client_version,
                         normalize_payload.operation_for_plan.name.as_deref(),
+                        normalize_payload.operation_for_plan.operation_kind.as_ref(),
                         &parser_payload.minified_document,
                         hive_usage_agent,
                         shared_state
@@ -517,6 +534,7 @@ async fn handle_text_frame(
                             .map(|c| &c.usage_reporting)
                             .expect("Expected Usage Reporting options to be present when Hive Usage Agent is initialized"),
                         shared_response.error_count(),
+                        Some(request_details),
                     )
                     .await;
                 }

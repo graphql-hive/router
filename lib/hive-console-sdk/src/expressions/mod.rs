@@ -6,7 +6,7 @@ pub mod values;
 pub use vrl;
 
 pub use error::{ExpressionCompileError, ExpressionExecutionError, ProgramResolutionError};
-pub use lib::{CompileExpression, ExecutableProgram, FromVrlValue, ValueOrProgram};
-pub use values::duration::{DurationConversionError, DurationOrProgram};
+pub use lib::{CompileExpression, ExecutableProgram, FromVrlValue};
+pub use values::duration::DurationConversionError;
 pub use values::header_value::HeaderValueConversionError;
-pub use values::string::{StringConversionError, StringOrProgram};
+pub use values::string::StringConversionError;
