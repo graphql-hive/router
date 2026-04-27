@@ -31,7 +31,7 @@ tokio = { version = "1.36.0", features = ["full"] }
 tower = { version = "0.5", features = ["full"] }
 http = "1"
 http-body-util = "0.1"
-rand = "0.9.3"
+rand = "0.10.1"
 tokio-util = "0.7.16"
 
 [dev-dependencies]

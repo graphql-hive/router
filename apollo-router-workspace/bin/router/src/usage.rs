@@ -11,7 +11,7 @@ use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
 use hive_console_sdk::graphql_tools::parser::parse_schema;
 use hive_console_sdk::graphql_tools::parser::schema::Document;
 use http::HeaderValue;
-use rand::Rng;
+use rand::RngExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
