@@ -1,3 +1,6 @@
+# Minimum recommended version
+nextest-version = "0.9.133"
+
 [profile.default]
 # Show output (stdout/stderr) of failed tests
 failure-output = "immediate"

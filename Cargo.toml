@@ -110,4 +110,3 @@ tracing-subscriber = { version = "0.3.22", features = [
   "json",
 ] }
 tracing-tree = "0.4.0"
-cargo-nextest = "0.9.133"
