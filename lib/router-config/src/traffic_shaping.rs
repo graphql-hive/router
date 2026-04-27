@@ -93,6 +93,14 @@ pub struct TrafficShapingExecutorSubgraphConfig {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<ClientTLSConfig>,
+
+    /// Forces HTTP/2 for requests to subgraphs.
+    ///
+    /// For plain HTTP, it will use HTTP/2 cleartext (h2c).
+    /// For HTTPS, it also requires HTTP/2.
+    /// This will make the subgraph requests never fall back to HTTP/1.1,
+    /// and will fail if the subgraph doesn't support HTTP/2.
+    pub allow_only_http2: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -137,6 +145,15 @@ pub struct TrafficShapingExecutorGlobalConfig {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<ClientTLSConfig>,
+
+    /// Forces HTTP/2 for requests to subgraphs.
+    ///
+    /// For plain HTTP, it will use HTTP/2 cleartext (h2c).
+    /// For HTTPS, it also requires HTTP/2.
+    /// This will make the subgraph requests never fall back to HTTP/1.1,
+    /// and will fail if the subgraph doesn't support HTTP/2.
+    #[serde(default)]
+    pub allow_only_http2: bool,
 }
 
 fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
@@ -168,6 +185,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             dedupe_enabled: default_dedupe_enabled(),
             request_timeout: default_request_timeout(),
             tls: None,
+            allow_only_http2: false,
         }
     }
 }

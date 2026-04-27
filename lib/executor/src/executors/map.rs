@@ -83,13 +83,17 @@ impl SubgraphExecutorMap {
         global_timeout: DurationOrProgram,
         telemetry_context: Arc<TelemetryContext>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let client: HttpClient = Client::builder(TokioExecutor::new())
+        let mut client_builder = Client::builder(TokioExecutor::new());
+        client_builder
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.traffic_shaping.all.pool_idle_timeout)
-            .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host)
-            .build(build_https_connector(
-                config.traffic_shaping.all.tls.as_ref(),
-            )?);
+            .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host);
+        if config.traffic_shaping.all.allow_only_http2 {
+            client_builder.http2_only(true);
+        }
+        let client: HttpClient = client_builder.build(build_https_connector(
+            config.traffic_shaping.all.tls.as_ref(),
+        )?);
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
@@ -549,21 +553,28 @@ impl SubgraphExecutorMap {
         let pool_idle_timeout = subgraph_config
             .pool_idle_timeout
             .unwrap_or(self.config.traffic_shaping.all.pool_idle_timeout);
-        // Override client only if pool idle timeout is customized or TLS config is provided
+        // Override client only if pool idle timeout is customized, TLS config is provided, or allow_only_http2 differs
+        let subgraph_allow_only_http2 = subgraph_config
+            .allow_only_http2
+            .unwrap_or(self.config.traffic_shaping.all.allow_only_http2);
         if pool_idle_timeout != self.config.traffic_shaping.all.pool_idle_timeout
             || subgraph_config.tls.is_some()
+            || subgraph_allow_only_http2 != self.config.traffic_shaping.all.allow_only_http2
         {
             let tls_config = get_merged_tls_config(
                 self.config.traffic_shaping.all.tls.as_ref(),
                 subgraph_config.tls.as_ref(),
             );
-            config.client = Arc::new(
-                Client::builder(TokioExecutor::new())
-                    .pool_timer(TokioTimer::new())
-                    .pool_idle_timeout(pool_idle_timeout)
-                    .pool_max_idle_per_host(self.max_connections_per_host)
-                    .build(build_https_connector(tls_config.as_ref())?),
-            );
+            let mut client_builder = Client::builder(TokioExecutor::new());
+            client_builder
+                .pool_timer(TokioTimer::new())
+                .pool_idle_timeout(pool_idle_timeout)
+                .pool_max_idle_per_host(self.max_connections_per_host);
+            if subgraph_allow_only_http2 {
+                client_builder.http2_only(true);
+            }
+            config.client =
+                Arc::new(client_builder.build(build_https_connector(tls_config.as_ref())?));
         }
 
         // Apply other subgraph-specific overrides
