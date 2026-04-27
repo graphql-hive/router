@@ -384,7 +384,10 @@ fn expand_abstract_fragment(
             })
             .collect();
 
-        if specific_sub_fragments.iter().any(|f| !f.directives.is_empty()) {
+        if specific_sub_fragments
+            .iter()
+            .any(|f| !f.directives.is_empty())
+        {
             // If any sub-fragment has directives, each is treated as a distinct entity.
             // A fragment for the inherited fields (with parent directives) is created first...
             let mut inherited_fragment = InlineFragment {
