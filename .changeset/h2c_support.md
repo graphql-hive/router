@@ -2,6 +2,7 @@
 hive-router-config: patch
 hive-router-plan-executor: patch
 hive-router: patch
+hive-router-internal: patch
 ---
 
 # HTTP/2 Cleartext (h2c) Support for Subgraph Connections
