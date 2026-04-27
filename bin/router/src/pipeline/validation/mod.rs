@@ -127,7 +127,7 @@ pub async fn validate_operation_with_cache(
                             .request_context
                             .for_plugin::<hooks::OnGraphqlValidation>()
                     })
-                    .unwrap(),
+                    .expect("plugin state to exist as end callbacks are not empty"),
             };
             for callback in on_end_callbacks {
                 let result = callback(end_payload);

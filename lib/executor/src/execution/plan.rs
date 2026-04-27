@@ -438,7 +438,7 @@ async fn execute_query_plan_with_data<'exec>(
                 .plugin_req_state
                 .as_ref()
                 .map(|state| state.request_context.for_plugin::<hooks::OnExecute>())
-                .unwrap(),
+                .expect("plugin state not available, but on_end_callbacks are present"),
         };
 
         for callback in on_end_callbacks {

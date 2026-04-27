@@ -465,7 +465,7 @@ async fn handle_text_frame(
                 let exec = |guard| execute_planned_request(
                     &Method::POST,
                     ws_uri,
-                    headers.clone(),
+                    headers.as_ref().clone(),
                     payload,
                     &normalize_payload,
                     supergraph,

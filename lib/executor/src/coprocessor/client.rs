@@ -153,6 +153,12 @@ impl CoprocessorClient {
     ) -> Result<Self, CoprocessorError> {
         let timeout = config.timeout;
 
+        if config.protocol == CoprocessorProtocol::Http2 {
+            return Err(CoprocessorError::UnsupportedProtocol(
+                CoprocessorProtocol::Http2,
+            ));
+        }
+
         match (&config.url, config.protocol) {
             (CoprocessorEndpoint::Http { url }, protocol) => {
                 let endpoint = url

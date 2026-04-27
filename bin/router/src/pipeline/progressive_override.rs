@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use hive_router_config::override_labels::{LabelOverrideValue, OverrideLabelsConfig};
 use hive_router_internal::expressions::CompileExpression;
-use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
+use hive_router_plan_executor::execution::client_request_details::ClientRequestDetailsView;
 use hive_router_plan_executor::request_context::RequestContextError;
 use hive_router_plan_executor::request_context::SharedRequestContext;
 use hive_router_query_planner::{
@@ -57,9 +57,9 @@ pub struct RequestOverrideContext {
 
 impl RequestOverrideContext {
     #[inline]
-    pub fn new<'exec>(
+    pub fn new(
         override_labels_evaluator: &OverrideLabelsEvaluator,
-        client_request_details: &ClientRequestDetails<'exec>,
+        client_request_details: &impl ClientRequestDetailsView,
         request_context: &SharedRequestContext,
     ) -> Result<Self, LabelEvaluationError> {
         let progressive_override_state = request_context.snapshot()?.progressive_override;
@@ -114,14 +114,7 @@ impl RequestOverrideContext {
             .progressive_override
             .labels_to_override;
 
-        match active_labels {
-            Some(labels) => {
-                self.active_flags = labels;
-            }
-            None => {
-                self.active_flags = HashSet::default();
-            }
-        }
+        self.active_flags = active_labels.unwrap_or_default();
 
         Ok(())
     }
@@ -205,11 +198,11 @@ impl OverrideLabelsEvaluator {
         })
     }
 
-    pub(crate) fn evaluate<'exec>(
+    pub(crate) fn evaluate(
         &self,
         // Labels that have already been resolved either by plugins or coprocessors
         resolved_labels: Option<&HashSet<String>>,
-        client_request: &ClientRequestDetails<'exec>,
+        client_request: &impl ClientRequestDetailsView,
     ) -> Result<HashSet<String>, LabelEvaluationError> {
         let mut active_flags = match resolved_labels {
             Some(set) => set.union(&self.static_enabled_labels).cloned().collect(),
@@ -221,7 +214,10 @@ impl OverrideLabelsEvaluator {
         }
 
         let mut target = VrlTargetValue {
-            value: VrlValue::Object(BTreeMap::from([("request".into(), client_request.into())])),
+            value: VrlValue::Object(BTreeMap::from([(
+                "request".into(),
+                client_request.to_vrl_value(),
+            )])),
             metadata: VrlValue::Object(BTreeMap::new()),
             secrets: VrlSecrets::default(),
         };

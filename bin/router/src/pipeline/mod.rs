@@ -8,7 +8,9 @@ use hive_router_internal::{
 use hive_router_plan_executor::{
     coprocessor::runtime::MutableRequestState,
     execution::{
-        client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
+        client_request_details::{
+            JwtRequestDetails, MutableClientRequestDetails, OperationDetails,
+        },
         plan::{PlanExecutionOutput, QueryPlanExecutionResult},
     },
     headers::response::ResponseHeaderAggregator,
@@ -232,22 +234,12 @@ pub async fn graphql_request_handler(
         })?;
 
         if let Some(coprocessor_runtime) = shared_state.coprocessor.as_ref() {
-            let graphql_sdl = if coprocessor_runtime.graphql_request_needs_sdl() {
-                schema_state
-                    .current_supergraph()
-                    .as_ref()
-                    .as_ref()
-                    .map(|supergraph| supergraph.public_schema.sdl.clone())
-            } else {
-                None
-            };
-
             let performed_mutations = match coprocessor_runtime
                 .on_graphql_request(
                     req,
                     &mut request_headers,
                     &mut graphql_params,
-                    graphql_sdl.as_deref(),
+                    || supergraph.public_schema.sdl.clone()
                 )
                 .await?
             {
@@ -352,7 +344,7 @@ pub async fn graphql_request_handler(
         let exec = |guard| execute_planned_request(
             req.method(),
             req.uri(),
-            Arc::new(request_headers),
+            request_headers,
             graphql_params,
             &normalize_payload,
             supergraph,
@@ -432,7 +424,7 @@ pub async fn graphql_request_handler(
 pub async fn execute_planned_request<'exec>(
     method: &'exec Method,
     url: &'exec http::Uri,
-    headers: Arc<HeaderMap>,
+    headers: HeaderMap,
     mut graphql_params: GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     supergraph: &'exec SupergraphData,
@@ -446,7 +438,7 @@ pub async fn execute_planned_request<'exec>(
 ) -> Result<SharedRouterResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
-            .validate_headers(headers.as_ref(), &shared_state.jwt_claims_cache)
+            .validate_headers(&headers, &shared_state.jwt_claims_cache)
             .await?
         {
             Some(jwt_context) => JwtRequestDetails::Authenticated {
@@ -464,7 +456,7 @@ pub async fn execute_planned_request<'exec>(
     let variable_payload =
         coerce_request_variables(supergraph, &mut graphql_params.variables, normalize_payload)?;
 
-    let client_request_details = ClientRequestDetails {
+    let client_request_details = MutableClientRequestDetails {
         method,
         url,
         headers,
@@ -565,7 +557,7 @@ pub async fn execute_planned_request<'exec>(
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_pipeline<'exec>(
-    mut client_request_details: ClientRequestDetails<'exec>,
+    mut client_request_details: MutableClientRequestDetails<'exec>,
     graphql_params: &GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     variable_payload: CoerceVariablesPayload,
@@ -599,26 +591,16 @@ pub async fn execute_pipeline<'exec>(
     )?;
 
     if let Some(coprocessor_runtime) = shared_state.coprocessor.as_ref() {
-        let graphql_sdl = if coprocessor_runtime.graphql_analysis_needs_sdl() {
-            schema_state
-                .current_supergraph()
-                .as_ref()
-                .as_ref()
-                .map(|supergraph| supergraph.public_schema.sdl.clone())
-        } else {
-            None
-        };
-
         match coprocessor_runtime
             .on_graphql_analysis(
                 MutableRequestState {
                     method: client_request_details.method,
                     uri: client_request_details.url,
-                    headers: Arc::make_mut(&mut client_request_details.headers),
+                    headers: &mut client_request_details.headers,
                 },
                 graphql_params,
                 request_context,
-                graphql_sdl.as_deref(),
+                || supergraph.public_schema.sdl.clone(),
             )
             .await?
         {
@@ -665,6 +647,7 @@ pub async fn execute_pipeline<'exec>(
         }
     };
 
+    let client_request_details = client_request_details.freeze();
     let planned_request = PlannedRequest {
         normalized_payload: normalize_payload,
         query_plan_payload: &query_plan_payload,

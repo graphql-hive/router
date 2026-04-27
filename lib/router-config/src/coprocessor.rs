@@ -1,4 +1,4 @@
-use std::{fmt, time::Duration};
+use std::{collections::HashSet, fmt, time::Duration};
 
 use schemars::{json_schema, JsonSchema};
 use serde::{
@@ -8,7 +8,7 @@ use serde::{
 
 use crate::primitives::value_or_expression::ValueOrExpression;
 
-#[derive(Debug, Serialize, JsonSchema, Clone)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorConfig {
     /// Endpoint for the external coprocessor service.
@@ -38,42 +38,6 @@ pub struct CoprocessorConfig {
     pub stages: CoprocessorStagesConfig,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CoprocessorConfigRaw {
-    url: CoprocessorEndpoint,
-    protocol: CoprocessorProtocol,
-    #[serde(
-        default = "default_coprocessor_timeout",
-        deserialize_with = "humantime_serde::deserialize"
-    )]
-    timeout: Duration,
-    #[serde(default)]
-    stages: CoprocessorStagesConfig,
-}
-
-impl<'de> Deserialize<'de> for CoprocessorConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let raw = CoprocessorConfigRaw::deserialize(deserializer)?;
-
-        if raw.protocol == CoprocessorProtocol::Http2 {
-            return Err(de::Error::custom(
-                "coprocessor.protocol=http2 is not supported yet; use protocol=http1 or protocol=h2c",
-            ));
-        }
-
-        Ok(Self {
-            url: raw.url,
-            protocol: raw.protocol,
-            timeout: raw.timeout,
-            stages: raw.stages,
-        })
-    }
-}
-
 fn default_coprocessor_timeout() -> Duration {
     Duration::from_secs(1)
 }
@@ -93,17 +57,11 @@ pub enum CoprocessorProtocol {
 #[serde(deny_unknown_fields)]
 pub struct CoprocessorStagesConfig {
     #[serde(default)]
-    /// Hooks around the router HTTP boundary (`router.request` / `router.response`).
+    /// Hooks around the router HTTP boundary
     pub router: CoprocessorRouterStageConfig,
     #[serde(default)]
-    /// Hooks around GraphQL processing (`graphql.request` / `graphql.analysis` / `graphql.response`).
+    /// Hooks around GraphQL processing
     pub graphql: CoprocessorGraphqlStageConfig,
-    #[serde(default)]
-    /// Hooks around execution (`execution.request` / `execution.response`).
-    pub execution: CoprocessorExecutionStageConfig,
-    #[serde(default)]
-    /// Hooks around outbound subgraph calls (`subgraph.request` / `subgraph.response`).
-    pub subgraph: CoprocessorSubgraphStageConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
@@ -129,28 +87,6 @@ pub struct CoprocessorGraphqlStageConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Configuration for `graphql.response` hook.
     pub response: Option<CoprocessorHookConfig<CoprocessorGraphqlResponseIncludeConfig>>,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct CoprocessorExecutionStageConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Configuration for `execution.request` hook.
-    pub request: Option<CoprocessorHookConfig<CoprocessorExecutionRequestIncludeConfig>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Configuration for `execution.response` hook.
-    pub response: Option<CoprocessorHookConfig<CoprocessorExecutionResponseIncludeConfig>>,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct CoprocessorSubgraphStageConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Configuration for `subgraph.request` hook.
-    pub request: Option<CoprocessorHookConfig<CoprocessorSubgraphRequestIncludeConfig>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Configuration for `subgraph.response` hook.
-    pub response: Option<CoprocessorHookConfig<CoprocessorSubgraphResponseIncludeConfig>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
@@ -444,7 +380,7 @@ impl JsonSchema for GraphqlBodySelection {
 /// - list => include only selected context keys
 pub struct ContextSelection {
     all: bool,
-    keys: Vec<String>,
+    keys: HashSet<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -455,22 +391,25 @@ enum ContextSelectionRepr {
 }
 
 impl ContextSelection {
-    pub const fn all() -> Self {
+    pub fn all() -> Self {
         Self {
             all: true,
-            keys: Vec::new(),
+            keys: HashSet::new(),
         }
     }
 
-    pub const fn none() -> Self {
+    pub fn none() -> Self {
         Self {
             all: false,
-            keys: Vec::new(),
+            keys: HashSet::new(),
         }
     }
 
-    pub fn keys(keys: Vec<String>) -> Self {
-        Self { all: false, keys }
+    pub fn list(keys: Vec<String>) -> Self {
+        Self {
+            all: false,
+            keys: HashSet::from_iter(keys),
+        }
     }
 
     pub const fn is_all(&self) -> bool {
@@ -485,8 +424,8 @@ impl ContextSelection {
         !self.is_none()
     }
 
-    pub fn keys_slice(&self) -> &[String] {
-        &self.keys
+    pub fn keys(&self) -> impl ExactSizeIterator<Item = &str> + '_ {
+        self.keys.iter().map(|k| k.as_str())
     }
 }
 
@@ -500,7 +439,7 @@ impl Serialize for ContextSelection {
         } else if self.is_none() {
             ContextSelectionRepr::Bool(false)
         } else {
-            ContextSelectionRepr::List(self.keys.clone())
+            ContextSelectionRepr::List(Vec::from_iter(self.keys.iter().cloned()))
         };
 
         repr.serialize(serializer)
@@ -517,7 +456,7 @@ impl<'de> Deserialize<'de> for ContextSelection {
         Ok(match repr {
             ContextSelectionRepr::Bool(true) => ContextSelection::all(),
             ContextSelectionRepr::Bool(false) => ContextSelection::none(),
-            ContextSelectionRepr::List(keys) => ContextSelection::keys(keys),
+            ContextSelectionRepr::List(keys) => ContextSelection::list(keys),
         })
     }
 }

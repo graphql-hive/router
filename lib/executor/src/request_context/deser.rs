@@ -76,7 +76,7 @@ impl Serialize for SelectedRequestContext<'_> {
             return self.context.serialize(serializer);
         }
 
-        let keys = self.selection.keys_slice();
+        let keys = self.selection.keys();
         let mut map = serializer.serialize_map(Some(keys.len()))?;
 
         for key in keys {

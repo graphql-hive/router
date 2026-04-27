@@ -443,12 +443,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         };
 
         if !on_end_callbacks.is_empty() {
+            let plugin_state_ref = plugin_req_state
+                .as_ref()
+                .expect("plugin state not available, but on_end_callbacks are present");
             let mut end_payload = OnSubgraphHttpResponseHookPayload {
-                context: &plugin_req_state.as_ref().unwrap().context,
-                request_context: plugin_req_state
-                    .as_ref()
-                    .map(|state| state.request_context.for_plugin::<hooks::OnSubgraphHttp>())
-                    .unwrap(),
+                context: &plugin_state_ref.context,
+                request_context: plugin_state_ref
+                    .request_context
+                    .for_plugin::<hooks::OnSubgraphHttp>(),
                 response,
                 deduplication_hint,
             };

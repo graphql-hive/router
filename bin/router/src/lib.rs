@@ -192,31 +192,25 @@ async fn graphql_endpoint_dispatch(
         }
 
         if let Some(coprocessor_runtime) = app_state.coprocessor.as_ref() {
-            let graphql_sdl = if coprocessor_runtime.graphql_response_needs_sdl() {
-                schema_state
-                    .current_supergraph()
-                    .as_ref()
-                    .as_ref()
-                    .map(|supergraph| supergraph.public_schema.sdl.clone())
-            } else {
-                None
-            };
-
-            match coprocessor_runtime
-                .on_graphql_response(response, request, graphql_sdl.as_deref())
+            response = match coprocessor_runtime
+                .on_graphql_response(response, request, || {
+                    schema_state
+                        .current_supergraph()
+                        .as_ref()
+                        .as_ref()
+                        .map(|supergraph| supergraph.public_schema.sdl.clone())
+                })
                 .await
             {
                 Ok(
                     ControlFlow::Break(updated_response) | ControlFlow::Continue(updated_response),
-                ) => {
-                    response = updated_response;
-                }
+                ) => updated_response,
                 Err(error) => {
                     warn!(%error, "coprocessor graphql.response stage failed");
                     write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                    response = handle_pipeline_error(error.into(), &app_state, &response_mode);
+                    handle_pipeline_error(error.into(), &app_state, &response_mode)
                 }
-            }
+            };
         }
 
         root_http_request_span.record_response(&response);

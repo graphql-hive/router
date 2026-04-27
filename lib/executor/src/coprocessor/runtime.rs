@@ -250,27 +250,6 @@ impl CoprocessorRuntime {
         })
     }
 
-    pub fn graphql_request_needs_sdl(&self) -> bool {
-        self.graphql_request
-            .as_ref()
-            .map(|stage| stage.stage.include_sdl())
-            .unwrap_or(false)
-    }
-
-    pub fn graphql_response_needs_sdl(&self) -> bool {
-        self.graphql_response
-            .as_ref()
-            .map(|stage| stage.stage.include_sdl())
-            .unwrap_or(false)
-    }
-
-    pub fn graphql_analysis_needs_sdl(&self) -> bool {
-        self.graphql_analysis
-            .as_ref()
-            .map(|stage| stage.stage.include_sdl())
-            .unwrap_or(false)
-    }
-
     pub async fn on_router_request(
         &self,
         mut req: web::WebRequest<DefaultError>,
@@ -364,33 +343,17 @@ impl CoprocessorRuntime {
         request: &web::HttpRequest,
         request_headers: &mut HeaderMap,
         graphql_request: &mut GraphQLParams,
-        sdl: Option<&str>,
+        sdl_fn: impl FnOnce() -> Arc<str>,
     ) -> Result<ControlFlow<web::HttpResponse, PerformedMutations>, CoprocessorError> {
         let Some(stage) = &self.graphql_request else {
             return Ok(ControlFlow::Continue(Default::default()));
         };
 
         let shared_context = request.read_request_context()?;
-        let mut input = GraphqlRequestInput::new(request, request_headers, graphql_request, sdl);
+        let sdl = stage.stage.include_sdl().then(sdl_fn);
+        let mut input =
+            GraphqlRequestInput::new(request, request_headers, graphql_request, sdl.as_deref());
         stage.execute(&mut input, &shared_context).await
-    }
-
-    pub async fn on_graphql_response(
-        &self,
-        response: web::HttpResponse,
-        request: &web::HttpRequest,
-        sdl: Option<&str>,
-    ) -> Result<ControlFlow<web::HttpResponse, web::HttpResponse>, CoprocessorError> {
-        let Some(stage) = &self.graphql_response else {
-            return Ok(ControlFlow::Continue(response));
-        };
-
-        let shared_context = request.read_request_context()?;
-        let mut input = GraphqlResponseInput::new(response, request, sdl);
-        Ok(stage
-            .execute(&mut input, &shared_context)
-            .await?
-            .map_continue(|_| input.response))
     }
 
     pub async fn on_graphql_analysis(
@@ -398,14 +361,38 @@ impl CoprocessorRuntime {
         request: MutableRequestState<'_>,
         graphql_request: &GraphQLParams,
         context: &SharedRequestContext,
-        sdl: Option<&str>,
+        sdl_fn: impl FnOnce() -> Arc<str>,
     ) -> Result<ControlFlow<web::HttpResponse, PerformedMutations>, CoprocessorError> {
         let Some(stage) = &self.graphql_analysis else {
             return Ok(ControlFlow::Continue(Default::default()));
         };
 
-        let mut input = GraphqlAnalysisInput::new(request, graphql_request, sdl);
+        let sdl = stage.stage.include_sdl().then(sdl_fn);
+        let mut input = GraphqlAnalysisInput::new(request, graphql_request, sdl.as_deref());
         stage.execute(&mut input, context).await
+    }
+
+    pub async fn on_graphql_response(
+        &self,
+        response: web::HttpResponse,
+        request: &web::HttpRequest,
+        // We return `Option<T>` instead of `T`, because of error handling of the caller.
+        // If I would return `T`, the caller would have to be wrapped with duplicated
+        // error handling logic.
+        // With `Option<T>`, the coprocessor runtime handles the case where sdl is not available.
+        sdl_fn: impl FnOnce() -> Option<Arc<str>>,
+    ) -> Result<ControlFlow<web::HttpResponse, web::HttpResponse>, CoprocessorError> {
+        let Some(stage) = &self.graphql_response else {
+            return Ok(ControlFlow::Continue(response));
+        };
+
+        let sdl = stage.stage.include_sdl().then(sdl_fn).flatten();
+        let shared_context = request.read_request_context()?;
+        let mut input = GraphqlResponseInput::new(response, request, sdl.as_deref());
+        Ok(stage
+            .execute(&mut input, &shared_context)
+            .await?
+            .map_continue(|_| input.response))
     }
 }
 
