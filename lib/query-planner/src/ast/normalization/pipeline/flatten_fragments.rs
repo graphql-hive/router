@@ -368,38 +368,45 @@ fn expand_abstract_fragment(
             .cloned()
             .collect();
 
-        let specific_sub_fragment = fragment.selection_set.items.iter().find_map(|s| {
-            if let Selection::InlineFragment(f) = s {
-                if f.type_condition.as_ref().map(extract_type_condition) == Some(obj_type_name) {
-                    return Some(f);
+        // Collect ALL matching sub-fragments for this concrete type (not just the first one).
+        let specific_sub_fragments: Vec<&InlineFragment<'static, String>> = fragment
+            .selection_set
+            .items
+            .iter()
+            .filter_map(|s| {
+                if let Selection::InlineFragment(f) = s {
+                    if f.type_condition.as_ref().map(extract_type_condition) == Some(obj_type_name)
+                    {
+                        return Some(f);
+                    }
                 }
-            }
-            None
-        });
+                None
+            })
+            .collect();
 
-        if let Some(sub_fragment) = specific_sub_fragment {
-            if !sub_fragment.directives.is_empty() {
-                // If the sub-fragment has directives, it's treated as a distinct entity.
-                // A fragment for the inherited fields (with parent directives) is created first...
-                let mut inherited_fragment = InlineFragment {
-                    type_condition: Some(TypeCondition::On(obj_type_name.to_string())),
-                    directives: fragment.directives.clone(),
-                    selection_set: SelectionSet {
-                        span: fragment.selection_set.span,
-                        items: inherited_fields,
-                    },
-                    position: fragment.position,
-                };
-                handle_selection_set(
-                    state,
-                    possible_types,
-                    obj_type_def,
-                    &mut inherited_fragment.selection_set,
-                )?;
-                new_items.push(Selection::InlineFragment(inherited_fragment));
+        if specific_sub_fragments.iter().any(|f| !f.directives.is_empty()) {
+            // If any sub-fragment has directives, each is treated as a distinct entity.
+            // A fragment for the inherited fields (with parent directives) is created first...
+            let mut inherited_fragment = InlineFragment {
+                type_condition: Some(TypeCondition::On(obj_type_name.to_string())),
+                directives: fragment.directives.clone(),
+                selection_set: SelectionSet {
+                    span: fragment.selection_set.span,
+                    items: inherited_fields,
+                },
+                position: fragment.position,
+            };
+            handle_selection_set(
+                state,
+                possible_types,
+                obj_type_def,
+                &mut inherited_fragment.selection_set,
+            )?;
+            new_items.push(Selection::InlineFragment(inherited_fragment));
 
-                // then a separate fragment for the sub-fragment's fields and directives.
-                let mut specific_fragment = sub_fragment.clone();
+            // then a separate fragment for each sub-fragment's fields and directives.
+            for sub_fragment in &specific_sub_fragments {
+                let mut specific_fragment = (*sub_fragment).clone();
                 handle_selection_set(
                     state,
                     possible_types,
@@ -407,9 +414,9 @@ fn expand_abstract_fragment(
                     &mut specific_fragment.selection_set,
                 )?;
                 new_items.push(Selection::InlineFragment(specific_fragment));
-
-                continue;
             }
+
+            continue;
         }
 
         let mut new_fragment = InlineFragment {
@@ -422,7 +429,8 @@ fn expand_abstract_fragment(
             position: fragment.position,
         };
 
-        if let Some(sub_fragment) = specific_sub_fragment {
+        // Merge ALL matching sub-fragments into the new fragment.
+        for sub_fragment in &specific_sub_fragments {
             new_fragment
                 .directives
                 .extend(sub_fragment.directives.clone());
