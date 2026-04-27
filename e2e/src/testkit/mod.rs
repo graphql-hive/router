@@ -13,11 +13,13 @@ use ntex::{
     web::{self, test},
     ws::WsConnection,
 };
+use rcgen::generate_simple_self_signed;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
 use std::{
     any::Any,
     future::Future,
+    io::Write,
     marker::PhantomData,
     net::SocketAddr,
     path::PathBuf,
@@ -220,6 +222,7 @@ pub struct RequestLike {
     pub headers: http::HeaderMap,
     #[allow(unused)]
     pub body: Option<Bytes>,
+    pub http_version: http::Version,
 }
 
 pub struct ResponseLike {
@@ -250,6 +253,7 @@ pub struct TestSubgraphsBuilder {
     on_request: Option<Arc<OnRequest>>,
     rustls_config: Option<RustlsConfig>,
     delay: Option<Duration>,
+    http2_only: bool,
 }
 
 impl TestSubgraphsBuilder {
@@ -259,6 +263,7 @@ impl TestSubgraphsBuilder {
             rustls_config: None,
             delay: None,
             subscriptions_protocol: HTTPStreamingSubscriptionProtocol::default(),
+            http2_only: false,
         }
     }
 
@@ -294,12 +299,21 @@ impl TestSubgraphsBuilder {
         self
     }
 
+    /// Enables HTTP/2 only mode (h2c) for the test subgraph server.
+    /// When enabled, the server will only accept HTTP/2 connections over plain TCP.
+    #[allow(unused)]
+    pub fn with_http2_only(mut self) -> Self {
+        self.http2_only = true;
+        self
+    }
+
     pub fn build(self) -> TestSubgraphs<Built> {
         TestSubgraphs {
             on_request: self.on_request,
             rustls_config: self.rustls_config,
             delay: self.delay,
             subscriptions_protocol: self.subscriptions_protocol,
+            http2_only: self.http2_only,
             handle: None,
             _state: PhantomData,
         }
@@ -323,6 +337,7 @@ pub struct TestSubgraphs<State> {
     on_request: Option<Arc<OnRequest>>,
     rustls_config: Option<RustlsConfig>,
     delay: Option<Duration>,
+    http2_only: bool,
     handle: Option<TestSubgraphsHandle>,
     _state: PhantomData<State>,
 }
@@ -345,6 +360,7 @@ async fn record_requests(
     let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
 
     let header_map = parts.headers.clone();
+    let http_version = parts.version;
     let record = RequestLike {
         path,
         headers: header_map,
@@ -353,6 +369,7 @@ async fn record_requests(
         } else {
             Some(body_bytes.clone())
         },
+        http_version,
     };
     state.request_log.entry(subgraph).or_default().push(record);
 
@@ -373,6 +390,7 @@ async fn handle_on_request(
         path: path.clone(),
         headers: parts.headers.clone(),
         body: None, // TODO: do we really care about the body?
+        http_version: parts.version,
     };
 
     if let Some(new_resp) = on_request(req) {
@@ -441,6 +459,13 @@ impl TestSubgraphs<Built> {
                     .serve(app.into_make_service())
                     .await
                     .expect("failed to start subgraphs server");
+            } else if self.http2_only {
+                axum_server::bind(addr)
+                    .http2_only()
+                    .handle(server_handle_clone.clone())
+                    .serve(app.into_make_service())
+                    .await
+                    .expect("failed to start subgraphs h2c server");
             } else {
                 axum_server::bind(addr)
                     .handle(server_handle_clone.clone())
@@ -460,6 +485,7 @@ impl TestSubgraphs<Built> {
             rustls_config: rustls_config_clone,
             delay: self.delay,
             subscriptions_protocol: self.subscriptions_protocol,
+            http2_only: self.http2_only,
             handle: Some(TestSubgraphsHandle {
                 server_handle,
                 addr,
@@ -1069,4 +1095,71 @@ pub async fn wait_until_mock_matched(mock: &Mock) -> Result<(), String> {
             return Err(format!("timeout after {:?}", now.elapsed()));
         }
     }
+}
+
+pub struct GeneratedKeyPair {
+    pub cert_file: NamedTempFile,
+    pub cert_file_path: String,
+    pub cert_pem: String,
+    pub key_file: NamedTempFile,
+    pub key_file_path: String,
+    pub key_pem: String,
+}
+
+pub async fn generate_keypair() -> GeneratedKeyPair {
+    let cert_key = generate_simple_self_signed(vec![
+        "127.0.0.1".to_string(),
+        "localhost".to_string(),
+        "0.0.0.0".to_string(),
+    ])
+    .expect("Failed to generate self-signed certificate");
+
+    let mut cert_file =
+        NamedTempFile::new().expect("Failed to create temporary file for certificate");
+    let cert = cert_key.cert;
+    let cert_pem = cert.pem();
+    let _ = cert_file
+        .write(cert_pem.as_bytes())
+        .expect("Failed to write certificate to temporary file");
+
+    let mut key_file =
+        NamedTempFile::new().expect("Failed to create temporary file for private key");
+    let key = cert_key.signing_key;
+    let key_pem = key.serialize_pem();
+    let _ = key_file
+        .write(key_pem.as_bytes())
+        .expect("Failed to write private key to temporary file");
+
+    GeneratedKeyPair {
+        cert_file_path: cert_file
+            .path()
+            .to_str()
+            .expect("Failed to convert cert file path to string")
+            .to_string(),
+        cert_file,
+        cert_pem,
+        key_file_path: key_file
+            .path()
+            .to_str()
+            .expect("Failed to convert key file path to string")
+            .to_string(),
+        key_file,
+        key_pem,
+    }
+}
+
+pub async fn generate_tls_subgraph() -> (TestSubgraphs<Started>, GeneratedKeyPair) {
+    let generated_key_pair = generate_keypair().await;
+    let rustls_config = RustlsConfig::from_pem_file(
+        &generated_key_pair.cert_file_path,
+        &generated_key_pair.key_file_path,
+    )
+    .await
+    .expect("Failed to create RustlsConfig from PEM files");
+    let subgraphs = TestSubgraphs::builder()
+        .with_rustls_config(rustls_config)
+        .build()
+        .start()
+        .await;
+    (subgraphs, generated_key_pair)
 }
