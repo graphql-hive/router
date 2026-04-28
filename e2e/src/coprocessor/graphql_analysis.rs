@@ -52,17 +52,17 @@ async fn rejects_body_mutation_from_coprocessor() {
 
     // TODO: hide those errors from the client
     insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
+    {
+      "errors": [
         {
-          "errors": [
-            {
-              "extensions": {
-                "code": "COPROCESSOR_FORBIDDEN_STAGE_MUTATION_ERROR"
-              },
-              "message": "coprocessor graphql.analysis stage cannot mutate 'body'"
-            }
-          ]
+          "extensions": {
+            "code": "COPROCESSOR_FORBIDDEN_STAGE_MUTATION_ERROR"
+          },
+          "message": "Internal server error"
         }
-        "#);
+      ]
+    }
+    "#);
 
     assert!(
         !response.status().is_success(),

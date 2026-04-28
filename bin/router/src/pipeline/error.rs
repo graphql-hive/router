@@ -209,6 +209,7 @@ impl PipelineError {
     pub fn graphql_error_message(&self) -> String {
         match self {
             Self::PlannerError(_) => "Unexpected error".to_string(),
+            Self::CoprocessorError(_) => "Internal server error".to_string(),
             _ => self.to_string(),
         }
     }

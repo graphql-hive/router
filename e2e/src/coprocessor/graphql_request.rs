@@ -480,17 +480,17 @@ async fn rejects_body_mutation_with_empty_query() {
 
     // TODO: hide those errors from the client
     insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
+    {
+      "errors": [
         {
-          "errors": [
-            {
-              "extensions": {
-                "code": "COPROCESSOR_INVALID_STAGE_BODY_ERROR"
-              },
-              "message": "invalid body returned by coprocessor graphql.request stage, expected 'query' must be a non-empty string: query is empty"
-            }
-          ]
+          "extensions": {
+            "code": "COPROCESSOR_INVALID_STAGE_BODY_ERROR"
+          },
+          "message": "Internal server error"
         }
-        "#);
+      ]
+    }
+    "#);
 
     assert!(
         !response.status().is_success(),

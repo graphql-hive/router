@@ -276,17 +276,17 @@ mod basic {
             .await;
 
         insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
-          {
-            "errors": [
-              {
-                "extensions": {
-                  "code": "REQUEST_CONTEXT_ERROR"
-                },
-                "message": "request context error: request-context key 'hive::operation::name' cannot be mutated externally"
-              }
-            ]
-          }
-          "#);
+        {
+          "errors": [
+            {
+              "extensions": {
+                "code": "REQUEST_CONTEXT_ERROR"
+              },
+              "message": "Internal server error"
+            }
+          ]
+        }
+        "#);
 
         assert!(!response.status().is_success());
         request_stage_mock.assert_async().await;
@@ -550,7 +550,7 @@ mod progressive_override {
               "extensions": {
                 "code": "REQUEST_CONTEXT_ERROR"
               },
-              "message": "request context error: request-context key 'hive::progressive_override::unresolved_labels' cannot be mutated externally"
+              "message": "Internal server error"
             }
           ]
         }
@@ -613,7 +613,7 @@ mod progressive_override {
               "extensions": {
                 "code": "REQUEST_CONTEXT_ERROR"
               },
-              "message": "request context error: reserved request-context key 'hive::progressive_override::labels_to_override' has an invalid type: expected array of strings or null"
+              "message": "Internal server error"
             }
           ]
         }
