@@ -291,7 +291,7 @@ Configuration for coprocessor.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**protocol**||Transport protocol used to call the coprocessor service.<br/>|yes|
-|[**stages**](#coprocessorstages)|`object`|Stage-specific configuration.<br/>Default: `{"execution":{},"graphql":{},"router":{},"subgraph":{}}`<br/>|no|
+|[**stages**](#coprocessorstages)|`object`|Stage-specific configuration.<br/>Default: `{"graphql":{},"router":{}}`<br/>|no|
 |**timeout**|`string`|Per-stage timeout for a coprocessor call.<br/><br/>Defaults to `1s`.<br/>Default: `"1s"`<br/>|no|
 |**url**|`string`|Endpoint for the external coprocessor service.<br/><br/>Supported formats:<br/>- `http://host[:port][/path]`<br/>- `unix:///absolute/path/to/socket.sock`<br/>- `unix:///absolute/path/to/socket.sock?path=/request/path`<br/>|yes|
 
@@ -306,126 +306,22 @@ Stage-specific configuration.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**execution**](#coprocessorstagesexecution)|`object`|Hooks around execution (`execution.request` / `execution.response`).<br/>Default: `{}`<br/>||
-|[**graphql**](#coprocessorstagesgraphql)|`object`|Hooks around GraphQL processing (`graphql.request` / `graphql.analysis` / `graphql.response`).<br/>Default: `{}`<br/>||
-|[**router**](#coprocessorstagesrouter)|`object`|Hooks around the router HTTP boundary (`router.request` / `router.response`).<br/>Default: `{}`<br/>||
-|[**subgraph**](#coprocessorstagessubgraph)|`object`|Hooks around outbound subgraph calls (`subgraph.request` / `subgraph.response`).<br/>Default: `{}`<br/>||
+|[**graphql**](#coprocessorstagesgraphql)|`object`|Hooks around GraphQL processing<br/>Default: `{}`<br/>||
+|[**router**](#coprocessorstagesrouter)|`object`|Hooks around the router HTTP boundary<br/>Default: `{}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-execution: {}
 graphql: {}
 router: {}
-subgraph: {}
-
-```
-
-<a name="coprocessorstagesexecution"></a>
-#### coprocessor\.stages\.execution: object
-
-Hooks around execution (`execution.request` / `execution.response`).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**request**](#coprocessorstagesexecutionrequest)|`object`, `null`|Configuration for `execution.request` hook.<br/>||
-|[**response**](#coprocessorstagesexecutionresponse)|`object`, `null`|Configuration for `execution.response` hook.<br/>||
-
-**Additional Properties:** not allowed  
-<a name="coprocessorstagesexecutionrequest"></a>
-##### coprocessor\.stages\.execution\.request: object,null
-
-Configuration for `execution.request` hook.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
-|[**include**](#coprocessorstagesexecutionrequestinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
-
-**Additional Properties:** not allowed  
-<a name="coprocessorstagesexecutionrequestinclude"></a>
-###### coprocessor\.stages\.execution\.request\.include: object
-
-Selects which fields are included in the coprocessor payload for this hook.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**body**|`boolean`|Include execution request body.<br/>Default: `false`<br/>||
-|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
-|**headers**|`boolean`|Include request headers.<br/>Default: `false`<br/>||
-|**method**|`boolean`|Include request method.<br/>Default: `false`<br/>||
-|**path**|`boolean`|Include request path.<br/>Default: `false`<br/>||
-|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-body: false
-context: false
-headers: false
-method: false
-path: false
-sdl: false
-
-```
-
-<a name="coprocessorstagesexecutionresponse"></a>
-##### coprocessor\.stages\.execution\.response: object,null
-
-Configuration for `execution.response` hook.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
-|[**include**](#coprocessorstagesexecutionresponseinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
-
-**Additional Properties:** not allowed  
-<a name="coprocessorstagesexecutionresponseinclude"></a>
-###### coprocessor\.stages\.execution\.response\.include: object
-
-Selects which fields are included in the coprocessor payload for this hook.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**body**|`boolean`|Include execution response body.<br/>Default: `false`<br/>||
-|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
-|**headers**|`boolean`|Include response headers.<br/>Default: `false`<br/>||
-|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
-|**status\_code**|`boolean`|Include response status code.<br/>Default: `false`<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-body: false
-context: false
-headers: false
-sdl: false
-status_code: false
 
 ```
 
 <a name="coprocessorstagesgraphql"></a>
 #### coprocessor\.stages\.graphql: object
 
-Hooks around GraphQL processing (`graphql.request` / `graphql.analysis` / `graphql.response`).
+Hooks around GraphQL processing
 
 
 **Properties**
@@ -570,7 +466,7 @@ status_code: false
 <a name="coprocessorstagesrouter"></a>
 #### coprocessor\.stages\.router: object
 
-Hooks around the router HTTP boundary (`router.request` / `router.response`).
+Hooks around the router HTTP boundary
 
 
 **Properties**
@@ -659,110 +555,6 @@ Selects which fields are included in the coprocessor payload for this hook.
 body: false
 context: false
 headers: false
-status_code: false
-
-```
-
-<a name="coprocessorstagessubgraph"></a>
-#### coprocessor\.stages\.subgraph: object
-
-Hooks around outbound subgraph calls (`subgraph.request` / `subgraph.response`).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**request**](#coprocessorstagessubgraphrequest)|`object`, `null`|Configuration for `subgraph.request` hook.<br/>||
-|[**response**](#coprocessorstagessubgraphresponse)|`object`, `null`|Configuration for `subgraph.response` hook.<br/>||
-
-**Additional Properties:** not allowed  
-<a name="coprocessorstagessubgraphrequest"></a>
-##### coprocessor\.stages\.subgraph\.request: object,null
-
-Configuration for `subgraph.request` hook.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
-|[**include**](#coprocessorstagessubgraphrequestinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
-
-**Additional Properties:** not allowed  
-<a name="coprocessorstagessubgraphrequestinclude"></a>
-###### coprocessor\.stages\.subgraph\.request\.include: object
-
-Selects which fields are included in the coprocessor payload for this hook.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**body**|`boolean`|Include outbound subgraph request body.<br/>Default: `false`<br/>||
-|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
-|**headers**|`boolean`|Include outbound subgraph request headers.<br/>Default: `false`<br/>||
-|**method**|`boolean`|Include outbound subgraph request method.<br/>Default: `false`<br/>||
-|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
-|**service\_name**|`boolean`|Include target subgraph service name.<br/>Default: `false`<br/>||
-|**uri**|`boolean`|Include outbound subgraph request URI.<br/>Default: `false`<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-body: false
-context: false
-headers: false
-method: false
-sdl: false
-service_name: false
-uri: false
-
-```
-
-<a name="coprocessorstagessubgraphresponse"></a>
-##### coprocessor\.stages\.subgraph\.response: object,null
-
-Configuration for `subgraph.response` hook.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
-|[**include**](#coprocessorstagessubgraphresponseinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
-
-**Additional Properties:** not allowed  
-<a name="coprocessorstagessubgraphresponseinclude"></a>
-###### coprocessor\.stages\.subgraph\.response\.include: object
-
-Selects which fields are included in the coprocessor payload for this hook.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**body**|`boolean`|Include subgraph response body.<br/>Default: `false`<br/>||
-|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
-|**headers**|`boolean`|Include subgraph response headers.<br/>Default: `false`<br/>||
-|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
-|**service\_name**|`boolean`|Include target subgraph service name.<br/>Default: `false`<br/>||
-|**status\_code**|`boolean`|Include subgraph response status code.<br/>Default: `false`<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-body: false
-context: false
-headers: false
-sdl: false
-service_name: false
 status_code: false
 
 ```
