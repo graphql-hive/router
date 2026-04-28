@@ -43,32 +43,6 @@ use hive_router_config::{
 use hive_router_plan_executor::executors::websocket_client;
 use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 
-// utilities
-
-/// Retries the code wrapped 3 times before reporting the last error as failure.
-#[macro_export]
-macro_rules! flakey {
-    ($body:expr) => {{
-        use futures::FutureExt;
-        let mut last_err = None;
-        let attempts = 3;
-        for attempt in 1..=attempts {
-            let result = std::panic::AssertUnwindSafe($body).catch_unwind().await;
-            match result {
-                Ok(_) => return,
-                Err(e) => {
-                    eprintln!("Flakey attempt {}/{} failed", attempt, attempts);
-                    last_err = Some(e);
-                }
-            }
-        }
-        std::panic::resume_unwind(last_err.unwrap());
-    }};
-}
-
-// #[macro_export] always hoists to the crate root so we re-export it here module level
-pub use flakey;
-
 /// Binds a TCP listener to an OS-assigned port and returns that port number.
 /// The listener is immediately dropped, so the port is free for the caller to use.
 pub fn get_available_port() -> u16 {

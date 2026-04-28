@@ -1,0 +1,11 @@
+name: "Install tools"
+description: "Install tools required by our CI jobs"
+
+runs:
+  using: composite
+  steps:
+    - name: Install cargo-nextest
+      uses: ./.github/actions/cargo-install
+      with:
+        crate: cargo-nextest
+        version: 0.9.133
