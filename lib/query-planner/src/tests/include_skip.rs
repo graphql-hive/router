@@ -757,3 +757,125 @@ fn plans_query_with_field_level_include_skip_conditions() -> Result<(), Box<dyn 
 
     Ok(())
 }
+
+#[test]
+fn qp_include_field_level() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($bool: Boolean) {
+          product {
+            price # graph A
+            name @include(if: $bool) # graph B
+            isCheap # graph B
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/simple-include-skip.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($bool:Boolean) {
+            product {
+              __typename
+              price
+              id
+              ... on Product @include(if: $bool) {
+                price
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "b") {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            ($bool:Boolean) {
+              ... on Product {
+                isCheap
+                ... on Product @include(if: $bool) {
+                  name
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+#[test]
+fn qp_skip_field_level() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($bool: Boolean) {
+          product {
+            price # graph A
+            name @skip(if: $bool) # graph B
+            isCheap # graph B
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/simple-include-skip.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($bool:Boolean) {
+            product {
+              __typename
+              price
+              id
+              ... on Product @skip(if: $bool) {
+                price
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "b") {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            ($bool:Boolean) {
+              ... on Product {
+                isCheap
+                ... on Product @skip(if: $bool) {
+                  name
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
