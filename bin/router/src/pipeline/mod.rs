@@ -258,6 +258,13 @@ pub async fn graphql_request_handler(
                         return Ok(response);
                     }
                 };
+
+                request_context.update(|ctx| {
+                    ctx.operation.update(
+                        parser_payload.operation_name.clone(),
+                        Some(parser_payload.operation_type.clone()),
+                    );
+                })?;
             }
         }
 
