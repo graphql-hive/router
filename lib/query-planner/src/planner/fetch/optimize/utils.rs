@@ -143,8 +143,16 @@ fn preserve_or_scope_source_condition_for_entity_target(
         return;
     }
 
-    // If type scope is unclear, keep condition at target step level.
-    target.condition = Some(condition);
+    if target.condition.as_ref() == Some(&condition) {
+        // Both have the same condition, safe to keep at the step level.
+        // We re-set it on the target as it was taken from the source.
+        target.condition = Some(condition);
+    } else {
+        // If target is unconditional, or has a different condition, we cannot
+        // apply the source's condition at the step level. Instead, we wrap only
+        // the source's output selections with its condition.
+        source.output.wrap_with_condition(condition);
+    }
 }
 
 // Return true in case an alias was applied during the merge process.
