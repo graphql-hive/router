@@ -408,6 +408,8 @@ fn expand_abstract_fragment(
             new_items.push(Selection::InlineFragment(inherited_fragment));
 
             // then a separate fragment for each sub-fragment's fields and directives.
+            // Wrap with parent directives so that directives on the abstract fragment
+            // (e.g. @skip/@include) still gate the nested concrete fragments.
             for sub_fragment in &specific_sub_fragments {
                 let mut specific_fragment = (*sub_fragment).clone();
                 handle_selection_set(
@@ -416,7 +418,20 @@ fn expand_abstract_fragment(
                     obj_type_def,
                     &mut specific_fragment.selection_set,
                 )?;
-                new_items.push(Selection::InlineFragment(specific_fragment));
+                if fragment.directives.is_empty() {
+                    new_items.push(Selection::InlineFragment(specific_fragment));
+                } else {
+                    let outer = InlineFragment {
+                        type_condition: Some(TypeCondition::On(obj_type_name.to_string())),
+                        directives: fragment.directives.clone(),
+                        selection_set: SelectionSet {
+                            span: fragment.selection_set.span,
+                            items: vec![Selection::InlineFragment(specific_fragment)],
+                        },
+                        position: fragment.position,
+                    };
+                    new_items.push(Selection::InlineFragment(outer));
+                }
             }
 
             continue;
