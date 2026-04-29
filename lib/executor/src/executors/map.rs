@@ -213,11 +213,15 @@ impl SubgraphExecutorMap {
             Some(execution_result) => execution_result,
             None => {
                 let exec_fut = executor.execute(execution_request, timeout, plugin_req_state);
-                let circuit_breaker = self.circuit_breakers_by_subgraph.get(subgraph_name);
+                // Clone the circuit breaker out of the DashMap before awaiting to avoid
+                // holding the shard read-lock across an await point (potential deadlock).
+                let circuit_breaker = self
+                    .circuit_breakers_by_subgraph
+                    .get(subgraph_name)
+                    .map(|r| r.value().clone());
                 match circuit_breaker {
                     Some(circuit_breaker) => {
                         circuit_breaker
-                            .value()
                             .call(exec_fut)
                             .map_err(|e| match e {
                                 recloser::Error::Inner(e) => e,
