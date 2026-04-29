@@ -250,17 +250,9 @@ impl<E: SpanExporter> SpanExporter for HttpCompatibilityExporter<E> {
     }
 
     fn shutdown(&mut self) -> OTelSdkResult {
-        tracing::info!(
-            component = "telemetry",
-            layer = "http_compat_exporter",
-            "shutdown scheduled"
-        );
+        tracing::debug!("telemetry http_compat_exporter shutdown scheduled");
         let result = self.inner.shutdown();
-        tracing::info!(
-            component = "telemetry",
-            layer = "http_compat_exporter",
-            "shutdown completed"
-        );
+        tracing::info!("telemetry http_compat_exporter shutdown completed");
         result
     }
 

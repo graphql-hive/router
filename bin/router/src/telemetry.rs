@@ -230,51 +230,27 @@ impl Telemetry {
         let meter_provider = self.metrics_provider.clone();
         let shutdown_tracer = spawn_blocking(|| {
             if let Some(provider) = tracer {
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "provider",
-                    "shutdown scheduled"
-                );
+                tracing::debug!("telemetry trace provider shutdown scheduled");
                 let _ = provider.force_flush();
                 let _ = provider.shutdown();
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "provider",
-                    "shutdown completed"
-                );
+                tracing::info!("telemetry trace provider shutdown completed");
             }
         });
 
         let shutdown_prometheus = async {
             if let Some(runtime) = &self.prometheus {
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "prometheus",
-                    "shutdown scheduled"
-                );
+                tracing::debug!("telemetry prometheus shutdown scheduled");
                 runtime.shutdown().await;
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "prometheus",
-                    "shutdown completed"
-                );
+                tracing::info!("telemetry prometheus shutdown completed");
             }
         };
 
         let shutdown_metrics = spawn_blocking(|| {
             if let Some(provider) = meter_provider {
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "metrics",
-                    "shutdown scheduled"
-                );
+                tracing::debug!("telemetry metrics shutdown scheduled");
                 let _ = provider.force_flush();
                 let _ = provider.shutdown();
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "metrics",
-                    "shutdown completed"
-                );
+                tracing::info!("telemetry metrics shutdown completed");
             }
         });
 
@@ -329,8 +305,6 @@ fn create_prometheus_runtime(
     };
 
     tracing::info!(
-        component = "telemetry",
-        layer = "metrics",
         port = %port,
         path = %path_for_log,
         "Prometheus metrics server started"
@@ -340,10 +314,8 @@ fn create_prometheus_runtime(
     let handle = tokio::spawn(async move {
         if let Err(err) = server.await {
             tracing::error!(
-                component = "telemetry",
-                layer = "metrics",
                 error = %err,
-                "Prometheus metrics server failed"
+                "Prometheus metrics server failed to start"
             );
         }
     });

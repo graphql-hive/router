@@ -29,7 +29,7 @@ impl JwksManager {
             .filter_map(|v| match v.get_jwk_set() {
                 Ok(set) => Some(set),
                 Err(err) => {
-                    warn!(error = %err, "Failed to use JWK Set, skipping");
+                    error!(error = %err, "Failed to use JWK set, ignoring");
 
                     None
                 }
@@ -92,7 +92,7 @@ impl BackgroundTask for JwksSourceTask {
                           debug!("jwks loaded and stored successfully");
                         }
                         Err(err) => {
-                            warn!(error = %err, "failed to load remote jwks");
+                          error!(error = %err, "Failed to load remote jwks");
                         }
                     } }
                     _ = token.cancelled() => { debug!("JWKS source shutting down"); return; }

@@ -209,8 +209,8 @@ impl WsClient {
                                 _ => {
                                     // any other message before ack is an error
                                     error!(
-                                        "Wrong message received before ConnectionAck: {:?}",
-                                        server_msg
+                                        error = ?server_msg,
+                                        "Wrong message received before ConnectionAck",
                                     );
                                     let _ = sink.send(CloseCode::Unauthorized.into()).await;
                                     return Err(WsInitError::WrongMessageBeforeAck);
@@ -230,7 +230,7 @@ impl WsClient {
                     }
                 }
                 Some(Err(e)) => {
-                    error!("WebSocket receiver error during init: {:?}", e);
+                    error!(error = %e, "WebSocket receiver error during init");
                     return Err(WsInitError::ConnectionAckReceiverError);
                 }
                 None => {
@@ -442,7 +442,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
                 let response = match SubgraphResponse::deserialize_from_bytes(payload_bytes) {
                     Ok(response) => response,
                     Err(e) => {
-                        tracing::warn!("Failed to deserialize payload: {}", e);
+                        tracing::warn!(error = %e, payload = %payload, "Failed to deserialize payload");
                         WsClientError::FailedToDeserializePayload.into()
                     }
                 };
@@ -476,7 +476,7 @@ fn text_to_server_message(text: &str) -> Result<ServerMessage, ws::Message> {
     let server_msg: ServerMessage = match sonic_rs::from_str(text) {
         Ok(msg) => msg,
         Err(e) => {
-            error!("Failed to parse server message to JSON: {}", e);
+            error!(error = %e, payload = text, "Failed to parse server message to JSON");
             return Err(CloseCode::BadResponse("Invalid message received from server").into());
         }
     };

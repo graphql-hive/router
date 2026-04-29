@@ -7,7 +7,7 @@ use futures::stream::BoxStream;
 use futures_util::StreamExt;
 use ntex::rt;
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
@@ -51,9 +51,8 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
         debug!(
-            subgraph_name = subgraph_name,
-            endpoint = endpoint.to_string(),
-            "establishing WebSocket connection to subgraph",
+          subgraph_name, endpoint = ?endpoint,
+          "establishing WebSocket connection to subgraph",
         );
 
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
@@ -89,10 +88,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     }
                 };
 
-                debug!(
-                    subgraph_name = subgraph_name,
-                    endpoint = endpoint.to_string(),
-                    "WebSocket connection to subgraph established",
+                info!(
+                  subgraph_name, endpoint = ?endpoint,
+                  "WebSocket connection to subgraph established",
                 );
 
                 let mut stream = client.subscribe(subscribe_payload).await;
@@ -135,8 +133,8 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
 
         debug!(
-            subgraph_name = subgraph_name,
-            endpoint = endpoint.to_string(),
+            subgraph_name,
+            endpoint = ?endpoint,
             "establishing WebSocket subscription connection to subgraph",
         );
 
@@ -168,9 +166,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 }
             };
 
-            debug!(
-                subgraph_name = subgraph_name,
-                endpoint = endpoint.to_string(),
+            info!(
+                subgraph_name,
+                endpoint = ?endpoint,
                 "WebSocket subscription connection to subgraph established",
             );
 
@@ -184,16 +182,16 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                         // up. we terminate the subscription without an error message because it anyways cant
                         // go through
                         warn!(
-                            subgraph_name = subgraph_name,
-                            endpoint = endpoint.to_string(),
-                            "Client for subgraph subscriptions is too slow",
+                            subgraph_name,
+                            endpoint = ?endpoint,
+                            "subscriptions client for subgraph is too slow"
                         );
                         break;
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
                         debug!(
-                            subgraph_name = subgraph_name,
-                            endpoint = endpoint.to_string(),
+                            subgraph_name,
+                            endpoint = ?endpoint,
                             "Client for subgraph dropped the receiver",
                         );
                         break;

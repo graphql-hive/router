@@ -158,8 +158,8 @@ impl PersistedDocumentsManager {
         if let Some(negative_cache) = &self.negative_cache {
             if negative_cache.get(document_id).await.is_some() {
                 debug!(
-                    "Document {} found in negative cache, skipping CDN fetch",
-                    document_id
+                    document_id,
+                    "Document found in negative cache, skipping CDN fetch",
                 );
                 return Err(PersistedDocumentsError::DocumentNotFound);
             }
