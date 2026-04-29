@@ -197,7 +197,7 @@ impl SchemaState {
                                         Err(err) => {
                                             process_capture.finish_error();
                                             error!(
-                                              err = err.message,
+                                              error = err.message,
                                               "Plugin short-circuit with error while loading supergraph"
                                             );
                                             return;
@@ -327,7 +327,7 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
                     poll_capture.finish_updated();
                 }
                 Err(err) => {
-                    error!(err = %err, "Failed to load supergraph");
+                    error!(error = %err, "Failed to load supergraph");
                     poll_capture.finish_error();
                 }
             }
