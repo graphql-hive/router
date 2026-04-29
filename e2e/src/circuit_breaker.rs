@@ -796,4 +796,153 @@ mod circuit_breaker_e2e_tests {
             rejection_count
         );
     }
+
+    /// When a subgraph defines a `circuit_breaker` block but does not explicitly
+    /// set `enabled`, the value should be inherited from the global `all`
+    /// configuration instead of silently defaulting to `false`.
+    #[ntex::test]
+    async fn should_inherit_enabled_from_global_when_subgraph_circuit_breaker_omits_enabled() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(500)
+            .expect(3)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 2
+                            reset_timeout: 30s
+                    subgraphs:
+                        accounts:
+                            circuit_breaker:
+                                volume_threshold: 2
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=3 {
+            let _ = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+        }
+
+        error_mock.assert_async().await;
+
+        // The subgraph block exists without `enabled`, so it should inherit
+        // `enabled: true` from the global config and trip the breaker.
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+
+        insta::assert_snapshot!(
+            res.json_body_string_pretty().await,
+            @r###"{
+  "data": {
+    "users": null
+  },
+  "errors": [
+    {
+      "message": "Rejected by the circuit breaker",
+      "extensions": {
+        "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
+        "serviceName": "accounts"
+      }
+    }
+  ]
+}"###
+        );
+    }
+
+    /// A subgraph should be able to explicitly opt out of the circuit breaker
+    /// (with `enabled: false`) even when the global config has it enabled.
+    #[ntex::test]
+    async fn should_allow_subgraph_to_disable_circuit_breaker_when_global_is_enabled() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        // The breaker should never trip for `accounts`, so all 10 requests must
+        // reach the upstream subgraph.
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(500)
+            .expect(10)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 30s
+                    subgraphs:
+                        accounts:
+                            circuit_breaker:
+                                enabled: false
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=10 {
+            let _ = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+        }
+
+        error_mock.assert_async().await;
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+
+        // The breaker stays closed, so we keep getting the upstream error
+        // instead of `SUBGRAPH_CIRCUIT_BREAKER_REJECTED`.
+        insta::assert_snapshot!(
+            res.json_body_string_pretty().await,
+            @r###"{
+  "data": {
+    "users": null
+  },
+  "errors": [
+    {
+      "message": "Received empty response body from subgraph \"accounts\"",
+      "extensions": {
+        "code": "SUBGRAPH_RESPONSE_BODY_EMPTY",
+        "serviceName": "accounts"
+      }
+    }
+  ]
+}"###
+        );
+    }
 }

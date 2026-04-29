@@ -351,8 +351,12 @@ pub struct ServerTLSConfig {
 pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     /// Enable or disable the circuit breaker for the subgraph.
     /// Default: false (circuit breaker is disabled)
-    #[serde(default = "default_circuit_breaker_enabled")]
-    pub enabled: bool,
+    ///
+    /// When unset on a subgraph-level configuration, the value falls back
+    /// to the value defined in the global (`all`) circuit breaker
+    /// configuration.
+    #[serde(default)]
+    pub enabled: Option<bool>,
     /// Percentage after what the circuit breaker should kick in.
     /// Default: 50%
     #[serde(default)]
@@ -371,10 +375,6 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     )]
     #[schemars(with = "String")]
     pub reset_timeout: Option<Duration>,
-}
-
-fn default_circuit_breaker_enabled() -> bool {
-    false
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

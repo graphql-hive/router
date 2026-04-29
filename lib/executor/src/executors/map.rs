@@ -667,8 +667,8 @@ impl SubgraphExecutorMap {
             .and_then(|s| s.circuit_breaker.as_ref());
 
         let circuit_breaker_enabled = subgraph_circuit_breaker_cfg
-            .map(|c| c.enabled)
-            .or_else(|| global_circuit_breaker_cfg.map(|c| c.enabled))
+            .and_then(|c| c.enabled)
+            .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.enabled))
             .unwrap_or(false);
 
         if circuit_breaker_enabled {
