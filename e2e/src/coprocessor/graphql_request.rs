@@ -21,9 +21,9 @@ async fn uses_nested_body_with_selected_fields() {
                 return false;
             }
 
-            // `variables` and `operation_name` should be absent
+            // `variables` and `operationName` should be absent
             payload.pointer(&["body", "variables"]).is_none()
-                && payload.pointer(&["body", "operation_name"]).is_none()
+                && payload.pointer(&["body", "operationName"]).is_none()
         })
         .with_status(200)
         .with_header("content-type", "application/json")

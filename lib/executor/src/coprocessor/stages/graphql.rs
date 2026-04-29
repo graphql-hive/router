@@ -498,7 +498,7 @@ impl GraphqlBodyPayload {
 struct GraphqlBodyPayloadRef<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     query: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "operationName", skip_serializing_if = "Option::is_none")]
     operation_name: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     variables: Option<&'a HashMap<String, sonic_rs::Value>>,
@@ -511,7 +511,7 @@ struct GraphqlBodyPayloadRef<'a> {
 struct GraphqlBodyPayload {
     #[serde(default)]
     query: Option<String>,
-    #[serde(default)]
+    #[serde(rename = "operationName", default)]
     operation_name: Option<String>,
     #[serde(default)]
     variables: Option<HashMap<String, sonic_rs::Value>>,

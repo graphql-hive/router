@@ -235,7 +235,7 @@ pub struct CoprocessorGraphqlAnalysisIncludeConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum GraphqlBodyField {
     /// Include the GraphQL query string.
     Query,
@@ -473,118 +473,6 @@ impl JsonSchema for ContextSelection {
     fn inline_schema() -> bool {
         true
     }
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct CoprocessorExecutionRequestIncludeConfig {
-    #[serde(default)]
-    /// Include execution request body.
-    pub body: bool,
-    #[serde(default)]
-    /// Include request context.
-    ///
-    /// Values:
-    /// - `false`: no context
-    /// - `true`: full context
-    /// - list: selected context keys
-    pub context: ContextSelection,
-    #[serde(default)]
-    /// Include request headers.
-    pub headers: bool,
-    #[serde(default)]
-    /// Include request method.
-    pub method: bool,
-    #[serde(default)]
-    /// Include request path.
-    pub path: bool,
-    #[serde(default)]
-    /// Include the current public schema SDL.
-    pub sdl: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct CoprocessorExecutionResponseIncludeConfig {
-    #[serde(default)]
-    /// Include execution response body.
-    pub body: bool,
-    #[serde(default)]
-    /// Include request context.
-    ///
-    /// Values:
-    /// - `false`: no context
-    /// - `true`: full context
-    /// - list: selected context keys
-    pub context: ContextSelection,
-    #[serde(default)]
-    /// Include response headers.
-    pub headers: bool,
-    #[serde(default)]
-    /// Include response status code.
-    pub status_code: bool,
-    #[serde(default)]
-    /// Include the current public schema SDL.
-    pub sdl: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct CoprocessorSubgraphRequestIncludeConfig {
-    #[serde(default)]
-    /// Include outbound subgraph request body.
-    pub body: bool,
-    #[serde(default)]
-    /// Include request context.
-    ///
-    /// Values:
-    /// - `false`: no context
-    /// - `true`: full context
-    /// - list: selected context keys
-    pub context: ContextSelection,
-    #[serde(default)]
-    /// Include outbound subgraph request headers.
-    pub headers: bool,
-    #[serde(default)]
-    /// Include outbound subgraph request method.
-    pub method: bool,
-    #[serde(default)]
-    /// Include outbound subgraph request URI.
-    pub uri: bool,
-    #[serde(default)]
-    /// Include the current public schema SDL.
-    pub sdl: bool,
-    #[serde(default)]
-    /// Include target subgraph service name.
-    pub service_name: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct CoprocessorSubgraphResponseIncludeConfig {
-    #[serde(default)]
-    /// Include subgraph response body.
-    pub body: bool,
-    #[serde(default)]
-    /// Include request context.
-    ///
-    /// Values:
-    /// - `false`: no context
-    /// - `true`: full context
-    /// - list: selected context keys
-    pub context: ContextSelection,
-    #[serde(default)]
-    /// Include subgraph response headers.
-    pub headers: bool,
-    #[serde(default)]
-    /// Include subgraph response status code.
-    pub status_code: bool,
-    #[serde(default)]
-    /// Include the current public schema SDL.
-    pub sdl: bool,
-    #[serde(default)]
-    /// Include target subgraph service name.
-    pub service_name: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
