@@ -131,7 +131,7 @@ impl PersistedDocumentsManager {
                 .text()
                 .await
                 .map_err(|e| PersistedDocumentsError::FailedToReadCDNResponse(e.to_string()))?;
-            debug!("Document fetched from CDN: {}", document);
+            debug!(document_id, document, "Document fetched from CDN");
 
             return Ok(document);
         }
@@ -139,12 +139,12 @@ impl PersistedDocumentsManager {
         let status = response.status();
 
         warn!(
-            "Document fetch from CDN failed: HTTP {}, Body: {:?}",
-            status,
-            response
+            status = ?status,
+            response = response
                 .text()
                 .await
-                .unwrap_or_else(|_| "Unavailable".to_string())
+                .unwrap_or_else(|_| "Unavailable".to_string()),
+            "Document fetch from CDN failed"
         );
 
         Err(PersistedDocumentsError::DocumentNotFound)

@@ -52,24 +52,20 @@ pub enum CallbackError {
         CALLBACK_PROTOCOL_VERSION
     )]
     InvalidProtocolHeader,
-    #[error("Failed to parse callback payload: {0}")]
+    #[error("Failed to parse callback payload")]
     PayloadParseError(#[from] sonic_rs::Error),
-    #[error("Subscription ID mismatch: path='{path}', body='{body}'")]
+    #[error("Subscription ID mismatch")]
     SubscriptionIdMismatch { path: String, body: String },
-    #[error("Missing payload in next message for subscription ID '{subscription_id}'")]
+    #[error("Missing payload in next message for subscription ID")]
     MissingPayload { subscription_id: String },
-    #[error(
-        "Subscription not found, may have been terminated for subscription ID '{subscription_id}'"
-    )]
+    #[error("Subscription not found, may have been terminated for subscription ID")]
     SubscriptionNotFound { subscription_id: String },
-    #[error("Invalid verifier for subscription ID '{subscription_id}'")]
+    #[error("Invalid verifier for subscription ID")]
     InvalidVerifier { subscription_id: String },
-    #[error("Subscription receiver dropped for subscription ID '{subscription_id}'")]
+    #[error("Subscription receiver dropped for subscription ID")]
     SubscriptionDropped { subscription_id: String },
     // NOTE: intentionally a different variant from SubscriptionDropped
-    #[error(
-        "Client consuming too slowly. Event buffer full for subscription ID '{subscription_id}'"
-    )]
+    #[error("Client consuming too slowly. Event buffer full for subscription ID")]
     ClientTooSlow { subscription_id: String },
 }
 
@@ -77,13 +73,19 @@ impl CallbackError {
     fn log(&self) {
         match self {
             CallbackError::InvalidProtocolHeader => warn!("{}", self),
-            CallbackError::PayloadParseError(_) => error!("{}", self),
-            CallbackError::SubscriptionIdMismatch { .. } => warn!("{}", self),
-            CallbackError::MissingPayload { .. } => warn!("{}", self),
-            CallbackError::SubscriptionNotFound { .. } => warn!("{}", self),
-            CallbackError::InvalidVerifier { .. } => warn!("{}", self),
-            CallbackError::SubscriptionDropped { .. } => debug!("{}", self),
-            CallbackError::ClientTooSlow { .. } => warn!("{}", self),
+            CallbackError::PayloadParseError(err) => error!(err = ?err, "{}", self),
+            CallbackError::SubscriptionIdMismatch { path, body } => warn!(path, body, "{}", self),
+            CallbackError::MissingPayload { subscription_id } => warn!(subscription_id, "{}", self),
+            CallbackError::SubscriptionNotFound { subscription_id } => {
+                warn!(subscription_id, "{}", self)
+            }
+            CallbackError::InvalidVerifier { subscription_id } => {
+                warn!(subscription_id, "{}", self)
+            }
+            CallbackError::SubscriptionDropped { subscription_id } => {
+                debug!(subscription_id, "{}", self)
+            }
+            CallbackError::ClientTooSlow { subscription_id } => warn!(subscription_id, "{}", self),
         }
     }
 }

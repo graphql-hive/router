@@ -199,9 +199,9 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
 
         debug!(
             subscription_id = %subscription_id,
-            "sending HTTP callback subscription request to subgraph {} at {}",
-            self.subgraph_name,
-            self.endpoint.to_string()
+            subgraph_name = self.subgraph_name,
+            endpoint = self.endpoint.to_string(),
+            "sending HTTP callback subscription request to subgraph",
         );
 
         let req_fut = self.http_client.request(req);
@@ -217,9 +217,10 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
 
         debug!(
             subscription_id = %subscription_id,
-            "HTTP callback subscription request to {} completed, status: {}",
-            self.endpoint.to_string(),
-            res.status()
+            subgraph_name = self.subgraph_name,
+            endpoint = self.endpoint.to_string(),
+            status = res.status().as_str(),
+            "HTTP callback subscription request completed",
         );
 
         if !res.status().is_success() {
@@ -254,7 +255,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                             Err(e) => {
                                 error!(
                                     subscription_id = %subscription_id,
-                                    error = %e,
+                                    erro = %e,
                                     "failed to deserialize callback payload"
                                 );
                                 yield Err(e);

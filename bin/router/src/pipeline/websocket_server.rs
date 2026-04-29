@@ -89,7 +89,7 @@ async fn ws_service(
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
     if !has_accepted_subprotocol {
-        debug!("WebSocket connection rejecting due to unacceptable subprotocol");
+        warn!("WebSocket connection rejecting due to unacceptable subprotocol");
         let _ = sink.send(CloseCode::SubprotocolNotAcceptable.into()).await;
         // we dont return an Err here because we want to gracefully close the
         // connection for the client side with a close frame. returning an Err
@@ -222,9 +222,9 @@ async fn handle_text_frame(
             let header_map =
                 parse_headers_from_connection_init_payload(state.borrow().init_payload.as_ref());
             if !header_map.is_empty() {
-                trace!("Connection init message contains headers in the payload");
+                debug!("Connection init message contains headers in the payload");
             } else {
-                trace!("Connection init message does not contain headers in the payload");
+                debug!("Connection init message does not contain headers in the payload");
             }
 
             None

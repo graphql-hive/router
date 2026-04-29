@@ -4,7 +4,7 @@ use sonic_rs::from_str;
 use std::sync::{Arc, RwLock};
 use tokio::fs::read_to_string;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use jsonwebtoken::jwk::JwkSet;
 
@@ -79,7 +79,7 @@ impl BackgroundTask for JwksSourceTask {
             ..
         } = &self.0.config
         {
-            debug!(
+            info!(
               source = ?self.0.config,
                 "Starting polling for remote jwks",
             );
