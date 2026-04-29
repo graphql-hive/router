@@ -4,7 +4,7 @@ use sonic_rs::from_str;
 use std::sync::{Arc, RwLock};
 use tokio::fs::read_to_string;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info};
 
 use jsonwebtoken::jwk::JwkSet;
 

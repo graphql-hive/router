@@ -15,7 +15,7 @@ use ntex::web::types::Query;
 use ntex::web::HttpRequest;
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use std::sync::Arc;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, warn};
 
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::header::SingleContentType;
