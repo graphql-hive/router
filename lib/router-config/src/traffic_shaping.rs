@@ -3,7 +3,10 @@ use std::{collections::HashMap, time::Duration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::{http_header::HttpHeaderName, percentage::Percentage};
+use crate::primitives::{
+    file_path::FilePath, http_header::HttpHeaderName, percentage::Percentage,
+    single_or_multiple::SingleOrMultiple,
+};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
@@ -93,6 +96,17 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// When the circuit breaker is open, requests to the subgraph will be short-circuited and an error will be returned to the client.
     /// The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
     pub circuit_breaker: Option<TrafficShapingSubgraphCircuitBreakerConfig>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls: Option<ClientTLSConfig>,
+
+    /// Forces HTTP/2 for requests to subgraphs.
+    ///
+    /// For plain HTTP, it will use HTTP/2 cleartext (h2c).
+    /// For HTTPS, it also requires HTTP/2.
+    /// This will make the subgraph requests never fall back to HTTP/1.1,
+    /// and will fail if the subgraph doesn't support HTTP/2.
+    pub allow_only_http2: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -140,6 +154,18 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// short-circuited and an error will be returned to the client.
     /// The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
     pub circuit_breaker: Option<TrafficShapingSubgraphCircuitBreakerConfig>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls: Option<ClientTLSConfig>,
+
+    /// Forces HTTP/2 for requests to subgraphs.
+    ///
+    /// For plain HTTP, it will use HTTP/2 cleartext (h2c).
+    /// For HTTPS, it also requires HTTP/2.
+    /// This will make the subgraph requests never fall back to HTTP/1.1,
+    /// and will fail if the subgraph doesn't support HTTP/2.
+    #[serde(default)]
+    pub allow_only_http2: bool,
 }
 
 fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
@@ -171,6 +197,8 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             dedupe_enabled: default_dedupe_enabled(),
             request_timeout: default_request_timeout(),
             circuit_breaker: default_circuit_breaker_config(),
+            tls: None,
+            allow_only_http2: false,
         }
     }
 }
@@ -192,6 +220,9 @@ pub struct TrafficShapingRouterConfig {
     )]
     #[schemars(with = "String")]
     pub request_timeout: Duration,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls: Option<ServerTLSConfig>,
 
     /// Maximum number of concurrent long-lived clients (WebSocket connections and HTTP streaming responses).
     /// Regular non-streaming requests are not counted toward this limit.
@@ -297,6 +328,7 @@ impl Default for TrafficShapingRouterConfig {
         Self {
             dedupe: Default::default(),
             request_timeout: default_router_request_timeout(),
+            tls: None,
             max_long_lived_clients: default_max_long_lived_clients(),
         }
     }
@@ -304,6 +336,14 @@ impl Default for TrafficShapingRouterConfig {
 
 fn default_circuit_breaker_config() -> Option<TrafficShapingSubgraphCircuitBreakerConfig> {
     None
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ServerTLSConfig {
+    pub cert_file: SingleOrMultiple<FilePath>,
+    pub key_file: FilePath,
+    pub client_auth: Option<ServerClientAuthConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -335,4 +375,28 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
 
 fn default_circuit_breaker_enabled() -> bool {
     false
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ServerClientAuthConfig {
+    pub cert_file: SingleOrMultiple<FilePath>,
+    #[serde(default)]
+    pub required: Option<bool>,
+}
+
+#[derive(Default, Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ClientTLSConfig {
+    pub cert_file: Option<SingleOrMultiple<FilePath>>,
+    pub client_auth: Option<ClientAuthConfig>,
+    #[serde(default)]
+    pub insecure_skip_ca_verification: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ClientAuthConfig {
+    pub cert_file: SingleOrMultiple<FilePath>,
+    pub key_file: FilePath,
 }

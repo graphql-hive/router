@@ -82,6 +82,9 @@ impl<State> Display for FetchStepData<State> {
             match condition {
                 Condition::Include(var_name) => write!(f, " [@include(if: ${})]", var_name)?,
                 Condition::Skip(var_name) => write!(f, " [@skip(if: ${})]", var_name)?,
+                Condition::SkipAndInclude { skip, include } => {
+                    write!(f, " [@skip(if: ${}) @include(if: ${})]", skip, include)?
+                }
             }
         }
 

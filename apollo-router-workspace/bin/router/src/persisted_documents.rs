@@ -4,9 +4,9 @@ use apollo_router::layers::ServiceBuilderExt;
 use apollo_router::plugin::Plugin;
 use apollo_router::plugin::PluginInit;
 use apollo_router::services::router;
+use apollo_router::services::router::body::from_bytes;
 use apollo_router::services::router::Body;
 use apollo_router::Context;
-use apollo_router::services::router::body::from_bytes;
 use core::ops::Drop;
 use futures::FutureExt;
 use hive_console_sdk::persisted_documents::PersistedDocumentsError;
@@ -313,7 +313,7 @@ struct ExpectedBodyStructure {
 
 fn extract_document_id(body: &[u8]) -> Result<ExpectedBodyStructure, PersistedDocumentsError> {
     serde_json::from_slice::<ExpectedBodyStructure>(body)
-        .map_err(PersistedDocumentsError::FailedToParseBody)
+        .map_err(|error| PersistedDocumentsError::FailedToParseBody(error.to_string()))
 }
 
 /// To test this plugin, we do the following:

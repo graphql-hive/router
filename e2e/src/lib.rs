@@ -7,6 +7,8 @@ mod body_limit;
 #[cfg(test)]
 mod circuit_breaker;
 #[cfg(test)]
+mod conditional_directives;
+#[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
 mod entity_batching;
@@ -22,6 +24,8 @@ mod header_propagation;
 mod hive_cdn_supergraph;
 #[cfg(test)]
 mod http;
+#[cfg(test)]
+mod http2;
 #[cfg(test)]
 mod http_callback;
 #[cfg(test)]
@@ -41,6 +45,8 @@ mod max_tokens;
 #[cfg(test)]
 mod override_subgraph_urls;
 #[cfg(test)]
+mod persisted_documents;
+#[cfg(test)]
 mod probes;
 #[cfg(test)]
 mod router_timeout;
@@ -52,6 +58,8 @@ mod supergraph;
 mod telemetry;
 #[cfg(test)]
 mod timeout_per_subgraph;
+#[cfg(test)]
+mod tls;
 #[cfg(test)]
 mod websocket;
 

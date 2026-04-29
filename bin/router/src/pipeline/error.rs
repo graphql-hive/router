@@ -53,9 +53,6 @@ pub enum PipelineError {
     UnsupportedContentType,
 
     // GET Specific pipeline errors
-    #[error("Failed to deserialize query parameters")]
-    #[strum(serialize = "INVALID_QUERY_PARAMS")]
-    GetInvalidQueryParams,
     #[error("Missing query parameter: {0}")]
     #[strum(serialize = "MISSING_QUERY_PARAM")]
     GetMissingQueryParam(&'static str),
@@ -79,6 +76,18 @@ pub enum PipelineError {
     #[error("Failed to parse GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_FAILED")]
     FailedToParseOperation(#[from] Arc<graphql_tools::parser::query::ParseError>),
+    #[error("Persisted document not found: {0}")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_NOT_FOUND")]
+    PersistedDocumentNotFound(String),
+    #[error("Persisted document id is required")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_ID_REQUIRED")]
+    PersistedDocumentIdRequired,
+    #[error("{0}")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_EXTRACTION_FAILED")]
+    PersistedDocumentExtraction(String),
+    #[error("{0}")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_RESOLUTION_FAILED")]
+    PersistedDocumentResolution(String),
     #[error("Failed to minify parsed GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
     FailedToMinifyParsedOperation(String),
@@ -204,11 +213,17 @@ impl PipelineError {
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
             (Self::GetUnprocessableQueryParams(_), _) => StatusCode::BAD_REQUEST,
-            (Self::GetInvalidQueryParams, _) => StatusCode::BAD_REQUEST,
             (Self::GetMissingQueryParam(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseBody(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseVariables(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseExtensions(_), _) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentNotFound(_), false) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentNotFound(_), true) => StatusCode::OK,
+            (Self::PersistedDocumentIdRequired, false) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentIdRequired, true) => StatusCode::OK,
+            (Self::PersistedDocumentExtraction(_), false) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentExtraction(_), true) => StatusCode::OK,
+            (Self::PersistedDocumentResolution(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::FailedToParseOperation(_), false) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseOperation(_), true) => StatusCode::OK,
             (Self::FailedToMinifyParsedOperation(_), false) => StatusCode::BAD_REQUEST,

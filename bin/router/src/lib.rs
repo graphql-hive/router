@@ -28,6 +28,7 @@ use crate::{
         header::ResponseMode,
         http_callback::handler,
         long_lived_client_limit::LongLivedClientLimitService,
+        persisted_documents::PersistedDocumentsRuntime,
         request_extensions::{
             read_graphql_operation_metric_identity, read_graphql_response_metric_status,
             read_request_body_size, write_graphql_response_metric_status,
@@ -75,8 +76,12 @@ pub use sonic_rs;
 pub use tokio;
 pub use tracing;
 use tracing::{info, warn, Instrument};
+pub mod tls;
 
+#[cfg(not(feature = "graphiql"))]
 static LABORATORY_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/laboratory.html"));
+#[cfg(feature = "graphiql")]
+static LABORATORY_HTML: &str = include_str!("../static/graphiql.html");
 
 struct CallbackServer(std::sync::Mutex<Option<ntex::server::Server>>);
 
@@ -250,10 +255,11 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let paths = RouterPaths::new(graphql_path.clone(), websocket_path, callback_path);
     paths.detect_conflicts(&prometheus)?;
 
+    let graphql_path = graphql_path.to_string();
     let long_lived_client_limit_service =
         LongLivedClientLimitService::new(&shared_state.router_config);
 
-    let maybe_error = web::HttpServer::new(async move || {
+    let server = web::HttpServer::new(async move || {
         let landing_page_path = graphql_path.clone();
         let prometheus = prometheus.clone();
         let long_lived_client_limit_service = long_lived_client_limit_service.clone();
@@ -273,9 +279,22 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
             .default_service(web::to(move || {
                 landing_page_handler(landing_page_path.clone())
             }))
-    })
-    .bind(&addr)
-    .map_err(|err| RouterInitError::HttpServerBindError(addr, err))?
+    });
+
+    let tls_config = shared_state_clone
+        .router_config
+        .traffic_shaping
+        .router
+        .tls
+        .as_ref();
+
+    let maybe_error = if let Some(tls_config) = tls_config {
+        let rustls_config = tls::build_rustls_config(tls_config)?;
+        server.bind_rustls(&addr, &rustls_config)
+    } else {
+        server.bind(&addr)
+    }
+    .map_err(|err| RouterInitError::HttpServerBindError(addr.to_string(), err))?
     .run()
     .await
     .map_err(RouterInitError::HttpServerStartError);
@@ -353,8 +372,28 @@ pub async fn configure_app_from_config(
             config: max_aliases_config.clone(),
         }));
     }
+    let persisted_documents_runtime = PersistedDocumentsRuntime::init(
+        &router_config_arc.persisted_documents,
+        &router_config_arc.http.graphql_endpoint,
+        bg_tasks_manager,
+    )
+    .await
+    .map_err(|err| crate::shared_state::SharedStateError::PersistedDocuments(Box::new(err)))?;
+
+    if !persisted_documents_runtime
+        .supports_graphql_endpoint(&router_config_arc.http.graphql_endpoint)
+    {
+        // url_path_param extractor depends on path segments relative to graphql endpoint.
+        // Root endpoint would make all routes ambiguous for persisted-document extraction.
+        // Even /health could be treated as a graphql request with document id == "health".
+        return Err(RouterInitError::PersistedDocumentsEndpointIncompatible(
+            "http.graphql_endpoint='/' is not allowed when persisted_documents.selectors contains type=url_path_param. Use a non-root endpoint like '/graphql'.".to_string(),
+        ));
+    }
+
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc,
+        persisted_documents_runtime,
         jwt_runtime,
         hive_usage_agent,
         validation_plan,
@@ -472,6 +511,13 @@ pub fn configure_ntex_app(
                 let registry = registry.clone();
                 async move { telemetry::build_metrics_response(&registry) }
             }),
+        );
+    }
+
+    // Enables /graphql/sha256:12345 cases for persisted documents
+    if paths.graphql != "/" {
+        cfg.service(
+            web::scope(paths.graphql.as_str()).default_service(web::to(graphql_endpoint_handler)),
         );
     }
 }

@@ -602,6 +602,18 @@ impl PlanNode {
                     if_clause: None,
                     else_clause: Some(Box::new(node)),
                 }),
+                Condition::SkipAndInclude { skip, include } => {
+                    let include_node = PlanNode::Condition(ConditionNode {
+                        condition: include.clone(),
+                        if_clause: Some(Box::new(node)),
+                        else_clause: None,
+                    });
+                    PlanNode::Condition(ConditionNode {
+                        condition: skip.clone(),
+                        if_clause: None,
+                        else_clause: Some(Box::new(include_node)),
+                    })
+                }
             },
             None => node,
         }

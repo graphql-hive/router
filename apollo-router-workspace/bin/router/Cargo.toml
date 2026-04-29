@@ -5,7 +5,7 @@ repository = "https://github.com/graphql-hive/router"
 edition = "2021"
 license = "MIT"
 publish = true
-version = "3.0.3"
+version = "3.0.4"
 description = "Apollo-Router Plugin for integrating with Hive Console"
 
 [[bin]]
@@ -18,7 +18,7 @@ path = "src/lib.rs"
 
 [dependencies]
 apollo-router = { version = "^2.0.0" }
-hive-console-sdk = { version = "=0.3.8", path = "../../../lib/hive-console-sdk"}
+hive-console-sdk = { version = "0.3.9", path = "../../../lib/hive-console-sdk"}
 sha2 = { version = "0.10.8", features = ["std"] }
 anyhow = "1"
 tracing = "0.1"
@@ -31,7 +31,7 @@ tokio = { version = "1.36.0", features = ["full"] }
 tower = { version = "0.5", features = ["full"] }
 http = "1"
 http-body-util = "0.1"
-rand = "0.9.3"
+rand = "0.10.1"
 tokio-util = "0.7.16"
 
 [dev-dependencies]
