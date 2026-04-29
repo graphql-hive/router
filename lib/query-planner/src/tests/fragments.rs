@@ -6,8 +6,9 @@ use std::error::Error;
 
 /// Regression test: multiple inline fragments on the same concrete type inside an abstract type
 /// fragment should all be evaluated, not just the first one.
-/// When querying a field returning an interface type and using a fragment on that interface
-/// containing multiple fragments on the same concrete type, all fragment fields must be included.
+/// Uses `account(id:)` (concrete parent type `Account`) with a `... on Node` abstract fragment
+/// to force the `expand_abstract_fragment` path, where two `... on Account` inline fragments
+/// must both be collected and merged so all their fields appear in the query plan.
 #[test]
 fn multiple_inline_fragments_on_same_concrete_type_within_interface_fragment(
 ) -> Result<(), Box<dyn Error>> {
@@ -15,7 +16,7 @@ fn multiple_inline_fragments_on_same_concrete_type_within_interface_fragment(
     let document = parse_operation(
         r#"
         query {
-          node(id: "a1") {
+          account(id: "a1") {
             ... on Node {
               ... on Account {
                 id
@@ -37,12 +38,9 @@ fn multiple_inline_fragments_on_same_concrete_type_within_interface_fragment(
     QueryPlan {
       Fetch(service: "a") {
         {
-          node(id: "a1") {
-            __typename
-            ... on Account {
-              id
-              username
-            }
+          account(id: "a1") {
+            id
+            username
           }
         }
       },
