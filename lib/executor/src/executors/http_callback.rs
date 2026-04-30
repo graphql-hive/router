@@ -144,7 +144,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         _execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
         _plugin_req_state: Option<&'a PluginRequestState<'a>>,
-    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         Err(SubgraphExecutorError::HttpCallbackNoSingle)
     }
 

@@ -5,8 +5,7 @@ use std::{
 };
 
 use dashmap::DashMap;
-use futures::stream::BoxStream;
-use futures::TryFutureExt;
+use futures::{stream::BoxStream, FutureExt};
 use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerError};
 use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, subscriptions::SubscriptionProtocol,
@@ -221,18 +220,42 @@ impl SubgraphExecutorMap {
                     .map(|r| r.value().clone());
                 match circuit_breaker {
                     Some(circuit_breaker) => {
+                        // Make 5xx responses as errors for the circuit breaker to track
+                        let exec_fut = exec_fut.map(|exec_res| match exec_res {
+                            Ok(succ_res) => {
+                                if succ_res
+                                    .status
+                                    .is_some_and(|status| status.is_server_error())
+                                {
+                                    // Save the original response in case the circuit breaker treats it as an error and returns it through the error variant
+                                    Err(SubgraphExecutorError::InternalServerError(succ_res.into()))
+                                } else {
+                                    Ok(succ_res)
+                                }
+                            }
+                            Err(err) => Err(err),
+                        });
                         circuit_breaker
                             .call(exec_fut)
-                            .map_err(|e| match e {
-                                recloser::Error::Inner(e) => e,
-                                recloser::Error::Rejected => {
+                            .map(|exec_res| match exec_res {
+                                Err(recloser::Error::Inner(e)) => match e {
+                                    // If it's an error we wrapped above, unwrap it and return the original successful response instead of treating it as a failure for the caller
+                                    // This allows the circuit breaker to track 5xx responses without impacting the actual response returned to the client,
+                                    // which is important for use cases where clients want to handle 5xx responses differently but still want the circuit breaker to be aware of them.
+                                    SubgraphExecutorError::InternalServerError(succ_ress) => {
+                                        Ok(*succ_ress)
+                                    }
+                                    other_err => Err(other_err),
+                                },
+                                Err(recloser::Error::Rejected) => {
                                     // Record circuit breaker rejection in metrics
                                     self.telemetry_context
                                         .metrics
                                         .circuit_breaker
                                         .record_rejected_request(subgraph_name);
-                                    SubgraphExecutorError::CircuitBreakerRejected
+                                    Err(SubgraphExecutorError::CircuitBreakerRejected)
                                 }
+                                Ok(res) => Ok(res),
                             })
                             .await?
                     }

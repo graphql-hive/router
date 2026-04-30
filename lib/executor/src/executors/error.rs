@@ -3,6 +3,8 @@ use http::{uri::InvalidUri, StatusCode};
 use rustls::server::VerifierBuilderError;
 use strum::IntoStaticStr;
 
+use crate::response::subgraph_response::SubgraphResponse;
+
 #[derive(thiserror::Error, Debug, IntoStaticStr)]
 pub enum SubgraphExecutorError {
     #[error("Failed to parse endpoint \"{0}\" as URI: {1}")]
@@ -100,6 +102,9 @@ pub enum SubgraphExecutorError {
     #[error("HTTP Callback protocol configured for subgraph but no callback configuration provided for router")]
     #[strum(serialize = "SUBGRAPH_HTTP_CALLBACK_NOT_CONFIGURED")]
     HttpCallbackNotConfigured,
+    #[error("Subgraph internal server error")]
+    #[strum(serialize = "SUBGRAPH_INTERNAL_SERVER_ERROR")]
+    InternalServerError(Box<SubgraphResponse<'static>>),
 }
 
 impl SubgraphExecutorError {
