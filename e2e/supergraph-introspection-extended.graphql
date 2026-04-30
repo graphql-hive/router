@@ -69,6 +69,11 @@ directive @test_directive(
   newArg: TestInput
 ) on FIELD_DEFINITION
 
+directive @test_repeatable_directive(
+  oldArg: TestInput @deprecated(reason: "Use `newArg` instead")
+  newArg: TestInput
+) repeatable on FIELD_DEFINITION
+
 type Query @join__type(graph: ACCOUNTS) {
   testField(
     oldArg: TestInput @deprecated(reason: "Use `newArg` instead")
