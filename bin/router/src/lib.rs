@@ -122,7 +122,12 @@ async fn graphql_endpoint_handler(
         .telemetry_context
         .extract_context(&HeaderExtractor(request.headers()));
     let start = Instant::now();
-    let root_logging_span = LoggerRootSpan::create(&request, &parent_ctx);
+
+    let root_logging_span = LoggerRootSpan::create(
+        &app_state.telemetry_context.logging.identifier_extractor,
+        &request,
+        &parent_ctx,
+    );
     let http_request_capture = app_state
         .telemetry_context
         .metrics

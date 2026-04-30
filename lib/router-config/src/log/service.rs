@@ -1,3 +1,4 @@
+use http::HeaderName;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +12,8 @@ use crate::{
 pub struct ServiceLoggingConfig {
     #[serde(default)]
     pub log_fields: LogFieldsConfig,
+    #[serde(default)]
+    pub correlation: CorrelationConfig,
     pub exporters: Vec<ServiceLogExporter>,
 }
 
@@ -18,7 +21,34 @@ impl Default for ServiceLoggingConfig {
     fn default() -> Self {
         Self {
             log_fields: LogFieldsConfig::default(),
+            correlation: CorrelationConfig::default(),
             exporters: vec![ServiceLogExporter::Stdout(StdoutExporterConfig::default())],
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CorrelationConfig {
+    #[serde(default = "default_correlation_id_header")]
+    pub id_header: HttpHeaderName,
+    #[serde(default = "default_trace_propagation")]
+    pub trace_propagation: bool,
+}
+
+fn default_correlation_id_header() -> HttpHeaderName {
+    HttpHeaderName::from(HeaderName::from_static("x-request-id"))
+}
+
+fn default_trace_propagation() -> bool {
+    true
+}
+
+impl Default for CorrelationConfig {
+    fn default() -> Self {
+        Self {
+            id_header: default_correlation_id_header(),
+            trace_propagation: default_trace_propagation(),
         }
     }
 }

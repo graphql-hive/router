@@ -3,20 +3,27 @@ use std::{
     time::Duration,
 };
 
-use hive_router_config::{log::service::LogFieldsConfig, primitives::http_header::HttpHeaderName};
+use hive_router_config::{
+    log::service::{CorrelationConfig, LogFieldsConfig},
+    primitives::http_header::HttpHeaderName,
+};
 use ntex::http::body::{BodySize, MessageBody};
 use tracing::info;
 
-use crate::logging::sonic_valuable::SonicMapRef;
+use crate::logging::{request_id::RequestIdentifierExtractor, sonic_valuable::SonicMapRef};
 
 #[derive(Clone, Default)]
 pub struct LoggerContext {
     fields_config: LogFieldsConfig,
+    pub identifier_extractor: RequestIdentifierExtractor,
 }
 
 impl LoggerContext {
-    pub fn new(fields_config: LogFieldsConfig) -> Self {
-        Self { fields_config }
+    pub fn new(fields_config: LogFieldsConfig, correlation_config: CorrelationConfig) -> Self {
+        Self {
+            fields_config,
+            identifier_extractor: RequestIdentifierExtractor::new(correlation_config),
+        }
     }
 
     #[inline]

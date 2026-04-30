@@ -83,6 +83,7 @@ impl TelemetryContext {
         let metrics = Arc::new(Metrics::new(meter.as_ref()));
         let logging = Arc::new(LoggerContext::new(
             config.logging.service.log_fields.clone(),
+            config.logging.service.correlation.clone(),
         ));
 
         if propagators.is_empty() {

@@ -151,7 +151,10 @@ impl Telemetry {
             prometheus,
             context,
             logging_writer_guards: writer_guards,
-            logging_context: LoggerContext::new(service_log_config.log_fields),
+            logging_context: LoggerContext::new(
+                service_log_config.log_fields,
+                service_log_config.correlation,
+            ),
         })
     }
 
@@ -216,7 +219,10 @@ impl Telemetry {
                 prometheus: None,
                 context,
                 logging_writer_guards: writer_guards,
-                logging_context: LoggerContext::new(service_log_config.log_fields),
+                logging_context: LoggerContext::new(
+                    service_log_config.log_fields,
+                    service_log_config.correlation,
+                ),
             },
             subscriber,
         ))

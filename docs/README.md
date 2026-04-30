@@ -20,7 +20,7 @@
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"logging":{"service":{"exporters":[{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}],"log_fields":{"graphql":{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{"error_count":true}},"http":{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}}}},"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"logging":{"service":{"correlation":{"id_header":"x-request-id","trace_propagation":true},"exporters":[{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}],"log_fields":{"graphql":{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{"error_count":true}},"http":{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}}}},"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
 |[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
@@ -134,6 +134,9 @@ telemetry:
   hive: null
   logging:
     service:
+      correlation:
+        id_header: x-request-id
+        trace_propagation: true
       exporters:
         - format: json
           kind: StdoutExporterConfig
@@ -2224,7 +2227,7 @@ max_retries: 10
 |----|----|-----------|--------|
 |[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
 |[**hive**](#telemetryhive)|`object`, `null`|||
-|[**logging**](#telemetrylogging)|`object`|Default: `{"service":{"exporters":[{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}],"log_fields":{"graphql":{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{"error_count":true}},"http":{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}}}}`<br/>||
+|[**logging**](#telemetrylogging)|`object`|Default: `{"service":{"correlation":{"id_header":"x-request-id","trace_propagation":true},"exporters":[{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}],"log_fields":{"graphql":{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{"error_count":true}},"http":{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}}}}`<br/>||
 |[**metrics**](#telemetrymetrics)|`object`|Configures metrics collection, processing, and export.<br/>Default: `{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}}`<br/>||
 |[**resource**](#telemetryresource)|`object`|Default: `{"attributes":{}}`<br/>||
 |[**tracing**](#telemetrytracing)|`object`|Default: `{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}`<br/>||
@@ -2239,6 +2242,9 @@ client_identification:
 hive: null
 logging:
   service:
+    correlation:
+      id_header: x-request-id
+      trace_propagation: true
     exporters:
       - format: json
         kind: StdoutExporterConfig
@@ -2481,13 +2487,16 @@ Example: ["IntrospectionQuery", "MeQuery"]
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**service**](#telemetryloggingservice)|`object`|Default: `{"exporters":[{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}],"log_fields":{"graphql":{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{"error_count":true}},"http":{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}}}`<br/>|yes|
+|[**service**](#telemetryloggingservice)|`object`|Default: `{"correlation":{"id_header":"x-request-id","trace_propagation":true},"exporters":[{"format":"json","kind":"StdoutExporterConfig","level":"info","log_internals":false}],"log_fields":{"graphql":{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{"error_count":true}},"http":{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}}}`<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
 service:
+  correlation:
+    id_header: x-request-id
+    trace_propagation: true
   exporters:
     - format: json
       kind: StdoutExporterConfig
@@ -2528,6 +2537,7 @@ service:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**correlation**](#telemetryloggingservicecorrelation)|`object`|Default: `{"id_header":"x-request-id","trace_propagation":true}`<br/>|no|
 |[**exporters**](#telemetryloggingserviceexporters)|`array`||yes|
 |[**log\_fields**](#telemetryloggingservicelog_fields)|`object`|Default: `{"graphql":{"request":{"body_size_bytes":false,"client_name":true,"client_version":true,"extensions":false,"operation":false,"operation_name":true,"variables":false},"response":{"error_count":true}},"http":{"request":{"headers":["accept","user-agent"],"method":true,"path":true,"query_string":false},"response":{"duration_ms":true,"headers":[],"payload_bytes":false,"status_code":true}}}`<br/>|no|
 
@@ -2535,6 +2545,9 @@ service:
 **Example**
 
 ```yaml
+correlation:
+  id_header: x-request-id
+  trace_propagation: true
 exporters:
   - format: json
     kind: StdoutExporterConfig
@@ -2565,6 +2578,25 @@ log_fields:
       headers: []
       payload_bytes: false
       status_code: true
+
+```
+
+<a name="telemetryloggingservicecorrelation"></a>
+##### telemetry\.logging\.service\.correlation: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**id\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"x-request-id"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
+|**trace\_propagation**|`boolean`|Default: `true`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+id_header: x-request-id
+trace_propagation: true
 
 ```
 
