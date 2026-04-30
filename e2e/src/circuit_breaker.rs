@@ -945,4 +945,184 @@ mod circuit_breaker_e2e_tests {
 }"###
         );
     }
+
+    /// When a subgraph responds with HTTP 5xx but ships a valid GraphQL body
+    /// (data and/or errors), the router must surface that body to the client
+    /// instead of replacing it with an `SUBGRAPH_RESPONSE_BODY_EMPTY` error.
+    /// The 5xx is still recorded internally so the circuit breaker can trip,
+    /// but a single failing request alone should not transform the upstream
+    /// response.
+    #[ntex::test]
+    async fn should_return_subgraph_5xx_response_body_to_client() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(500)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"users":[{"id":"1"}]},"errors":[{"message":"upstream is unhappy","extensions":{"code":"UPSTREAM_FAILURE"}}]}"#,
+            )
+            .expect_at_least(1)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: false
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert_eq!(res.status(), ntex::http::StatusCode::OK);
+
+        // The upstream 5xx body must be propagated to the client (with the
+        // partial `data` and upstream `errors`) instead of being replaced by
+        // an `SUBGRAPH_RESPONSE_BODY_EMPTY` error. The router augments the
+        // error extensions with the originating subgraph name.
+        insta::assert_snapshot!(
+            res.json_body_string_pretty().await,
+            @r###"{
+  "data": {
+    "users": [
+      {
+        "id": "1"
+      }
+    ]
+  },
+  "errors": [
+    {
+      "message": "upstream is unhappy",
+      "extensions": {
+        "code": "UPSTREAM_FAILURE",
+        "serviceName": "accounts"
+      }
+    }
+  ]
+}"###
+        );
+
+        error_mock.assert_async().await;
+    }
+
+    /// 5xx subgraph responses that carry a valid GraphQL body must still count
+    /// as failures for the circuit breaker. The first few requests should
+    /// receive the upstream body, then the breaker must open and short-circuit
+    /// subsequent requests with `SUBGRAPH_CIRCUIT_BREAKER_REJECTED`.
+    #[ntex::test]
+    async fn should_track_5xx_responses_with_body_in_circuit_breaker() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        // The breaker should open after 4 failures with these thresholds, so
+        // the upstream subgraph should be hit exactly 4 times.
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(500)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":null,"errors":[{"message":"upstream is unhappy","extensions":{"code":"UPSTREAM_FAILURE"}}]}"#,
+            )
+            .expect(4)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 30s
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // First four requests reach the subgraph and surface the upstream
+        // 5xx body to the client. We collect the bodies first so the snapshot
+        // assertion can live outside the loop (insta forbids inline snapshots
+        // inside loops).
+        let mut bodies = Vec::with_capacity(4);
+        for _ in 1..=4 {
+            let res = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+            assert_eq!(res.status(), ntex::http::StatusCode::OK);
+            bodies.push(res.json_body_string_pretty().await);
+        }
+        // All four bodies should be identical upstream 5xx payloads.
+        for body in &bodies[1..] {
+            assert_eq!(&bodies[0], body);
+        }
+        insta::assert_snapshot!(
+            bodies[0],
+            @r###"{
+  "data": {
+    "users": null
+  },
+  "errors": [
+    {
+      "message": "upstream is unhappy",
+      "extensions": {
+        "code": "UPSTREAM_FAILURE",
+        "serviceName": "accounts"
+      }
+    }
+  ]
+}"###
+        );
+
+        error_mock.assert_async().await;
+
+        // After the threshold is reached, the breaker opens and rejects new
+        // requests without ever calling the subgraph.
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert_eq!(res.status(), ntex::http::StatusCode::OK);
+        insta::assert_snapshot!(
+            res.json_body_string_pretty().await,
+            @r###"{
+  "data": {
+    "users": null
+  },
+  "errors": [
+    {
+      "message": "Rejected by the circuit breaker",
+      "extensions": {
+        "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
+        "serviceName": "accounts"
+      }
+    }
+  ]
+}"###
+        );
+    }
 }
