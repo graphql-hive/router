@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
     time::Duration,
 };
@@ -17,7 +17,7 @@ use hive_router_internal::{
     expressions::vrl::compiler::Program as VrlProgram, inflight::InFlightMap,
     telemetry::TelemetryContext,
 };
-use http::Uri;
+use http::{StatusCode, Uri};
 use hyper_util::{
     client::legacy::Client,
     rt::{TokioExecutor, TokioTimer},
@@ -50,7 +50,24 @@ type ExecutorsBySubgraphMap =
 type StaticEndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
 type ExpressionEndpointsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
 type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
-type CircuitBreakersBySubgraph = DashMap<SubgraphName, AsyncRecloser>;
+
+#[derive(Clone)]
+struct SubgraphCircuitBreaker {
+    recloser: AsyncRecloser,
+    /// HTTP status codes that should be counted as failures by the
+    /// circuit breaker. Wrapped in `Arc` so the value is cheap to clone
+    /// out of the `DashMap`.
+    error_status_codes: Arc<HashSet<StatusCode>>,
+}
+type CircuitBreakersBySubgraph = DashMap<SubgraphName, SubgraphCircuitBreaker>;
+
+lazy_static::lazy_static! {
+    static ref DEFAULT_CIRCUIT_BREAKER_ERROR_STATUS_CODES: Arc<HashSet<StatusCode>> = Arc::new({
+        let mut set = HashSet::new();
+        set.insert(StatusCode::SERVICE_UNAVAILABLE);
+        set
+    });
+}
 
 struct ResolvedSubgraphConfig<'a> {
     client: Arc<HttpClient>,
@@ -220,12 +237,17 @@ impl SubgraphExecutorMap {
                     .map(|r| r.value().clone());
                 match circuit_breaker {
                     Some(circuit_breaker) => {
-                        // Make 5xx responses as errors for the circuit breaker to track
-                        let exec_fut = exec_fut.map(|exec_res| match exec_res {
+                        let SubgraphCircuitBreaker {
+                            recloser,
+                            error_status_codes,
+                        } = circuit_breaker;
+                        // Treat configured status codes as errors so the
+                        // circuit breaker can track them. Default: only 503.
+                        let exec_fut = exec_fut.map(move |exec_res| match exec_res {
                             Ok(succ_res) => {
                                 if succ_res
                                     .status
-                                    .is_some_and(|status| status.is_server_error())
+                                    .is_some_and(|status| error_status_codes.contains(&status))
                                 {
                                     // Save the original response in case the circuit breaker treats it as an error and returns it through the error variant
                                     Err(SubgraphExecutorError::InternalServerError(succ_res.into()))
@@ -235,7 +257,7 @@ impl SubgraphExecutorMap {
                             }
                             Err(err) => Err(err),
                         });
-                        circuit_breaker
+                        recloser
                             .call(exec_fut)
                             .map(|exec_res| match exec_res {
                                 Err(recloser::Error::Inner(e)) => match e {
@@ -729,12 +751,29 @@ impl SubgraphExecutorMap {
                 builder = builder.reset_timeout(reset_timeout);
             }
 
-            let circuit_breaker = builder.build_async().map_err(|e| {
+            let recloser = builder.build_async().map_err(|e| {
                 SubgraphExecutorError::CircuitBreakerCreationError(e, subgraph_name.to_string())
             })?;
 
-            self.circuit_breakers_by_subgraph
-                .insert(subgraph_name.to_string(), circuit_breaker);
+            let error_status_codes = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.error_status_codes.as_ref())
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.error_status_codes.as_ref()))
+                .map(|codes| {
+                    codes
+                        .iter()
+                        .copied()
+                        .collect::<HashSet<StatusCode>>()
+                        .into()
+                })
+                .unwrap_or_else(|| DEFAULT_CIRCUIT_BREAKER_ERROR_STATUS_CODES.clone());
+
+            self.circuit_breakers_by_subgraph.insert(
+                subgraph_name.to_string(),
+                SubgraphCircuitBreaker {
+                    recloser,
+                    error_status_codes,
+                },
+            );
         }
 
         Ok(())

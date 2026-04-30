@@ -175,7 +175,7 @@ mod circuit_breaker_e2e_tests {
 
         let error_mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(503)
             .expect(4)
             .create_async()
             .await;
@@ -264,7 +264,7 @@ mod circuit_breaker_e2e_tests {
 
         let error_mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(503)
             .expect(4)
             .create_async()
             .await;
@@ -360,7 +360,7 @@ mod circuit_breaker_e2e_tests {
 
         let accounts_error_mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(503)
             .expect(3)
             .create_async()
             .await;
@@ -451,14 +451,20 @@ mod circuit_breaker_e2e_tests {
         products_success_mock.assert_async().await;
     }
 
+    /// With `volume_threshold: 10` and `error_threshold: 90%`, the breaker
+    /// only starts evaluating after the ring buffer of size 10 fills up.
+    /// Sending exactly `volume_threshold` failing requests is therefore not
+    /// enough on its own to flip the breaker open — the next request still
+    /// reaches the subgraph. This guards against accidentally tripping the
+    /// breaker too eagerly when the configured volume is barely reached.
     #[ntex::test]
-    async fn should_handle_circuit_breaker_with_mixed_success_and_failure() {
+    async fn should_not_open_circuit_breaker_when_volume_threshold_just_reached() {
         let mut accounts_server = mockito::Server::new_async().await;
         let host = accounts_server.host_with_port();
 
         let mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(503)
             .expect_at_least(1)
             .create_async()
             .await;
@@ -525,7 +531,7 @@ mod circuit_breaker_e2e_tests {
 
         let error_mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(503)
             .expect_at_least(10)
             .create_async()
             .await;
@@ -587,7 +593,7 @@ mod circuit_breaker_e2e_tests {
 
         let error_mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(503)
             .expect(6)
             .create_async()
             .await;
@@ -652,8 +658,12 @@ mod circuit_breaker_e2e_tests {
         error_mock.assert_async().await;
     }
 
+    /// Requests to an unreachable upstream time out and surface as
+    /// `SUBGRAPH_REQUEST_TIMEOUT`. Those timeouts must be counted as failures
+    /// by the circuit breaker so that, after the threshold is reached, further
+    /// requests are short-circuited with `SUBGRAPH_CIRCUIT_BREAKER_REJECTED`.
     #[ntex::test]
-    async fn should_open_circuit_breaker_on_connection_errors() {
+    async fn should_open_circuit_breaker_on_subgraph_unreachable_timeouts() {
         let non_existent_host = "192.0.2.1:9999";
 
         let router = TestRouter::builder()
@@ -807,7 +817,7 @@ mod circuit_breaker_e2e_tests {
 
         let error_mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(503)
             .expect(3)
             .create_async()
             .await;
@@ -882,7 +892,7 @@ mod circuit_breaker_e2e_tests {
         // reach the upstream subgraph.
         let error_mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(503)
             .expect(10)
             .create_async()
             .await;
@@ -946,20 +956,20 @@ mod circuit_breaker_e2e_tests {
         );
     }
 
-    /// When a subgraph responds with HTTP 5xx but ships a valid GraphQL body
+    /// When a subgraph responds with HTTP 503 but ships a valid GraphQL body
     /// (data and/or errors), the router must surface that body to the client
     /// instead of replacing it with an `SUBGRAPH_RESPONSE_BODY_EMPTY` error.
-    /// The 5xx is still recorded internally so the circuit breaker can trip,
+    /// The 503 is still recorded internally so the circuit breaker can trip,
     /// but a single failing request alone should not transform the upstream
     /// response.
     #[ntex::test]
-    async fn should_return_subgraph_5xx_response_body_to_client() {
+    async fn should_return_subgraph_503_response_body_to_client() {
         let mut accounts_server = mockito::Server::new_async().await;
         let host = accounts_server.host_with_port();
 
         let error_mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(503)
             .with_header("content-type", "application/json")
             .with_body(
                 r#"{"data":{"users":[{"id":"1"}]},"errors":[{"message":"upstream is unhappy","extensions":{"code":"UPSTREAM_FAILURE"}}]}"#,
@@ -992,7 +1002,7 @@ mod circuit_breaker_e2e_tests {
             .await;
         assert_eq!(res.status(), ntex::http::StatusCode::OK);
 
-        // The upstream 5xx body must be propagated to the client (with the
+        // The upstream 503 body must be propagated to the client (with the
         // partial `data` and upstream `errors`) instead of being replaced by
         // an `SUBGRAPH_RESPONSE_BODY_EMPTY` error. The router augments the
         // error extensions with the originating subgraph name.
@@ -1021,12 +1031,13 @@ mod circuit_breaker_e2e_tests {
         error_mock.assert_async().await;
     }
 
-    /// 5xx subgraph responses that carry a valid GraphQL body must still count
-    /// as failures for the circuit breaker. The first few requests should
-    /// receive the upstream body, then the breaker must open and short-circuit
-    /// subsequent requests with `SUBGRAPH_CIRCUIT_BREAKER_REJECTED`.
+    /// 503 subgraph responses that carry a valid GraphQL body must still count
+    /// as failures for the circuit breaker (503 is the default tracked status
+    /// code). The first few requests should receive the upstream body, then
+    /// the breaker must open and short-circuit subsequent requests with
+    /// `SUBGRAPH_CIRCUIT_BREAKER_REJECTED`.
     #[ntex::test]
-    async fn should_track_5xx_responses_with_body_in_circuit_breaker() {
+    async fn should_track_503_responses_with_body_in_circuit_breaker() {
         let mut accounts_server = mockito::Server::new_async().await;
         let host = accounts_server.host_with_port();
 
@@ -1034,7 +1045,7 @@ mod circuit_breaker_e2e_tests {
         // the upstream subgraph should be hit exactly 4 times.
         let error_mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(503)
             .with_header("content-type", "application/json")
             .with_body(
                 r#"{"data":null,"errors":[{"message":"upstream is unhappy","extensions":{"code":"UPSTREAM_FAILURE"}}]}"#,
@@ -1066,7 +1077,7 @@ mod circuit_breaker_e2e_tests {
             .await;
 
         // First four requests reach the subgraph and surface the upstream
-        // 5xx body to the client. We collect the bodies first so the snapshot
+        // 503 body to the client. We collect the bodies first so the snapshot
         // assertion can live outside the loop (insta forbids inline snapshots
         // inside loops).
         let mut bodies = Vec::with_capacity(4);
@@ -1077,7 +1088,7 @@ mod circuit_breaker_e2e_tests {
             assert_eq!(res.status(), ntex::http::StatusCode::OK);
             bodies.push(res.json_body_string_pretty().await);
         }
-        // All four bodies should be identical upstream 5xx payloads.
+        // All four bodies should be identical upstream 503 payloads.
         for body in &bodies[1..] {
             assert_eq!(&bodies[0], body);
         }
@@ -1124,5 +1135,197 @@ mod circuit_breaker_e2e_tests {
   ]
 }"###
         );
+    }
+
+    /// By default, only HTTP 503 responses count as failures for the circuit
+    /// breaker. Other 5xx codes (like 500) must NOT trip the breaker, so the
+    /// subgraph keeps being called for every request.
+    #[ntex::test]
+    async fn should_not_open_circuit_breaker_on_500_by_default() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        // Subgraph returns a valid GraphQL body alongside the 500 status,
+        // so the executor surfaces it as a successful response (with the
+        // upstream status). Without a body the executor would return an
+        // error which the breaker counts regardless of status code.
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(500)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":null,"errors":[{"message":"oops"}]}"#)
+            .expect(6)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 30s
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=6 {
+            let res = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+            // The breaker never opens, so the upstream body is always
+            // returned and we never see SUBGRAPH_CIRCUIT_BREAKER_REJECTED.
+            let body = res.json_body_string_pretty().await;
+            assert!(
+                !body.contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+                "breaker must not open for 500 by default, got: {body}"
+            );
+        }
+
+        error_mock.assert_async().await;
+    }
+
+    /// When the user configures `error_status_codes` to include 500, the
+    /// circuit breaker must open for 500 responses just like it does for 503
+    /// by default.
+    #[ntex::test]
+    async fn should_open_circuit_breaker_on_500_when_configured() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        // The breaker should open after 4 failures with these thresholds, so
+        // the subgraph should be hit exactly 4 times.
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(500)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":null,"errors":[{"message":"oops"}]}"#)
+            .expect(4)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 30s
+                            error_status_codes: [500, 502, 503, 504]
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=4 {
+            let _ = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+        }
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert_eq!(res.status(), ntex::http::StatusCode::OK);
+        insta::assert_snapshot!(
+            res.json_body_string_pretty().await,
+            @r###"{
+  "data": {
+    "users": null
+  },
+  "errors": [
+    {
+      "message": "Rejected by the circuit breaker",
+      "extensions": {
+        "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
+        "serviceName": "accounts"
+      }
+    }
+  ]
+}"###
+        );
+
+        error_mock.assert_async().await;
+    }
+
+    /// A subgraph-level `error_status_codes` setting must override the
+    /// global one for that specific subgraph.
+    #[ntex::test]
+    async fn should_use_subgraph_level_error_status_codes_override() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        // Subgraph-level config restricts failures to 502 only, so even
+        // though the global config would treat 500 as a failure, 500
+        // responses must not trip the breaker for `accounts`.
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(500)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":null,"errors":[{"message":"oops"}]}"#)
+            .expect(6)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 30s
+                            error_status_codes: [500]
+                    subgraphs:
+                        accounts:
+                            circuit_breaker:
+                                error_status_codes: [502]
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=6 {
+            let res = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+            let body = res.json_body_string_pretty().await;
+            assert!(
+                !body.contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+                "subgraph-level override must prevent breaker from opening on 500, got: {body}"
+            );
+        }
+
+        error_mock.assert_async().await;
     }
 }

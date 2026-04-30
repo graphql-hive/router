@@ -43,6 +43,7 @@ ahash = { workspace = true }
 ntex = { workspace = true }
 hyper-rustls = { workspace = true}
 rustls = { workspace = true }
+lazy_static = { workspace = true }
 
 hyper-util = { version = "0.1.16", features = [
   "client",

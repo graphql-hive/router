@@ -1,5 +1,9 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
+use http::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -375,6 +379,53 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     )]
     #[schemars(with = "String")]
     pub reset_timeout: Option<Duration>,
+    /// HTTP status codes returned by the subgraph that should be counted as
+    /// failures by the circuit breaker.
+    ///
+    /// Only responses whose status code is contained in this list will be
+    /// recorded as failures. Responses with any other status code (including
+    /// other 5xx codes) are treated as successes from the circuit breaker's
+    /// point of view.
+    ///
+    /// Default: `[503]`
+    #[serde(
+        default,
+        deserialize_with = "deserialize_status_codes",
+        serialize_with = "serialize_status_codes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<Vec<u16>>")]
+    pub error_status_codes: Option<HashSet<StatusCode>>,
+}
+
+pub fn serialize_status_codes<S>(
+    status_codes: &Option<HashSet<StatusCode>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match status_codes {
+        Some(codes) => {
+            let codes_as_u16: Vec<u16> = codes.iter().map(|code| code.as_u16()).collect();
+            codes_as_u16.serialize(serializer)
+        }
+        None => serializer.serialize_none(),
+    }
+}
+
+pub fn deserialize_status_codes<'de, D>(
+    deserializer: D,
+) -> Result<Option<HashSet<StatusCode>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt_vec = Option::<Vec<u16>>::deserialize(deserializer)?;
+    Ok(opt_vec.map(|vec| {
+        vec.into_iter()
+            .filter_map(|code| StatusCode::from_u16(code).ok())
+            .collect()
+    }))
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
