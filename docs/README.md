@@ -3209,8 +3209,9 @@ Default: `[503]`
 **Items**
 
 **Item Type:** `integer`  
-**Item Minimum:** `0`  
-**Item Maximum:** `65535`  
+**Item Minimum:** `100`  
+**Item Maximum:** `599`  
+**Unique Items:** yes  
 <a name="traffic_shapingalltls"></a>
 #### traffic\_shaping\.all\.tls: object,null
 
@@ -3366,8 +3367,9 @@ Default: `[503]`
 **Items**
 
 **Item Type:** `integer`  
-**Item Minimum:** `0`  
-**Item Maximum:** `65535`  
+**Item Minimum:** `100`  
+**Item Maximum:** `599`  
+**Unique Items:** yes  
 <a name="traffic_shapingsubgraphsadditionalpropertiestls"></a>
 ##### traffic\_shaping\.subgraphs\.additionalProperties\.tls: object,null
 
