@@ -3186,11 +3186,31 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**|`boolean`, `null`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/><br/>When unset on a subgraph-level configuration, the value falls back<br/>to the value defined in the global (`all`) circuit breaker<br/>configuration.<br/>||
+|[**error\_status\_codes**](#traffic_shapingallcircuit_breakererror_status_codes)|`integer[]`|HTTP status codes returned by the subgraph that should be counted as<br/>||
 |**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
 |**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Count of requests before starting evaluating.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Additional Properties:** not allowed  
+<a name="traffic_shapingallcircuit_breakererror_status_codes"></a>
+##### traffic\_shaping\.all\.circuit\_breaker\.error\_status\_codes\[\]: array,null
+
+HTTP status codes returned by the subgraph that should be counted as
+failures by the circuit breaker.
+
+Only responses whose status code is contained in this list will be
+recorded as failures. Responses with any other status code (including
+other 5xx codes) are treated as successes from the circuit breaker's
+point of view.
+
+Default: `[503]`
+
+
+**Items**
+
+**Item Type:** `integer`  
+**Item Minimum:** `0`  
+**Item Maximum:** `65535`  
 <a name="traffic_shapingalltls"></a>
 #### traffic\_shaping\.all\.tls: object,null
 
@@ -3323,11 +3343,31 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**|`boolean`, `null`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/><br/>When unset on a subgraph-level configuration, the value falls back<br/>to the value defined in the global (`all`) circuit breaker<br/>configuration.<br/>||
+|[**error\_status\_codes**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breakererror_status_codes)|`integer[]`|HTTP status codes returned by the subgraph that should be counted as<br/>||
 |**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
 |**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Count of requests before starting evaluating.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Additional Properties:** not allowed  
+<a name="traffic_shapingsubgraphsadditionalpropertiescircuit_breakererror_status_codes"></a>
+###### traffic\_shaping\.subgraphs\.additionalProperties\.circuit\_breaker\.error\_status\_codes\[\]: array,null
+
+HTTP status codes returned by the subgraph that should be counted as
+failures by the circuit breaker.
+
+Only responses whose status code is contained in this list will be
+recorded as failures. Responses with any other status code (including
+other 5xx codes) are treated as successes from the circuit breaker's
+point of view.
+
+Default: `[503]`
+
+
+**Items**
+
+**Item Type:** `integer`  
+**Item Minimum:** `0`  
+**Item Maximum:** `65535`  
 <a name="traffic_shapingsubgraphsadditionalpropertiestls"></a>
 ##### traffic\_shaping\.subgraphs\.additionalProperties\.tls: object,null
 
