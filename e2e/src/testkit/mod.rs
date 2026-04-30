@@ -1,6 +1,7 @@
 pub mod docker;
 pub mod otel;
 
+use axum_server::{tls_rustls::RustlsConfig, Handle};
 use bytes::Bytes;
 use dashmap::DashMap;
 use hive_router_plan_executor::plugin_trait::RouterPlugin;
@@ -12,11 +13,13 @@ use ntex::{
     web::{self, test},
     ws::WsConnection,
 };
+use rcgen::generate_simple_self_signed;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use sonic_rs::json;
 use std::{
     any::Any,
     future::Future,
+    io::Write,
     marker::PhantomData,
     net::SocketAddr,
     path::PathBuf,
@@ -24,10 +27,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tempfile::{NamedTempFile, TempPath};
-use tokio::{
-    sync::{oneshot, Semaphore},
-    time,
-};
+use tokio::{sync::Semaphore, time};
 use tracing::{info, warn};
 
 use hive_router::{
@@ -42,32 +42,6 @@ use hive_router_config::{
 };
 use hive_router_plan_executor::executors::websocket_client;
 use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
-
-// utilities
-
-/// Retries the code wrapped 3 times before reporting the last error as failure.
-#[macro_export]
-macro_rules! flakey {
-    ($body:expr) => {{
-        use futures::FutureExt;
-        let mut last_err = None;
-        let attempts = 3;
-        for attempt in 1..=attempts {
-            let result = std::panic::AssertUnwindSafe($body).catch_unwind().await;
-            match result {
-                Ok(_) => return,
-                Err(e) => {
-                    eprintln!("Flakey attempt {}/{} failed", attempt, attempts);
-                    last_err = Some(e);
-                }
-            }
-        }
-        std::panic::resume_unwind(last_err.unwrap());
-    }};
-}
-
-// #[macro_export] always hoists to the crate root so we re-export it here module level
-pub use flakey;
 
 /// Binds a TCP listener to an OS-assigned port and returns that port number.
 /// The listener is immediately dropped, so the port is free for the caller to use.
@@ -97,27 +71,18 @@ pub use some_header_map;
 /// subgraphs address and returns the modified supergraph.
 ///
 /// It will replace all occurrences of `0.0.0.0:4200` with the test subgraphs address.
-pub fn supergraph_with_subgraphs(
-    supergraph: impl Into<String>,
-    subgraphs: impl Into<SocketAddr>,
-) -> String {
-    let original: String = supergraph.into();
-    let subgraphs_addr = subgraphs.into();
-    original.replace("0.0.0.0:4200", subgraphs_addr.to_string().as_str())
+pub fn supergraph_with_subgraphs(supergraph: &str, subgraphs: &str) -> String {
+    supergraph.replace("http://0.0.0.0:4200", subgraphs)
 }
 
 /// Creates a temporary supergraph file with the content of the given file but with the subgraphs
 /// address replaced with the test subgraphs address.
 ///
 /// The temp file will be automatically deleted when the returned TempPath is dropped.
-pub fn supergraph_temp_file_with_subgraphs(
-    supergraph_file: &str,
-    subgraphs: impl Into<SocketAddr>,
-) -> TempPath {
+pub fn supergraph_temp_file_with_subgraphs(supergraph_file: &str, subgraphs: &str) -> TempPath {
     let original =
         std::fs::read_to_string(supergraph_file).expect("failed to read supergraph file");
-    let subgraphs_addr = subgraphs.into();
-    let with_addr = supergraph_with_subgraphs(original, subgraphs_addr);
+    let with_addr = supergraph_with_subgraphs(&original, subgraphs);
 
     let temp_file =
         NamedTempFile::with_suffix(".graphql").expect("failed to create temp supergraph file");
@@ -132,7 +97,7 @@ pub fn supergraph_temp_file_with_subgraphs(
         temp_path
             .to_str()
             .expect("failed to convert temp path to string"),
-        subgraphs_addr
+        subgraphs.to_string()
     );
 
     temp_path
@@ -231,6 +196,7 @@ pub struct RequestLike {
     pub headers: http::HeaderMap,
     #[allow(unused)]
     pub body: Option<Bytes>,
+    pub http_version: http::Version,
 }
 
 pub struct ResponseLike {
@@ -259,15 +225,19 @@ type OnRequest = dyn Fn(RequestLike) -> Option<ResponseLike> + Send + Sync;
 pub struct TestSubgraphsBuilder {
     subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
     on_request: Option<Arc<OnRequest>>,
+    rustls_config: Option<RustlsConfig>,
     delay: Option<Duration>,
+    http2_only: bool,
 }
 
 impl TestSubgraphsBuilder {
     pub fn new() -> Self {
         Self {
             on_request: None,
+            rustls_config: None,
             delay: None,
             subscriptions_protocol: HTTPStreamingSubscriptionProtocol::default(),
+            http2_only: false,
         }
     }
 
@@ -287,6 +257,12 @@ impl TestSubgraphsBuilder {
         self
     }
 
+    #[allow(unused)]
+    pub fn with_rustls_config(mut self, rustls_config: RustlsConfig) -> Self {
+        self.rustls_config = Some(rustls_config);
+        self
+    }
+
     /// Adds a cooperative async delay to every subgraph request.
     /// Unlike `with_on_request` with `std::thread::sleep`, this yields
     /// back to the tokio runtime, allowing other tasks (like schema
@@ -297,11 +273,21 @@ impl TestSubgraphsBuilder {
         self
     }
 
+    /// Enables HTTP/2 only mode (h2c) for the test subgraph server.
+    /// When enabled, the server will only accept HTTP/2 connections over plain TCP.
+    #[allow(unused)]
+    pub fn with_http2_only(mut self) -> Self {
+        self.http2_only = true;
+        self
+    }
+
     pub fn build(self) -> TestSubgraphs<Built> {
         TestSubgraphs {
             on_request: self.on_request,
+            rustls_config: self.rustls_config,
             delay: self.delay,
             subscriptions_protocol: self.subscriptions_protocol,
+            http2_only: self.http2_only,
             handle: None,
             _state: PhantomData,
         }
@@ -315,7 +301,7 @@ impl Default for TestSubgraphsBuilder {
 }
 
 struct TestSubgraphsHandle {
-    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    server_handle: Handle<SocketAddr>,
     addr: SocketAddr,
     state: Arc<TestSubgraphsMiddlewareState>,
 }
@@ -323,7 +309,9 @@ struct TestSubgraphsHandle {
 pub struct TestSubgraphs<State> {
     subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
     on_request: Option<Arc<OnRequest>>,
+    rustls_config: Option<RustlsConfig>,
     delay: Option<Duration>,
+    http2_only: bool,
     handle: Option<TestSubgraphsHandle>,
     _state: PhantomData<State>,
 }
@@ -346,6 +334,7 @@ async fn record_requests(
     let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
 
     let header_map = parts.headers.clone();
+    let http_version = parts.version;
     let record = RequestLike {
         path,
         headers: header_map,
@@ -354,6 +343,7 @@ async fn record_requests(
         } else {
             Some(body_bytes.clone())
         },
+        http_version,
     };
     state.request_log.entry(subgraph).or_default().push(record);
 
@@ -374,6 +364,7 @@ async fn handle_on_request(
         path: path.clone(),
         headers: parts.headers.clone(),
         body: None, // TODO: do we really care about the body?
+        http_version: parts.version,
     };
 
     if let Some(new_resp) = on_request(req) {
@@ -404,6 +395,7 @@ impl TestSubgraphs<Built> {
             .await
             .expect("failed to bind tcp listener");
         let addr = listener.local_addr().expect("failed to get local address");
+        drop(listener); // release the listener; the axum_server will bind to the same addr
 
         let mut app = subgraphs_app(self.subscriptions_protocol.clone());
 
@@ -430,22 +422,46 @@ impl TestSubgraphs<Built> {
             record_requests,
         ));
 
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let rustls_config_clone = self.rustls_config.clone();
+
+        let server_handle = Handle::new();
+        let server_handle_clone = server_handle.clone();
         tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    shutdown_rx.await.ok();
-                })
-                .await
-                .expect("failed to start subgraphs server");
+            if let Some(rustls_config) = self.rustls_config {
+                axum_server::bind_rustls(addr, rustls_config)
+                    .handle(server_handle_clone.clone())
+                    .serve(app.into_make_service())
+                    .await
+                    .expect("failed to start subgraphs server");
+            } else if self.http2_only {
+                axum_server::bind(addr)
+                    .http2_only()
+                    .handle(server_handle_clone.clone())
+                    .serve(app.into_make_service())
+                    .await
+                    .expect("failed to start subgraphs h2c server");
+            } else {
+                axum_server::bind(addr)
+                    .handle(server_handle_clone.clone())
+                    .serve(app.into_make_service())
+                    .await
+                    .expect("failed to start subgraphs server");
+            }
         });
+
+        let addr = server_handle
+            .listening()
+            .await
+            .expect("failed to get subgraphs server address");
 
         TestSubgraphs {
             on_request: self.on_request,
+            rustls_config: rustls_config_clone,
             delay: self.delay,
             subscriptions_protocol: self.subscriptions_protocol,
+            http2_only: self.http2_only,
             handle: Some(TestSubgraphsHandle {
-                shutdown_tx: Some(shutdown_tx),
+                server_handle,
                 addr,
                 state: middleware_state,
             }),
@@ -456,8 +472,14 @@ impl TestSubgraphs<Built> {
 
 impl TestSubgraphs<Started> {
     #[allow(unused)]
-    pub fn addr(&self) -> SocketAddr {
-        self.handle.as_ref().expect("subgraphs not started").addr
+    pub fn url(&self) -> String {
+        let addr = self.handle.as_ref().expect("subgraphs not started").addr;
+        let protocol = if self.rustls_config.is_some() {
+            "https"
+        } else {
+            "http"
+        };
+        format!("{}://{}", protocol, addr)
     }
 
     /// Returns the list of requests received on the given subgraph. Supply the subgarph name.
@@ -475,20 +497,14 @@ impl TestSubgraphs<Started> {
     /// subgraphs address and returns the modified supergraph.
     ///
     /// It will replace all occurrences of `0.0.0.0:4200` with the test subgraphs address.
-    pub fn supergraph(&self, supergraph: impl Into<String>) -> String {
-        supergraph_with_subgraphs(supergraph, self.addr())
-    }
-}
-
-impl From<&TestSubgraphs<Started>> for SocketAddr {
-    fn from(subgraphs: &TestSubgraphs<Started>) -> Self {
-        subgraphs.addr()
+    pub fn supergraph(&self, supergraph: &str) -> String {
+        supergraph_with_subgraphs(supergraph, &self.url())
     }
 }
 
 impl Drop for TestSubgraphsHandle {
     fn drop(&mut self) {
-        let _ = self.shutdown_tx.take().map(|tx| tx.send(()));
+        self.server_handle.graceful_shutdown(None);
     }
 }
 
@@ -499,7 +515,7 @@ pub struct TestRouterBuilder {
     wait_for_ready_on_start: bool,
     config: Option<HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
-    subgraphs_addr: Option<SocketAddr>,
+    subgraphs_url: Option<String>,
     port: u16,
     listener: Option<std::net::TcpListener>,
 }
@@ -511,7 +527,7 @@ impl TestRouterBuilder {
             wait_for_ready_on_start: true,
             config: None,
             plugins: vec![],
-            subgraphs_addr: None,
+            subgraphs_url: None,
             port: 0,
             listener: None,
         }
@@ -538,8 +554,12 @@ impl TestRouterBuilder {
         self
     }
 
-    pub fn with_subgraphs(mut self, subgraphs: impl Into<SocketAddr>) -> Self {
-        self.subgraphs_addr = Some(subgraphs.into());
+    pub fn with_subgraphs(self, subgraphs: &TestSubgraphs<Started>) -> Self {
+        self.with_subgraphs_url(subgraphs.url())
+    }
+
+    pub fn with_subgraphs_url(mut self, subgraphs_url: String) -> Self {
+        self.subgraphs_url = Some(subgraphs_url);
         self
     }
 
@@ -576,14 +596,14 @@ impl TestRouterBuilder {
         let mut _hold_until_drop: Vec<Box<dyn Any>> = vec![];
 
         // change the supergraph to use the test subgraphs address
-        if let Some(subgraphs_addr) = self.subgraphs_addr {
+        if let Some(subgraphs_url) = self.subgraphs_url {
             match &config.supergraph {
                 hive_router_config::supergraph::SupergraphSource::File { path, .. } => {
                     let supergraph_path = path.as_ref().expect("supergraph file path is required");
 
                     let temp_path = supergraph_temp_file_with_subgraphs(
                         supergraph_path.absolute.as_str(),
-                        subgraphs_addr,
+                        &subgraphs_url,
                     );
 
                     let supergraph_file_path =
@@ -715,7 +735,9 @@ impl TestRouter<Built> {
         TestRouterBuilder::new()
     }
 
-    pub async fn start(mut self) -> TestRouter<Started> {
+    // When self-signed certificates are used, the ntex test client doesn't work
+    // So we can't use it to call the healthcheck endpoints
+    pub async fn start_without_healthcheck(mut self) -> TestRouter<Started> {
         init_rustls_crypto_provider();
         let config = self.config.take().unwrap();
         let (telemetry, subscriber) = Telemetry::init_testing_subscriber(&config)
@@ -804,7 +826,19 @@ impl TestRouter<Built> {
         let serv_paths = paths.clone();
         let serv_prometheus = prometheus.clone();
         let long_lived_limit = LongLivedClientLimitService::new(&shared_state.router_config);
-        let serv = test::server_with(test::config().listener(serv_listener), move || {
+        let mut serv_config = test::config().listener(serv_listener);
+        if let Some(tls_config) = serv_shared_state
+            .router_config
+            .traffic_shaping
+            .router
+            .tls
+            .as_ref()
+        {
+            let rustls_config = hive_router::tls::build_rustls_config(tls_config)
+                .expect("failed to build rustls config for test router");
+            serv_config = serv_config.rustls(rustls_config);
+        }
+        let serv = test::server_with(serv_config, move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
             let paths = serv_paths.clone();
@@ -842,7 +876,7 @@ impl TestRouter<Built> {
 
         let mut hold_until_drop = self._hold_until_drop;
         hold_until_drop.push(Box::new(subscription_guard));
-        let started = TestRouter {
+        TestRouter {
             port: serv_port,
             listener: None,
             wait_for_healthy_on_start: self.wait_for_healthy_on_start,
@@ -861,14 +895,18 @@ impl TestRouter<Built> {
             plugins: self.plugins,
             _hold_until_drop: hold_until_drop,
             _state: PhantomData,
-        };
+        }
+    }
 
-        if self.wait_for_healthy_on_start {
+    pub async fn start(self) -> TestRouter<Started> {
+        let started = self.start_without_healthcheck().await;
+
+        if started.wait_for_healthy_on_start {
             info!("Waiting for healthcheck to pass...");
             started.wait_for_healthy(None).await;
         }
 
-        if self.wait_for_ready_on_start {
+        if started.wait_for_ready_on_start {
             info!("Waiting for readiness check to pass...");
             started.wait_for_ready(None).await;
         }
@@ -985,7 +1023,7 @@ impl TestRouter<Started> {
         );
         let ws_url = url.as_str().replace("http://", "ws://");
         let ws_uri = ws_url.parse::<http::Uri>().expect("Failed to parse ws url");
-        websocket_client::connect(&ws_uri)
+        websocket_client::connect(&ws_uri, None)
             .await
             .expect("Failed to connect to websocket")
     }
@@ -1031,4 +1069,71 @@ pub async fn wait_until_mock_matched(mock: &Mock) -> Result<(), String> {
             return Err(format!("timeout after {:?}", now.elapsed()));
         }
     }
+}
+
+pub struct GeneratedKeyPair {
+    pub cert_file: NamedTempFile,
+    pub cert_file_path: String,
+    pub cert_pem: String,
+    pub key_file: NamedTempFile,
+    pub key_file_path: String,
+    pub key_pem: String,
+}
+
+pub async fn generate_keypair() -> GeneratedKeyPair {
+    let cert_key = generate_simple_self_signed(vec![
+        "127.0.0.1".to_string(),
+        "localhost".to_string(),
+        "0.0.0.0".to_string(),
+    ])
+    .expect("Failed to generate self-signed certificate");
+
+    let mut cert_file =
+        NamedTempFile::new().expect("Failed to create temporary file for certificate");
+    let cert = cert_key.cert;
+    let cert_pem = cert.pem();
+    let _ = cert_file
+        .write(cert_pem.as_bytes())
+        .expect("Failed to write certificate to temporary file");
+
+    let mut key_file =
+        NamedTempFile::new().expect("Failed to create temporary file for private key");
+    let key = cert_key.signing_key;
+    let key_pem = key.serialize_pem();
+    let _ = key_file
+        .write(key_pem.as_bytes())
+        .expect("Failed to write private key to temporary file");
+
+    GeneratedKeyPair {
+        cert_file_path: cert_file
+            .path()
+            .to_str()
+            .expect("Failed to convert cert file path to string")
+            .to_string(),
+        cert_file,
+        cert_pem,
+        key_file_path: key_file
+            .path()
+            .to_str()
+            .expect("Failed to convert key file path to string")
+            .to_string(),
+        key_file,
+        key_pem,
+    }
+}
+
+pub async fn generate_tls_subgraph() -> (TestSubgraphs<Started>, GeneratedKeyPair) {
+    let generated_key_pair = generate_keypair().await;
+    let rustls_config = RustlsConfig::from_pem_file(
+        &generated_key_pair.cert_file_path,
+        &generated_key_pair.key_file_path,
+    )
+    .await
+    .expect("Failed to create RustlsConfig from PEM files");
+    let subgraphs = TestSubgraphs::builder()
+        .with_rustls_config(rustls_config)
+        .build()
+        .start()
+        .await;
+    (subgraphs, generated_key_pair)
 }

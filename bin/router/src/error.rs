@@ -1,4 +1,5 @@
 use hive_router_config::RouterConfigError;
+use hive_router_plan_executor::executors::error::TlsCertificatesError;
 
 use crate::{
     jwt::jwks_manager::JwksSourceError, pipeline::usage_reporting::UsageReportingError,
@@ -36,4 +37,6 @@ pub enum RouterInitError {
         endpoint_name_two: String,
         endpoint: String,
     },
+    #[error(transparent)]
+    TlsCertificatesError(#[from] TlsCertificatesError),
 }

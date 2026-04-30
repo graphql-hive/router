@@ -1,0 +1,12 @@
+# Minimum recommended version
+nextest-version = "0.9.133"
+
+[profile.default]
+# Show output (stdout/stderr) of failed tests
+failure-output = "immediate"
+# Show output of successful tests only when --no-capture is passed
+success-output = "never"
+# Don't stop on the first failure
+fail-fast = false
+# Mark as slow test after 10s and terminate after 3 retries
+slow-timeout = { period = "10s", terminate-after = 3 }

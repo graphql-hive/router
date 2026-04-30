@@ -25,6 +25,8 @@ mod hive_cdn_supergraph;
 #[cfg(test)]
 mod http;
 #[cfg(test)]
+mod http2;
+#[cfg(test)]
 mod http_callback;
 #[cfg(test)]
 mod introspection;
@@ -56,6 +58,8 @@ mod supergraph;
 mod telemetry;
 #[cfg(test)]
 mod timeout_per_subgraph;
+#[cfg(test)]
+mod tls;
 #[cfg(test)]
 mod websocket;
 

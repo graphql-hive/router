@@ -1,0 +1,44 @@
+name: "Run `cargo install`"
+description: "Run `cargo install`"
+
+inputs:
+  crate:
+    description: "Crate to install"
+    required: true
+  version:
+    description: "Version to install"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      id: cache-restore
+      with:
+        path: ${{ runner.tool_cache }}/${{ inputs.crate }}
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ inputs.crate }}-bin-${{ inputs.version }}
+
+    - name: Add installation destination to PATH
+      shell: bash
+      run: echo "${{ runner.tool_cache }}/${{ inputs.crate }}/bin" >> $GITHUB_PATH
+
+    - name: Run cargo install
+      shell: bash
+      # Install only on cache miss
+      if: steps.cache-restore.outputs.cache-hit != 'true'
+      run: |
+        cargo install \
+          --root ${{ runner.tool_cache }}/${{ inputs.crate }} \
+          --version ${{ inputs.version }} \
+          --locked \
+          ${{ inputs.crate }}
+
+    # Only save these caches for the
+    # main branch and for release branches,
+    # and only on cache miss.
+    - name: Save Github Actions cache
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-')) && steps.cache-restore.outputs.cache-hit != 'true'
+      with:
+        path: ${{ runner.tool_cache }}/${{ inputs.crate }}
+        key: ${{ steps.cache-restore.outputs.cache-primary-key }}

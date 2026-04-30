@@ -17,9 +17,8 @@ use hive_router_internal::{
     telemetry::TelemetryContext,
 };
 use http::Uri;
-use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::{
-    client::legacy::{connect::HttpConnector, Client},
+    client::legacy::Client,
     rt::{TokioExecutor, TokioTimer},
 };
 use tokio::sync::Semaphore;
@@ -33,6 +32,7 @@ use crate::{
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, SubgraphHttpResponse},
         http_callback::{CallbackSubscriptionsMap, HttpCallbackSubgraphExecutor},
+        tls::{build_https_client_config, build_https_connector, get_merged_tls_config},
         websocket::WsSubgraphExecutor,
     },
     hooks::on_subgraph_execute::{
@@ -79,25 +79,23 @@ pub struct SubgraphExecutorMap {
     /// Shared map of active HTTP callback subscriptions
     callback_subscriptions: CallbackSubscriptionsMap,
 }
-
-fn build_https_executor() -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
-    HttpsConnectorBuilder::new()
-        .with_native_roots()
-        .map_err(SubgraphExecutorError::NativeTlsCertificatesError)
-        .map(|b| b.https_or_http().enable_http1().enable_http2().build())
-}
-
 impl SubgraphExecutorMap {
     pub fn new(
         config: Arc<HiveRouterConfig>,
         global_timeout: DurationOrProgram,
         telemetry_context: Arc<TelemetryContext>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let client: HttpClient = Client::builder(TokioExecutor::new())
+        let mut client_builder = Client::builder(TokioExecutor::new());
+        client_builder
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.traffic_shaping.all.pool_idle_timeout)
-            .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host)
-            .build(build_https_executor()?);
+            .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host);
+        if config.traffic_shaping.all.allow_only_http2 {
+            client_builder.http2_only(true);
+        }
+        let client: HttpClient = client_builder.build(build_https_connector(
+            config.traffic_shaping.all.tls.as_ref(),
+        )?);
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
@@ -492,10 +490,25 @@ impl SubgraphExecutorMap {
                         )
                     })?;
 
+                // Resolve TLS config for the subgraph (merging global + per-subgraph)
+                let tls_config = get_merged_tls_config(
+                    self.config.traffic_shaping.all.tls.as_ref(),
+                    self.config
+                        .traffic_shaping
+                        .subgraphs
+                        .get(subgraph_name)
+                        .and_then(|s| s.tls.as_ref()),
+                );
+                let ws_tls_config = match tls_config.as_ref() {
+                    Some(tls) => Some(Arc::new(build_https_client_config(Some(tls))?)),
+                    None => None,
+                };
+
                 let ws_executor = WsSubgraphExecutor::new(
                     subgraph_name.to_string(),
                     // we use the new constructed ws_endpoint_uri here
                     ws_endpoint_uri,
+                    ws_tls_config,
                 )
                 .to_boxed_arc();
 
@@ -517,10 +530,12 @@ impl SubgraphExecutorMap {
 
                 let heartbeat_interval_ms = callback_config.heartbeat_interval.as_millis() as u64;
 
+                let subgraph_config = self.resolve_subgraph_config(subgraph_name)?;
+
                 let callback_executor = HttpCallbackSubgraphExecutor::new(
                     subgraph_name.to_string(),
                     endpoint_uri,
-                    self.client.clone(),
+                    subgraph_config.client,
                     callback_config.public_url.to_string(),
                     heartbeat_interval_ms,
                     self.callback_subscriptions.clone(),
@@ -553,18 +568,31 @@ impl SubgraphExecutorMap {
             return Ok(config);
         };
 
-        // Override client only if pool idle timeout is customized
-        if let Some(pool_idle_timeout) = subgraph_config.pool_idle_timeout {
-            // Only override if it's different from the global setting
-            if pool_idle_timeout != self.config.traffic_shaping.all.pool_idle_timeout {
-                config.client = Arc::new(
-                    Client::builder(TokioExecutor::new())
-                        .pool_timer(TokioTimer::new())
-                        .pool_idle_timeout(pool_idle_timeout)
-                        .pool_max_idle_per_host(self.max_connections_per_host)
-                        .build(build_https_executor()?),
-                );
+        let pool_idle_timeout = subgraph_config
+            .pool_idle_timeout
+            .unwrap_or(self.config.traffic_shaping.all.pool_idle_timeout);
+        // Override client only if pool idle timeout is customized, TLS config is provided, or allow_only_http2 differs
+        let subgraph_allow_only_http2 = subgraph_config
+            .allow_only_http2
+            .unwrap_or(self.config.traffic_shaping.all.allow_only_http2);
+        if pool_idle_timeout != self.config.traffic_shaping.all.pool_idle_timeout
+            || subgraph_config.tls.is_some()
+            || subgraph_allow_only_http2 != self.config.traffic_shaping.all.allow_only_http2
+        {
+            let tls_config = get_merged_tls_config(
+                self.config.traffic_shaping.all.tls.as_ref(),
+                subgraph_config.tls.as_ref(),
+            );
+            let mut client_builder = Client::builder(TokioExecutor::new());
+            client_builder
+                .pool_timer(TokioTimer::new())
+                .pool_idle_timeout(pool_idle_timeout)
+                .pool_max_idle_per_host(self.max_connections_per_host);
+            if subgraph_allow_only_http2 {
+                client_builder.http2_only(true);
             }
+            config.client =
+                Arc::new(client_builder.build(build_https_connector(tls_config.as_ref())?));
         }
 
         // Apply other subgraph-specific overrides
