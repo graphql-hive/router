@@ -4,7 +4,7 @@ use std::{
 };
 
 use http::StatusCode;
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 use crate::primitives::{
@@ -394,7 +394,7 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
         serialize_with = "serialize_status_codes",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Option<Vec<u16>>")]
+    #[schemars(schema_with = "schema_status_codes")]
     pub error_status_codes: Option<HashSet<StatusCode>>,
 }
 
@@ -426,6 +426,20 @@ where
             .filter_map(|code| StatusCode::from_u16(code).ok())
             .collect()
     }))
+}
+
+pub fn schema_status_codes(_generator: &mut SchemaGenerator) -> Schema {
+    // Schema for `Option<HashSet<StatusCode>>` represented as an array of valid HTTP
+    // status codes (integers in the range 100-599) or null.
+    schemars::json_schema!({
+        "type": ["array", "null"],
+        "items": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
+        },
+        "uniqueItems": true
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
