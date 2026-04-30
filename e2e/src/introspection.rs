@@ -144,142 +144,6 @@ mod introspection_e2e_tests {
               "subscriptionType": null,
               "types": [
                 {
-                  "kind": "INPUT_OBJECT",
-                  "name": "TestInput",
-                  "description": null,
-                  "fields": null,
-                  "inputFields": [
-                    {
-                      "name": "oldField",
-                      "description": null,
-                      "type": {
-                        "kind": "SCALAR",
-                        "name": "MyScalar",
-                        "ofType": null
-                      },
-                      "defaultValue": null
-                    },
-                    {
-                      "name": "newField",
-                      "description": null,
-                      "type": {
-                        "kind": "SCALAR",
-                        "name": "MyScalar",
-                        "ofType": null
-                      },
-                      "defaultValue": "\"newFieldDefaultValue\""
-                    }
-                  ],
-                  "interfaces": null,
-                  "enumValues": null,
-                  "possibleTypes": null
-                },
-                {
-                  "kind": "OBJECT",
-                  "name": "__InputValue",
-                  "description": null,
-                  "fields": [
-                    {
-                      "name": "name",
-                      "description": null,
-                      "args": [],
-                      "type": {
-                        "kind": "NON_NULL",
-                        "name": null,
-                        "ofType": {
-                          "kind": "SCALAR",
-                          "name": "String",
-                          "ofType": null
-                        }
-                      },
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "description",
-                      "description": null,
-                      "args": [],
-                      "type": {
-                        "kind": "SCALAR",
-                        "name": "String",
-                        "ofType": null
-                      },
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "type",
-                      "description": null,
-                      "args": [],
-                      "type": {
-                        "kind": "NON_NULL",
-                        "name": null,
-                        "ofType": {
-                          "kind": "OBJECT",
-                          "name": "__Type",
-                          "ofType": null
-                        }
-                      },
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "defaultValue",
-                      "description": null,
-                      "args": [],
-                      "type": {
-                        "kind": "SCALAR",
-                        "name": "String",
-                        "ofType": null
-                      },
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "isDeprecated",
-                      "description": null,
-                      "args": [],
-                      "type": {
-                        "kind": "NON_NULL",
-                        "name": null,
-                        "ofType": {
-                          "kind": "SCALAR",
-                          "name": "Boolean",
-                          "ofType": null
-                        }
-                      },
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "deprecationReason",
-                      "description": null,
-                      "args": [],
-                      "type": {
-                        "kind": "SCALAR",
-                        "name": "String",
-                        "ofType": null
-                      },
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    }
-                  ],
-                  "inputFields": null,
-                  "interfaces": [],
-                  "enumValues": null,
-                  "possibleTypes": null
-                },
-                {
-                  "kind": "SCALAR",
-                  "name": "Float",
-                  "description": "The `Float` scalar type represents signed double-precision fractional values as specified by [IEEE 754](https://en.wikipedia.org/wiki/IEEE_floating_point). Float can represent values between -(2^53 - 1) and 2^53 - 1, inclusive.",
-                  "fields": null,
-                  "inputFields": null,
-                  "interfaces": null,
-                  "enumValues": null,
-                  "possibleTypes": null
-                },
-                {
                   "kind": "OBJECT",
                   "name": "__Field",
                   "description": null,
@@ -398,68 +262,9 @@ mod introspection_e2e_tests {
                   "possibleTypes": null
                 },
                 {
-                  "kind": "ENUM",
-                  "name": "__TypeKind",
-                  "description": null,
-                  "fields": null,
-                  "inputFields": null,
-                  "interfaces": null,
-                  "enumValues": [
-                    {
-                      "name": "SCALAR",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "OBJECT",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "INTERFACE",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "UNION",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "ENUM",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "INPUT_OBJECT",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "LIST",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "NON_NULL",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    }
-                  ],
-                  "possibleTypes": null
-                },
-                {
                   "kind": "SCALAR",
-                  "name": "Boolean",
-                  "description": "The `Boolean` scalar type represents `true` or `false` values.",
+                  "name": "ID",
+                  "description": "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID.",
                   "fields": null,
                   "inputFields": null,
                   "interfaces": null,
@@ -467,11 +272,32 @@ mod introspection_e2e_tests {
                   "possibleTypes": null
                 },
                 {
-                  "kind": "SCALAR",
-                  "name": "String",
-                  "description": "The `String` scalar type represents textual data, represented as UTF-8 character sequences. The String type is most often used by GraphQL to represent free-form human-readable text.",
+                  "kind": "INPUT_OBJECT",
+                  "name": "TestInput",
+                  "description": null,
                   "fields": null,
-                  "inputFields": null,
+                  "inputFields": [
+                    {
+                      "name": "oldField",
+                      "description": null,
+                      "type": {
+                        "kind": "SCALAR",
+                        "name": "MyScalar",
+                        "ofType": null
+                      },
+                      "defaultValue": null
+                    },
+                    {
+                      "name": "newField",
+                      "description": null,
+                      "type": {
+                        "kind": "SCALAR",
+                        "name": "MyScalar",
+                        "ofType": null
+                      },
+                      "defaultValue": "\"newFieldDefaultValue\""
+                    }
+                  ],
                   "interfaces": null,
                   "enumValues": null,
                   "possibleTypes": null
@@ -518,6 +344,125 @@ mod introspection_e2e_tests {
                   "inputFields": null,
                   "interfaces": [],
                   "enumValues": null,
+                  "possibleTypes": null
+                },
+                {
+                  "kind": "ENUM",
+                  "name": "__DirectiveLocation",
+                  "description": null,
+                  "fields": null,
+                  "inputFields": null,
+                  "interfaces": null,
+                  "enumValues": [
+                    {
+                      "name": "QUERY",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "MUTATION",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "SUBSCRIPTION",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "FIELD",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "FRAGMENT_DEFINITION",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "FRAGMENT_SPREAD",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "INLINE_FRAGMENT",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "SCHEMA",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "SCALAR",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "OBJECT",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "FIELD_DEFINITION",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "ARGUMENT_DEFINITION",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "INTERFACE",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "UNION",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "ENUM",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "ENUM_VALUE",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "INPUT_OBJECT",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "INPUT_FIELD_DEFINITION",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    }
+                  ],
                   "possibleTypes": null
                 },
                 {
@@ -633,11 +578,116 @@ mod introspection_e2e_tests {
                 },
                 {
                   "kind": "SCALAR",
-                  "name": "MyScalar",
-                  "description": null,
+                  "name": "String",
+                  "description": "The `String` scalar type represents textual data, represented as UTF-8 character sequences. The String type is most often used by GraphQL to represent free-form human-readable text.",
                   "fields": null,
                   "inputFields": null,
                   "interfaces": null,
+                  "enumValues": null,
+                  "possibleTypes": null
+                },
+                {
+                  "kind": "SCALAR",
+                  "name": "Float",
+                  "description": "The `Float` scalar type represents signed double-precision fractional values as specified by [IEEE 754](https://en.wikipedia.org/wiki/IEEE_floating_point). Float can represent values between -(2^53 - 1) and 2^53 - 1, inclusive.",
+                  "fields": null,
+                  "inputFields": null,
+                  "interfaces": null,
+                  "enumValues": null,
+                  "possibleTypes": null
+                },
+                {
+                  "kind": "OBJECT",
+                  "name": "__InputValue",
+                  "description": null,
+                  "fields": [
+                    {
+                      "name": "name",
+                      "description": null,
+                      "args": [],
+                      "type": {
+                        "kind": "NON_NULL",
+                        "name": null,
+                        "ofType": {
+                          "kind": "SCALAR",
+                          "name": "String",
+                          "ofType": null
+                        }
+                      },
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "description",
+                      "description": null,
+                      "args": [],
+                      "type": {
+                        "kind": "SCALAR",
+                        "name": "String",
+                        "ofType": null
+                      },
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "type",
+                      "description": null,
+                      "args": [],
+                      "type": {
+                        "kind": "NON_NULL",
+                        "name": null,
+                        "ofType": {
+                          "kind": "OBJECT",
+                          "name": "__Type",
+                          "ofType": null
+                        }
+                      },
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "defaultValue",
+                      "description": null,
+                      "args": [],
+                      "type": {
+                        "kind": "SCALAR",
+                        "name": "String",
+                        "ofType": null
+                      },
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "isDeprecated",
+                      "description": null,
+                      "args": [],
+                      "type": {
+                        "kind": "NON_NULL",
+                        "name": null,
+                        "ofType": {
+                          "kind": "SCALAR",
+                          "name": "Boolean",
+                          "ofType": null
+                        }
+                      },
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "deprecationReason",
+                      "description": null,
+                      "args": [],
+                      "type": {
+                        "kind": "SCALAR",
+                        "name": "String",
+                        "ofType": null
+                      },
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    }
+                  ],
+                  "inputFields": null,
+                  "interfaces": [],
                   "enumValues": null,
                   "possibleTypes": null
                 },
@@ -929,6 +979,65 @@ mod introspection_e2e_tests {
                   "possibleTypes": null
                 },
                 {
+                  "kind": "ENUM",
+                  "name": "__TypeKind",
+                  "description": null,
+                  "fields": null,
+                  "inputFields": null,
+                  "interfaces": null,
+                  "enumValues": [
+                    {
+                      "name": "SCALAR",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "OBJECT",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "INTERFACE",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "UNION",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "ENUM",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "INPUT_OBJECT",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "LIST",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    },
+                    {
+                      "name": "NON_NULL",
+                      "description": null,
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    }
+                  ],
+                  "possibleTypes": null
+                },
+                {
                   "kind": "OBJECT",
                   "name": "__Directive",
                   "description": null,
@@ -1044,8 +1153,8 @@ mod introspection_e2e_tests {
                 },
                 {
                   "kind": "SCALAR",
-                  "name": "ID",
-                  "description": "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID.",
+                  "name": "MyScalar",
+                  "description": null,
                   "fields": null,
                   "inputFields": null,
                   "interfaces": null,
@@ -1053,128 +1162,19 @@ mod introspection_e2e_tests {
                   "possibleTypes": null
                 },
                 {
-                  "kind": "ENUM",
-                  "name": "__DirectiveLocation",
-                  "description": null,
+                  "kind": "SCALAR",
+                  "name": "Int",
+                  "description": "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1.",
                   "fields": null,
                   "inputFields": null,
                   "interfaces": null,
-                  "enumValues": [
-                    {
-                      "name": "QUERY",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "MUTATION",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "SUBSCRIPTION",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "FIELD",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "FRAGMENT_DEFINITION",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "FRAGMENT_SPREAD",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "INLINE_FRAGMENT",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "SCHEMA",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "SCALAR",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "OBJECT",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "FIELD_DEFINITION",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "ARGUMENT_DEFINITION",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "INTERFACE",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "UNION",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "ENUM",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "ENUM_VALUE",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "INPUT_OBJECT",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    },
-                    {
-                      "name": "INPUT_FIELD_DEFINITION",
-                      "description": null,
-                      "isDeprecated": false,
-                      "deprecationReason": null
-                    }
-                  ],
+                  "enumValues": null,
                   "possibleTypes": null
                 },
                 {
                   "kind": "SCALAR",
-                  "name": "Int",
-                  "description": "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1.",
+                  "name": "Boolean",
+                  "description": "The `Boolean` scalar type represents `true` or `false` values.",
                   "fields": null,
                   "inputFields": null,
                   "interfaces": null,
