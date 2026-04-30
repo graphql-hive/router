@@ -408,30 +408,28 @@ fn expand_abstract_fragment(
             new_items.push(Selection::InlineFragment(inherited_fragment));
 
             // then a separate fragment for each sub-fragment's fields and directives.
-            // Wrap with parent directives so that directives on the abstract fragment
-            // (e.g. @skip/@include) still gate the nested concrete fragments.
+            // Propagate any parent directives (e.g. @skip/@include) into each sub-fragment
+            // so they remain gated by the abstract fragment's conditions.  Only directives
+            // not already present on the sub-fragment are added, avoiding redundant nesting
+            // when the sub-fragment already carries the same condition as the parent.
             for sub_fragment in &specific_sub_fragments {
                 let mut specific_fragment = (*sub_fragment).clone();
+                for parent_directive in &fragment.directives {
+                    if !specific_fragment
+                        .directives
+                        .iter()
+                        .any(|d| d.name == parent_directive.name)
+                    {
+                        specific_fragment.directives.push(parent_directive.clone());
+                    }
+                }
                 handle_selection_set(
                     state,
                     possible_types,
                     obj_type_def,
                     &mut specific_fragment.selection_set,
                 )?;
-                if fragment.directives.is_empty() {
-                    new_items.push(Selection::InlineFragment(specific_fragment));
-                } else {
-                    let outer = InlineFragment {
-                        type_condition: Some(TypeCondition::On(obj_type_name.to_string())),
-                        directives: fragment.directives.clone(),
-                        selection_set: SelectionSet {
-                            span: fragment.selection_set.span,
-                            items: vec![Selection::InlineFragment(specific_fragment)],
-                        },
-                        position: fragment.position,
-                    };
-                    new_items.push(Selection::InlineFragment(outer));
-                }
+                new_items.push(Selection::InlineFragment(specific_fragment));
             }
 
             continue;

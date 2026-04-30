@@ -1013,9 +1013,7 @@ mod tests {
             displayName @include(if: $guest)
             ... on AdminAccount @skip(if: $guest) {
               accountType
-              ... on AdminAccount @skip(if: $guest) {
-                adminLevel
-              }
+              adminLevel
             }
             ... on GuestAccount @skip(if: $guest) {
               accountType
