@@ -4,6 +4,52 @@ use crate::{
 };
 use std::error::Error;
 
+/// Regression test: multiple inline fragments on the same concrete type inside an abstract type
+/// fragment should all be evaluated, not just the first one.
+/// Uses `account(id:)` (concrete parent type `Account`) with a `... on Node` abstract fragment
+/// to force the `expand_abstract_fragment` path, where two `... on Account` inline fragments
+/// must both be collected and merged so all their fields appear in the query plan.
+#[test]
+fn multiple_inline_fragments_on_same_concrete_type_within_interface_fragment(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          account(id: "a1") {
+            ... on Node {
+              ... on Account {
+                id
+              }
+              ... on Account {
+                username
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          account(id: "a1") {
+            id
+            username
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
     init_logger();
