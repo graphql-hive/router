@@ -78,6 +78,8 @@ type Product
   skip: Boolean! @join__field(graph: C, requires: "isExpensive")
   neverCalledInclude: Boolean! @join__field(graph: C, requires: "isExpensive")
   neverCalledSkip: Boolean! @join__field(graph: C, requires: "isExpensive")
+  name: String! @join__field(graph: B, requires: "price")
+  isCheap: Boolean! @join__field(graph: B, requires: "price")
 }
 
 type Query @join__type(graph: A) @join__type(graph: B) @join__type(graph: C) {
