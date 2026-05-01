@@ -8,7 +8,9 @@ directive @include(
   "Included when true."
   if: Boolean!
 ) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
-directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION | ENUM_VALUE | INPUT_FIELD_DEFINITION
+directive @deprecated(
+  reason: String = "No longer supported"
+) on FIELD_DEFINITION | ENUM_VALUE | INPUT_FIELD_DEFINITION
 directive @specifiedBy(url: String!) on SCALAR
 directive @oneOf on OBJECT | INTERFACE | UNION
 
@@ -108,6 +110,7 @@ type __Directive {
   description: String
   locations: [__DirectiveLocation!]!
   args(includeDeprecated: Boolean = false): [__InputValue!]!
+  isRepeatable: Boolean!
 }
 
 enum __DirectiveLocation {
