@@ -4,15 +4,18 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     graphql::ObservedError,
-    telemetry::traces::{
-        disabled_span, is_level_enabled,
-        spans::{
-            attributes::{
-                self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
-                HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND,
+    telemetry::{
+        metrics::demand_control_metrics::DemandControlResultCode,
+        traces::{
+            disabled_span, is_level_enabled,
+            spans::{
+                attributes::{
+                    self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
+                    HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND,
+                },
+                kind::{HiveEventKind, HiveSpanKind},
+                TARGET_NAME,
             },
-            kind::{HiveEventKind, HiveSpanKind},
-            TARGET_NAME,
         },
     },
 };
@@ -305,6 +308,91 @@ impl GraphQLExecuteSpan {
     }
 }
 
+pub struct GraphQLDemandControlSpan {
+    pub span: Span,
+}
+
+impl std::ops::Deref for GraphQLDemandControlSpan {
+    type Target = Span;
+    fn deref(&self) -> &Self::Target {
+        &self.span
+    }
+}
+
+impl Default for GraphQLDemandControlSpan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GraphQLDemandControlSpan {
+    pub fn new() -> Self {
+        if !is_level_enabled(Level::INFO) {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
+        let kind: &'static str = HiveSpanKind::GraphqlDemandControl.into();
+        let span = info_span!(
+            target: TARGET_NAME,
+            "graphql.demand_control",
+            "hive.kind" = kind,
+            "otel.kind" = "Internal",
+            "cache.hit" = Empty,
+            "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
+            "graphql.document.hash" = Empty,
+            "cost.estimated" = Empty,
+            "cost.result" = Empty,
+            "cost.blocked_subgraph_count" = Empty,
+            "cost.formula_compile_ms" = Empty,
+            "cost.formula_eval_ms" = Empty,
+        );
+        GraphQLDemandControlSpan { span }
+    }
+
+    pub fn record_cache_hit(&self, hit: bool) {
+        self.span.record(attributes::CACHE_HIT, hit);
+    }
+
+    pub fn record_operation_identity(&self, identity: GraphQLSpanOperationIdentity) {
+        if self.span.is_disabled() {
+            return;
+        }
+
+        record_all!(
+            self.span,
+            "graphql.operation.name" = identity.name,
+            "graphql.operation.type" = identity.operation_type,
+            "graphql.document.hash" = identity.client_document_hash,
+        );
+    }
+
+    pub fn record_compile_ms(&self, ms: f64) {
+        self.span.record(attributes::COST_FORMULA_COMPILE_MS, ms);
+    }
+
+    pub fn record_eval_ms(&self, ms: f64) {
+        self.span.record(attributes::COST_FORMULA_EVAL_MS, ms);
+    }
+
+    pub fn record_result(
+        &self,
+        estimated: u64,
+        blocked_subgraph_count: usize,
+        result: &DemandControlResultCode,
+    ) {
+        self.span.record(attributes::COST_ESTIMATED, estimated);
+        self.span.record(
+            attributes::COST_BLOCKED_SUBGRAPH_COUNT,
+            blocked_subgraph_count as u64,
+        );
+        let result_code: &'static str = result.into();
+        self.span.record(attributes::COST_RESULT, result_code);
+    }
+}
+
 pub struct GraphQLOperationSpan {
     pub span: Span,
 }
@@ -343,11 +431,16 @@ impl GraphQLOperationSpan {
             "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
             "graphql.document" = Empty,
+            "cost.estimated" = Empty,
+            "cost.actual" = Empty,
+            "cost.delta" = Empty,
+            "cost.result" = Empty,
             "hive.graphql.error.count" = Empty,
             "hive.graphql.error.codes" = Empty,
             "hive.graphql.operation.hash" = Empty,
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
+            "cost.formula_cache_hit" = Empty,
         );
         GraphQLOperationSpan { span }
     }
@@ -389,6 +482,32 @@ impl GraphQLOperationSpan {
             "hive.client.name" = client_name,
             "hive.client.version" = client_version,
         );
+    }
+
+    pub fn record_demand_control(
+        &self,
+        estimated: u64,
+        actual: Option<u64>,
+        delta: Option<i64>,
+        result: &str,
+        formula_cache_hit: Option<bool>,
+    ) {
+        if self.span.is_disabled() {
+            return;
+        }
+
+        self.span.record(attributes::COST_ESTIMATED, estimated);
+        if let Some(actual) = actual {
+            self.span.record(attributes::COST_ACTUAL, actual);
+        }
+        if let Some(delta) = delta {
+            self.span.record(attributes::COST_DELTA, delta);
+        }
+        self.span.record(attributes::COST_RESULT, result);
+        if let Some(formula_cache_hit) = formula_cache_hit {
+            self.span
+                .record(attributes::COST_FORMULA_CACHE_HIT, formula_cache_hit);
+        }
     }
 }
 

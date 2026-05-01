@@ -82,7 +82,7 @@ impl SupergraphTestData {
             operation_for_introspection,
             operation_for_introspection_hash: hashes.operation_for_introspection_hash,
             normalized_operation_hash: hashes.combined_operation_hash,
-            operation_indentity: OperationIdentity {
+            operation_identity: OperationIdentity {
                 name: doc.operation_name.clone(),
                 operation_type: "query",
                 client_document_hash: "".to_string(),

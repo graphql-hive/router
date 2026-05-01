@@ -21,7 +21,7 @@ sonic-rs = { workspace = true }
 vrl = { workspace = true }
 humantime = { workspace = true }
 bytes = { workspace = true }
-http = { workspace=true }
+http = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
@@ -34,8 +34,8 @@ futures = { workspace = true }
 thiserror = { workspace = true }
 ahash = { workspace = true }
 dashmap = { workspace = true }
-tokio-stream = "0.1.18"
 serde = { workspace = true }
+tokio-stream = "0.1.18"
 
 # telemetry
 opentelemetry = { workspace = true, features = ["trace"] }

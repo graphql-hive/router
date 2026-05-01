@@ -24,7 +24,9 @@ use hyper_util::{
 use tokio::sync::Semaphore;
 
 use crate::{
-    execution::client_request_details::ClientRequestDetails,
+    execution::{
+        client_request_details::ClientRequestDetails, demand_control::DemandControlExecutionContext,
+    },
     executors::{
         common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         error::SubgraphExecutorError,
@@ -137,17 +139,17 @@ impl SubgraphExecutorMap {
                 .get_subgraph_url(subgraph_name);
 
             let endpoint_str = match endpoint_config {
-                Some(UrlOrExpression::Url(url)) => url.clone(),
+                Some(UrlOrExpression::Url(url)) => url,
                 Some(UrlOrExpression::Expression { expression }) => {
                     subgraph_executor_map
                         .register_endpoint_expression(subgraph_name, expression)?;
-                    original_endpoint_str.clone()
+                    original_endpoint_str
                 }
-                None => original_endpoint_str.clone(),
+                None => original_endpoint_str,
             };
 
-            subgraph_executor_map.register_static_endpoint(subgraph_name, &endpoint_str);
-            subgraph_executor_map.register_executor(subgraph_name, &endpoint_str, false)?;
+            subgraph_executor_map.register_static_endpoint(subgraph_name, endpoint_str);
+            subgraph_executor_map.register_executor(subgraph_name, endpoint_str, false)?;
             subgraph_executor_map.register_subgraph_timeout(subgraph_name)?;
         }
 
@@ -165,7 +167,23 @@ impl SubgraphExecutorMap {
         mut execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec>,
         plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
+        demand_control_ctx: Option<&DemandControlExecutionContext>,
     ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
+        if let Some(demand_control_opts) = demand_control_ctx {
+            if demand_control_opts
+                .blocked_subgraphs
+                .contains(subgraph_name)
+            {
+                return Err(SubgraphExecutorError::CostEstimatedTooExpensive {
+                    estimated_cost: demand_control_opts
+                        .evaluation
+                        .per_subgraph
+                        .get(subgraph_name)
+                        .copied()
+                        .unwrap_or_default(),
+                });
+            }
+        }
         let mut executor = self.get_or_create_http_executor(subgraph_name, client_request)?;
 
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;

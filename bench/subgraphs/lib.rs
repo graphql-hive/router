@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod books;
 pub mod graphql_with_subscriptions;
 pub mod inventory;
 pub mod products;
@@ -99,6 +100,7 @@ pub fn subgraphs_app(subscriptions_protocol: HTTPStreamingSubscriptionProtocol) 
             "/accounts",
             post_service(GraphQL::new(accounts::get_subgraph())),
         )
+        .route("/books", post_service(GraphQL::new(books::get_subgraph())))
         .route(
             "/inventory",
             post_service(GraphQL::new(inventory::get_subgraph())),

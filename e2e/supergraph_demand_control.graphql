@@ -1,0 +1,181 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+  mutation: Mutation
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+directive @cost(weight: Int!) on ARGUMENT_DEFINITION | ENUM | FIELD_DEFINITION | INPUT_FIELD_DEFINITION | OBJECT | SCALAR
+
+directive @listSize(
+  assumedSize: Int
+  slicingArguments: [String!]
+  sizedFields: [String!]
+  requireOneSlicingArgument: Boolean = true
+) on FIELD_DEFINITION
+
+scalar join__FieldSet
+
+scalar link__Import
+
+enum join__Graph {
+  BOOKS @join__graph(name: "books", url: "http://0.0.0.0:4200/books")
+}
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
+
+input PaginationInput @join__type(graph: BOOKS) {
+  first: Int @join__field(graph: BOOKS)
+}
+
+input SearchInput @join__type(graph: BOOKS) {
+  pagination: PaginationInput @join__field(graph: BOOKS)
+}
+
+input DeepPaginationInput @join__type(graph: BOOKS) {
+  level1: Level1PaginationInput @join__field(graph: BOOKS)
+}
+
+input CostlySearchInput @join__type(graph: BOOKS) {
+  query: String @cost(weight: 2) @join__field(graph: BOOKS)
+  limit: Int @join__field(graph: BOOKS)
+}
+
+input Level1PaginationInput @join__type(graph: BOOKS) {
+  level2: Level2PaginationInput @join__field(graph: BOOKS)
+}
+
+input Level2PaginationInput @join__type(graph: BOOKS) {
+  count: Int @join__field(graph: BOOKS)
+}
+
+enum BookGenre @join__type(graph: BOOKS) {
+  FICTION @join__enumValue(graph: BOOKS)
+  MYSTERY @cost(weight: 2) @join__enumValue(graph: BOOKS)
+  SCIFI @cost(weight: 3) @join__enumValue(graph: BOOKS)
+}
+
+scalar BookId @cost(weight: 1) @join__type(graph: BOOKS)
+
+type Address @join__type(graph: BOOKS) {
+  zipCode: Int! @join__field(graph: BOOKS)
+}
+
+type CostlyAddress @cost(weight: 5) @join__type(graph: BOOKS) {
+  zipCode: Int! @join__field(graph: BOOKS)
+}
+
+type Author @join__type(graph: BOOKS) {
+  name: String @join__field(graph: BOOKS)
+  bio: String @cost(weight: 3) @join__field(graph: BOOKS)
+}
+
+type Publisher @join__type(graph: BOOKS) {
+  name: String @join__field(graph: BOOKS)
+  address: Address @join__field(graph: BOOKS)
+  addressWithCost: CostlyAddress @join__field(graph: BOOKS)
+}
+
+type Book @join__type(graph: BOOKS) {
+  title: String @join__field(graph: BOOKS)
+  genre: BookGenre @join__field(graph: BOOKS)
+  id: BookId @join__field(graph: BOOKS)
+  author: Author @join__field(graph: BOOKS)
+  publisher: Publisher @join__field(graph: BOOKS)
+}
+
+type ResultPage @join__type(graph: BOOKS) {
+  books: [Book!] @join__field(graph: BOOKS)
+  metadata: String @join__field(graph: BOOKS)
+}
+
+type DeepContainer @join__type(graph: BOOKS) {
+  results: ResultContainer @join__field(graph: BOOKS)
+}
+
+type ResultContainer @join__type(graph: BOOKS) {
+  page: [Book!] @join__field(graph: BOOKS)
+  recent: [Book] @listSize(assumedSize: 2) @join__field(graph: BOOKS)
+  metadata: String @join__field(graph: BOOKS)
+}
+
+type Cursor @join__type(graph: BOOKS) {
+  page: [Book!] @join__field(graph: BOOKS)
+  nextPage: ID @join__field(graph: BOOKS)
+}
+
+type Query @join__type(graph: BOOKS) {
+  book(id: ID): Book @join__field(graph: BOOKS)
+  bookWithFieldCost: Book @cost(weight: 2) @join__field(graph: BOOKS)
+  bookWithArgCost(limit: Int @cost(weight: 1)): Book @join__field(graph: BOOKS)
+  bestsellers: [Book] @listSize(assumedSize: 5) @join__field(graph: BOOKS)
+  newestAdditions(after: ID, limit: Int!): [Book]
+    @listSize(slicingArguments: ["limit"])
+    @join__field(graph: BOOKS)
+  newestAdditions2(first: Int, last: Int): [Book]
+    @listSize(slicingArguments: ["first", "last"], requireOneSlicingArgument: false)
+    @join__field(graph: BOOKS)
+  newestAdditionsByCursor(limit: Int!): Cursor!
+    @listSize(slicingArguments: ["limit"], sizedFields: ["page"], requireOneSlicingArgument: false)
+    @join__field(graph: BOOKS)
+  search(input: SearchInput!): [Book]
+    @listSize(slicingArguments: ["input.pagination.first"], requireOneSlicingArgument: true)
+    @join__field(graph: BOOKS)
+  deepSearch(input: DeepPaginationInput!): [Book]
+    @listSize(slicingArguments: ["input.level1.level2.count"], requireOneSlicingArgument: true)
+    @join__field(graph: BOOKS)
+  deepContainer(first: Int): DeepContainer
+    @listSize(slicingArguments: ["first"], sizedFields: ["results { page }"], requireOneSlicingArgument: false)
+    @join__field(graph: BOOKS)
+  searchByCostlyInput(input: CostlySearchInput!): [Book]
+    @listSize(slicingArguments: ["input.limit"], requireOneSlicingArgument: true)
+    @join__field(graph: BOOKS)
+  booksByGenre(genre: BookGenre!): [Book] @join__field(graph: BOOKS)
+  ping: String @join__field(graph: BOOKS)
+}
+
+type Mutation @join__type(graph: BOOKS) {
+  doThing: String @join__field(graph: BOOKS)
+}
