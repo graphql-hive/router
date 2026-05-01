@@ -327,20 +327,20 @@ async fn handle_text_frame(
 
                 let client_name = headers
                     .get(
-                        &shared_state
+                        shared_state
                             .router_config
                             .telemetry
                             .client_identification
-                            .name_header,
+                            .name_header.get_header_ref(),
                     )
                     .and_then(|v| v.to_str().ok());
                 let client_version = headers
                     .get(
-                        &shared_state
+                        shared_state
                             .router_config
                             .telemetry
                             .client_identification
-                            .version_header,
+                            .version_header.get_header_ref(),
                     )
                     .and_then(|v| v.to_str().ok());
 
