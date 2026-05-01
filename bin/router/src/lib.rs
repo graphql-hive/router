@@ -57,7 +57,9 @@ pub use hive_router_config::humantime_serde;
 use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
 use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
+use hive_router_internal::logging::logger_span::LoggerRootSpan;
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
+use hive_router_internal::telemetry::otel::opentelemetry::Context as OTELContext;
 use hive_router_internal::telemetry::{
     otel::tracing_opentelemetry::OpenTelemetrySpanExt,
     traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
@@ -74,6 +76,7 @@ pub use ntex::main;
 use ntex::web::{self, HttpRequest};
 pub use sonic_rs;
 pub use tokio;
+use tokio::time::Instant;
 pub use tracing;
 use tracing::{info, warn, Instrument};
 pub mod tls;
@@ -108,20 +111,49 @@ impl BackgroundTask for CallbackServer {
     }
 }
 
+#[inline]
 async fn graphql_endpoint_handler(
     request: HttpRequest,
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
+    let parent_ctx = app_state
+        .telemetry_context
+        .extract_context(&HeaderExtractor(request.headers()));
+    let start = Instant::now();
+
+    let root_logging_span = LoggerRootSpan::create(
+        &app_state.telemetry_context.logging.identifier_extractor,
+        &request,
+        &parent_ctx,
+    );
     let http_request_capture = app_state
         .telemetry_context
         .metrics
         .http_server
         .capture_request(&request);
 
-    let response =
-        graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone()).await;
+    let logging_context = app_state.telemetry_context.logging.clone();
+
+    // "instrument" here wrap both "http_request_start" and "http_request_end" so the two root log lines
+    // will be correlated with the request_id identifier
+    let response = async {
+        logging_context.http_request_start(&request);
+        let inner_res = graphql_endpoint_dispatch(
+            &request,
+            body_stream,
+            schema_state,
+            app_state.clone(),
+            parent_ctx,
+        )
+        .await;
+        logging_context.http_request_end(start.elapsed(), &inner_res);
+
+        inner_res
+    }
+    .instrument(root_logging_span.span)
+    .await;
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -149,12 +181,10 @@ async fn graphql_endpoint_dispatch(
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
+    otel_ctx: OTELContext,
 ) -> web::HttpResponse {
-    let parent_ctx = app_state
-        .telemetry_context
-        .extract_context(&HeaderExtractor(request.headers()));
     let root_http_request_span = HttpServerRequestSpan::from_request(request);
-    let _ = root_http_request_span.set_parent(parent_ctx);
+    let _ = root_http_request_span.set_parent(otel_ctx);
 
     async {
         // Set it to the default value in case of the negotiation failing,
@@ -170,6 +200,7 @@ async fn graphql_endpoint_dispatch(
             schema_state.get_ref(),
             &root_http_request_span,
             &mut response_mode,
+            app_state.telemetry_context.logging.clone(),
         );
 
         // Handle the request with a timeout. If the timeout is reached, a timeout error response will be generated.
@@ -178,6 +209,7 @@ async fn graphql_endpoint_dispatch(
             Ok(response) => response,
             // If the request handler returns an error, convert it to an HTTP response.
             Err(err) => {
+                tracing::error!(error = %err, "request handler has failed");
                 write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
                 handle_pipeline_error(err, &app_state, &response_mode)
             }
@@ -204,7 +236,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         .prometheus
         .as_ref()
         .and_then(|prom| prom.to_attached());
-    info!("hive-router@{} starting...", ROUTER_VERSION);
+    info!(version = ROUTER_VERSION, "hive-router starting...",);
     let addr = router_config.address();
     let graphql_path = router_config.graphql_path().to_string();
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
@@ -299,7 +331,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     .await
     .map_err(RouterInitError::HttpServerStartError);
 
-    info!("server stopped, clearing background tasks");
+    info!("server stopped");
     bg_tasks_manager.shutdown();
     telemetry.graceful_shutdown().await;
 

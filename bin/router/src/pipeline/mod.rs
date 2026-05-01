@@ -1,6 +1,9 @@
 use futures::StreamExt;
-use hive_router_internal::telemetry::traces::spans::{
-    graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+use hive_router_internal::{
+    logging::context::LoggerContext,
+    telemetry::traces::spans::{
+        graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+    },
 };
 use hive_router_plan_executor::{
     execution::{
@@ -26,7 +29,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tracing::{error, Instrument};
+use tracing::{debug, error, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
@@ -95,6 +98,7 @@ pub async fn graphql_request_handler(
     schema_state: &Arc<SchemaState>,
     http_server_request_span: &HttpServerRequestSpan,
     response_mode: &mut ResponseMode,
+    logger_context: Arc<LoggerContext>,
 ) -> Result<web::HttpResponse, PipelineError> {
     // If an early CORS response is needed, return it immediately.
     if let Some(early_response) = shared_state
@@ -107,6 +111,7 @@ pub async fn graphql_request_handler(
 
     // agree on the response content type
     *response_mode = req.negotiate()?;
+    debug!(%response_mode, "response mode negotiated");
 
     if *response_mode == ResponseMode::Laboratory {
         if shared_state.router_config.laboratory.enabled {
@@ -114,6 +119,7 @@ pub async fn graphql_request_handler(
                 .header(CONTENT_TYPE, TEXT_HTML_MIME)
                 .body(LABORATORY_HTML));
         } else {
+            debug!("responding with not found, graphiql disabled");
             return Ok(web::HttpResponse::NotFound().into());
         }
     }
@@ -136,8 +142,9 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
-        write_request_body_size(req, body_bytes.len() as u64);
-        http_server_request_span.record_body_size(body_bytes.len());
+        let req_body_size = body_bytes.len();
+        write_request_body_size(req, req_body_size as u64);
+        http_server_request_span.record_body_size(req_body_size);
 
         let client_name = req
             .headers()
@@ -191,6 +198,18 @@ pub async fn graphql_request_handler(
         };
 
         let graphql_params = prepared_operation.graphql_params;
+
+        logger_context.graphql_request_start(
+            req_body_size,
+            client_name,
+            client_version,
+            // TODO: In the future, once we merge crates, we can pass `graphql_params` as-is.
+            // At the moment, we can't since it's defined in router, and moving it will cause a major refactoring due to other dependencies.
+            graphql_params.query.as_deref(),
+            graphql_params.operation_name.as_deref(),
+            &graphql_params.variables,
+            graphql_params.extensions.as_ref(),
+          );
 
         write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
 

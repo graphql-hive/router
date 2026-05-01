@@ -450,17 +450,9 @@ impl<E: SpanExporter> SpanExporter for HiveConsoleExporter<E> {
     }
 
     fn shutdown(&mut self) -> OTelSdkResult {
-        tracing::info!(
-            component = "telemetry",
-            layer = "hive_console_exporter",
-            "shutdown scheduled"
-        );
+        tracing::debug!("telemetry hive_console_exporter shutdown scheduled");
         let result = self.inner.shutdown();
-        tracing::info!(
-            component = "telemetry",
-            layer = "hive_console_exporter",
-            "shutdown completed"
-        );
+        tracing::info!("telemetry hive_console_exporter shutdown completed");
         result
     }
 

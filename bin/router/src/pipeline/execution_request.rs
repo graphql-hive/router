@@ -15,7 +15,7 @@ use ntex::web::types::Query;
 use ntex::web::HttpRequest;
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use std::sync::Arc;
-use tracing::{info, trace, warn};
+use tracing::{debug, info, warn};
 
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::header::SingleContentType;
@@ -383,7 +383,6 @@ impl<'a> OperationPreparation<'a> {
             && operation.resolved_document_id.is_none()
         {
             info!(
-                event = "persisted_documents.missing_id_request",
                 method = %self.req.method(),
                 path = %self.req.uri().path(),
                 require_id = self.require_id,
@@ -445,7 +444,7 @@ impl<'a> OperationPreparation<'a> {
             Method::GET => self.decode_get(),
             Method::POST => self.decode_post(),
             _ => {
-                warn!("unsupported HTTP method: {}", self.req.method());
+                warn!(method = ?self.req.method(), "unsupported HTTP method");
                 Err(PipelineError::UnsupportedHttpMethod(
                     self.req.method().to_owned(),
                 ))
@@ -479,14 +478,14 @@ impl<'a> OperationPreparation<'a> {
                     .map_err(|_| PipelineError::InvalidHeaderValue(CONTENT_TYPE))?;
                 if !content_type_str.contains(SingleContentType::JSON.as_ref()) {
                     warn!(
-                        "Invalid content type on a POST request: {}",
-                        content_type_str
+                        value = content_type_str,
+                        "Invalid content type on a POST request",
                     );
                     return Err(PipelineError::UnsupportedContentType);
                 }
             }
             None => {
-                trace!("POST without content type detected");
+                debug!("POST without content type detected");
                 return Err(PipelineError::MissingContentTypeHeader);
             }
         }

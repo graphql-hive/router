@@ -46,30 +46,22 @@ struct CallbackPayload<'a> {
 
 #[derive(thiserror::Error, Debug)]
 pub enum CallbackError {
-    #[error(
-        "Invalid or missing {} header, expected {}",
-        SUBSCRIPTION_PROTOCOL_HEADER,
-        CALLBACK_PROTOCOL_VERSION
-    )]
+    #[error("Invalid or missing protocol header")]
     InvalidProtocolHeader,
-    #[error("Failed to parse callback payload: {0}")]
+    #[error("Failed to parse callback payload")]
     PayloadParseError(#[from] sonic_rs::Error),
-    #[error("Subscription ID mismatch: path='{path}', body='{body}'")]
+    #[error("Subscription ID mismatch")]
     SubscriptionIdMismatch { path: String, body: String },
-    #[error("Missing payload in next message for subscription ID '{subscription_id}'")]
+    #[error("Missing payload in next message for subscription ID")]
     MissingPayload { subscription_id: String },
-    #[error(
-        "Subscription not found, may have been terminated for subscription ID '{subscription_id}'"
-    )]
+    #[error("Subscription not found, may have been terminated for subscription ID")]
     SubscriptionNotFound { subscription_id: String },
-    #[error("Invalid verifier for subscription ID '{subscription_id}'")]
+    #[error("Invalid verifier for subscription ID")]
     InvalidVerifier { subscription_id: String },
-    #[error("Subscription receiver dropped for subscription ID '{subscription_id}'")]
+    #[error("Subscription receiver dropped for subscription ID")]
     SubscriptionDropped { subscription_id: String },
     // NOTE: intentionally a different variant from SubscriptionDropped
-    #[error(
-        "Client consuming too slowly. Event buffer full for subscription ID '{subscription_id}'"
-    )]
+    #[error("Client consuming too slowly. Event buffer full for subscription ID")]
     ClientTooSlow { subscription_id: String },
 }
 
@@ -77,13 +69,19 @@ impl CallbackError {
     fn log(&self) {
         match self {
             CallbackError::InvalidProtocolHeader => warn!("{}", self),
-            CallbackError::PayloadParseError(_) => error!("{}", self),
-            CallbackError::SubscriptionIdMismatch { .. } => warn!("{}", self),
-            CallbackError::MissingPayload { .. } => warn!("{}", self),
-            CallbackError::SubscriptionNotFound { .. } => warn!("{}", self),
-            CallbackError::InvalidVerifier { .. } => warn!("{}", self),
-            CallbackError::SubscriptionDropped { .. } => debug!("{}", self),
-            CallbackError::ClientTooSlow { .. } => warn!("{}", self),
+            CallbackError::PayloadParseError(err) => error!(error = %err, "{}", self),
+            CallbackError::SubscriptionIdMismatch { path, body } => warn!(path, body, "{}", self),
+            CallbackError::MissingPayload { subscription_id } => warn!(subscription_id, "{}", self),
+            CallbackError::SubscriptionNotFound { subscription_id } => {
+                warn!(subscription_id, "{}", self)
+            }
+            CallbackError::InvalidVerifier { subscription_id } => {
+                warn!(subscription_id, "{}", self)
+            }
+            CallbackError::SubscriptionDropped { subscription_id } => {
+                debug!(subscription_id, "{}", self)
+            }
+            CallbackError::ClientTooSlow { subscription_id } => warn!(subscription_id, "{}", self),
         }
     }
 }
@@ -143,7 +141,7 @@ fn validate_payload(
 }
 
 fn handle_check(subscription_id: &str, subscription: &Ref<'_, String, CallbackSubscription>) {
-    trace!(subscription_id = %subscription_id, "Received check message");
+    trace!(subscription_id, "Received check message");
     subscription.record_heartbeat();
 }
 
@@ -153,7 +151,7 @@ fn handle_next(
     subscription: Ref<'_, String, CallbackSubscription>,
     callback_subscriptions: &CallbackSubscriptionsMap,
 ) -> Result<(), CallbackError> {
-    trace!(subscription_id = %subscription_id, "Received next message");
+    trace!(subscription_id, "Received next message");
 
     let data = match &payload.payload {
         Some(p) => BytesLib::copy_from_slice(p.as_raw_str().as_bytes()),
@@ -172,7 +170,7 @@ fn handle_next(
         Err(mpsc::error::TrySendError::Full(_)) => {
             // if the channel is full it means the consuming client is too slow and unable to keep
             // up. we terminate the subscription without an error message because it anyways cant go through
-            warn!(subscription_id = %subscription_id, "Subscription client is too slow");
+            warn!(subscription_id, "Subscription client is too slow");
             drop(subscription);
             callback_subscriptions.remove(subscription_id);
             Err(CallbackError::ClientTooSlow {
@@ -180,7 +178,7 @@ fn handle_next(
             })
         }
         Err(mpsc::error::TrySendError::Closed(_)) => {
-            debug!(subscription_id = %subscription_id, "Subscription receiver dropped");
+            debug!(subscription_id, "Subscription receiver dropped");
             drop(subscription);
             callback_subscriptions.remove(subscription_id);
             Err(CallbackError::SubscriptionDropped {
@@ -196,7 +194,7 @@ fn handle_complete(
     subscription: Ref<'_, String, CallbackSubscription>,
     callback_subscriptions: &CallbackSubscriptionsMap,
 ) {
-    trace!(subscription_id = %subscription_id, "Received complete message");
+    debug!(subscription_id, "Received subscription complete message");
     // if the buffer is full or closed we ignore and remove the subscription, we dont send
     // the final error message because the client is already unable to consume
     let _ = subscription.sender.try_send(CallbackMessage::Complete {

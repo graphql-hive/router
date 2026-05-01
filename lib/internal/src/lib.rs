@@ -5,6 +5,7 @@ pub mod graphql;
 pub mod http;
 pub mod inflight;
 pub mod json;
+pub mod logging;
 pub mod telemetry;
 
 pub type BoxError = Box<dyn std::error::Error>;

@@ -1,8 +1,9 @@
-use std::{io::IsTerminal, str::FromStr, sync::Mutex};
+use std::sync::Mutex;
 
-use hive_router_config::{log::LogFormat, HiveRouterConfig};
+use hive_router_config::HiveRouterConfig;
 use hive_router_internal::{
     http::normalize_route_path,
+    logging::{context::LoggerContext, logging_layers_from_logger_config},
     telemetry::{
         build_otel_layer_from_config, build_resource, build_scope,
         error::TelemetryError,
@@ -25,12 +26,8 @@ use hive_router_internal::{
 use ntex::web::{self};
 use ntex::web::{App, HttpResponse, HttpServer};
 use prometheus::{Encoder, TextEncoder};
-use tracing_subscriber::{filter::filter_fn, util::SubscriberInitExt, Layer};
-use tracing_subscriber::{fmt::time::UtcTime, EnvFilter};
-use tracing_subscriber::{
-    fmt::{self},
-    layer::SubscriberExt,
-};
+use tracing::debug;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Registry};
 
 pub struct HeaderExtractor<'a>(pub &'a ntex::http::HeaderMap);
 
@@ -62,6 +59,8 @@ pub struct Telemetry {
     pub metrics_provider: Option<SdkMeterProvider>,
     pub prometheus: Option<PrometheusRuntime>,
     pub context: TelemetryContext,
+    pub logging_writer_guards: Vec<tracing_appender::non_blocking::WorkerGuard>,
+    pub logging_context: LoggerContext,
 }
 
 pub enum PrometheusRuntime {
@@ -128,11 +127,17 @@ impl Telemetry {
             (None, None)
         };
 
-        let registry = tracing_subscriber::registry().with(otel_layer);
-        init_logging(config, registry)?;
+        let (logging_layers, writer_guards, service_log_config) =
+            logging_layers_from_logger_config::<Registry>(&config.telemetry.logging);
 
-        let context = TelemetryContext::from_propagation_config_with_meter(
-            &config.telemetry.tracing.propagation,
+        let registry = tracing_subscriber::registry()
+            .with(logging_layers)
+            .with(otel_layer);
+
+        registry.init();
+
+        let context = TelemetryContext::from_config_with_meter(
+            &config.telemetry,
             metrics_provider
                 .as_ref()
                 .map(|provider| provider.meter_with_scope(scope)),
@@ -145,6 +150,11 @@ impl Telemetry {
             metrics_provider,
             prometheus,
             context,
+            logging_writer_guards: writer_guards,
+            logging_context: LoggerContext::new(
+                service_log_config.log_fields,
+                service_log_config.correlation,
+            ),
         })
     }
 
@@ -193,17 +203,14 @@ impl Telemetry {
         let meter = metrics_result
             .as_ref()
             .map(|setup| setup.provider.meter_with_scope(scope));
-        let context = TelemetryContext::from_propagation_config_with_meter(
-            &config.telemetry.tracing.propagation,
-            meter,
-        );
+        let context = TelemetryContext::from_config_with_meter(&config.telemetry, meter);
 
-        let filter = EnvFilter::from_str(config.log.env_filter_str())?;
+        let (logging_layers, writer_guards, service_log_config) =
+            logging_layers_from_logger_config::<Registry>(&config.telemetry.logging);
 
         let subscriber = tracing_subscriber::Registry::default()
-            .with(filter)
-            .with(otel_layer)
-            .with(fmt::layer().with_test_writer());
+            .with(logging_layers)
+            .with(otel_layer);
 
         Ok((
             Self {
@@ -211,63 +218,45 @@ impl Telemetry {
                 metrics_provider: metrics_result.map(|setup| setup.provider),
                 prometheus: None,
                 context,
+                logging_writer_guards: writer_guards,
+                logging_context: LoggerContext::new(
+                    service_log_config.log_fields,
+                    service_log_config.correlation,
+                ),
             },
             subscriber,
         ))
     }
 
     pub async fn graceful_shutdown(&self) {
+        debug!("flushing telemetry data");
         use tokio::task::spawn_blocking;
 
         let tracer = self.traces_provider.clone();
         let meter_provider = self.metrics_provider.clone();
         let shutdown_tracer = spawn_blocking(|| {
             if let Some(provider) = tracer {
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "provider",
-                    "shutdown scheduled"
-                );
+                tracing::debug!("telemetry trace provider shutdown scheduled");
                 let _ = provider.force_flush();
                 let _ = provider.shutdown();
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "provider",
-                    "shutdown completed"
-                );
+                tracing::info!("telemetry trace provider shutdown completed");
             }
         });
 
         let shutdown_prometheus = async {
             if let Some(runtime) = &self.prometheus {
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "prometheus",
-                    "shutdown scheduled"
-                );
+                tracing::debug!("telemetry prometheus shutdown scheduled");
                 runtime.shutdown().await;
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "prometheus",
-                    "shutdown completed"
-                );
+                tracing::info!("telemetry prometheus shutdown completed");
             }
         };
 
         let shutdown_metrics = spawn_blocking(|| {
             if let Some(provider) = meter_provider {
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "metrics",
-                    "shutdown scheduled"
-                );
+                tracing::debug!("telemetry metrics shutdown scheduled");
                 let _ = provider.force_flush();
                 let _ = provider.shutdown();
-                tracing::info!(
-                    component = "telemetry",
-                    layer = "metrics",
-                    "shutdown completed"
-                );
+                tracing::info!("telemetry metrics shutdown completed");
             }
         });
 
@@ -322,8 +311,6 @@ fn create_prometheus_runtime(
     };
 
     tracing::info!(
-        component = "telemetry",
-        layer = "metrics",
         port = %port,
         path = %path_for_log,
         "Prometheus metrics server started"
@@ -333,10 +320,8 @@ fn create_prometheus_runtime(
     let handle = tokio::spawn(async move {
         if let Err(err) = server.await {
             tracing::error!(
-                component = "telemetry",
-                layer = "metrics",
                 error = %err,
-                "Prometheus metrics server failed"
+                "Prometheus metrics server failed to start"
             );
         }
     });
@@ -366,64 +351,4 @@ pub(crate) fn build_metrics_response(registry: &prometheus::Registry) -> HttpRes
 
 async fn metrics_handler(registry: web::types::State<prometheus::Registry>) -> HttpResponse {
     build_metrics_response(&registry)
-}
-
-pub fn init_logging<S>(config: &HiveRouterConfig, registry: S) -> Result<(), TelemetryInitError>
-where
-    S: tracing::Subscriber
-        + for<'span> tracing_subscriber::registry::LookupSpan<'span>
-        + Send
-        + Sync,
-{
-    let timer = UtcTime::rfc_3339();
-    let filter = EnvFilter::from_str(config.log.env_filter_str())?;
-    let is_terminal = std::io::stdout().is_terminal();
-
-    let events_only = filter_fn(|m| !m.is_span());
-
-    match config.log.format {
-        LogFormat::PrettyTree => {
-            registry
-                .with(
-                    tracing_tree::HierarchicalLayer::new(2)
-                        .with_ansi(is_terminal)
-                        .with_bracketed_fields(true)
-                        .with_deferred_spans(false)
-                        .with_wraparound(25)
-                        .with_indent_lines(true)
-                        .with_timer(tracing_tree::time::Uptime::default())
-                        .with_thread_names(false)
-                        .with_thread_ids(false)
-                        .with_targets(false)
-                        .with_filter(events_only),
-                )
-                .with(filter)
-                .init();
-        }
-        LogFormat::Json => {
-            registry
-                .with(
-                    fmt::layer()
-                        .json()
-                        .with_timer(timer)
-                        .with_filter(events_only),
-                )
-                .with(filter)
-                .init();
-        }
-        LogFormat::PrettyCompact => {
-            registry
-                .with(
-                    fmt::layer()
-                        .compact()
-                        .with_ansi(is_terminal)
-                        .with_timer(timer)
-                        .with_filter(events_only),
-                )
-                .with(filter)
-                .init();
-        }
-    };
-
-    Ok(())
 }

@@ -204,7 +204,7 @@ async fn send_request<'a>(
 
     *req.headers_mut() = headers;
 
-    debug!("making http request to {}", endpoint.to_string());
+    debug!(endpoint = %endpoint, "making subraph http request");
 
     let http_request_span = HttpClientRequestSpan::from_request(&req);
     let mut http_request_capture = telemetry_context.metrics.http_client.capture_request(
@@ -231,9 +231,9 @@ async fn send_request<'a>(
         http_request_capture.set_status_code(res.status().as_u16());
 
         debug!(
-            "http request to {} completed, status: {}",
-            endpoint.to_string(),
-            res.status()
+          endpoint = %endpoint,
+          status = %res.status(),
+          "subgraph http request completed"
         );
 
         let (parts, body) = res.into_parts();
@@ -507,9 +507,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         *req.headers_mut() = headers;
 
         debug!(
-            "establishing subscription connection to subgraph {} at {}",
-            self.subgraph_name,
-            self.endpoint.to_string()
+            subgraph_name = self.subgraph_name,
+            endpoint = self.endpoint.to_string(),
+            "establishing subscription connection to subgraph",
         );
 
         let res_fut = self.http_client.request(req);
@@ -521,10 +521,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }?;
 
         debug!(
-            "subscription connection to subgraph {} at {} established, status: {}",
-            self.subgraph_name,
-            self.endpoint.to_string(),
-            res.status()
+            subgraph_name = self.subgraph_name,
+            endpoint = self.endpoint.to_string(),
+            status = ?res.status(),
+            "subscription connection to subgraph established",
         );
 
         if !res.status().is_success() {
@@ -575,9 +575,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             }))
         } else {
             debug!(
-                "using SSE for subscription connection to subgraph {} at {}",
-                self.subgraph_name,
-                self.endpoint.to_string(),
+                subgraph_name = self.subgraph_name,
+                endpoint = self.endpoint.to_string(),
+                "using SSE for subscription connection to subgraph",
             );
 
             let stream = sse::parse_to_stream(body_stream);
