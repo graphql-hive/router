@@ -2700,6 +2700,7 @@ version = "2.7.1"
 dependencies = [
  "bitflags 2.11.1",
  "criterion",
+ "faststr",
  "graphql-tools",
  "insta",
  "lazy-init",
