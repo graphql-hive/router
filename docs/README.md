@@ -5,6 +5,7 @@
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**authorization**](#authorization)|`object`|Default: `{"directives":{"enabled":true,"unauthorized":{"mode":"filter"}}}`<br/>|yes|
+|[**coprocessor**](#coprocessor)|`object`, `null`|Configuration for coprocessor.<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
@@ -276,6 +277,285 @@ unauthorized:
 
 ```yaml
 mode: filter
+
+```
+
+<a name="coprocessor"></a>
+## coprocessor: object,null
+
+Configuration for coprocessor.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**protocol**||Transport protocol used to call the coprocessor service.<br/>|yes|
+|[**stages**](#coprocessorstages)|`object`|Stage-specific configuration.<br/>Default: `{"graphql":{},"router":{}}`<br/>|no|
+|**timeout**|`string`|Per-stage timeout for a coprocessor call.<br/><br/>Defaults to `1s`.<br/>Default: `"1s"`<br/>|no|
+|**url**|`string`|Endpoint for the external coprocessor service.<br/><br/>Supported formats:<br/>- `http://host[:port][/path]`<br/>- `unix:///absolute/path/to/socket.sock`<br/>- `unix:///absolute/path/to/socket.sock?path=/request/path`<br/>|yes|
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstages"></a>
+### coprocessor\.stages: object
+
+Stage-specific configuration.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**graphql**](#coprocessorstagesgraphql)|`object`|Hooks around GraphQL processing<br/>Default: `{}`<br/>||
+|[**router**](#coprocessorstagesrouter)|`object`|Hooks around the router HTTP boundary<br/>Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+graphql: {}
+router: {}
+
+```
+
+<a name="coprocessorstagesgraphql"></a>
+#### coprocessor\.stages\.graphql: object
+
+Hooks around GraphQL processing
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**analysis**](#coprocessorstagesgraphqlanalysis)|`object`, `null`|Configuration for `graphql.analysis` hook.<br/>||
+|[**request**](#coprocessorstagesgraphqlrequest)|`object`, `null`|Configuration for `graphql.request` hook.<br/>||
+|[**response**](#coprocessorstagesgraphqlresponse)|`object`, `null`|Configuration for `graphql.response` hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlanalysis"></a>
+##### coprocessor\.stages\.graphql\.analysis: object,null
+
+Configuration for `graphql.analysis` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesgraphqlanalysisinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlanalysisinclude"></a>
+###### coprocessor\.stages\.graphql\.analysis\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**||Include GraphQL request body fields.<br/><br/>Accepts `true`, `false`, or a list of fields.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include request headers.<br/>Default: `false`<br/>||
+|**method**|`boolean`|Include request method.<br/>Default: `false`<br/>||
+|**path**|`boolean`|Include request path.<br/>Default: `false`<br/>||
+|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+sdl: false
+
+```
+
+<a name="coprocessorstagesgraphqlrequest"></a>
+##### coprocessor\.stages\.graphql\.request: object,null
+
+Configuration for `graphql.request` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesgraphqlrequestinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlrequestinclude"></a>
+###### coprocessor\.stages\.graphql\.request\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**||Include GraphQL request body fields.<br/><br/>Accepts `true`, `false`, or a list of fields.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include request headers.<br/>Default: `false`<br/>||
+|**method**|`boolean`|Include request method.<br/>Default: `false`<br/>||
+|**path**|`boolean`|Include request path.<br/>Default: `false`<br/>||
+|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+sdl: false
+
+```
+
+<a name="coprocessorstagesgraphqlresponse"></a>
+##### coprocessor\.stages\.graphql\.response: object,null
+
+Configuration for `graphql.response` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesgraphqlresponseinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlresponseinclude"></a>
+###### coprocessor\.stages\.graphql\.response\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Include GraphQL response body.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include response headers.<br/>Default: `false`<br/>||
+|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
+|**status\_code**|`boolean`|Include response status code.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+sdl: false
+status_code: false
+
+```
+
+<a name="coprocessorstagesrouter"></a>
+#### coprocessor\.stages\.router: object
+
+Hooks around the router HTTP boundary
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**request**](#coprocessorstagesrouterrequest)|`object`, `null`|Configuration for `router.request` hook.<br/>||
+|[**response**](#coprocessorstagesrouterresponse)|`object`, `null`|Configuration for `router.response` hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterrequest"></a>
+##### coprocessor\.stages\.router\.request: object,null
+
+Configuration for `router.request` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesrouterrequestinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterrequestinclude"></a>
+###### coprocessor\.stages\.router\.request\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Include the inbound HTTP request body.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include inbound HTTP request headers.<br/>Default: `false`<br/>||
+|**method**|`boolean`|Include inbound HTTP request method.<br/>Default: `false`<br/>||
+|**path**|`boolean`|Include inbound HTTP request path.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+
+```
+
+<a name="coprocessorstagesrouterresponse"></a>
+##### coprocessor\.stages\.router\.response: object,null
+
+Configuration for `router.response` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesrouterresponseinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterresponseinclude"></a>
+###### coprocessor\.stages\.router\.response\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Include outbound HTTP response body.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include outbound HTTP response headers.<br/>Default: `false`<br/>||
+|**status\_code**|`boolean`|Include outbound HTTP response status code.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+status_code: false
 
 ```
 
@@ -769,7 +1049,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -991,7 +1271,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1244,7 +1524,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1466,7 +1746,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).

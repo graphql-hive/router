@@ -32,18 +32,18 @@ use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
 use crate::{
-    context::ExecutionContext,
     execution::{
         client_request_details::ClientRequestDetails,
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
+    execution_context::ExecutionContext,
     executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     headers::{
-        plan::{HeaderRulesPlan, ResponseHeaderAggregator},
+        plan::HeaderRulesPlan,
         request::modify_subgraph_request_headers,
-        response::apply_subgraph_response_headers,
+        response::{apply_subgraph_response_headers, ResponseHeaderAggregator},
     },
     hooks::{
         on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
@@ -55,6 +55,7 @@ use crate::{
     },
     plugin_context::PluginRequestState,
     plugin_trait::{EndControlFlow, StartControlFlow},
+    plugins::hooks,
     projection::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
@@ -284,7 +285,7 @@ pub async fn execute_query_plan<'exec>(
                     client_request: ClientRequestDetails {
                         method: &client_method,
                         url: &client_url,
-                        headers: &client_headers,
+                        headers: client_headers.clone(),
                         operation: OperationDetails {
                             query: &client_operation_query,
                             name: client_operation_name.as_deref(),
@@ -350,10 +351,14 @@ async fn execute_query_plan_with_data<'exec>(
 
     let mut on_end_callbacks = vec![];
 
+    // TODO: coprocessor.on_execution_request
     if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
+            request_context: plugin_req_state
+                .request_context
+                .for_plugin::<hooks::OnExecute>(),
             query_plan: opts.query_plan,
             operation_for_plan: &opts.operation_for_plan,
             data,
@@ -422,12 +427,18 @@ async fn execute_query_plan_with_data<'exec>(
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
+    // TODO: coprocessor.on_execution_response
     if !on_end_callbacks.is_empty() {
         let mut end_payload = OnExecuteEndHookPayload {
             data,
             errors,
             extensions,
             response_size_estimate,
+            request_context: opts
+                .plugin_req_state
+                .as_ref()
+                .map(|state| state.request_context.for_plugin::<hooks::OnExecute>())
+                .expect("plugin state not available, but on_end_callbacks are present"),
         };
 
         for callback in on_end_callbacks {
@@ -1388,11 +1399,11 @@ fn select_fetch_variables<'a>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        context::ExecutionContext,
         execution::{
             client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
             plan::Executor,
         },
+        execution_context::ExecutionContext,
         headers::plan::HeaderRulesPlan,
         introspection::schema::SchemaMetadata,
         response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
@@ -1565,7 +1576,7 @@ mod tests {
             client_request: &ClientRequestDetails {
                 method: &http::Method::POST,
                 url: &"http://example.com".parse().unwrap(),
-                headers: &HeaderMap::new(),
+                headers: HeaderMap::new().into(),
                 operation: OperationDetails {
                     name: None,
                     query: "{ products { upc } }",
@@ -1677,7 +1688,7 @@ mod tests {
             client_request: &ClientRequestDetails {
                 method: &http::Method::POST,
                 url: &"http://example.com".parse().unwrap(),
-                headers: &HeaderMap::new(),
+                headers: HeaderMap::new().into(),
                 operation: OperationDetails {
                     name: None,
                     query: "{ from_a from_b }",

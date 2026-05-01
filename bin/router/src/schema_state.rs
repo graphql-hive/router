@@ -18,7 +18,8 @@ use hive_router_plan_executor::response::graphql_error::GraphQLErrorExtensions;
 use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
     hooks::on_supergraph_load::{
-        OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload, SupergraphData,
+        OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload, PublicSchema,
+        SupergraphData,
     },
     introspection::schema::SchemaWithMetadata,
     plugin_trait::{EndControlFlow, RouterPluginBoxed, StartControlFlow},
@@ -263,6 +264,10 @@ impl SchemaState {
 
         Ok(SupergraphData {
             supergraph_schema: Arc::new(parsed_supergraph_sdl),
+            public_schema: PublicSchema {
+                document: planner.consumer_schema.document.clone(),
+                sdl: Arc::<str>::from(planner.consumer_schema.document.to_string()),
+            },
             metadata,
             planner,
             authorization,

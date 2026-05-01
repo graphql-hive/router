@@ -610,7 +610,7 @@ impl SupergraphState {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum OperationKind {
     #[serde(rename = "query")]
@@ -621,12 +621,35 @@ pub enum OperationKind {
     Subscription,
 }
 
+impl OperationKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OperationKind::Query => "query",
+            OperationKind::Mutation => "mutation",
+            OperationKind::Subscription => "subscription",
+        }
+    }
+}
+
 impl Display for OperationKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OperationKind::Query => write!(f, "query"),
             OperationKind::Mutation => write!(f, "mutation"),
             OperationKind::Subscription => write!(f, "subscription"),
+        }
+    }
+}
+
+impl TryFrom<&str> for OperationKind {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "query" => Ok(OperationKind::Query),
+            "mutation" => Ok(OperationKind::Mutation),
+            "subscription" => Ok(OperationKind::Subscription),
+            _ => Err("invalid operation kind".to_string()),
         }
     }
 }

@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+log:
+  level: info
+coprocessor:
+  url: unix:///tmp/hive-bench-coprocessor.sock?path=/coprocessor
+  protocol: h2c
+  timeout: 2s
+  stages:
+    router:
+      request:
+        condition:
+          expression: .request.method == "POST"
+        include:
+          headers: true
+          method: true
+          context: true
