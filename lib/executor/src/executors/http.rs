@@ -298,7 +298,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
         plugin_req_state: Option<&'a PluginRequestState<'a>>,
-    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         let mut body = build_request_body(&execution_request)?;
 
         self.header_map.iter().for_each(|(key, value)| {
@@ -635,14 +635,12 @@ pub struct SubgraphHttpResponse {
 }
 
 impl SubgraphHttpResponse {
-    fn deserialize_http_response<'a>(self) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
-        SubgraphResponse::deserialize_from_bytes(self.body.clone()).map(
-            |mut resp: SubgraphResponse<'a>| {
-                // headers are under arc, zero cost clone
-                resp.headers = Some(self.headers.clone());
-                resp
-            },
-        )
+    fn deserialize_http_response(self) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        SubgraphResponse::deserialize_from_bytes(self.body).map(|mut resp: SubgraphResponse| {
+            resp.headers = Some(self.headers);
+            resp.status = Some(self.status);
+            resp
+        })
     }
 }
 

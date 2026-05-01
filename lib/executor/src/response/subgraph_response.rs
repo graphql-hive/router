@@ -6,7 +6,7 @@ use crate::{
     response::{graphql_error::GraphQLError, value::Value},
 };
 use bytes::Bytes;
-use http::HeaderMap;
+use http::{HeaderMap, StatusCode};
 use serde::de::{self, Deserializer, MapAccess, Visitor};
 
 #[derive(Debug, Default)]
@@ -16,6 +16,7 @@ pub struct SubgraphResponse<'a> {
     pub extensions: Option<Value<'a>>,
     pub headers: Option<Arc<HeaderMap>>,
     pub bytes: Option<Bytes>,
+    pub status: Option<StatusCode>,
 }
 
 impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
@@ -80,6 +81,7 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
                     data,
                     errors,
                     extensions,
+                    status: None,
                     headers: None,
                     bytes: None,
                 })
@@ -92,7 +94,7 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
     }
 }
 
-impl<'a> SubgraphResponse<'a> {
+impl SubgraphResponse<'_> {
     pub fn deserialize_from_bytes(
         bytes: Bytes,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {

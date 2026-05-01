@@ -1,6 +1,9 @@
+use hive_console_sdk::circuit_breaker::CircuitBreakerError;
 use http::{uri::InvalidUri, StatusCode};
 use rustls::server::VerifierBuilderError;
 use strum::IntoStaticStr;
+
+use crate::response::subgraph_response::SubgraphResponse;
 
 #[derive(thiserror::Error, Debug, IntoStaticStr)]
 pub enum SubgraphExecutorError {
@@ -57,6 +60,12 @@ pub enum SubgraphExecutorError {
     #[error(transparent)]
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     TlsCertificatesError(#[from] TlsCertificatesError),
+    #[error("Unable to create circuit breaker: {0} for subgraph \"{1}\"")]
+    #[strum(serialize = "SUBGRAPH_CIRCUIT_BREAKER_CREATION_FAILURE")]
+    CircuitBreakerCreationError(CircuitBreakerError, String),
+    #[error("Rejected by the circuit breaker")]
+    #[strum(serialize = "SUBGRAPH_CIRCUIT_BREAKER_REJECTED")]
+    CircuitBreakerRejected,
     #[error("Unsupported content-type '{0}': expected 'multipart/mixed' or 'text/event-stream' for HTTP subscriptions")]
     #[strum(serialize = "SUBGRAPH_SUBSCRIPTION_UNSUPPORTED_CONTENT_TYPE")]
     UnsupportedContentTypeError(String),
@@ -93,6 +102,9 @@ pub enum SubgraphExecutorError {
     #[error("HTTP Callback protocol configured for subgraph but no callback configuration provided for router")]
     #[strum(serialize = "SUBGRAPH_HTTP_CALLBACK_NOT_CONFIGURED")]
     HttpCallbackNotConfigured,
+    #[error("Subgraph internal server error")]
+    #[strum(serialize = "SUBGRAPH_INTERNAL_SERVER_ERROR")]
+    InternalServerError(Box<SubgraphResponse<'static>>),
 }
 
 impl SubgraphExecutorError {

@@ -1,10 +1,15 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
-use schemars::JsonSchema;
+use http::StatusCode;
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 use crate::primitives::{
-    file_path::FilePath, http_header::HttpHeaderName, single_or_multiple::SingleOrMultiple,
+    file_path::FilePath, http_header::HttpHeaderName, percentage::Percentage,
+    single_or_multiple::SingleOrMultiple,
 };
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -91,6 +96,11 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// ```
     pub request_timeout: Option<DurationOrExpression>,
 
+    /// Circuit Breaker configuration for the subgraph.
+    /// When the circuit breaker is open, requests to the subgraph will be short-circuited and an error will be returned to the client.
+    /// The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
+    pub circuit_breaker: Option<TrafficShapingSubgraphCircuitBreakerConfig>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<ClientTLSConfig>,
 
@@ -143,6 +153,12 @@ pub struct TrafficShapingExecutorGlobalConfig {
     #[serde(default = "default_request_timeout")]
     pub request_timeout: DurationOrExpression,
 
+    /// Circuit Breaker configuration for all subgraphs.
+    /// When the circuit breaker is open, requests to the subgraph will be
+    /// short-circuited and an error will be returned to the client.
+    /// The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
+    pub circuit_breaker: Option<TrafficShapingSubgraphCircuitBreakerConfig>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<ClientTLSConfig>,
 
@@ -184,6 +200,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             pool_idle_timeout: default_pool_idle_timeout(),
             dedupe_enabled: default_dedupe_enabled(),
             request_timeout: default_request_timeout(),
+            circuit_breaker: default_circuit_breaker_config(),
             tls: None,
             allow_only_http2: false,
         }
@@ -321,12 +338,108 @@ impl Default for TrafficShapingRouterConfig {
     }
 }
 
+fn default_circuit_breaker_config() -> Option<TrafficShapingSubgraphCircuitBreakerConfig> {
+    None
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ServerTLSConfig {
     pub cert_file: SingleOrMultiple<FilePath>,
     pub key_file: FilePath,
     pub client_auth: Option<ServerClientAuthConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingSubgraphCircuitBreakerConfig {
+    /// Enable or disable the circuit breaker for the subgraph.
+    /// Default: false (circuit breaker is disabled)
+    ///
+    /// When unset on a subgraph-level configuration, the value falls back
+    /// to the value defined in the global (`all`) circuit breaker
+    /// configuration.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Percentage after what the circuit breaker should kick in.
+    /// Default: 50%
+    #[serde(default)]
+    #[schemars(with = "String")]
+    pub error_threshold: Option<Percentage>,
+    /// Count of requests before starting evaluating.
+    /// Default: 5
+    #[serde(default)]
+    pub volume_threshold: Option<usize>,
+    /// The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.
+    /// Default: 30s
+    #[serde(
+        default,
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub reset_timeout: Option<Duration>,
+    /// HTTP status codes returned by the subgraph that should be counted as
+    /// failures by the circuit breaker.
+    ///
+    /// Only responses whose status code is contained in this list will be
+    /// recorded as failures. Responses with any other status code (including
+    /// other 5xx codes) are treated as successes from the circuit breaker's
+    /// point of view.
+    ///
+    /// Default: `[503]`
+    #[serde(
+        default,
+        deserialize_with = "deserialize_status_codes",
+        serialize_with = "serialize_status_codes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(schema_with = "schema_status_codes")]
+    pub error_status_codes: Option<HashSet<StatusCode>>,
+}
+
+pub fn serialize_status_codes<S>(
+    status_codes: &Option<HashSet<StatusCode>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match status_codes {
+        Some(codes) => {
+            let codes_as_u16: Vec<u16> = codes.iter().map(|code| code.as_u16()).collect();
+            codes_as_u16.serialize(serializer)
+        }
+        None => serializer.serialize_none(),
+    }
+}
+
+pub fn deserialize_status_codes<'de, D>(
+    deserializer: D,
+) -> Result<Option<HashSet<StatusCode>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt_vec = Option::<Vec<u16>>::deserialize(deserializer)?;
+    Ok(opt_vec.map(|vec| {
+        vec.into_iter()
+            .filter_map(|code| StatusCode::from_u16(code).ok())
+            .collect()
+    }))
+}
+
+pub fn schema_status_codes(_generator: &mut SchemaGenerator) -> Schema {
+    // Schema for `Option<HashSet<StatusCode>>` represented as an array of valid HTTP
+    // status codes (integers in the range 100-599) or null.
+    schemars::json_schema!({
+        "type": ["array", "null"],
+        "items": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
+        },
+        "uniqueItems": true
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

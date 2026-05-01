@@ -2665,6 +2665,7 @@ dependencies = [
  "futures",
  "futures-util",
  "graphql-tools",
+ "hive-console-sdk",
  "hive-router-config",
  "hive-router-internal",
  "hive-router-query-planner",
@@ -2676,8 +2677,10 @@ dependencies = [
  "indexmap 2.14.0",
  "insta",
  "itoa",
+ "lazy_static",
  "mockito",
  "ntex",
+ "recloser",
  "regex-automata",
  "rustls",
  "ryu",
@@ -6449,7 +6452,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
