@@ -193,7 +193,7 @@ jobs:
             package: "hive-router"
             binary: "hive_router"
             config: "bench/configs/persisted-documents.config.yaml"
-            compare_with_default: true
+            compare_with_default: false
     name: benchmark / router / ${{ matrix.name }}
     runs-on: ubuntu-latest
     env:
