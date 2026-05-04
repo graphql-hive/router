@@ -51,6 +51,42 @@ fn multiple_inline_fragments_on_same_concrete_type_within_interface_fragment(
 }
 
 #[test]
+fn nested_same_name_directives_on_abstract_and_concrete_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($parent: Boolean!, $child: Boolean!) {
+          account(id: "a1") {
+            ... on Node @include(if: $parent) {
+              ... on Account @include(if: $child) {
+                username
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        document,
+    )?;
+
+    let query_plan = format!("{}", query_plan);
+    assert!(
+        query_plan.contains("$parent"),
+        "parent directive condition must be preserved in the query plan"
+    );
+    assert!(
+        query_plan.contains("$child"),
+        "child directive condition must be preserved in the query plan"
+    );
+
+    // TODO: include also the inline snapshot of the QP
+
+    Ok(())
+}
+
+#[test]
 fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
