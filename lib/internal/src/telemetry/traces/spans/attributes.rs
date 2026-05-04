@@ -19,6 +19,10 @@ pub const USER_AGENT_ORIGINAL: &str = "user_agent.original";
 pub const HTTP_RESPONSE_STATUS_CODE: &str = "http.response.status_code";
 pub const HTTP_RESPONSE_BODY_SIZE: &str = "http.response.body.size";
 pub const HTTP_ROUTE: &str = "http.route";
+pub const CLIENT_ADDRESS: &str = "client.address";
+pub const CLIENT_PORT: &str = "client.port";
+pub const NETWORK_PEER_ADDRESS: &str = "network.peer.address";
+pub const NETWORK_PEER_PORT: &str = "network.peer.port";
 
 /// GraphQL Attributes
 pub const GRAPHQL_OPERATION_NAME: &str = "graphql.operation.name";
