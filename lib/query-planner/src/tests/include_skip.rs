@@ -1531,7 +1531,7 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
 }
 
 #[test]
-fn qp_abstract_interface_uniform_condition_can_skip_remote_fetch() -> Result<(), Box<dyn Error>> {
+fn qp_abstract_interface_shared_condition_can_skip_remote_fetch() -> Result<(), Box<dyn Error>> {
     init_logger();
 
     let document = parse_operation(
