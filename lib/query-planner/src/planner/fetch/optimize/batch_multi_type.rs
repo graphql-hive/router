@@ -5,8 +5,9 @@ use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
 
 use crate::ast::merge_path::Condition;
-use crate::planner::fetch::fetch_step_data::FetchStepFlags;
-use crate::planner::fetch::optimize::utils::type_condition_types_from_response_path;
+use crate::planner::fetch::fetch_step_data::{
+    type_condition_types_from_response_path, FetchStepFlags,
+};
 use crate::{
     ast::merge_path::{MergePath, Segment},
     planner::fetch::{

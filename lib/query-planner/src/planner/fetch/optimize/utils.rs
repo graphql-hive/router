@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use petgraph::{
     graph::NodeIndex,
@@ -7,8 +7,10 @@ use petgraph::{
 use tracing::{instrument, trace};
 
 use crate::{
-    ast::merge_path::Segment,
-    ast::{merge_path::MergePath, selection_set::find_arguments_conflicts},
+    ast::{
+        merge_path::{MergePath, Segment},
+        selection_set::find_arguments_conflicts,
+    },
     planner::fetch::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
@@ -17,52 +19,6 @@ use crate::{
         state::MultiTypeFetchStep,
     },
 };
-
-pub fn type_condition_types_from_response_path(
-    response_path: &MergePath,
-) -> Option<BTreeSet<&str>> {
-    let conditioned_types = response_path
-        .inner
-        .iter()
-        .filter_map(|segment| match segment {
-            Segment::TypeCondition(type_names, _) => Some(type_names),
-            _ => None,
-        })
-        .flat_map(|type_names| type_names.iter().map(|s| s.as_str()).clone())
-        .collect::<BTreeSet<_>>();
-
-    if conditioned_types.is_empty() {
-        None
-    } else {
-        Some(conditioned_types)
-    }
-}
-
-/// Moves a step-level condition into type-specific output branches when safe.
-/// Prevents accidentally applying the condition to sibling types.
-///
-/// Example:
-/// If a merged fetch has Book + Magazine output and a condition from a Book path,
-/// this applies the condition to Book selections only.
-fn scope_target_condition(target: &mut FetchStepData<MultiTypeFetchStep>) {
-    if !target.is_entity_call() || !target.is_fetching_multiple_types() {
-        return;
-    }
-
-    let Some(condition) = target.condition.clone() else {
-        return;
-    };
-
-    let Some(conditioned_types) = type_condition_types_from_response_path(&target.response_path)
-    else {
-        return;
-    };
-
-    target
-        .output
-        .wrap_with_condition_for_types(condition, &conditioned_types);
-    target.condition = None;
-}
 
 /// Handles the "target is non-entity, source has step-level condition" case.
 /// When merging an entity fetch into a non-entity target, the condition must
@@ -109,52 +65,6 @@ fn merge_source_condition_into_non_entity_target(
     Ok(true)
 }
 
-/// Tries to scope `source.condition` to source type branches.
-/// If type scope is unclear, keeps the condition on `target` as a safe fallback.
-fn preserve_or_scope_source_condition_for_entity_target(
-    target: &mut FetchStepData<MultiTypeFetchStep>,
-    source: &mut FetchStepData<MultiTypeFetchStep>,
-) {
-    // This helper only applies when the merge target is an entity fetch
-    if !target.is_entity_call() {
-        return;
-    }
-
-    // If source has no step-level condition, there is nothing to scope or preserve
-    let Some(condition) = source.condition.take() else {
-        return;
-    };
-
-    // We can scope condition to concrete type branches only in multi-type step.
-    // The response path's type-condition segments tell us which concrete types are affected.
-    let conditioned_types =
-        if target.is_fetching_multiple_types() || source.is_fetching_multiple_types() {
-            type_condition_types_from_response_path(&source.response_path)
-        } else {
-            None
-        };
-
-    // We know the concrete types, so apply condition only to those
-    // source output branches (instead of gating whole step).
-    if let Some(types) = conditioned_types {
-        source
-            .output
-            .wrap_with_condition_for_types(condition, &types);
-        return;
-    }
-
-    if target.condition.as_ref() == Some(&condition) {
-        // Both have the same condition, safe to keep at the step level.
-        // We re-set it on the target as it was taken from the source.
-        target.condition = Some(condition);
-    } else {
-        // If target is unconditional, or has a different condition, we cannot
-        // apply the source's condition at the step level. Instead, we wrap only
-        // the source's output selections with its condition.
-        source.output.wrap_with_condition(condition);
-    }
-}
-
 // Return true in case an alias was applied during the merge process.
 #[instrument(level = "trace", skip_all)]
 pub(crate) fn perform_fetch_step_merge(
@@ -171,11 +81,9 @@ pub(crate) fn perform_fetch_step_merge(
         source_index.index(),
     );
 
-    scope_target_condition(target);
-
     let source_condition_merged = merge_source_condition_into_non_entity_target(target, source)?;
     if !source_condition_merged {
-        preserve_or_scope_source_condition_for_entity_target(target, source);
+        target.scope_fetch_conditions_before_merge(source);
     }
 
     let scoped_aliases = target.output.safe_migrate_from_another(
@@ -220,6 +128,11 @@ pub(crate) fn perform_fetch_step_merge(
             .input
             .migrate_from_another(&source.input, &MergePath::default())?;
     }
+
+    // Conditions may have been pushed down to keep the merge correct.
+    // If the merged fetch is still guarded by one shared condition, lift it back to
+    // step level.
+    target.lift_shared_output_condition_to_fetch();
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];

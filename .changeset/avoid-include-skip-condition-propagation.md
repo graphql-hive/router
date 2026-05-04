@@ -4,7 +4,7 @@ hive-router-plan-executor: patch
 hive-router: patch
 ---
 
-# Avoid propagating @include/@skip conditions to unconditional fetches
+# Avoid propagating `@include`/`@skip` conditions to unconditional fetches
 
 Fixed query planner condition propagation logic to avoid wrapping unconditional fetches
 in conditional blocks when merging steps. This ensures that fields without directives are
