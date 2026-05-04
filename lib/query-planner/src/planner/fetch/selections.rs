@@ -534,15 +534,8 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         }
 
         let condition = common_condition?;
-        let type_names = self
-            .iter()
-            .map(|(type_name, _)| type_name.clone())
-            .collect::<Vec<_>>();
-
-        for type_name in type_names {
-            if let Some(selection_set) = self.selections_for_definition_mut(&type_name) {
-                clear_top_level_fragment_conditions(&type_name, selection_set);
-            }
+        for (type_name, selection_set) in self.selections.iter_mut() {
+            clear_top_level_fragment_conditions(&type_name, selection_set);
         }
 
         Some(condition)
