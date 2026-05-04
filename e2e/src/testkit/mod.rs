@@ -1,4 +1,3 @@
-pub mod docker;
 pub mod otel;
 
 use axum_server::{tls_rustls::RustlsConfig, Handle};
