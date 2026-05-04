@@ -174,26 +174,229 @@ impl RouterPlugin for ResponseCachePlugin {
 
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{docker::TestDockerContainer, TestRouter, TestSubgraphs};
+    use std::{
+        collections::HashMap,
+        io::{BufRead, BufReader, Read, Write},
+        net::{TcpListener, TcpStream},
+        sync::{Arc, Mutex},
+        time::{Duration, Instant},
+    };
+
+    use e2e::testkit::{TestRouter, TestSubgraphs};
     use hive_router::{http::StatusCode, ntex};
+
+    type Store = Arc<Mutex<HashMap<String, (Vec<u8>, Instant)>>>;
+
+    struct TinyRedisServer {
+        addr: String,
+    }
+
+    impl TinyRedisServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .expect("tiny redis server should bind to an ephemeral port");
+
+            let addr = listener
+                .local_addr()
+                .expect("tiny redis server should expose local addr");
+
+            let store: Store = Arc::new(Mutex::new(HashMap::new()));
+            let store_for_thread = Arc::clone(&store);
+
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let stream = match stream {
+                        Ok(stream) => stream,
+                        Err(_) => break,
+                    };
+
+                    let store = Arc::clone(&store_for_thread);
+
+                    std::thread::spawn(move || {
+                        handle_connection(stream, store);
+                    });
+                }
+            });
+
+            Self {
+                addr: format!("127.0.0.1:{}", addr.port()),
+            }
+        }
+
+        fn redis_url(&self) -> String {
+            format!("redis://{}", self.addr)
+        }
+    }
+
+    fn read_line(reader: &mut BufReader<TcpStream>) -> Option<String> {
+        let mut line = String::new();
+
+        if reader.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+
+        Some(line.trim_end_matches("\r\n").to_string())
+    }
+
+    fn read_command(reader: &mut BufReader<TcpStream>) -> Option<Vec<Vec<u8>>> {
+        let header = read_line(reader)?;
+        let count: usize = header.strip_prefix('*')?.parse().ok()?;
+
+        let mut parts = Vec::with_capacity(count);
+
+        for _ in 0..count {
+            let len_header = read_line(reader)?;
+            let len: usize = len_header.strip_prefix('$')?.parse().ok()?;
+
+            let mut bytes = vec![0; len];
+            reader.read_exact(&mut bytes).ok()?;
+
+            let mut crlf = [0_u8; 2];
+            reader.read_exact(&mut crlf).ok()?;
+
+            if crlf != *b"\r\n" {
+                return None;
+            }
+
+            parts.push(bytes);
+        }
+
+        Some(parts)
+    }
+
+    fn write_simple(stream: &mut TcpStream, value: &str) {
+        let _ = stream.write_all(format!("+{value}\r\n").as_bytes());
+        let _ = stream.flush();
+    }
+
+    fn write_error(stream: &mut TcpStream, value: &str) {
+        let _ = stream.write_all(format!("-ERR {value}\r\n").as_bytes());
+        let _ = stream.flush();
+    }
+
+    fn write_bulk(stream: &mut TcpStream, value: Option<&[u8]>) {
+        match value {
+            Some(bytes) => {
+                let _ = stream.write_all(format!("${}\r\n", bytes.len()).as_bytes());
+                let _ = stream.write_all(bytes);
+                let _ = stream.write_all(b"\r\n");
+            }
+            None => {
+                let _ = stream.write_all(b"$-1\r\n");
+            }
+        }
+
+        let _ = stream.flush();
+    }
+
+    fn clean_expired(store: &mut HashMap<String, (Vec<u8>, Instant)>) {
+        let now = Instant::now();
+        store.retain(|_, (_, expires_at)| *expires_at > now);
+    }
+
+    fn is_command(value: &[u8], expected: &[u8]) -> bool {
+        value.eq_ignore_ascii_case(expected)
+    }
+
+    fn handle_connection(mut stream: TcpStream, store: Store) {
+        let read_stream = stream
+            .try_clone()
+            .expect("tiny redis server should clone stream");
+
+        let mut reader = BufReader::new(read_stream);
+
+        while let Some(parts) = read_command(&mut reader) {
+            let Some(command) = parts.first() else {
+                write_error(&mut stream, "empty command");
+                continue;
+            };
+
+            if is_command(command, b"PING") {
+                write_simple(&mut stream, "PONG");
+                continue;
+            }
+
+            if is_command(command, b"CLIENT") {
+                // redis-rs may send CLIENT SETINFO / CLIENT SETNAME.
+                // We don't care in this test.
+                write_simple(&mut stream, "OK");
+                continue;
+            }
+
+            if is_command(command, b"GET") {
+                if parts.len() != 2 {
+                    write_error(&mut stream, "wrong number of arguments for GET");
+                    continue;
+                }
+
+                let key = String::from_utf8_lossy(&parts[1]).to_string();
+
+                let mut store = store.lock().expect("tiny redis store lock should succeed");
+                clean_expired(&mut store);
+
+                let value = store.get(&key).map(|(value, _)| value.clone());
+                write_bulk(&mut stream, value.as_deref());
+
+                continue;
+            }
+
+            if is_command(command, b"SETEX") {
+                if parts.len() != 4 {
+                    write_error(&mut stream, "wrong number of arguments for SETEX");
+                    continue;
+                }
+
+                let key = String::from_utf8_lossy(&parts[1]).to_string();
+
+                let ttl_seconds = match String::from_utf8_lossy(&parts[2]).parse::<u64>() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        write_error(&mut stream, "invalid expire time");
+                        continue;
+                    }
+                };
+
+                let value = parts[3].clone();
+                let expires_at = Instant::now() + Duration::from_secs(ttl_seconds);
+
+                let mut store = store.lock().expect("tiny redis store lock should succeed");
+                clean_expired(&mut store);
+                store.insert(key, (value, expires_at));
+
+                write_simple(&mut stream, "OK");
+                continue;
+            }
+
+            write_error(
+                &mut stream,
+                &format!("unsupported command {}", String::from_utf8_lossy(command)),
+            );
+        }
+    }
 
     #[ntex::test]
     async fn test_caching_with_default_ttl() {
-        let container =
-            TestDockerContainer::builder("redis_resp_caching_test", "redis/redis-stack:latest")
-                .port(6379, 6379)
-                .env("ALLOW_EMPTY_PASSWORD=yes")
-                .build()
-                .start()
-                .await;
-
-        container.exec(vec!["redis-cli", "FLUSHALL"]).await;
+        let redis_server = TinyRedisServer::start();
+        let redis_url = redis_server.redis_url();
 
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .file_config("../plugin_examples/response_cache/router.config.yaml")
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: ../../e2e/supergraph.graphql
+                  plugins:
+                    response_cache_plugin:
+                      enabled: true
+                      config:
+                          redis_url: "{}"
+                          default_ttl_seconds: 2
+                "#,
+                redis_url
+            ))
             .register_plugin::<super::ResponseCachePlugin>()
             .build()
             .start()
