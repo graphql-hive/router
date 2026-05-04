@@ -11,34 +11,25 @@ fn main() {
     }
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let project_root_dir = manifest_dir.join("..").join("..");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("missing OUT_DIR"));
     let output_file = out_dir.join("laboratory.html");
     let product_logo = manifest_dir.join("static/product_logo.svg");
-    let node_modules_dist = out_dir.join("node_modules/@graphql-hive/laboratory/dist");
-
-    fs::copy(
-        manifest_dir.join("package.json"),
-        out_dir.join("package.json"),
-    )
-    .expect("Failed to copy package.json");
-    fs::copy(
-        manifest_dir.join("package-lock.json"),
-        out_dir.join("package-lock.json"),
-    )
-    .expect("Failed to copy package-lock.json");
+    let node_modules_dist = project_root_dir.join("node_modules/@graphql-hive/laboratory/dist");
 
     println!("cargo:rerun-if-changed={}", product_logo.display());
+
     println!(
         "cargo:rerun-if-changed={}",
         manifest_dir.join("package.json").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
-        manifest_dir.join("node_modules").display()
+        project_root_dir.join("node_modules").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
-        manifest_dir.join("package-lock.json").display()
+        project_root_dir.join("package-lock.json").display()
     );
 
     if !node_modules_dist.exists() {
@@ -47,7 +38,7 @@ fn main() {
                 "install",
                 "--include=dev", // NODE_ENV=production will skip dev deps - make sure they're in
             ])
-            .current_dir(out_dir)
+            .current_dir(project_root_dir)
             .status()
             .expect("Failed to execute npm install");
 

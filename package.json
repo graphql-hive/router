@@ -6,7 +6,8 @@
     "audits",
     "lib/node-addon",
     "docs/generator",
-    "bench"
+    "bench",
+    "bin/router"
   ],
   "packageManager": "npm@11.11.1",
   "devDependencies": {
