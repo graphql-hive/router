@@ -535,7 +535,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 
         let condition = common_condition?;
         for (type_name, selection_set) in self.selections.iter_mut() {
-            clear_top_level_fragment_conditions(&type_name, selection_set);
+            clear_top_level_fragment_conditions(type_name, selection_set);
         }
 
         Some(condition)
