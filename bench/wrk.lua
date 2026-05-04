@@ -90,13 +90,17 @@ if ok_cjson then
   cjson = cjson_module
 end
 
-local status_failures = 0
-local graphql_error_responses = 0
-local response_structure_failures = 0
-local checked_response_structure = false
-local sample_status_failure = nil
-local sample_graphql_error = nil
-local sample_structure_error = nil
+-- wrk runs response() in each worker's own Lua environment, while done()
+-- runs in a separate environment. Keep counters global so done() can read
+-- them from each worker via thread:get().
+threads = {}
+status_failures = 0
+graphql_error_responses = 0
+response_structure_failures = 0
+checked_response_structure = false
+sample_status_failure = nil
+sample_graphql_error = nil
+sample_structure_error = nil
 local find = string.find
 
 local expected_response_file = os.getenv("BENCH_EXPECTED_RESPONSE_FILE")
@@ -143,6 +147,12 @@ wrk.method = "POST"
 wrk.headers["Content-Type"] = "application/json"
 wrk.body = request_body
 
+setup = function(thread)
+  -- Store thread handles in the done() environment so validation results can
+  -- be aggregated after all workers finish.
+  threads[#threads + 1] = thread
+end
+
 response = function(status, headers, body)
   if status ~= 200 then
     status_failures = status_failures + 1
@@ -174,18 +184,56 @@ response = function(status, headers, body)
   end
 end
 
-done = function(summary, latency, requests)
-  io.write("VALIDATION_STATUS_FAILURES=" .. status_failures .. "\n")
-  io.write("VALIDATION_GRAPHQL_ERRORS=" .. graphql_error_responses .. "\n")
-  io.write("VALIDATION_RESPONSE_STRUCTURE_FAILURES=" .. response_structure_failures .. "\n")
+local function get_thread_number(thread, name)
+  return thread:get(name) or 0
+end
 
-  if sample_status_failure ~= nil then
-    io.write("VALIDATION_STATUS_FAILURE_SAMPLE=" .. sample_status_failure .. "\n")
+local function get_thread_sample(thread, name)
+  local value = thread:get(name)
+  if value ~= nil and value ~= "" then
+    return value
   end
-  if sample_graphql_error ~= nil then
-    io.write("VALIDATION_GRAPHQL_ERROR_SAMPLE=" .. sample_graphql_error .. "\n")
+
+  return nil
+end
+
+done = function(summary, latency, requests)
+  local total_status_failures = 0
+  local total_graphql_error_responses = 0
+  local total_response_structure_failures = 0
+  local status_failure_sample = nil
+  local graphql_error_sample = nil
+  local structure_error_sample = nil
+
+  -- done() cannot see mutations performed by response() directly. Pull the
+  -- final global counter values from every worker environment instead.
+  for _, thread in ipairs(threads) do
+    total_status_failures = total_status_failures + get_thread_number(thread, "status_failures")
+    total_graphql_error_responses = total_graphql_error_responses + get_thread_number(thread, "graphql_error_responses")
+    total_response_structure_failures = total_response_structure_failures + get_thread_number(thread, "response_structure_failures")
+
+    if status_failure_sample == nil then
+      status_failure_sample = get_thread_sample(thread, "sample_status_failure")
+    end
+    if graphql_error_sample == nil then
+      graphql_error_sample = get_thread_sample(thread, "sample_graphql_error")
+    end
+    if structure_error_sample == nil then
+      structure_error_sample = get_thread_sample(thread, "sample_structure_error")
+    end
   end
-  if sample_structure_error ~= nil then
-    io.write("VALIDATION_RESPONSE_STRUCTURE_FAILURE_SAMPLE=" .. sample_structure_error .. "\n")
+
+  io.write("VALIDATION_STATUS_FAILURES=" .. total_status_failures .. "\n")
+  io.write("VALIDATION_GRAPHQL_ERRORS=" .. total_graphql_error_responses .. "\n")
+  io.write("VALIDATION_RESPONSE_STRUCTURE_FAILURES=" .. total_response_structure_failures .. "\n")
+
+  if status_failure_sample ~= nil then
+    io.write("VALIDATION_STATUS_FAILURE_SAMPLE=" .. status_failure_sample .. "\n")
+  end
+  if graphql_error_sample ~= nil then
+    io.write("VALIDATION_GRAPHQL_ERROR_SAMPLE=" .. graphql_error_sample .. "\n")
+  end
+  if structure_error_sample ~= nil then
+    io.write("VALIDATION_RESPONSE_STRUCTURE_FAILURE_SAMPLE=" .. structure_error_sample .. "\n")
   end
 end
