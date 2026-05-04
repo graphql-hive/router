@@ -193,7 +193,7 @@ jobs:
             package: "hive-router"
             binary: "hive_router"
             config: "bench/configs/persisted-documents.config.yaml"
-            compare_with_default: false
+            compare_with_default: true
     name: benchmark / router / ${{ matrix.name }}
     runs-on: ubuntu-latest
     env:
@@ -268,8 +268,6 @@ jobs:
         run: ./bench/run-benchmark.sh
         env:
           SUMMARY_PATH: ./bench/results/main
-          BENCH_PERSISTED_MODE: ${{ matrix.name == 'persisted-documents' && 'true' || '' }}
-          BENCH_DOCUMENT_ID: ${{ matrix.name == 'persisted-documents' && 'bench_test_query' || '' }}
       - name: Compare benchmark results
         if: github.event_name == 'pull_request'
         run: |
