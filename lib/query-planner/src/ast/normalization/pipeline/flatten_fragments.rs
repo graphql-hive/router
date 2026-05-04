@@ -409,27 +409,65 @@ fn expand_abstract_fragment(
 
             // then a separate fragment for each sub-fragment's fields and directives.
             // Propagate any parent directives (e.g. @skip/@include) into each sub-fragment
-            // so they remain gated by the abstract fragment's conditions.  Only directives
-            // not already present on the sub-fragment are added, avoiding redundant nesting
-            // when the sub-fragment already carries the same condition as the parent.
+            // so they remain gated by the abstract fragment's conditions. For each parent
+            // directive we either:
+            //   * skip it, if a semantically equal directive (same name + args) is already
+            //     on the sub-fragment (avoids redundant nesting for the common case);
+            //   * merge it into the sub-fragment's directives, if no same-named directive
+            //     exists there;
+            //   * fall back to wrapping the sub-fragment in an outer inline fragment that
+            //     carries the parent directives, when a same-named directive with different
+            //     arguments is present on the sub-fragment (e.g. nested `@include` with
+            //     different conditions) — both conditions must be preserved and `@include`
+            //     / `@skip` are non-repeatable so they can't co-exist on the same fragment.
             for sub_fragment in &specific_sub_fragments {
                 let mut specific_fragment = (*sub_fragment).clone();
+
+                let mut needs_wrapping = false;
+                let mut directives_to_merge: Vec<_> = Vec::new();
                 for parent_directive in &fragment.directives {
-                    if !specific_fragment
+                    let same_named = specific_fragment
                         .directives
                         .iter()
-                        .any(|d| d.name == parent_directive.name)
-                    {
-                        specific_fragment.directives.push(parent_directive.clone());
+                        .find(|d| d.name == parent_directive.name);
+                    match same_named {
+                        Some(existing) if existing.arguments == parent_directive.arguments => {
+                            // Equivalent directive already present – nothing to do.
+                        }
+                        Some(_) => {
+                            // Same-named directive but with different arguments –
+                            // can't merge safely, must wrap.
+                            needs_wrapping = true;
+                            break;
+                        }
+                        None => {
+                            directives_to_merge.push(parent_directive.clone());
+                        }
                     }
                 }
+
                 handle_selection_set(
                     state,
                     possible_types,
                     obj_type_def,
                     &mut specific_fragment.selection_set,
                 )?;
-                new_items.push(Selection::InlineFragment(specific_fragment));
+
+                if needs_wrapping {
+                    let wrapper = InlineFragment {
+                        type_condition: Some(TypeCondition::On(obj_type_name.to_string())),
+                        directives: fragment.directives.clone(),
+                        selection_set: SelectionSet {
+                            span: fragment.selection_set.span,
+                            items: vec![Selection::InlineFragment(specific_fragment)],
+                        },
+                        position: fragment.position,
+                    };
+                    new_items.push(Selection::InlineFragment(wrapper));
+                } else {
+                    specific_fragment.directives.extend(directives_to_merge);
+                    new_items.push(Selection::InlineFragment(specific_fragment));
+                }
             }
 
             continue;
