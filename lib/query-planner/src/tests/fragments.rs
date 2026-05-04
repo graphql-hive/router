@@ -50,6 +50,11 @@ fn multiple_inline_fragments_on_same_concrete_type_within_interface_fragment(
     Ok(())
 }
 
+/// Regression test: when an abstract-type fragment carries a directive (e.g. `@include`)
+/// and a nested concrete-type fragment carries another `@include` with a *different*
+/// argument, both conditions must be preserved in the query plan. Because `@include`/
+/// `@skip` are non-repeatable, the parent directive must be carried by an outer wrapper
+/// fragment around the inner one.
 #[test]
 fn nested_same_name_directives_on_abstract_and_concrete_fragments() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -71,17 +76,154 @@ fn nested_same_name_directives_on_abstract_and_concrete_fragments() -> Result<()
         document,
     )?;
 
-    let query_plan = format!("{}", query_plan);
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($child:Boolean!,$parent:Boolean!) {
+          account(id: "a1") {
+            ... on Account @include(if: $parent) {
+              ... on Account @include(if: $child) {
+                username
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// When the parent abstract fragment and the nested concrete fragment carry the
+/// *same* directive with the *same* argument, the duplicate must be collapsed —
+/// no redundant nesting should appear in the plan.
+#[test]
+fn nested_same_directive_same_arg_on_abstract_and_concrete_fragments() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($cond: Boolean!) {
+          account(id: "a1") {
+            ... on Node @include(if: $cond) {
+              ... on Account @include(if: $cond) {
+                username
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($cond:Boolean!) {
+          account(id: "a1") {
+            ... on Account @include(if: $cond) {
+              username
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// When the parent abstract fragment carries `@skip` and the nested concrete fragment
+/// carries `@include`, both directives must be preserved (different names, so they can
+/// be merged onto the same fragment).
+#[test]
+fn nested_different_directives_on_abstract_and_concrete_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($skip: Boolean!, $include: Boolean!) {
+          account(id: "a1") {
+            ... on Node @skip(if: $skip) {
+              ... on Account @include(if: $include) {
+                username
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        document,
+    )?;
+
+    let plan_str = format!("{}", query_plan);
     assert!(
-        query_plan.contains("$parent"),
-        "parent directive condition must be preserved in the query plan"
+        plan_str.contains("$skip"),
+        "parent @skip directive must be preserved: {plan_str}"
     );
     assert!(
-        query_plan.contains("$child"),
-        "child directive condition must be preserved in the query plan"
+        plan_str.contains("$include"),
+        "child @include directive must be preserved: {plan_str}"
     );
 
-    // TODO: include also the inline snapshot of the QP
+    insta::assert_snapshot!(plan_str, @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($include:Boolean!,$skip:Boolean!) {
+          account(id: "a1") {
+            ... on Account @skip(if: $skip) @include(if: $include) {
+              username
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// When the parent abstract fragment carries `@include` and the nested concrete fragment
+/// has *no* directive, the parent's `@include` must be merged onto the concrete fragment.
+#[test]
+fn parent_directive_only_on_abstract_fragment() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($parent: Boolean!) {
+          account(id: "a1") {
+            ... on Node @include(if: $parent) {
+              ... on Account {
+                username
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($parent:Boolean!) {
+          account(id: "a1") {
+            ... on Account @include(if: $parent) {
+              username
+            }
+          }
+        }
+      },
+    },
+    "#);
 
     Ok(())
 }
