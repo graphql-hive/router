@@ -76,8 +76,12 @@ pub use sonic_rs;
 pub use tokio;
 pub use tracing;
 use tracing::{info, warn, Instrument};
+pub mod tls;
 
+#[cfg(not(feature = "graphiql"))]
 static LABORATORY_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/laboratory.html"));
+#[cfg(feature = "graphiql")]
+static LABORATORY_HTML: &str = include_str!("../static/graphiql.html");
 
 struct CallbackServer(std::sync::Mutex<Option<ntex::server::Server>>);
 
@@ -149,7 +153,14 @@ async fn graphql_endpoint_dispatch(
     let parent_ctx = app_state
         .telemetry_context
         .extract_context(&HeaderExtractor(request.headers()));
-    let root_http_request_span = HttpServerRequestSpan::from_request(request);
+    let root_http_request_span = HttpServerRequestSpan::from_request(
+        request,
+        &app_state
+            .router_config
+            .telemetry
+            .client_identification
+            .ip_header,
+    );
     let _ = root_http_request_span.set_parent(parent_ctx);
 
     async {
@@ -251,10 +262,11 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let paths = RouterPaths::new(graphql_path.clone(), websocket_path, callback_path);
     paths.detect_conflicts(&prometheus)?;
 
+    let graphql_path = graphql_path.to_string();
     let long_lived_client_limit_service =
         LongLivedClientLimitService::new(&shared_state.router_config);
 
-    let maybe_error = web::HttpServer::new(async move || {
+    let server = web::HttpServer::new(async move || {
         let landing_page_path = graphql_path.clone();
         let prometheus = prometheus.clone();
         let long_lived_client_limit_service = long_lived_client_limit_service.clone();
@@ -274,9 +286,22 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
             .default_service(web::to(move || {
                 landing_page_handler(landing_page_path.clone())
             }))
-    })
-    .bind(&addr)
-    .map_err(|err| RouterInitError::HttpServerBindError(addr, err))?
+    });
+
+    let tls_config = shared_state_clone
+        .router_config
+        .traffic_shaping
+        .router
+        .tls
+        .as_ref();
+
+    let maybe_error = if let Some(tls_config) = tls_config {
+        let rustls_config = tls::build_rustls_config(tls_config)?;
+        server.bind_rustls(&addr, &rustls_config)
+    } else {
+        server.bind(&addr)
+    }
+    .map_err(|err| RouterInitError::HttpServerBindError(addr.to_string(), err))?
     .run()
     .await
     .map_err(RouterInitError::HttpServerStartError);

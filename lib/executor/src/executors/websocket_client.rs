@@ -86,17 +86,23 @@ impl From<WsClientError> for SubgraphResponse<'static> {
     }
 }
 
-pub async fn connect(uri: &http::Uri) -> Result<WsConnection<ntex::io::Sealed>, WsConnectError> {
+pub async fn connect(
+    uri: &http::Uri,
+    custom_tls_config: Option<Arc<rustls::ClientConfig>>,
+) -> Result<WsConnection<ntex::io::Sealed>, WsConnectError> {
     let scheme = uri
         .scheme_str()
         .ok_or_else(|| WsConnectError::MissingUriSchema(uri.to_string()))?;
     if scheme == "wss" {
-        let tls_config = Arc::new(
-            rustls::ClientConfig::builder()
-                .with_native_roots()
-                .map_err(|e| WsConnectError::NativeTlsCertificatesError(e.to_string()))?
-                .with_no_client_auth(),
-        );
+        let tls_config = match custom_tls_config {
+            Some(config) => config,
+            None => Arc::new(
+                rustls::ClientConfig::builder()
+                    .with_native_roots()
+                    .map_err(|e| WsConnectError::NativeTlsCertificatesError(e.to_string()))?
+                    .with_no_client_auth(),
+            ),
+        };
 
         let ws_client = NtexWsClient::builder(uri)
             .protocols([WS_SUBPROTOCOL])

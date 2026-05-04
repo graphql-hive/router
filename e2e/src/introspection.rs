@@ -3,6 +3,78 @@ mod introspection_e2e_tests {
     use crate::testkit::{ClientResponseExt, TestRouter};
 
     #[ntex::test]
+    async fn should_work_correctly_for_repeatable_directives() {
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"supergraph:
+                source: file
+                path: "./supergraph-introspection-extended.graphql"
+          "#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        let resp = router
+            .send_graphql_request(
+                r#"
+                query IntrospectionQuery {
+                  __schema {
+                    directives {
+                      name
+                      isRepeatable
+                    }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+
+        assert!(resp.status().is_success(), "Expected 200 OK");
+        let response = resp.json_body_string_pretty().await;
+
+        insta::assert_snapshot!(response, @r###"
+        {
+          "data": {
+            "__schema": {
+              "directives": [
+                {
+                  "name": "test_directive",
+                  "isRepeatable": false
+                },
+                {
+                  "name": "test_repeatable_directive",
+                  "isRepeatable": true
+                },
+                {
+                  "name": "skip",
+                  "isRepeatable": false
+                },
+                {
+                  "name": "include",
+                  "isRepeatable": false
+                },
+                {
+                  "name": "deprecated",
+                  "isRepeatable": false
+                },
+                {
+                  "name": "specifiedBy",
+                  "isRepeatable": false
+                },
+                {
+                  "name": "oneOf",
+                  "isRepeatable": false
+                }
+              ]
+            }
+          }
+        }
+        "###);
+    }
+
+    #[ntex::test]
     async fn should_have_deprecated_input_values_in_introspection() {
         let router = TestRouter::builder()
             .inline_config(&format!(
@@ -55,7 +127,7 @@ mod introspection_e2e_tests {
 
         assert!(resp.status().is_success(), "Expected 200 OK");
 
-        insta::assert_snapshot!(resp.json_body_string_pretty().await, @r#"
+        insta::assert_snapshot!(resp.json_body_string_pretty().await, @r###"
         {
           "data": {
             "Query": {
@@ -95,6 +167,21 @@ mod introspection_e2e_tests {
               "directives": [
                 {
                   "name": "test_directive",
+                  "args": [
+                    {
+                      "name": "oldArg",
+                      "isDeprecated": true,
+                      "deprecationReason": "Use `newArg` instead"
+                    },
+                    {
+                      "name": "newArg",
+                      "isDeprecated": false,
+                      "deprecationReason": null
+                    }
+                  ]
+                },
+                {
+                  "name": "test_repeatable_directive",
                   "args": [
                     {
                       "name": "oldArg",
@@ -156,8 +243,9 @@ mod introspection_e2e_tests {
             }
           }
         }
-        "#);
+        "###);
     }
+
     #[ntex::test]
     async fn should_have_is_one_of_in_input_values() {
         let router = TestRouter::builder()

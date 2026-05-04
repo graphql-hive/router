@@ -9,7 +9,7 @@ mod tests {
         let mut subgraphs = mockito::Server::new_async().await;
 
         let router = TestRouter::builder()
-            .with_subgraphs(subgraphs.socket_address())
+            .with_subgraphs_url(format!("http://{}", subgraphs.socket_address()))
             .file_config("../plugin_examples/error_mapping/router.config.yaml")
             .register_plugin::<crate::plugin::ErrorMappingPlugin>()
             .build()

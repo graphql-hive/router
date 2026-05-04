@@ -174,26 +174,290 @@ impl RouterPlugin for ResponseCachePlugin {
 
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{docker::TestDockerContainer, TestRouter, TestSubgraphs};
-    use hive_router::{http::StatusCode, ntex};
+    use std::{
+        collections::HashMap,
+        fs,
+        sync::{Arc, Mutex},
+        time::{Duration, Instant},
+    };
+
+    use e2e::testkit::{TestRouter, TestSubgraphs};
+    use hive_router::{http::StatusCode, ntex, tokio};
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+        net::{
+            tcp::{OwnedReadHalf, OwnedWriteHalf},
+            TcpListener, TcpStream,
+        },
+        sync::oneshot,
+    };
+
+    type Store = Arc<Mutex<HashMap<String, (Vec<u8>, Instant)>>>;
+
+    struct TinyRedisServer {
+        addr: String,
+        stop_tx: Option<oneshot::Sender<()>>,
+        thread_handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl TinyRedisServer {
+        async fn start() -> Self {
+            let (addr_tx, addr_rx) = std::sync::mpsc::sync_channel::<String>(1);
+            let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
+            let thread_handle = std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("tiny redis server should create tokio runtime");
+
+                rt.block_on(async move {
+                    let listener = TcpListener::bind("127.0.0.1:0")
+                        .await
+                        .expect("tiny redis server should bind to an ephemeral port");
+
+                    let addr = listener
+                        .local_addr()
+                        .expect("tiny redis server should expose local addr");
+                    let _ = addr_tx.send(format!("127.0.0.1:{}", addr.port()));
+
+                    let store: Store = Arc::new(Mutex::new(HashMap::new()));
+
+                    loop {
+                        tokio::select! {
+                            _ = &mut stop_rx => {
+                                break;
+                            }
+                            accepted = listener.accept() => {
+                                let Ok((stream, _)) = accepted else {
+                                    break;
+                                };
+
+                                let store = Arc::clone(&store);
+                                tokio::spawn(async move {
+                                    handle_connection(stream, store).await;
+                                });
+                            }
+                        }
+                    }
+                });
+            });
+
+            let addr = addr_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("tiny redis server should send bound addr");
+
+            Self {
+                addr,
+                stop_tx: Some(stop_tx),
+                thread_handle: Some(thread_handle),
+            }
+        }
+
+        fn redis_url(&self) -> String {
+            format!("redis://{}", self.addr)
+        }
+    }
+
+    impl Drop for TinyRedisServer {
+        fn drop(&mut self) {
+            if let Some(stop_tx) = self.stop_tx.take() {
+                let _ = stop_tx.send(());
+            }
+
+            if let Some(handle) = self.thread_handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    async fn read_line(reader: &mut BufReader<OwnedReadHalf>) -> Option<Vec<u8>> {
+        let mut line = Vec::new();
+        if reader.read_until(b'\n', &mut line).await.ok()? == 0 {
+            return None;
+        }
+
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+
+        Some(line)
+    }
+
+    fn bytes_to_string(bytes: Vec<u8>) -> Option<String> {
+        String::from_utf8(bytes).ok()
+    }
+
+    async fn read_command(reader: &mut BufReader<OwnedReadHalf>) -> Option<Vec<Vec<u8>>> {
+        let header = bytes_to_string(read_line(reader).await?)?;
+        if let Some(rest) = header.strip_prefix('*') {
+            let count: usize = rest.parse().ok()?;
+
+            let mut parts = Vec::with_capacity(count);
+
+            for _ in 0..count {
+                let len_header = bytes_to_string(read_line(reader).await?)?;
+                let len: usize = len_header.strip_prefix('$')?.parse().ok()?;
+
+                let mut bytes = vec![0; len];
+                reader.read_exact(&mut bytes).await.ok()?;
+
+                let mut crlf = [0_u8; 2];
+                reader.read_exact(&mut crlf).await.ok()?;
+
+                if crlf != *b"\r\n" {
+                    return None;
+                }
+
+                parts.push(bytes);
+            }
+
+            return Some(parts);
+        }
+
+        let parts = header
+            .split_whitespace()
+            .map(|part| part.as_bytes().to_vec())
+            .collect::<Vec<_>>();
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts)
+        }
+    }
+
+    async fn write_simple(stream: &mut OwnedWriteHalf, value: &str) {
+        let _ = stream.write_all(format!("+{value}\r\n").as_bytes()).await;
+        let _ = stream.flush().await;
+    }
+
+    async fn write_error(stream: &mut OwnedWriteHalf, value: &str) {
+        let _ = stream
+            .write_all(format!("-ERR {value}\r\n").as_bytes())
+            .await;
+        let _ = stream.flush().await;
+    }
+
+    async fn write_bulk(stream: &mut OwnedWriteHalf, value: Option<&[u8]>) {
+        match value {
+            Some(bytes) => {
+                let _ = stream
+                    .write_all(format!("${}\r\n", bytes.len()).as_bytes())
+                    .await;
+                let _ = stream.write_all(bytes).await;
+                let _ = stream.write_all(b"\r\n").await;
+            }
+            None => {
+                let _ = stream.write_all(b"$-1\r\n").await;
+            }
+        }
+
+        let _ = stream.flush().await;
+    }
+
+    fn clean_expired(store: &mut HashMap<String, (Vec<u8>, Instant)>) {
+        let now = Instant::now();
+        store.retain(|_, (_, expires_at)| *expires_at > now);
+    }
+
+    fn is_command(value: &[u8], expected: &[u8]) -> bool {
+        value.eq_ignore_ascii_case(expected)
+    }
+
+    async fn handle_connection(stream: TcpStream, store: Store) {
+        let (read_half, mut write_half) = stream.into_split();
+        let mut reader = BufReader::new(read_half);
+
+        while let Some(parts) = read_command(&mut reader).await {
+            let Some(command) = parts.first() else {
+                write_error(&mut write_half, "empty command").await;
+                continue;
+            };
+
+            if is_command(command, b"PING") {
+                write_simple(&mut write_half, "PONG").await;
+                continue;
+            }
+
+            if is_command(command, b"CLIENT") {
+                // redis-rs may send CLIENT SETINFO / CLIENT SETNAME.
+                // We don't care in this test.
+                write_simple(&mut write_half, "OK").await;
+                continue;
+            }
+
+            if is_command(command, b"GET") {
+                if parts.len() != 2 {
+                    write_error(&mut write_half, "wrong number of arguments for GET").await;
+                    continue;
+                }
+
+                let key = String::from_utf8_lossy(&parts[1]).to_string();
+
+                let value = {
+                    let mut store = store.lock().expect("tiny redis store lock should succeed");
+                    clean_expired(&mut store);
+                    store.get(&key).map(|(value, _)| value.clone())
+                };
+                write_bulk(&mut write_half, value.as_deref()).await;
+
+                continue;
+            }
+
+            if is_command(command, b"SETEX") {
+                if parts.len() != 4 {
+                    write_error(&mut write_half, "wrong number of arguments for SETEX").await;
+                    continue;
+                }
+
+                let key = String::from_utf8_lossy(&parts[1]).to_string();
+
+                let ttl_seconds = match String::from_utf8_lossy(&parts[2]).parse::<u64>() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        write_error(&mut write_half, "invalid expire time").await;
+                        continue;
+                    }
+                };
+
+                let value = parts[3].clone();
+                let expires_at = Instant::now() + Duration::from_secs(ttl_seconds);
+
+                {
+                    let mut store = store.lock().expect("tiny redis store lock should succeed");
+                    clean_expired(&mut store);
+                    store.insert(key, (value, expires_at));
+                }
+
+                write_simple(&mut write_half, "OK").await;
+                continue;
+            }
+
+            write_error(
+                &mut write_half,
+                &format!("unsupported command {}", String::from_utf8_lossy(command)),
+            )
+            .await;
+        }
+    }
 
     #[ntex::test]
     async fn test_caching_with_default_ttl() {
-        let container =
-            TestDockerContainer::builder("redis_resp_caching_test", "redis/redis-stack:latest")
-                .port(6379, 6379)
-                .env("ALLOW_EMPTY_PASSWORD=yes")
-                .build()
-                .start()
-                .await;
-
-        container.exec(vec!["redis-cli", "FLUSHALL"]).await;
+        let redis_server = TinyRedisServer::start().await;
+        let redis_url = redis_server.redis_url();
+        let router_config_path = format!("{}/router.config.yaml", env!("CARGO_MANIFEST_DIR"));
+        let router_config = fs::read_to_string(&router_config_path)
+            .expect("response-cache test should read router.config.yaml")
+            .replace("redis://localhost:6379", &redis_url);
 
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .file_config("../plugin_examples/response_cache/router.config.yaml")
+            .inline_config(router_config)
             .register_plugin::<super::ResponseCachePlugin>()
             .build()
             .start()

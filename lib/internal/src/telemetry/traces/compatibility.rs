@@ -279,6 +279,8 @@ mod tests {
     use crate::telemetry::traces::spans::http_request::{
         HttpClientRequestSpan, HttpServerRequestSpan,
     };
+    use hive_router_config::telemetry::ClientIpHeaderConfig;
+    use http::header::FORWARDED;
     use http_body_util::Full;
     use ntex::http::header::{HOST, USER_AGENT};
     use ntex::util::Bytes;
@@ -310,6 +312,10 @@ mod tests {
             .build();
 
         (provider, memory_exporter)
+    }
+
+    fn forwarded_ip_header_config() -> Option<ClientIpHeaderConfig> {
+        Some(ClientIpHeaderConfig::HeaderName(FORWARDED.as_str().into()))
     }
 
     fn setup_tracing_subscriber(provider: &SdkTracerProvider) -> impl Drop {
@@ -354,7 +360,8 @@ mod tests {
             ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
-            let span = HttpServerRequestSpan::from_request(&http_req);
+            let span =
+                HttpServerRequestSpan::from_request(&http_req, &forwarded_ip_header_config());
             span.record_body_size(body.len());
             span.record_response(&http_res);
         });
@@ -407,7 +414,8 @@ mod tests {
             ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
-            let span = HttpServerRequestSpan::from_request(&http_req);
+            let span =
+                HttpServerRequestSpan::from_request(&http_req, &forwarded_ip_header_config());
             span.record_body_size(body.len());
             span.record_response(&http_res);
         });
@@ -459,7 +467,8 @@ mod tests {
             ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
-            let span = HttpServerRequestSpan::from_request(&http_req);
+            let span =
+                HttpServerRequestSpan::from_request(&http_req, &forwarded_ip_header_config());
             span.record_body_size(body.len());
             span.record_response(&http_res);
         });
