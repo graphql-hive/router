@@ -176,6 +176,7 @@ impl RouterPlugin for ResponseCachePlugin {
 mod tests {
     use std::{
         collections::HashMap,
+        fs,
         sync::{Arc, Mutex},
         time::{Duration, Instant},
     };
@@ -447,25 +448,16 @@ mod tests {
     async fn test_caching_with_default_ttl() {
         let redis_server = TinyRedisServer::start().await;
         let redis_url = redis_server.redis_url();
+        let router_config_path = format!("{}/router.config.yaml", env!("CARGO_MANIFEST_DIR"));
+        let router_config = fs::read_to_string(&router_config_path)
+            .expect("response-cache test should read router.config.yaml")
+            .replace("redis://localhost:6379", &redis_url);
 
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(format!(
-                r#"
-                  supergraph:
-                    source: file
-                    path: ../../e2e/supergraph.graphql
-                  plugins:
-                    response_cache_plugin:
-                      enabled: true
-                      config:
-                          redis_url: "{}"
-                          default_ttl_seconds: 2
-                "#,
-                redis_url
-            ))
+            .inline_config(router_config)
             .register_plugin::<super::ResponseCachePlugin>()
             .build()
             .start()
