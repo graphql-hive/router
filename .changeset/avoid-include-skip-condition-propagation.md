@@ -2,6 +2,7 @@
 hive-router-query-planner: patch
 hive-router-plan-executor: patch
 hive-router: patch
+node-addon: patch
 ---
 
 # Avoid propagating `@include`/`@skip` conditions to unconditional fetches
