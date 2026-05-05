@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use bytes::Bytes;
-use hive_router_internal::expressions::vrl::core::Value;
-use http::{HeaderMap, HeaderValue};
+use hive_router_internal::expressions::{lib::ToVrlValue, vrl::core::Value};
+use http::HeaderValue;
 
 use crate::headers::{request::RequestExpressionContext, response::ResponseExpressionContext};
 use hive_router_internal::expressions::FromVrlValue;
@@ -14,19 +14,6 @@ use hive_router_internal::expressions::FromVrlValue;
 /// For detailed error information, use `HeaderValue::from_vrl_value()` directly.
 pub fn vrl_value_to_header_value(value: Value) -> Option<HeaderValue> {
     HeaderValue::from_vrl_value(value).ok()
-}
-
-fn header_map_to_vrl_value(headers: &HeaderMap) -> Value {
-    let mut obj = BTreeMap::new();
-    for (header_name, header_value) in headers.iter() {
-        if let Ok(value) = header_value.to_str() {
-            obj.insert(
-                header_name.as_str().into(),
-                Value::Bytes(Bytes::from(value.to_owned())),
-            );
-        }
-    }
-    Value::Object(obj)
 }
 
 impl From<&RequestExpressionContext<'_>> for Value {
@@ -57,7 +44,10 @@ impl From<&ResponseExpressionContext<'_>> for Value {
             Self::Bytes(Bytes::from(ctx.subgraph_name.to_owned())),
         )]));
         // .response
-        let response_value = header_map_to_vrl_value(ctx.subgraph_headers);
+        let response_value = Self::Object(BTreeMap::from([(
+            "headers".into(),
+            ctx.subgraph_headers.to_vrl_value(),
+        )]));
         // .request
         let request_value: Self = ctx.client_request.into();
 

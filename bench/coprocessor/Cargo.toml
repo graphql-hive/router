@@ -1,0 +1,16 @@
+[package]
+name = "bench-coprocessor"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "bench-coprocessor"
+path = "main.rs"
+
+[dependencies]
+bytes = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = ["server", "http2"] }
+hyper-util = { version = "0.1.20", features = ["server", "http2", "tokio"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "net"] }

@@ -15,6 +15,7 @@ use hive_router_plan_executor::{
     },
     projection::plan::FieldProjectionPlan,
 };
+use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::{
     ast::normalization::normalize_operation,
     planner::Planner,
@@ -63,7 +64,7 @@ fn authorization_benchmark(c: &mut Criterion) {
                 .map(Arc::new),
             operation_indentity: OperationIdentity {
                 name: None,
-                operation_type: "query",
+                operation_type: OperationKind::Query,
                 client_document_hash: "".to_string(),
             },
             operation_for_plan_hash: hashes.operation_for_plan_hash,
