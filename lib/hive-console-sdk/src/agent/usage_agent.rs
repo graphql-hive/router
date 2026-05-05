@@ -107,6 +107,9 @@ pub trait UsageAgentExt {
     }
     async fn flush(&self) -> Result<(), AgentError>;
     async fn start_flush_interval(&self, token: &CancellationToken);
+    /// Deprecated: use [`add_report_with_request`] instead.
+    /// This method will be removed in a future version major.
+    #[deprecated(note = "use `add_report_with_request` instead")]
     async fn add_report(&self, execution_report: ExecutionReport) -> Result<(), AgentError>;
 
     async fn add_report_with_request(
