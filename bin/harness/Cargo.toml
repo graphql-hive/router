@@ -1,0 +1,14 @@
+[package]
+name = "graphql-harness"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+hive-router-query-planner = { path = "../../lib/query-planner" }
+hive-router-plan-executor = { path = "../../lib/executor" }
+graphql-tools =  { path = "../../lib/graphql-tools" }
+rand = { workspace = true }
