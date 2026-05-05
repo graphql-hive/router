@@ -228,6 +228,104 @@ fn parent_directive_only_on_abstract_fragment() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Reusing the same named fragment with different `@include` conditions on the same
+/// concrete parent must preserve both conditions as separate wrappers.
+#[test]
+fn reusable_fragment_with_mixed_include_conditions_on_concrete_parent() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($first: Boolean!, $second: Boolean!) {
+          account(id: "a1") {
+            ...AccountFields @include(if: $first)
+            ...AccountFields @include(if: $second)
+          }
+        }
+
+        fragment AccountFields on Account {
+          username
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($first:Boolean!,$second:Boolean!) {
+          account(id: "a1") {
+            ... on Account @include(if: $first) {
+              ...a
+            }
+            ... on Account @include(if: $second) {
+              ...a
+            }
+          }
+        }
+        fragment a on Account {
+          username
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Reusing the same named fragment with different `@include` conditions under an
+/// abstract parent must keep both conditions through type expansion.
+#[test]
+fn reusable_fragment_with_mixed_include_conditions_on_abstract_parent() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($first: Boolean!, $second: Boolean!) {
+          account(id: "a1") {
+            ... on Node {
+              ...AccountFields @include(if: $first)
+              ...AccountFields @include(if: $second)
+            }
+          }
+        }
+
+        fragment AccountFields on Account {
+          username
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($first:Boolean!,$second:Boolean!) {
+          account(id: "a1") {
+            ... on Account @include(if: $first) {
+              ...a
+            }
+            ... on Account @include(if: $second) {
+              ...a
+            }
+          }
+        }
+        fragment a on Account {
+          username
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
     init_logger();

@@ -1407,4 +1407,492 @@ mod tests {
         "
         );
     }
+
+    #[test]
+    fn fragment_spread_on_interface_across_field_boundary_preserves_type_context() {
+        let schema_str = std::fs::read_to_string("./fixture/issues/939.supergraph.graphql")
+            .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query SingleNode($id: ID!) {
+                          node(id: $id) {
+                            ... on MyNode {
+                              content {
+                                ... on ITextContent {
+                                  fragments {
+                                    contentNode {
+                                      content {
+                                        ...ITextContentPreview
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+
+                        fragment ITextContentPreview on ITextContent {
+                          id
+                        }
+                      "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query SingleNode($id: ID!) {
+          node(id: $id) {
+            ... on MyNode {
+              content {
+                ... on TextContent {
+                  fragments {
+                    contentNode {
+                      content {
+                        ... on TextContent {
+                          id
+                        }
+                        ... on TextGroupContent {
+                          id
+                        }
+                      }
+                    }
+                  }
+                }
+                ... on TextGroupContent {
+                  fragments {
+                    contentNode {
+                      content {
+                        ... on TextContent {
+                          id
+                        }
+                        ... on TextGroupContent {
+                          id
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#
+        );
+    }
+
+    #[test]
+    fn same_type_fragment_spread_directives_are_preserved() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              account: Account
+            }
+
+            interface Node {
+              id: ID!
+            }
+
+            type Account implements Node {
+              id: ID!
+              name: String!
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($cond: Boolean!) {
+                          account {
+                            ...AccountFields @include(if: $cond)
+                          }
+                        }
+
+                        fragment AccountFields on Account {
+                          name
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query($cond: Boolean!) {
+          account {
+            ... on Account @include(if: $cond) {
+              name
+            }
+          }
+        }
+        "#
+        );
+    }
+
+    #[test]
+    fn same_type_fragment_spread_skip_is_preserved() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              account: Account
+            }
+
+            type Account {
+              id: ID!
+              name: String!
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($cond: Boolean!) {
+                          account {
+                            ...AccountFields @skip(if: $cond)
+                          }
+                        }
+
+                        fragment AccountFields on Account {
+                          name
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query($cond: Boolean!) {
+          account {
+            ... on Account @skip(if: $cond) {
+              name
+            }
+          }
+        }
+        "#
+        );
+    }
+
+    #[test]
+    fn same_type_fragment_spread_include_and_skip_are_preserved() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              account: Account
+            }
+
+            type Account {
+              id: ID!
+              name: String!
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($include: Boolean!, $skip: Boolean!) {
+                          account {
+                            ...AccountFields @include(if: $include) @skip(if: $skip)
+                          }
+                        }
+
+                        fragment AccountFields on Account {
+                          name
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query($include: Boolean!, $skip: Boolean!) {
+          account {
+            ... on Account @skip(if: $skip) @include(if: $include) {
+              name
+            }
+          }
+        }
+        "#
+        );
+    }
+
+    #[test]
+    fn outer_same_type_fragment_spread_directive_is_preserved_through_nested_spreads() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              account: Account
+            }
+
+            type Account {
+              id: ID!
+              name: String!
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($cond: Boolean!) {
+                          account {
+                            ...AccountFields1 @include(if: $cond)
+                          }
+                        }
+
+                        fragment AccountFields1 on Account {
+                          ...AccountFields2
+                        }
+
+                        fragment AccountFields2 on Account {
+                          name
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query($cond: Boolean!) {
+          account {
+            ... on Account @include(if: $cond) {
+              name
+            }
+          }
+        }
+        "#
+        );
+    }
+
+    #[test]
+    fn inner_same_type_fragment_spread_directive_is_preserved_through_nested_spreads() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              account: Account
+            }
+
+            type Account {
+              id: ID!
+              name: String!
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($cond: Boolean!) {
+                          account {
+                            ...AccountFields1
+                          }
+                        }
+
+                        fragment AccountFields1 on Account {
+                          ...AccountFields2 @include(if: $cond)
+                        }
+
+                        fragment AccountFields2 on Account {
+                          name
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query($cond: Boolean!) {
+          account {
+            ... on Account @include(if: $cond) {
+              name
+            }
+          }
+        }
+        "#
+        );
+    }
+
+    #[test]
+    fn field_boundary_fragment_spread_include_is_preserved() {
+        let schema_str = std::fs::read_to_string("./fixture/issues/939.supergraph.graphql")
+            .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query SingleNode($cond: Boolean!, $id: ID!) {
+                          node(id: $id) {
+                            ... on MyNode {
+                              content {
+                                ... on ITextContent {
+                                  fragments {
+                                    contentNode {
+                                      content {
+                                        ...ITextContentPreview @include(if: $cond)
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+
+                        fragment ITextContentPreview on ITextContent {
+                          id
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query SingleNode($cond: Boolean!, $id: ID!) {
+          node(id: $id) {
+            ... on MyNode {
+              content {
+                ... on TextContent {
+                  fragments {
+                    contentNode {
+                      content {
+                        ... on TextContent @include(if: $cond) {
+                          id
+                        }
+                        ... on TextGroupContent @include(if: $cond) {
+                          id
+                        }
+                      }
+                    }
+                  }
+                }
+                ... on TextGroupContent {
+                  fragments {
+                    contentNode {
+                      content {
+                        ... on TextContent @include(if: $cond) {
+                          id
+                        }
+                        ... on TextGroupContent @include(if: $cond) {
+                          id
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#
+        );
+    }
+
+    #[test]
+    fn reusable_fragment_with_mixed_include_conditions_stays_separate() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              account: Account
+            }
+
+            type Account {
+              id: ID!
+              name: String!
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($first: Boolean!, $second: Boolean!) {
+                          account {
+                            ...AccountFields @include(if: $first)
+                            ...AccountFields @include(if: $second)
+                          }
+                        }
+
+                        fragment AccountFields on Account {
+                          name
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query($first: Boolean!, $second: Boolean!) {
+          account {
+            ... on Account @include(if: $first) {
+              name
+            }
+            ... on Account @include(if: $second) {
+              name
+            }
+          }
+        }
+        "#
+        );
+    }
 }
