@@ -1,85 +1,17 @@
+use graphql_tools::ast::TypeDefinitionFields;
+use graphql_tools::parser::schema::parse_schema;
+use graphql_tools::parser::Pos;
+use graphql_tools::parser::Style;
+use graphql_tools::static_graphql::query::{
+    self as q, Directive as QueryDirective, Document as QueryDocument, Field as QueryField,
+    FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition, Selection,
+    SelectionSet, TypeCondition, Value as QueryValue, VariableDefinition,
+};
+use graphql_tools::static_graphql::schema::{
+    self as s, Document as SchemaDocument, Type as SchemaType,
+};
 use rand::{prelude::IndexedRandom, rngs::StdRng, seq::SliceRandom, RngExt, SeedableRng};
 use std::collections::BTreeMap;
-
-/// A minimal schema abstraction for schema-aware query generation.
-///
-/// Keep this trait small and adapt your real schema representation to it.
-/// For Hive Router you can implement this over whatever validated schema model
-/// you already have instead of coupling the generator to a specific parser crate.
-pub trait SchemaView {
-    fn query_type(&self) -> &str;
-
-    fn type_kind(&self, type_name: &str) -> Option<TypeKind>;
-
-    /// Fields visible directly from this type.
-    ///
-    /// For objects: object fields.
-    /// For interfaces: interface fields.
-    /// For unions: usually empty; `__typename` is generated separately.
-    fn fields(&self, type_name: &str) -> Vec<FieldDef>;
-
-    /// Possible concrete object types for an object/interface/union.
-    ///
-    /// For objects, returning itself is convenient.
-    fn possible_types(&self, type_name: &str) -> Vec<String>;
-
-    /// Values of an enum type. Used for argument generation.
-    fn enum_values(&self, _type_name: &str) -> Vec<String> {
-        Vec::new()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TypeKind {
-    Object,
-    Interface,
-    Union,
-    Scalar,
-    Enum,
-    InputObject,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldDef {
-    pub name: String,
-    pub ty: TypeRef,
-    pub args: Vec<InputValueDef>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InputValueDef {
-    pub name: String,
-    pub ty: TypeRef,
-    pub default_value: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TypeRef {
-    Named(String),
-    List(Box<TypeRef>),
-    NonNull(Box<TypeRef>),
-}
-
-impl TypeRef {
-    pub fn named_type(&self) -> &str {
-        match self {
-            TypeRef::Named(name) => name,
-            TypeRef::List(inner) | TypeRef::NonNull(inner) => inner.named_type(),
-        }
-    }
-
-    pub fn is_non_null(&self) -> bool {
-        matches!(self, TypeRef::NonNull(_))
-    }
-
-    pub fn as_graphql(&self) -> String {
-        match self {
-            TypeRef::Named(name) => name.clone(),
-            TypeRef::List(inner) => format!("[{}]", inner.as_graphql()),
-            TypeRef::NonNull(inner) => format!("{}!", inner.as_graphql()),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct GeneratorConfig {
@@ -120,7 +52,6 @@ impl Default for GeneratorConfig {
 pub struct QueryCase {
     pub document: String,
     pub operation_name: String,
-    /// JSON object string. Kept as a string to avoid forcing a serde_json dependency here.
     pub variables_json: String,
     pub features: FeatureCoverage,
 }
@@ -142,8 +73,8 @@ pub struct FeatureCoverage {
     pub max_depth: usize,
 }
 
-pub struct QueryGenerator<'a, S: SchemaView> {
-    schema: &'a S,
+pub struct QueryGenerator<'a> {
+    schema: &'a SchemaDocument,
     rng: StdRng,
     config: GeneratorConfig,
     fragments: Vec<FragmentDefinition>,
@@ -163,8 +94,22 @@ struct Counters {
     directives: usize,
 }
 
-impl<'a, S: SchemaView> QueryGenerator<'a, S> {
-    pub fn new(schema: &'a S, seed: u64, config: GeneratorConfig) -> Self {
+#[derive(Debug, Clone)]
+struct VariableDef {
+    name: String,
+    default_value: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionContext {
+    Root,
+    Field,
+    FragmentDefinition,
+    InlineFragment,
+}
+
+impl<'a> QueryGenerator<'a> {
+    pub fn new(schema: &'a SchemaDocument, seed: u64, config: GeneratorConfig) -> Self {
         Self {
             schema,
             rng: StdRng::seed_from_u64(seed),
@@ -179,26 +124,46 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
 
     pub fn generate(mut self) -> QueryCase {
         let operation_name = "GeneratedQuery".to_string();
-        let root = self.schema.query_type().to_string();
+        let root = self.schema.query_type_name().to_string();
         let selections = self.selection_set_for_type(&root, 0, SelectionContext::Root);
 
-        let variable_defs = self.render_variable_defs();
         let variables_json = self.render_variables_json();
 
-        let mut document = String::new();
-        document.push_str("query ");
-        document.push_str(&operation_name);
-        document.push_str(&variable_defs);
-        document.push_str(" ");
-        render_selection_set(&mut document, &selections, 0);
+        let mut defs = Vec::new();
 
-        for fragment in &self.fragments {
-            document.push_str("\n\n");
-            render_fragment_definition(&mut document, fragment);
+        let mut query_vars = Vec::new();
+        for (_, def) in &self.variable_defs {
+            query_vars.push(VariableDefinition {
+                position: Pos::default(),
+                name: def.name.clone(),
+                var_type: q::Type::NonNullType(Box::new(q::Type::NamedType("Boolean".to_string()))),
+                default_value: def.default_value.map(QueryValue::Boolean),
+            });
         }
 
+        defs.push(q::Definition::Operation(OperationDefinition::Query(
+            q::Query {
+                position: Pos::default(),
+                name: Some(operation_name.clone()),
+                variable_definitions: query_vars,
+                directives: Vec::new(),
+                selection_set: SelectionSet {
+                    span: (Pos::default(), Pos::default()),
+                    items: selections,
+                },
+            },
+        )));
+
+        for frag in self.fragments.into_iter() {
+            defs.push(q::Definition::Fragment(frag));
+        }
+
+        let doc = QueryDocument { definitions: defs };
+        let style = Style::default();
+        let document_str = doc.format(&style);
+
         QueryCase {
-            document,
+            document: document_str,
             operation_name,
             variables_json,
             features: self.features,
@@ -217,38 +182,43 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
             return self.leafish_selection_set(type_name);
         }
 
-        let kind = self.schema.type_kind(type_name).unwrap_or(TypeKind::Object);
+        let type_def_opt = self.schema.type_by_name(type_name);
         let mut selections = Vec::new();
 
-        if matches!(
-            kind,
-            TypeKind::Object | TypeKind::Interface | TypeKind::Union
-        ) {
-            if self.rng.random_bool(0.55) || matches!(kind, TypeKind::Union) {
-                selections.push(Selection::Field(FieldSelection {
-                    alias: None,
-                    name: "__typename".to_string(),
-                    args: Vec::new(),
-                    directives: self.maybe_directives(),
-                    selection_set: Vec::new(),
-                }));
+        if let Some(type_def) = type_def_opt {
+            if type_def.is_composite_type() {
+                if self.rng.random_bool(0.55) || type_def.is_union_type() {
+                    selections.push(Selection::Field(QueryField {
+                        position: Pos::default(),
+                        alias: None,
+                        name: "__typename".to_string(),
+                        arguments: Vec::new(),
+                        directives: self.maybe_directives(),
+                        selection_set: SelectionSet {
+                            span: (Pos::default(), Pos::default()),
+                            items: Vec::new(),
+                        },
+                    }));
+                }
             }
-        }
 
-        if !matches!(kind, TypeKind::Union) {
-            let mut fields = self.schema.fields(type_name);
-            fields.shuffle(&mut self.rng);
+            if !type_def.is_union_type() {
+                if let Some(TypeDefinitionFields::Fields(fields_slice)) = type_def.fields() {
+                    let mut fields = fields_slice.to_vec();
+                    fields.shuffle(&mut self.rng);
 
-            let width = self.rng.random_range(1..=self.config.max_width.max(1));
-            for field in fields.into_iter().take(width) {
-                selections.push(self.field_selection(field.clone(), depth));
+                    let width = self.rng.random_range(1..=self.config.max_width.max(1));
+                    for field in fields.into_iter().take(width) {
+                        selections.push(self.field_selection(&field, depth));
 
-                if self
-                    .rng
-                    .random_bool(self.config.duplicate_field_probability)
-                {
-                    selections.push(self.field_selection(field, depth));
-                    self.features.duplicated_response_keys += 1;
+                        if self
+                            .rng
+                            .random_bool(self.config.duplicate_field_probability)
+                        {
+                            selections.push(self.field_selection(&field, depth));
+                            self.features.duplicated_response_keys += 1;
+                        }
+                    }
                 }
             }
         }
@@ -266,12 +236,16 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
         }
 
         if selections.is_empty() {
-            selections.push(Selection::Field(FieldSelection {
+            selections.push(Selection::Field(QueryField {
+                position: Pos::default(),
                 alias: None,
                 name: "__typename".to_string(),
-                args: Vec::new(),
+                arguments: Vec::new(),
                 directives: Vec::new(),
-                selection_set: Vec::new(),
+                selection_set: SelectionSet {
+                    span: (Pos::default(), Pos::default()),
+                    items: Vec::new(),
+                },
             }));
         }
 
@@ -280,65 +254,81 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
     }
 
     fn leafish_selection_set(&mut self, type_name: &str) -> Vec<Selection> {
-        let kind = self.schema.type_kind(type_name).unwrap_or(TypeKind::Object);
+        let type_def_opt = self.schema.type_by_name(type_name);
 
-        if matches!(kind, TypeKind::Union) {
-            return vec![Selection::Field(FieldSelection {
-                alias: None,
-                name: "__typename".to_string(),
-                args: Vec::new(),
-                directives: self.maybe_directives(),
-                selection_set: Vec::new(),
-            })];
+        if let Some(type_def) = type_def_opt {
+            if type_def.is_union_type() {
+                return vec![Selection::Field(QueryField {
+                    position: Pos::default(),
+                    alias: None,
+                    name: "__typename".to_string(),
+                    arguments: Vec::new(),
+                    directives: self.maybe_directives(),
+                    selection_set: SelectionSet {
+                        span: (Pos::default(), Pos::default()),
+                        items: Vec::new(),
+                    },
+                })];
+            }
         }
 
         let mut selections = Vec::new();
 
         if self.rng.random_bool(0.60) {
-            selections.push(Selection::Field(FieldSelection {
+            selections.push(Selection::Field(QueryField {
+                position: Pos::default(),
                 alias: None,
                 name: "__typename".to_string(),
-                args: Vec::new(),
+                arguments: Vec::new(),
                 directives: self.maybe_directives(),
-                selection_set: Vec::new(),
+                selection_set: SelectionSet {
+                    span: (Pos::default(), Pos::default()),
+                    items: Vec::new(),
+                },
             }));
         }
 
-        let mut scalar_fields = self
-            .schema
-            .fields(type_name)
-            .into_iter()
-            .filter(|field| self.is_leaf_output_type(&field.ty))
-            .collect::<Vec<_>>();
-        scalar_fields.shuffle(&mut self.rng);
+        if let Some(type_def) = type_def_opt {
+            if let Some(TypeDefinitionFields::Fields(fields_slice)) = type_def.fields() {
+                let mut scalar_fields = fields_slice
+                    .iter()
+                    .filter(|field| self.is_leaf_output_type(&field.field_type))
+                    .collect::<Vec<_>>();
+                scalar_fields.shuffle(&mut self.rng);
 
-        for field in scalar_fields
-            .into_iter()
-            .take(self.config.max_width.min(3).max(1))
-        {
-            selections.push(self.field_selection(field, self.config.max_depth));
+                for field in scalar_fields
+                    .into_iter()
+                    .take(self.config.max_width.min(3).max(1))
+                {
+                    selections.push(self.field_selection(field, self.config.max_depth));
+                }
+            }
         }
 
         if selections.is_empty() {
-            selections.push(Selection::Field(FieldSelection {
+            selections.push(Selection::Field(QueryField {
+                position: Pos::default(),
                 alias: None,
                 name: "__typename".to_string(),
-                args: Vec::new(),
+                arguments: Vec::new(),
                 directives: Vec::new(),
-                selection_set: Vec::new(),
+                selection_set: SelectionSet {
+                    span: (Pos::default(), Pos::default()),
+                    items: Vec::new(),
+                },
             }));
         }
 
         selections
     }
 
-    fn field_selection(&mut self, field: FieldDef, depth: usize) -> Selection {
-        let named = field.ty.named_type().to_string();
-        let kind = self.schema.type_kind(&named).unwrap_or(TypeKind::Scalar);
-        let needs_selection = matches!(
-            kind,
-            TypeKind::Object | TypeKind::Interface | TypeKind::Union
-        );
+    fn field_selection(&mut self, field: &s::Field, depth: usize) -> Selection {
+        let named = field.field_type.inner_type().to_string();
+        let is_composite = self
+            .schema
+            .type_by_name(&named)
+            .map(|t| t.is_composite_type())
+            .unwrap_or(false);
 
         let alias = if self.rng.random_bool(self.config.alias_probability) {
             self.features.aliases += 1;
@@ -348,31 +338,35 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
             None
         };
 
-        let args = self.args_for_field(&field);
+        let args = self.args_for_field(field);
         let directives = self.maybe_directives();
-        let selection_set = if needs_selection {
+        let selection_set = if is_composite {
             self.selection_set_for_type(&named, depth + 1, SelectionContext::Field)
         } else {
             Vec::new()
         };
 
-        Selection::Field(FieldSelection {
+        Selection::Field(QueryField {
+            position: Pos::default(),
             alias,
-            name: field.name,
-            args,
+            name: field.name.clone(),
+            arguments: args,
             directives,
-            selection_set,
+            selection_set: SelectionSet {
+                span: (Pos::default(), Pos::default()),
+                items: selection_set,
+            },
         })
     }
 
-    fn args_for_field(&mut self, field: &FieldDef) -> Vec<(String, String)> {
+    fn args_for_field(&mut self, field: &s::Field) -> Vec<(String, QueryValue)> {
         let mut args = Vec::new();
 
-        for arg in &field.args {
-            let required = arg.ty.is_non_null() && arg.default_value.is_none();
+        for arg in &field.arguments {
+            let required = arg.value_type.is_non_null() && arg.default_value.is_none();
 
             if required || self.rng.random_bool(0.35) {
-                if let Some(value) = self.literal_for_input_type(&arg.ty) {
+                if let Some(value) = self.literal_for_input_type(&arg.value_type) {
                     args.push((arg.name.clone(), value));
                 }
             }
@@ -381,33 +375,48 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
         args
     }
 
-    fn literal_for_input_type(&mut self, ty: &TypeRef) -> Option<String> {
+    fn literal_for_input_type(&mut self, ty: &SchemaType) -> Option<QueryValue> {
         match ty {
-            TypeRef::NonNull(inner) => self.literal_for_input_type(inner),
-            TypeRef::List(inner) => {
+            SchemaType::NonNullType(inner) => self.literal_for_input_type(inner),
+            SchemaType::ListType(inner) => {
                 let len = self.rng.random_range(0..=3);
                 let mut values = Vec::new();
                 for _ in 0..len {
-                    values.push(self.literal_for_input_type(inner)?);
+                    if let Some(v) = self.literal_for_input_type(inner) {
+                        values.push(v);
+                    }
                 }
-                Some(format!("[{}]", values.join(", ")))
+                Some(QueryValue::List(values))
             }
-            TypeRef::Named(name) => match name.as_str() {
-                "ID" => Some(format!("\"id-{}\"", self.rng.random_range(0..1000))),
-                "String" => Some(format!("\"s{}\"", self.rng.random_range(0..1000))),
-                "Int" => Some(self.rng.random_range(0..100).to_string()),
-                "Float" => Some(format!("{}.5", self.rng.random_range(0..100))),
-                "Boolean" => Some(self.rng.random_bool(0.5).to_string()),
-                other => match self.schema.type_kind(other) {
-                    Some(TypeKind::Enum) => self
-                        .schema
-                        .enum_values(other)
-                        .choose(&mut self.rng)
-                        .cloned(),
-                    // Input objects are intentionally skipped in this starter implementation.
-                    // Add recursive object literal generation once you need it.
-                    _ => None,
-                },
+            SchemaType::NamedType(name) => match name.as_str() {
+                "ID" => Some(QueryValue::String(format!(
+                    "id-{}",
+                    self.rng.random_range(0..1000)
+                ))),
+                "String" => Some(QueryValue::String(format!(
+                    "s{}",
+                    self.rng.random_range(0..1000)
+                ))),
+                "Int" => Some(QueryValue::Int(
+                    (self.rng.random_range(0..100) as i32).into(),
+                )),
+                "Float" => Some(QueryValue::Float(self.rng.random_range(0.0..100.0))),
+                "Boolean" => Some(QueryValue::Boolean(self.rng.random_bool(0.5))),
+                other => {
+                    let type_def = self.schema.type_by_name(other);
+                    if let Some(type_def) = type_def {
+                        if type_def.is_enum_type() {
+                            if let Some(TypeDefinitionFields::EnumValues(values)) =
+                                type_def.fields()
+                            {
+                                if let Some(v) = values.choose(&mut self.rng) {
+                                    return Some(QueryValue::Enum(v.name.clone()));
+                                }
+                            }
+                        }
+                    }
+                    None
+                }
             },
         }
     }
@@ -424,9 +433,6 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
             && self.rng_bool_peekable(self.config.inline_fragment_probability)
     }
 
-    /// `rand::Rng::gen_bool` needs `&mut self`; these helpers are split so callers that only
-    /// need a cheap guard can be kept readable. The actual random decision is re-made inside
-    /// the constructor functions when necessary.
     fn rng_bool_peekable(&self, probability: f64) -> bool {
         probability > 0.0
     }
@@ -451,15 +457,20 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
 
         self.record_type_condition_feature(&type_condition);
         self.fragments.push(FragmentDefinition {
+            position: Pos::default(),
             name: name.clone(),
-            type_condition,
+            type_condition: TypeCondition::On(type_condition),
             directives: Vec::new(),
-            selection_set: fragment_selection_set,
+            selection_set: SelectionSet {
+                span: (Pos::default(), Pos::default()),
+                items: fragment_selection_set,
+            },
         });
         self.features.named_fragments += 1;
 
         Some(FragmentSpread {
-            name,
+            position: Pos::default(),
+            fragment_name: name,
             directives: self.maybe_directives(),
         })
     }
@@ -485,51 +496,58 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
             Some(ty)
         };
 
-        let scoped_type = type_condition.as_deref().unwrap_or(current_type);
+        let scoped_type = type_condition
+            .clone()
+            .unwrap_or_else(|| current_type.to_string());
         let selection_set =
-            self.selection_set_for_type(scoped_type, depth + 1, SelectionContext::InlineFragment);
+            self.selection_set_for_type(&scoped_type, depth + 1, SelectionContext::InlineFragment);
 
         Some(InlineFragment {
-            type_condition,
+            position: Pos::default(),
+            type_condition: type_condition.map(TypeCondition::On),
             directives: self.maybe_directives(),
-            selection_set,
+            selection_set: SelectionSet {
+                span: (Pos::default(), Pos::default()),
+                items: selection_set,
+            },
         })
     }
 
     fn compatible_type_condition(&mut self, current_type: &str) -> Option<String> {
-        let current_kind = self.schema.type_kind(current_type)?;
+        let current_def = self.schema.type_by_name(current_type)?;
 
-        match current_kind {
-            TypeKind::Object => Some(current_type.to_string()),
-            TypeKind::Interface | TypeKind::Union => {
-                let mut candidates = self.schema.possible_types(current_type);
+        if current_def.is_object_type() {
+            Some(current_type.to_string())
+        } else if current_def.is_abstract_type() {
+            let mut candidates: Vec<String> = current_def
+                .possible_types(self.schema)
+                .iter()
+                .map(|t| t.name().to_string())
+                .collect();
 
-                // Keep the abstract type itself as a candidate for interfaces.
-                // Union fragments must target object/interface/union, but selecting fields
-                // directly on a union still needs concrete fragments to be useful.
-                if matches!(current_kind, TypeKind::Interface) {
-                    candidates.push(current_type.to_string());
-                }
-
-                candidates.sort();
-                candidates.dedup();
-                candidates.choose(&mut self.rng).cloned()
+            if matches!(current_def, s::TypeDefinition::Interface(_)) {
+                candidates.push(current_type.to_string());
             }
-            _ => None,
+
+            candidates.sort();
+            candidates.dedup();
+            candidates.choose(&mut self.rng).cloned()
+        } else {
+            None
         }
     }
 
     fn record_type_condition_feature(&mut self, type_condition: &str) {
-        match self.schema.type_kind(type_condition) {
-            Some(TypeKind::Interface | TypeKind::Union) => {
-                self.features.abstract_type_conditions += 1
+        if let Some(def) = self.schema.type_by_name(type_condition) {
+            if def.is_abstract_type() {
+                self.features.abstract_type_conditions += 1;
+            } else if def.is_object_type() {
+                self.features.concrete_type_conditions += 1;
             }
-            Some(TypeKind::Object) => self.features.concrete_type_conditions += 1,
-            _ => {}
         }
     }
 
-    fn maybe_directives(&mut self) -> Vec<Directive> {
+    fn maybe_directives(&mut self) -> Vec<QueryDirective> {
         if self.counters.directives >= self.config.max_directives {
             return Vec::new();
         }
@@ -559,7 +577,7 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
         directives
     }
 
-    fn directive(&mut self, name: &'static str) -> Directive {
+    fn directive(&mut self, name: &'static str) -> QueryDirective {
         self.counters.directives += 1;
 
         match name {
@@ -569,7 +587,6 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
         }
 
         let value = match name {
-            // Bias toward selections staying visible, but still produce false/invisible branches.
             "skip" => self.rng.random_bool(0.20),
             "include" => self.rng.random_bool(0.80),
             _ => self.rng.random_bool(0.50),
@@ -580,14 +597,15 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
             .random_bool(self.config.variable_directive_probability)
         {
             self.features.directive_variables += 1;
-            BoolValue::Variable(self.bool_variable(value))
+            QueryValue::Variable(self.bool_variable(value))
         } else {
-            BoolValue::Literal(value)
+            QueryValue::Boolean(value)
         };
 
-        Directive {
+        QueryDirective {
+            position: Pos::default(),
             name: name.to_string(),
-            arg,
+            arguments: vec![("if".to_string(), arg)],
         }
     }
 
@@ -602,7 +620,6 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
             name.clone(),
             VariableDef {
                 name: name.clone(),
-                ty: "Boolean!".to_string(),
                 default_value: with_default.then_some(value),
             },
         );
@@ -614,30 +631,12 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
         name
     }
 
-    fn is_leaf_output_type(&self, ty: &TypeRef) -> bool {
-        let named = ty.named_type();
-        matches!(
-            self.schema.type_kind(named),
-            Some(TypeKind::Scalar | TypeKind::Enum)
-        )
-    }
-
-    fn render_variable_defs(&self) -> String {
-        if self.variable_defs.is_empty() {
-            return String::new();
+    fn is_leaf_output_type(&self, ty: &SchemaType) -> bool {
+        let named = ty.inner_type();
+        if let Some(def) = self.schema.type_by_name(named) {
+            return def.is_scalar_type() || def.is_enum_type();
         }
-
-        let defs = self
-            .variable_defs
-            .values()
-            .map(|def| match def.default_value {
-                Some(value) => format!("${}: {} = {}", def.name, def.ty, value),
-                None => format!("${}: {}", def.name, def.ty),
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        format!("({})", defs)
+        false
     }
 
     fn render_variables_json(&self) -> String {
@@ -652,374 +651,46 @@ impl<'a, S: SchemaView> QueryGenerator<'a, S> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SelectionContext {
-    Root,
-    Field,
-    FragmentDefinition,
-    InlineFragment,
+pub const TEST_SCHEMA_STR: &str = r#"
+schema {
+  query: Query
 }
 
-#[derive(Debug, Clone)]
-struct VariableDef {
-    name: String,
-    ty: String,
-    default_value: Option<bool>,
+type Query {
+  node(id: ID!): Node
+  user(id: ID!): User
+  search(text: String): [SearchResult!]
 }
 
-#[derive(Debug, Clone)]
-enum Selection {
-    Field(FieldSelection),
-    FragmentSpread(FragmentSpread),
-    InlineFragment(InlineFragment),
+interface Node {
+  id: ID!
+  name: String
 }
 
-#[derive(Debug, Clone)]
-struct FieldSelection {
-    alias: Option<String>,
-    name: String,
-    args: Vec<(String, String)>,
-    directives: Vec<Directive>,
-    selection_set: Vec<Selection>,
+type User implements Node {
+  id: ID!
+  name: String
+  role: Role
+  friend: User
+  friends(limit: Int): [User!]
+  posts: [Post!]
 }
 
-#[derive(Debug, Clone)]
-struct FragmentSpread {
-    name: String,
-    directives: Vec<Directive>,
+type Post implements Node {
+  id: ID!
+  name: String
+  title: String
+  author: User
 }
 
-#[derive(Debug, Clone)]
-struct InlineFragment {
-    type_condition: Option<String>,
-    directives: Vec<Directive>,
-    selection_set: Vec<Selection>,
+union SearchResult = User | Post
+
+enum Role {
+  ADMIN
+  USER
+  GUEST
 }
-
-#[derive(Debug, Clone)]
-struct FragmentDefinition {
-    name: String,
-    type_condition: String,
-    directives: Vec<Directive>,
-    selection_set: Vec<Selection>,
-}
-
-#[derive(Debug, Clone)]
-struct Directive {
-    name: String,
-    arg: BoolValue,
-}
-
-#[derive(Debug, Clone)]
-enum BoolValue {
-    Literal(bool),
-    Variable(String),
-}
-
-fn render_selection_set(out: &mut String, selections: &[Selection], indent: usize) {
-    out.push_str("{\n");
-
-    for selection in selections {
-        out.push_str(&"  ".repeat(indent + 1));
-        render_selection(out, selection, indent + 1);
-        out.push('\n');
-    }
-
-    out.push_str(&"  ".repeat(indent));
-    out.push('}');
-}
-
-fn render_selection(out: &mut String, selection: &Selection, indent: usize) {
-    match selection {
-        Selection::Field(field) => {
-            if let Some(alias) = &field.alias {
-                out.push_str(alias);
-                out.push_str(": ");
-            }
-
-            out.push_str(&field.name);
-
-            if !field.args.is_empty() {
-                out.push('(');
-                for (index, (name, value)) in field.args.iter().enumerate() {
-                    if index > 0 {
-                        out.push_str(", ");
-                    }
-                    out.push_str(name);
-                    out.push_str(": ");
-                    out.push_str(value);
-                }
-                out.push(')');
-            }
-
-            render_directives(out, &field.directives);
-
-            if !field.selection_set.is_empty() {
-                out.push(' ');
-                render_selection_set(out, &field.selection_set, indent);
-            }
-        }
-        Selection::FragmentSpread(spread) => {
-            out.push_str("...");
-            out.push_str(&spread.name);
-            render_directives(out, &spread.directives);
-        }
-        Selection::InlineFragment(fragment) => {
-            out.push_str("...");
-            if let Some(type_condition) = &fragment.type_condition {
-                out.push_str(" on ");
-                out.push_str(type_condition);
-            }
-            render_directives(out, &fragment.directives);
-            out.push(' ');
-            render_selection_set(out, &fragment.selection_set, indent);
-        }
-    }
-}
-
-fn render_fragment_definition(out: &mut String, fragment: &FragmentDefinition) {
-    out.push_str("fragment ");
-    out.push_str(&fragment.name);
-    out.push_str(" on ");
-    out.push_str(&fragment.type_condition);
-    render_directives(out, &fragment.directives);
-    out.push(' ');
-    render_selection_set(out, &fragment.selection_set, 0);
-}
-
-fn render_directives(out: &mut String, directives: &[Directive]) {
-    for directive in directives {
-        out.push(' ');
-        out.push('@');
-        out.push_str(&directive.name);
-        out.push_str("(if: ");
-        match &directive.arg {
-            BoolValue::Literal(value) => out.push_str(&value.to_string()),
-            BoolValue::Variable(name) => {
-                out.push('$');
-                out.push_str(name);
-            }
-        }
-        out.push(')');
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Example in-memory schema adapter for tests and initial experimentation.
-// Replace this with an adapter over your real validated schema model.
-// -----------------------------------------------------------------------------
-
-#[derive(Default)]
-pub struct TestSchema {
-    query_type: String,
-    types: BTreeMap<String, TypeInfo>,
-    possible_types: BTreeMap<String, Vec<String>>,
-    enum_values: BTreeMap<String, Vec<String>>,
-}
-
-#[derive(Debug, Clone)]
-struct TypeInfo {
-    kind: TypeKind,
-    fields: Vec<FieldDef>,
-}
-
-impl TestSchema {
-    pub fn synthetic() -> Self {
-        let mut schema = Self {
-            query_type: "Query".to_string(),
-            ..Self::default()
-        };
-
-        schema.scalar("ID");
-        schema.scalar("String");
-        schema.scalar("Int");
-        schema.scalar("Float");
-        schema.scalar("Boolean");
-        schema.enum_type("Role", &["ADMIN", "USER", "GUEST"]);
-
-        schema.interface(
-            "Node",
-            vec![
-                field("id", non_null(named("ID"))),
-                field("name", named("String")),
-            ],
-        );
-
-        schema.object(
-            "User",
-            vec![
-                field("id", non_null(named("ID"))),
-                field("name", named("String")),
-                field("role", named("Role")),
-                field("friend", named("User")),
-                field("friends", list(non_null(named("User")))).arg("limit", named("Int")),
-                field("posts", list(non_null(named("Post")))),
-            ],
-        );
-
-        schema.object(
-            "Post",
-            vec![
-                field("id", non_null(named("ID"))),
-                field("name", named("String")),
-                field("title", named("String")),
-                field("author", named("User")),
-            ],
-        );
-
-        schema.union("SearchResult", &["User", "Post"]);
-
-        schema.object(
-            "Query",
-            vec![
-                field("node", named("Node")).arg("id", non_null(named("ID"))),
-                field("user", named("User")).arg("id", non_null(named("ID"))),
-                field("search", list(non_null(named("SearchResult")))).arg("text", named("String")),
-            ],
-        );
-
-        schema.possible_types.insert(
-            "Node".to_string(),
-            vec!["User".to_string(), "Post".to_string()],
-        );
-        schema.possible_types.insert(
-            "SearchResult".to_string(),
-            vec!["User".to_string(), "Post".to_string()],
-        );
-        schema
-            .possible_types
-            .insert("User".to_string(), vec!["User".to_string()]);
-        schema
-            .possible_types
-            .insert("Post".to_string(), vec!["Post".to_string()]);
-        schema
-            .possible_types
-            .insert("Query".to_string(), vec!["Query".to_string()]);
-
-        schema
-    }
-
-    fn scalar(&mut self, name: &str) {
-        self.types.insert(
-            name.to_string(),
-            TypeInfo {
-                kind: TypeKind::Scalar,
-                fields: Vec::new(),
-            },
-        );
-    }
-
-    fn enum_type(&mut self, name: &str, values: &[&str]) {
-        self.types.insert(
-            name.to_string(),
-            TypeInfo {
-                kind: TypeKind::Enum,
-                fields: Vec::new(),
-            },
-        );
-        self.enum_values.insert(
-            name.to_string(),
-            values.iter().map(|value| value.to_string()).collect(),
-        );
-    }
-
-    fn object(&mut self, name: &str, fields: Vec<FieldDef>) {
-        self.types.insert(
-            name.to_string(),
-            TypeInfo {
-                kind: TypeKind::Object,
-                fields,
-            },
-        );
-    }
-
-    fn interface(&mut self, name: &str, fields: Vec<FieldDef>) {
-        self.types.insert(
-            name.to_string(),
-            TypeInfo {
-                kind: TypeKind::Interface,
-                fields,
-            },
-        );
-    }
-
-    fn union(&mut self, name: &str, members: &[&str]) {
-        self.types.insert(
-            name.to_string(),
-            TypeInfo {
-                kind: TypeKind::Union,
-                fields: Vec::new(),
-            },
-        );
-        self.possible_types.insert(
-            name.to_string(),
-            members.iter().map(|member| member.to_string()).collect(),
-        );
-    }
-}
-
-impl SchemaView for TestSchema {
-    fn query_type(&self) -> &str {
-        &self.query_type
-    }
-
-    fn type_kind(&self, type_name: &str) -> Option<TypeKind> {
-        self.types.get(type_name).map(|info| info.kind)
-    }
-
-    fn fields(&self, type_name: &str) -> Vec<FieldDef> {
-        self.types
-            .get(type_name)
-            .map(|info| info.fields.clone())
-            .unwrap_or_default()
-    }
-
-    fn possible_types(&self, type_name: &str) -> Vec<String> {
-        self.possible_types
-            .get(type_name)
-            .cloned()
-            .unwrap_or_else(|| vec![type_name.to_string()])
-    }
-
-    fn enum_values(&self, type_name: &str) -> Vec<String> {
-        self.enum_values.get(type_name).cloned().unwrap_or_default()
-    }
-}
-
-fn field(name: &str, ty: TypeRef) -> FieldDef {
-    FieldDef {
-        name: name.to_string(),
-        ty,
-        args: Vec::new(),
-    }
-}
-
-trait FieldBuilderExt {
-    fn arg(self, name: &str, ty: TypeRef) -> Self;
-}
-
-impl FieldBuilderExt for FieldDef {
-    fn arg(mut self, name: &str, ty: TypeRef) -> Self {
-        self.args.push(InputValueDef {
-            name: name.to_string(),
-            ty,
-            default_value: None,
-        });
-        self
-    }
-}
-
-fn named(name: &str) -> TypeRef {
-    TypeRef::Named(name.to_string())
-}
-
-fn list(inner: TypeRef) -> TypeRef {
-    TypeRef::List(Box::new(inner))
-}
-
-fn non_null(inner: TypeRef) -> TypeRef {
-    TypeRef::NonNull(Box::new(inner))
-}
+"#;
 
 #[cfg(test)]
 mod tests {
@@ -1027,7 +698,9 @@ mod tests {
 
     #[test]
     fn generates_a_complex_query() {
-        let schema = TestSchema::synthetic();
+        let schema = parse_schema::<String>(TEST_SCHEMA_STR)
+            .unwrap()
+            .into_static();
         let case = QueryGenerator::new(&schema, 42, GeneratorConfig::default()).generate();
 
         eprintln!("{}", case.document);
@@ -1041,7 +714,9 @@ mod tests {
 
     #[test]
     fn same_seed_generates_same_query() {
-        let schema = TestSchema::synthetic();
+        let schema = parse_schema::<String>(TEST_SCHEMA_STR)
+            .unwrap()
+            .into_static();
         let a = QueryGenerator::new(&schema, 7, GeneratorConfig::default()).generate();
         let b = QueryGenerator::new(&schema, 7, GeneratorConfig::default()).generate();
 
@@ -1051,7 +726,9 @@ mod tests {
 
     #[test]
     fn different_seeds_generate_different_queries() {
-        let schema = TestSchema::synthetic();
+        let schema = parse_schema::<String>(TEST_SCHEMA_STR)
+            .unwrap()
+            .into_static();
         let a = QueryGenerator::new(&schema, 7, GeneratorConfig::default()).generate();
         let b = QueryGenerator::new(&schema, 8, GeneratorConfig::default()).generate();
 
@@ -1060,8 +737,9 @@ mod tests {
 }
 
 fn main() {
-    let schema = TestSchema::synthetic();
-
+    let schema = parse_schema::<String>(TEST_SCHEMA_STR)
+        .unwrap()
+        .into_static();
     let case = QueryGenerator::new(&schema, 42, GeneratorConfig::default()).generate();
 
     println!("{}", case.document);
