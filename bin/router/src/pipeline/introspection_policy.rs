@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use hive_router_config::introspection_policy::IntrospectionPermissionConfig;
 use hive_router_internal::expressions::{
-    values::boolean::BooleanOrProgram, CompileExpression, ExpressionCompileError, ProgramHints,
+    BooleanOrProgram, CompileExpression, ExpressionCompileError, ProgramHints,
 };
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetailsView;
 use tracing::debug;

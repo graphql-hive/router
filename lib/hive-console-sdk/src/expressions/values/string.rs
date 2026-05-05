@@ -1,12 +1,7 @@
 use std::string::FromUtf8Error;
 
-use crate::expressions::{FromVrlValue, ValueOrProgram};
+use crate::expressions::FromVrlValue;
 use vrl::core::Value as VrlValue;
-
-/// Type alias for a String that can be either static or computed via expression
-///
-/// Useful for endpoints, URLs, or any string configuration that can be dynamic
-pub type StringOrProgram = ValueOrProgram<String>;
 
 /// Error type for String conversion failures
 #[derive(Debug, thiserror::Error, Clone)]

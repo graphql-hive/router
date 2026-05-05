@@ -5,8 +5,8 @@ use hive_router_config::coprocessor::{
     CoprocessorGraphqlAnalysisIncludeConfig, CoprocessorGraphqlRequestIncludeConfig,
     CoprocessorGraphqlResponseIncludeConfig, CoprocessorHookConfig,
 };
-use hive_router_internal::expressions::lib::ToVrlValue;
-use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
+use hive_router_internal::expressions::BooleanOrProgram;
+use hive_router_internal::expressions::ToVrlValue;
 use ntex::http::body::{Body, ResponseBody};
 use ntex::http::HeaderMap;
 use ntex::web;

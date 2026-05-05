@@ -2555,12 +2555,17 @@ dependencies = [
  "anyhow",
  "async-dropper-simple",
  "async-trait",
+ "bytes",
  "futures-util",
  "graphql-tools",
+ "http",
+ "http-serde",
+ "humantime",
  "lazy_static",
  "md5",
  "mockito",
  "moka",
+ "ntex",
  "recloser",
  "regex-automata",
  "regress 0.11.1",
@@ -2571,11 +2576,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sonic-rs",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
  "typify",
+ "vrl",
 ]
 
 [[package]]
@@ -2677,6 +2684,7 @@ dependencies = [
  "criterion",
  "dashmap",
  "futures",
+ "hive-console-sdk",
  "hive-router-config",
  "http",
  "http-body-util",
@@ -2838,6 +2846,16 @@ dependencies = [
  "http",
  "http-body",
  "pin-project-lite",
+]
+
+[[package]]
+name = "http-serde"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f056c8559e3757392c8d091e796416e4649d8e49e88b8d76df6c002f05027fd"
+dependencies = [
+ "http",
+ "serde",
 ]
 
 [[package]]
