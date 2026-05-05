@@ -60,7 +60,7 @@ fn handle_selection_set<'a>(
                 handle_selection_set(
                     &mut field.selection_set,
                     fragment_map,
-                    // Crossing a field boundary changes the parent type to the field's return type
+                    // Crossing a field boundary resets the type condition context
                     None,
                 )?;
                 new_items.push(Selection::Field(field));
