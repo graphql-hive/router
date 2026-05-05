@@ -10,7 +10,7 @@ pub use hive_console_sdk::expressions::lib::{
     CompileExpression, ExecutableProgram, FromVrlValue, ProgramHints, ToVrlValue,
 };
 pub use hive_console_sdk::expressions::values::duration::DurationConversionError;
-pub use hive_console_sdk::expressions::values::header_value::HeaderValueConversionError;
+pub use hive_console_sdk::expressions::values::http::HeaderValueConversionError;
 pub use hive_console_sdk::expressions::values::string::StringConversionError;
 use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue};
 

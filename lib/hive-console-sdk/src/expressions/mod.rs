@@ -8,5 +8,5 @@ pub use vrl;
 pub use error::{ExpressionCompileError, ExpressionExecutionError, ProgramResolutionError};
 pub use lib::{CompileExpression, ExecutableProgram, FromVrlValue, ProgramHints};
 pub use values::duration::DurationConversionError;
-pub use values::header_value::HeaderValueConversionError;
+pub use values::http::HeaderValueConversionError;
 pub use values::string::StringConversionError;
