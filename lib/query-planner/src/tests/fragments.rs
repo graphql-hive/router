@@ -231,7 +231,8 @@ fn parent_directive_only_on_abstract_fragment() -> Result<(), Box<dyn Error>> {
 /// Reusing the same named fragment with different `@include` conditions on the same
 /// concrete parent must preserve both conditions as separate wrappers.
 #[test]
-fn reusable_fragment_with_mixed_include_conditions_on_concrete_parent() -> Result<(), Box<dyn Error>> {
+fn reusable_fragment_with_mixed_include_conditions_on_concrete_parent() -> Result<(), Box<dyn Error>>
+{
     init_logger();
     let document = parse_operation(
         r#"
@@ -278,7 +279,8 @@ fn reusable_fragment_with_mixed_include_conditions_on_concrete_parent() -> Resul
 /// Reusing the same named fragment with different `@include` conditions under an
 /// abstract parent must keep both conditions through type expansion.
 #[test]
-fn reusable_fragment_with_mixed_include_conditions_on_abstract_parent() -> Result<(), Box<dyn Error>> {
+fn reusable_fragment_with_mixed_include_conditions_on_abstract_parent() -> Result<(), Box<dyn Error>>
+{
     init_logger();
     let document = parse_operation(
         r#"
