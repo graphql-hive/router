@@ -5,8 +5,11 @@ use crate::{
         EndHookPayload, EndHookResult, FromGraphQLErrorToResponse, StartHookPayload,
         StartHookResult,
     },
+    request_context::RequestContextPluginApi,
     response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
 };
+
+type RequestContextApi = RequestContextPluginApi<super::OnSubgraphExecute>;
 
 pub struct OnSubgraphExecuteStartHookPayload<'exec> {
     /// The incoming HTTP request to the router for which the GraphQL execution is happening.
@@ -24,6 +27,7 @@ pub struct OnSubgraphExecuteStartHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
+    pub request_context: RequestContextApi,
 
     /// The name of the subgraph for which the execution is happening.
     pub subgraph_name: &'exec str,
@@ -55,6 +59,7 @@ pub struct OnSubgraphExecuteEndHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
+    pub request_context: RequestContextApi,
 }
 
 impl<'exec> EndHookPayload<SubgraphResponse<'exec>> for OnSubgraphExecuteEndHookPayload<'exec> {}

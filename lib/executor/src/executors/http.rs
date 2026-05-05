@@ -10,6 +10,7 @@ use crate::hooks::on_subgraph_http_request::{
 };
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
+use crate::plugins::hooks;
 use crate::response::subgraph_response::SubgraphResponse;
 use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
@@ -41,8 +42,6 @@ use crate::utils::consts::QUOTE;
 use crate::{executors::common::SubgraphExecutor, json_writer::write_and_escape_string};
 use hive_router_internal::telemetry::traces::spans::http_request::HttpClientRequestSpan;
 use hive_router_internal::telemetry::traces::spans::http_request::HttpInflightRequestSpan;
-use hive_router_internal::telemetry::Injector;
-use http::HeaderName;
 use tracing::Instrument;
 
 pub struct HTTPSubgraphExecutor {
@@ -217,7 +216,7 @@ async fn send_request<'a>(
     let response: Result<SubgraphHttpResponse, SubgraphExecutorError> = async {
         // TODO: let's decide at some point if the tracing headers
         //       should be part of the fingerprint or not.
-        telemetry_context.inject_context(&mut TraceHeaderInjector(req.headers_mut()));
+        telemetry_context.inject_context_into_http_headers(req.headers_mut());
 
         let res_fut = http_client.request(req);
 
@@ -320,6 +319,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 execution_request,
                 deduplicate_request,
                 context: &plugin_req_state.context,
+                request_context: plugin_req_state
+                    .request_context
+                    .for_plugin::<hooks::OnSubgraphHttp>(),
             };
             for plugin in plugin_req_state.plugins.as_ref() {
                 let result = plugin.on_subgraph_http_request(start_payload).await;
@@ -441,8 +443,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         };
 
         if !on_end_callbacks.is_empty() {
+            let plugin_state_ref = plugin_req_state
+                .as_ref()
+                .expect("plugin state not available, but on_end_callbacks are present");
             let mut end_payload = OnSubgraphHttpResponseHookPayload {
-                context: &plugin_req_state.as_ref().unwrap().context,
+                context: &plugin_state_ref.context,
+                request_context: plugin_state_ref
+                    .request_context
+                    .for_plugin::<hooks::OnSubgraphHttp>(),
                 response,
                 deduplication_hint,
             };
@@ -643,21 +651,5 @@ impl SubgraphHttpResponse {
                 resp
             },
         )
-    }
-}
-
-struct TraceHeaderInjector<'a>(pub &'a mut HeaderMap);
-
-impl<'a> Injector for TraceHeaderInjector<'a> {
-    fn set(&mut self, key: &str, value: String) {
-        let Ok(name) = HeaderName::from_bytes(key.as_bytes()) else {
-            return;
-        };
-
-        let Ok(val) = HeaderValue::from_str(&value) else {
-            return;
-        };
-
-        self.0.insert(name, val);
     }
 }
