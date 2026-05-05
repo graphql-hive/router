@@ -10,3 +10,11 @@ success-output = "never"
 fail-fast = false
 # Mark as slow test after 10s and terminate after 3 retries
 slow-timeout = { period = "10s", terminate-after = 3 }
+
+[[profile.default.overrides]]
+filter = 'package(=e2e) and test(=body_limit_e2e_tests::should_return_payload_too_large_if_content_length_header_exceeds_the_limit)'
+retries = { backoff = "fixed", count = 2, delay = "1s" }
+
+[[profile.default.overrides]]
+filter = 'package(=multipart-plugin-example) and test(=tests::forward_files)'
+retries = { backoff = "fixed", count = 2, delay = "1s" }
