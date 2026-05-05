@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-internal"
-version = "0.0.19"
+version = "0.0.20"
 edition = "2021"
 description = "GraphQL Hive Router internal crate"
 license = "MIT"
@@ -15,7 +15,7 @@ authors = ["The Guild"]
 noop_otlp_exporter = []
 
 [dependencies]
-hive-router-config = { path = "../router-config", version = "0.0.32" }
+hive-router-config = { path = "../router-config", version = "0.0.33" }
 hive-console-sdk = { path = "../hive-console-sdk", version = "0.3.8" }
 
 sonic-rs = { workspace = true }

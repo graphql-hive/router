@@ -1,4 +1,46 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.24 (2026-05-05)
+
+### Fixes
+
+- Adjustments in operation's kind being Enum and not &'static str
+
+#### Added missing `isRepeatable` on `type __Directive`
+
+The router's introspection schema was resolving `isRepeatable`, but it did not appear in the public (consumer) schema, leading to validation errors when introspection schema was executed through Laboratory. 
+
+This change adds the missing `isRepeatable: Boolean!` to `type __Directive`, according to the [GraphQL introspection spec](https://github.com/graphql/graphql-spec/blob/main/spec/Section%204%20--%20Introspection.md).
+
+#### Avoid propagating `@include`/`@skip` conditions to unconditional fetches
+
+Fixed query planner condition propagation logic to avoid wrapping unconditional fetches
+in conditional blocks when merging steps. This ensures that fields without directives are
+not incorrectly gated by conditions from other steps, allowing for correct execution of
+queries with mixed conditional and unconditional selections.
+
+#### Fix fragments being dropped when multiple inline fragments target the same concrete type within an abstract type fragment.
+
+Previously, when a query contained two or more inline fragments on the same concrete type nested inside an interface or union fragment, only the first fragment's fields were included in the query plan — all subsequent ones were silently dropped.
+
+**Example query that previously returned only `title`:**
+
+```graphql
+query {
+  films {
+    ... on Node {
+      ... on Film { title }
+      ... on Film { director }
+    }
+  }
+}
+```
+
+Both fields are now correctly returned.
+
+#### Fix fragment handling
+
+Fix fragment handling for some queries that use reusable fragments with conditional directives
+
 ## 0.0.23 (2026-04-20)
 
 ### Fixes
