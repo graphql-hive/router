@@ -2,6 +2,8 @@
 hive-router: minor
 hive-console-sdk: minor
 hive-apollo-router-plugin: minor
+hive-router-internal: patch
+hive-router-plan-executor: patch
 ---
 
 # Dynamic Exclusions
