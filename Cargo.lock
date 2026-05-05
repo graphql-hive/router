@@ -2361,6 +2361,9 @@ dependencies = [
  "hive-router-plan-executor",
  "hive-router-query-planner",
  "rand 0.10.1",
+ "reqwest",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

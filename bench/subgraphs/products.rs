@@ -7,7 +7,7 @@ use lazy_static::lazy_static;
 use tokio::io::AsyncWriteExt;
 
 lazy_static! {
-    static ref PRODUCTS: Vec<Product> = vec![
+    pub static ref PRODUCTS: Vec<Product> = vec![
         Product {
             upc: "1".to_string(),
             name: Some("Table".to_string()),
@@ -84,12 +84,12 @@ lazy_static! {
 }
 #[derive(SimpleObject, Clone)]
 pub struct Product {
-    upc: String,
-    name: Option<String>,
-    price: Option<i64>,
-    weight: Option<i64>,
-    notes: Option<String>,
-    internal: Option<String>,
+    pub upc: String,
+    pub name: Option<String>,
+    pub price: Option<i64>,
+    pub weight: Option<i64>,
+    pub notes: Option<String>,
+    pub internal: Option<String>,
 }
 
 pub struct Query;

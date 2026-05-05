@@ -1,0 +1,43 @@
+schema {
+  query: Query
+  subscription: Subscription
+}
+
+type Query {
+  me: User
+  user(id: ID!): User
+  users: [User]
+  topProducts(first: Int = 5): [Product]
+}
+
+type Subscription {
+  reviewAdded(step: Int = 1, intervalInMs: Int = 1000): Review
+  reviewAddedForProduct(productUpc: String!, intervalInMs: Int = 1000): Review
+}
+
+type Product {
+  upc: String!
+  weight: Int
+  price: Int
+  inStock: Boolean
+  shippingEstimate: Int
+  name: String
+  reviews: [Review]
+  notes: String
+  internal: String
+}
+
+type Review {
+  id: ID!
+  body: String
+  product: Product
+  author: User
+}
+
+type User {
+  id: ID!
+  name: String
+  username: String
+  birthday: Int
+  reviews: [Review]
+}
