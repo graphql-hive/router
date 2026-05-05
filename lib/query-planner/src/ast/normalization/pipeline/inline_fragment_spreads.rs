@@ -60,7 +60,8 @@ fn handle_selection_set<'a>(
                 handle_selection_set(
                     &mut field.selection_set,
                     fragment_map,
-                    parent_type_condition,
+                    // Crossing a field boundary changes the parent type to the field's return type
+                    None,
                 )?;
                 new_items.push(Selection::Field(field));
             }
@@ -71,7 +72,12 @@ fn handle_selection_set<'a>(
                     }
                 })?;
 
-                if parent_type_condition == Some(&fragment_def.type_condition) {
+                if parent_type_condition == Some(&fragment_def.type_condition)
+                    // `...Frag @include(...)` stores `@include` on the spread itself.
+                    // In the code below, we inline the fragment's selections,
+                    // so any directives would be lost.
+                    && spread.directives.is_empty()
+                {
                     // If the fragment's type condition matches the top type condition,
                     // we can inline its selections directly.
                     let mut selection_set = fragment_def.selection_set.clone();
