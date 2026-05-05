@@ -4,6 +4,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub enum UsageReportingExclude {
+    Expression { expression: String },
+    OperationNames(Vec<String>),
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct UsageReportingConfig {
     #[serde(default = "default_enabled")]
@@ -22,10 +29,22 @@ pub struct UsageReportingConfig {
     #[schemars(with = "String")]
     pub sample_rate: Percentage,
 
-    /// A list of operations (by name) to be ignored by Hive.
-    /// Example: ["IntrospectionQuery", "MeQuery"]
+    /// An expression in VRL to exclude certain operations from being sent to Hive Console.
+    /// Returning `true` from this expression will exclude the operation, while `false` will include it.
+    /// This expression is a VRL expression that has access to the request and operation details;
+    ///
+    /// ```vrl
+    ///  if (.request.operation.name == "ExcludeMe") {
+    ///    true
+    ///  } else {
+    ///    false
+    ///  }
+    /// ```
+    /// Backward compatible with both:
+    /// - an expression object: `{ expression: "..." }`
+    /// - a list of operation names
     #[serde(default)]
-    pub exclude: Vec<String>,
+    pub exclude: Option<UsageReportingExclude>,
 
     /// A maximum number of operations to hold in a buffer before sending to Hive Console
     /// Default: 1000
@@ -68,13 +87,68 @@ pub struct UsageReportingConfig {
     pub flush_interval: Duration,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::UsageReportingConfig;
+
+    #[test]
+    fn exclude_supports_expression_object() {
+        let config: UsageReportingConfig = serde_json::from_str(
+            r#"{
+                "enabled": true,
+                "sample_rate": "100%",
+                "exclude": { "expression": ".request.operation.name == \"Health\"" }
+            }"#,
+        )
+        .expect("config with expression object should deserialize");
+
+        let exclude = config.exclude.expect("exclude should be present");
+
+        assert!(matches!(
+            exclude,
+            super::UsageReportingExclude::Expression { .. }
+        ));
+        if let super::UsageReportingExclude::Expression { expression } = exclude {
+            assert_eq!(
+                expression, ".request.operation.name == \"Health\"",
+                "expression should match the input"
+            );
+        }
+    }
+
+    #[test]
+    fn exclude_supports_legacy_operation_list() {
+        let config: UsageReportingConfig = serde_json::from_str(
+            r#"{
+                "enabled": true,
+                "sample_rate": "100%",
+                "exclude": ["IntrospectionQuery", "HealthCheck"]
+            }"#,
+        )
+        .expect("config with legacy operation list should deserialize");
+
+        let exclude = config.exclude.expect("exclude should be present");
+        assert!(matches!(
+            exclude,
+            super::UsageReportingExclude::OperationNames(_)
+        ));
+        if let super::UsageReportingExclude::OperationNames(names) = exclude {
+            assert_eq!(
+                names,
+                vec!["IntrospectionQuery".to_string(), "HealthCheck".to_string()],
+                "operation names should match the input"
+            );
+        }
+    }
+}
+
 impl Default for UsageReportingConfig {
     fn default() -> Self {
         Self {
             enabled: default_enabled(),
             endpoint: default_endpoint(),
             sample_rate: default_sample_rate(),
-            exclude: Vec::new(),
+            exclude: None,
             buffer_size: default_buffer_size(),
             accept_invalid_certs: default_accept_invalid_certs(),
             connect_timeout: default_connect_timeout(),

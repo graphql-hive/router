@@ -10,7 +10,10 @@ use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, subscriptions::SubscriptionProtocol,
     traffic_shaping::DurationOrExpression, HiveRouterConfig,
 };
-use hive_router_internal::expressions::vrl::core::Value as VrlValue;
+use hive_router_internal::expressions::{
+    vrl::{core::Value as VrlValue, prelude::Function},
+    ExpressionCompileError, ProgramHints, ValueOrProgram,
+};
 use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
 use hive_router_internal::{
     expressions::vrl::compiler::Program as VrlProgram, inflight::InFlightMap,
@@ -121,13 +124,14 @@ impl SubgraphExecutorMap {
         telemetry_context: Arc<TelemetryContext>,
         active_callback_subscriptions: CallbackSubscriptionsMap,
     ) -> Result<Self, SubgraphExecutorError> {
-        let global_timeout = DurationOrProgram::compile(
-            &config.traffic_shaping.all.request_timeout,
-            None,
-        )
-        .map_err(|err| {
-            SubgraphExecutorError::RequestTimeoutExpressionBuild("all".to_string(), err.diagnostics)
-        })?;
+        let global_timeout =
+            compile_duration_or_expression(&config.traffic_shaping.all.request_timeout, None)
+                .map_err(|err| {
+                    SubgraphExecutorError::RequestTimeoutExpressionBuild(
+                        "all".to_string(),
+                        err.diagnostics,
+                    )
+                })?;
         let mut subgraph_executor_map =
             SubgraphExecutorMap::new(config.clone(), global_timeout, telemetry_context)?;
         subgraph_executor_map.callback_subscriptions = active_callback_subscriptions;
@@ -615,7 +619,7 @@ impl SubgraphExecutorMap {
             .unwrap_or(&self.config.traffic_shaping.all.request_timeout);
 
         // Compile the timeout configuration into a DurationOrProgram
-        let timeout_prog = DurationOrProgram::compile(timeout_config, None).map_err(|err| {
+        let timeout_prog = compile_duration_or_expression(timeout_config, None).map_err(|err| {
             SubgraphExecutorError::RequestTimeoutExpressionBuild(
                 subgraph_name.to_string(),
                 err.diagnostics,
@@ -652,4 +656,18 @@ fn resolve_timeout(
             VrlValue::Object(context_map)
         })
         .map_err(|err| SubgraphExecutorError::TimeoutExpressionResolution(err.to_string()))
+}
+
+pub fn compile_duration_or_expression(
+    config: &DurationOrExpression,
+    fns: Option<&[Box<dyn Function>]>,
+) -> Result<ValueOrProgram<Duration>, ExpressionCompileError> {
+    match config {
+        DurationOrExpression::Duration(dur) => Ok(ValueOrProgram::Value(*dur)),
+        DurationOrExpression::Expression { expression } => {
+            let program = expression.as_str().compile_expression(fns)?;
+            let hints = ProgramHints::from_program(&program);
+            Ok(ValueOrProgram::Program(Box::new(program), hints))
+        }
+    }
 }

@@ -5,7 +5,7 @@ use hive_router_config::coprocessor::{
     CoprocessorHookConfig, CoprocessorRouterRequestIncludeConfig,
     CoprocessorRouterResponseIncludeConfig,
 };
-use hive_router_internal::expressions::{lib::ToVrlValue, values::boolean::BooleanOrProgram};
+use hive_router_internal::expressions::{BooleanOrProgram, ToVrlValue};
 use ntex::http::{
     body::{Body, ResponseBody},
     error::PayloadError,

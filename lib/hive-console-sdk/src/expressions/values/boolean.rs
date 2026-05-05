@@ -1,8 +1,5 @@
-use crate::expressions::{FromVrlValue, ValueOrProgram};
+use crate::expressions::FromVrlValue;
 use vrl::core::Value as VrlValue;
-
-/// Type alias for a Boolean that can be either static or computed via expression
-pub type BooleanOrProgram = ValueOrProgram<bool>;
 
 /// Error type for Boolean conversion failures
 #[derive(Debug, thiserror::Error, Clone)]

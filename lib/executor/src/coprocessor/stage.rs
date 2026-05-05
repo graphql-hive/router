@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use hive_router_config::headers::HOP_BY_HOP_HEADERS;
 use hive_router_config::primitives::value_or_expression::ValueOrExpression;
-use hive_router_internal::expressions::values::boolean::BooleanOrProgram;
 use hive_router_internal::expressions::vrl::core::Value as VrlValue;
+use hive_router_internal::expressions::BooleanOrProgram;
 use hive_router_internal::expressions::{CompileExpression, ProgramHints, ValueOrProgram};
 use ntex::http::header::{HeaderName, HeaderValue};
 use ntex::http::HeaderMap;

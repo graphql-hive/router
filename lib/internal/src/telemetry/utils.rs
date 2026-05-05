@@ -1,3 +1,4 @@
+use hive_console_sdk::expressions::{CompileExpression, ExecutableProgram};
 use hive_router_config::telemetry::tracing::OtlpGrpcTlsConfig;
 use std::{collections::HashMap, str::FromStr};
 use tonic::{
@@ -6,10 +7,7 @@ use tonic::{
 };
 use vrl::core::Value;
 
-use crate::{
-    expressions::{CompileExpression, ExecutableProgram},
-    telemetry::error::TelemetryError,
-};
+use crate::telemetry::error::TelemetryError;
 use hive_router_config::primitives::value_or_expression::ValueOrExpression;
 
 pub(super) fn build_metadata(
