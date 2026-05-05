@@ -7,7 +7,7 @@ pub use hive_console_sdk::expressions::error::{
     ExpressionCompileError, ExpressionExecutionError, ProgramResolutionError,
 };
 pub use hive_console_sdk::expressions::lib::{
-    CompileExpression, ExecutableProgram, FromVrlValue, ToVrlValue,
+    CompileExpression, ExecutableProgram, FromVrlValue, ProgramHints, ToVrlValue,
 };
 pub use hive_console_sdk::expressions::values::duration::DurationConversionError;
 pub use hive_console_sdk::expressions::values::header_value::HeaderValueConversionError;
@@ -19,8 +19,9 @@ use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue};
 pub enum ValueOrProgram<T> {
     /// A statically-known value
     Value(T),
-    /// A VRL program that computes the value at runtime
-    Program(Box<VrlProgram>),
+    /// A VRL program that computes the value at runtime, along with hints about which
+    /// fields are accessed during execution (used to optimize context construction).
+    Program(Box<VrlProgram>, ProgramHints),
 }
 
 impl<T> ValueOrProgram<T>
@@ -40,8 +41,30 @@ where
     {
         match self {
             ValueOrProgram::Value(v) => Ok(v.clone()),
-            ValueOrProgram::Program(vrl_program) => {
+            ValueOrProgram::Program(vrl_program, _) => {
                 let vrl_context = vrl_context_fn();
+                let result_value = vrl_program
+                    .execute(vrl_context)
+                    .map_err(ProgramResolutionError::ExecutionFailed)?;
+
+                T::from_vrl_value(result_value).map_err(ProgramResolutionError::ConversionFailed)
+            }
+        }
+    }
+
+    /// Resolve using hints to allow the context function to selectively build the context.
+    #[inline]
+    pub fn resolve_with_hints<F>(
+        &self,
+        vrl_context_fn: F,
+    ) -> Result<T, ProgramResolutionError<T::Error>>
+    where
+        F: FnOnce(&ProgramHints) -> VrlValue,
+    {
+        match self {
+            ValueOrProgram::Value(v) => Ok(v.clone()),
+            ValueOrProgram::Program(vrl_program, hints) => {
+                let vrl_context = vrl_context_fn(hints);
                 let result_value = vrl_program
                     .execute(vrl_context)
                     .map_err(ProgramResolutionError::ExecutionFailed)?;

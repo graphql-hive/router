@@ -103,84 +103,7 @@ impl ExecutableProgram for VrlProgram {
     }
 }
 
-pub enum ValueOrProgram<T> {
-    /// A statically-known value
-    Value(T),
-    /// A VRL program that computes the value at runtime
-    Program(Box<VrlProgram>, ProgramHints),
-}
-
-impl<T> ValueOrProgram<T>
-where
-    T: FromVrlValue + Clone,
-{
-    /// Resolve this ValueOrProgram to a concrete value
-    ///
-    /// If this is a static value, returns it immediately.
-    /// If this is a program, executes it against the provided context and converts the result.
-    ///
-    /// - `vrl_context_fn` - A function that returns the VRL value context for expression execution
-    #[inline]
-    pub fn resolve<F>(&self, vrl_context_fn: F) -> Result<T, ProgramResolutionError<T::Error>>
-    where
-        F: FnOnce() -> VrlValue,
-    {
-        match self {
-            ValueOrProgram::Value(v) => Ok(v.clone()),
-            ValueOrProgram::Program(vrl_program, _) => {
-                let vrl_context = vrl_context_fn();
-                let result_value = vrl_program
-                    .execute(vrl_context)
-                    .map_err(ProgramResolutionError::ExecutionFailed)?;
-
-                T::from_vrl_value(result_value).map_err(ProgramResolutionError::ConversionFailed)
-            }
-        }
-    }
-
-    /// Resolve this ValueOrProgram to a concrete value, providing target query hints
-    /// to the context function so it can optimize the VRL context structure.
-    ///
-    /// - `vrl_context_fn` - A function that returns the VRL value context, given the query hints
-    #[inline]
-    pub fn resolve_with_hints<F>(
-        &self,
-        vrl_context_fn: F,
-    ) -> Result<T, ProgramResolutionError<T::Error>>
-    where
-        F: FnOnce(&ProgramHints) -> VrlValue,
-    {
-        match self {
-            ValueOrProgram::Value(v) => Ok(v.clone()),
-            ValueOrProgram::Program(vrl_program, hints) => {
-                let vrl_context = vrl_context_fn(hints);
-                let result_value = vrl_program
-                    .execute(vrl_context)
-                    .map_err(ProgramResolutionError::ExecutionFailed)?;
-
-                T::from_vrl_value(result_value).map_err(ProgramResolutionError::ConversionFailed)
-            }
-        }
-    }
-}
-
-impl ValueOrProgram<Duration> {
-    pub fn compile(
-        config: &DurationOrExpression,
-        fns: Option<&[Box<dyn Function>]>,
-    ) -> Result<Self, ExpressionCompileError> {
-        match config {
-            DurationOrExpression::Duration(dur) => Ok(ValueOrProgram::Value(*dur)),
-            DurationOrExpression::Expression { expression } => {
-                let program = expression.as_str().compile_expression(fns)?;
-                let hints = ProgramHints::from_program(&program);
-                Ok(ValueOrProgram::Program(Box::new(program), hints))
-            }
-        }
-    }
-}
-
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct HintNode {
     is_terminal: bool,
     children: Vec<(String, HintNode)>,
@@ -216,7 +139,7 @@ impl HintNode {
 /// This struct analyzes a VRL program to determine which variables are accessed
 /// during execution.
 /// The purpose of this struct is to selectively build context for expressions.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ProgramHints {
     root: HintNode,
 }

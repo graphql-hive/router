@@ -12,7 +12,7 @@ use hive_router_config::{
 };
 use hive_router_internal::expressions::{
     vrl::{core::Value as VrlValue, prelude::Function},
-    ExpressionCompileError, ValueOrProgram,
+    ExpressionCompileError, ProgramHints, ValueOrProgram,
 };
 use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
 use hive_router_internal::{
@@ -666,7 +666,8 @@ pub fn compile_duration_or_expression(
         DurationOrExpression::Duration(dur) => Ok(ValueOrProgram::Value(*dur)),
         DurationOrExpression::Expression { expression } => {
             let program = expression.as_str().compile_expression(fns)?;
-            Ok(ValueOrProgram::Program(Box::new(program)))
+            let hints = ProgramHints::from_program(&program);
+            Ok(ValueOrProgram::Program(Box::new(program), hints))
         }
     }
 }
