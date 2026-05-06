@@ -75,6 +75,55 @@ mod conditional_directives_e2e_tests {
         check_response_includes_product_name(json_body, expected_included);
     }
 
+    const DUPLICATE_FIELD_PROJECTION_QUERY: &str = r#"
+        query($showConditionalInStock: Boolean!, $showAliasedShipping: Boolean!) {
+            me {
+                reviews {
+                    author {
+                        reviews {
+                            product {
+                                upc
+                                inStock
+                                inStock @include(if: $showConditionalInStock)
+                                shippingEstimate
+                                aliasedShippingEstimate: shippingEstimate @include(if: $showAliasedShipping)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    "#;
+
+    fn check_duplicate_field_projection_response(json_body: sonic_rs::Value) {
+        let product = json_body
+            .pointer(&pointer![
+                "data", "me", "reviews", 0, "author", "reviews", 0, "product"
+            ])
+            .expect("expected nested product in response");
+
+        let in_stock = product.pointer(&pointer!["inStock"]);
+        assert!(
+            in_stock.is_some(),
+            "Expected unconditional inStock to be present. Response body: {}",
+            json_body
+        );
+
+        let shipping_estimate = product.pointer(&pointer!["shippingEstimate"]);
+        assert!(
+            shipping_estimate.is_some(),
+            "Expected unconditional shippingEstimate to be present. Response body: {}",
+            json_body
+        );
+
+        let aliased_shipping_estimate = product.pointer(&pointer!["aliasedShippingEstimate"]);
+        assert!(
+            aliased_shipping_estimate.is_some(),
+            "Expected conditional aliasedShippingEstimate to be present. Response body: {}",
+            json_body
+        );
+    }
+
     const FIELD_CONDITIONS_SKIP_THEN_INCLUDE_QUERY: &'static str = r#"
         query($skip: Boolean!, $include: Boolean!) {
             me {
@@ -278,5 +327,34 @@ mod conditional_directives_e2e_tests {
             false,
         )
         .await;
+    }
+
+    #[ntex::test]
+    async fn duplicate_field_projection_preserves_unconditional_fields() {
+        let (_subgraphs, router) = build_router_with_supergraph().await;
+        let variables = sonic_rs::json!({
+            "showConditionalInStock": false,
+            "showAliasedShipping": true,
+        });
+        let res = router
+            .send_graphql_request(DUPLICATE_FIELD_PROJECTION_QUERY, Some(variables), None)
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let json_body = res.json_body().await;
+        let data = json_body.pointer(&pointer!["data"]);
+        assert!(
+            data.is_some_and(|value| value.is_object()),
+            "Expected response.data to be an object. Response body: {}",
+            json_body
+        );
+        let errors = json_body.pointer(&pointer!["errors"]);
+        assert!(
+            errors.is_none_or(|value| value.is_null()),
+            "Expected response.errors to be null or missing. Response body: {}",
+            json_body
+        );
+
+        check_duplicate_field_projection_response(json_body);
     }
 }
