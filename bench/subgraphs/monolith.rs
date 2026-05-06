@@ -1,5 +1,6 @@
 use async_graphql::{
-    ComplexObject, Interface, Object, Schema, SimpleObject, Subscription, ID, InputObject, Upload, Context
+    ComplexObject, Context, ID, InputObject, Interface, Object, Schema, SimpleObject,
+    Subscription, Upload,
 };
 use futures::stream::{self, Stream};
 use std::time::Duration;
@@ -24,25 +25,25 @@ pub enum SocialAccount {
 
 #[derive(SimpleObject, Clone)]
 pub struct TwitterAccount {
-    url: String,
-    handle: String,
-    followers: i32,
+    pub url: String,
+    pub handle: String,
+    pub followers: i32,
 }
 
 #[derive(SimpleObject, Clone)]
 pub struct GitHubAccount {
-    url: String,
-    handle: String,
-    repo_count: i32,
+    pub url: String,
+    pub handle: String,
+    pub repo_count: i32,
 }
 
 #[derive(SimpleObject, Clone)]
 #[graphql(complex)]
 pub struct User {
-    id: ID,
-    name: Option<String>,
-    username: Option<String>,
-    birthday: Option<i32>,
+    pub id: ID,
+    pub name: Option<String>,
+    pub username: Option<String>,
+    pub birthday: Option<i32>,
 }
 
 #[ComplexObject]
@@ -76,21 +77,14 @@ impl User {
     }
 
     async fn reviews(&self) -> Option<Vec<Option<Review>>> {
-        let relevant = REVIEWS.iter().filter(|r| {
-            // we mock this by saying user "1" has reviews 0 and 1
-            if self.id.as_str() == "1" {
-                r.id.as_str() == "1" || r.id.as_str() == "2"
-            } else {
-                false
-            }
-        }).map(|r| Some(Review {
+        // Mirror the reviews subgraph entity resolver exactly.
+        Some(REVIEWS[0..2].iter().map(|r| Some(Review {
             id: r.id.clone(),
             body: r.body.clone(),
             product: r.product.as_ref().map(|p| Product {
                 upc: p.upc.clone(),
             }),
-        })).collect();
-        Some(relevant)
+        })).collect())
     }
 }
 
@@ -353,4 +347,22 @@ impl Subscription {
 
 pub fn get_schema() -> Schema<Query, Mutation, Subscription> {
     Schema::build(Query, Mutation, Subscription).finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_graphql::Request;
+
+    #[tokio::test]
+    async fn monolith_matches_expected_bench_response() {
+        let query = include_str!("../operation.graphql");
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../expected_response.json")).unwrap();
+
+        let response = get_schema().execute(Request::new(query)).await;
+        let actual = serde_json::to_value(response).unwrap();
+
+        assert_eq!(actual, expected);
+    }
 }
