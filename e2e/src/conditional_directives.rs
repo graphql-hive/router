@@ -47,12 +47,12 @@ mod conditional_directives_e2e_tests {
         }
     }
 
-    async fn run_test(query: &str, skip: bool, include: bool, expected_included: bool) {
+    async fn run_test_with_variables(
+        query: &str,
+        variables: sonic_rs::Value,
+        assert_response: impl FnOnce(sonic_rs::Value),
+    ) {
         let (_subgraphs, router) = build_router_with_supergraph().await;
-        let variables = sonic_rs::json!({
-            "include": include,
-            "skip": skip,
-        });
         let res = router
             .send_graphql_request(query, Some(variables), None)
             .await;
@@ -72,7 +72,19 @@ mod conditional_directives_e2e_tests {
             json_body
         );
 
-        check_response_includes_product_name(json_body, expected_included);
+        assert_response(json_body);
+    }
+
+    async fn run_test(query: &str, skip: bool, include: bool, expected_included: bool) {
+        run_test_with_variables(
+            query,
+            sonic_rs::json!({
+                "include": include,
+                "skip": skip,
+            }),
+            |json_body| check_response_includes_product_name(json_body, expected_included),
+        )
+        .await;
     }
 
     const DUPLICATE_FIELD_PROJECTION_QUERY: &str = r#"
@@ -130,7 +142,7 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
+                        upc
                         name @skip(if: $skip) @include(if: $include)
                     }
                 }
@@ -144,7 +156,7 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
+                        upc
                         name @include(if: $include) @skip(if: $skip)
                     }
                 }
@@ -158,7 +170,7 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
+                        upc
                         ... on Product @skip(if: $skip) @include(if: $include) {
                             name
                         }
@@ -174,7 +186,7 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
+                        upc
                         ... on Product @include(if: $include) @skip(if: $skip) {
                             name
                         }
@@ -331,30 +343,14 @@ mod conditional_directives_e2e_tests {
 
     #[ntex::test]
     async fn duplicate_field_projection_preserves_unconditional_fields() {
-        let (_subgraphs, router) = build_router_with_supergraph().await;
-        let variables = sonic_rs::json!({
-            "showConditionalInStock": false,
-            "showAliasedShipping": true,
-        });
-        let res = router
-            .send_graphql_request(DUPLICATE_FIELD_PROJECTION_QUERY, Some(variables), None)
-            .await;
-        assert!(res.status().is_success(), "Expected 200 OK");
-
-        let json_body = res.json_body().await;
-        let data = json_body.pointer(&pointer!["data"]);
-        assert!(
-            data.is_some_and(|value| value.is_object()),
-            "Expected response.data to be an object. Response body: {}",
-            json_body
-        );
-        let errors = json_body.pointer(&pointer!["errors"]);
-        assert!(
-            errors.is_none_or(|value| value.is_null()),
-            "Expected response.errors to be null or missing. Response body: {}",
-            json_body
-        );
-
-        check_duplicate_field_projection_response(json_body);
+        run_test_with_variables(
+            DUPLICATE_FIELD_PROJECTION_QUERY,
+            sonic_rs::json!({
+                "showConditionalInStock": false,
+                "showAliasedShipping": true,
+            }),
+            check_duplicate_field_projection_response,
+        )
+        .await;
     }
 }
