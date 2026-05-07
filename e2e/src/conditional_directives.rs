@@ -214,6 +214,28 @@ mod conditional_directives_e2e_tests {
         );
     }
 
+    fn check_runtime_empty_nested_review_selection_preserves_object_shape(
+        json_body: sonic_rs::Value,
+    ) {
+        let nested_review = json_body
+            .pointer(&pointer![
+                "data", "topProducts", 0, "reviews", 0, "author", "reviews", 0
+            ])
+            .expect("expected nested review in response");
+
+        assert!(
+            nested_review.is_object(),
+            "Expected runtime-empty nested review item to remain an object. Response body: {}",
+            json_body
+        );
+        assert_eq!(
+            nested_review.to_string(),
+            "{}",
+            "Expected runtime-empty nested review item to be an empty object. Response body: {}",
+            json_body
+        );
+    }
+
     fn first_subgraph_query(requests: &[RequestLike]) -> String {
         let request = requests
             .first()
@@ -325,6 +347,20 @@ mod conditional_directives_e2e_tests {
             id
             reviews {
                 __typename
+            }
+        }
+    "#;
+
+    const RUNTIME_EMPTY_NESTED_REVIEW_SELECTION_PRESERVES_OBJECT_SHAPE_QUERY: &str = r#"
+        query($skipId: Boolean!, $includeId: Boolean!) {
+            topProducts(first: 1) {
+                reviews {
+                    author {
+                        reviews {
+                            hiddenId: id @skip(if: $skipId) @include(if: $includeId)
+                        }
+                    }
+                }
             }
         }
     "#;
@@ -562,6 +598,19 @@ mod conditional_directives_e2e_tests {
             SKIPPED_FRAGMENT_SPREAD_DOES_NOT_LEAK_INTO_NESTED_AUTHOR_QUERY,
             sonic_rs::json!({}),
             check_skipped_inline_fragment_does_not_leak_into_nested_author_response,
+        )
+        .await;
+    }
+
+    #[ntex::test]
+    async fn runtime_empty_nested_review_selection_preserves_object_shape() {
+        run_test_with_variables(
+            RUNTIME_EMPTY_NESTED_REVIEW_SELECTION_PRESERVES_OBJECT_SHAPE_QUERY,
+            sonic_rs::json!({
+                "skipId": true,
+                "includeId": true,
+            }),
+            check_runtime_empty_nested_review_selection_preserves_object_shape,
         )
         .await;
     }
