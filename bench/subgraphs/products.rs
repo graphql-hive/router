@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use async_graphql::{
     Context, EmptySubscription, InputObject, Object, Schema, SimpleObject, Upload, ID,
 };
