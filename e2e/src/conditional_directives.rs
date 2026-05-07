@@ -9,7 +9,6 @@ mod conditional_directives_e2e_tests {
 
     use sonic_rs::{pointer, JsonValueTrait};
 
-    use crate::testkit::{ClientResponseExt, Started, TestRouter, TestSubgraphs};
     use crate::testkit::{ClientResponseExt, RequestLike, Started, TestRouter, TestSubgraphs};
 
     async fn build_router_with_supergraph() -> (TestSubgraphs<Started>, TestRouter<Started>) {
@@ -48,17 +47,12 @@ mod conditional_directives_e2e_tests {
         }
     }
 
-    async fn run_test(query: &str, skip: bool, include: bool, expected_included: bool) {
     async fn run_test_with_variables(
         query: &str,
         variables: sonic_rs::Value,
         assert_response: impl FnOnce(sonic_rs::Value),
     ) {
         let (_subgraphs, router) = build_router_with_supergraph().await;
-        let variables = sonic_rs::json!({
-            "include": include,
-            "skip": skip,
-        });
         let res = router
             .send_graphql_request(query, Some(variables), None)
             .await;
@@ -78,7 +72,6 @@ mod conditional_directives_e2e_tests {
             json_body
         );
 
-        check_response_includes_product_name(json_body, expected_included);
         assert_response(json_body);
     }
 
@@ -147,7 +140,9 @@ mod conditional_directives_e2e_tests {
         json_body: sonic_rs::Value,
     ) {
         let nested_review = json_body
-            .pointer(&pointer!["data", "me", "reviews", 0, "author", "reviews", 0])
+            .pointer(&pointer![
+                "data", "me", "reviews", 0, "author", "reviews", 0
+            ])
             .expect("expected nested review in response");
 
         assert!(
@@ -165,6 +160,56 @@ mod conditional_directives_e2e_tests {
         assert!(
             nested_review.pointer(&pointer!["leakedBody"]).is_none(),
             "Expected leakedBody from skipped parent branch to be absent. Response body: {}",
+            json_body
+        );
+    }
+
+    fn check_skipped_inline_fragment_does_not_leak_into_nested_author_response(
+        json_body: sonic_rs::Value,
+    ) {
+        let author = json_body
+            .pointer(&pointer!["data", "me", "reviews", 0, "a7_author"])
+            .expect("expected nested author in response");
+
+        assert!(
+            author.pointer(&pointer!["a8_id"]).is_some(),
+            "Expected active branch to include a8_id. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["name"]).is_some(),
+            "Expected active branch to include name. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["username"]).is_some(),
+            "Expected active branch to include username. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["__typename"]).is_some(),
+            "Expected active branch to include __typename. Response body: {}",
+            json_body
+        );
+
+        assert!(
+            author.pointer(&pointer!["a9_name"]).is_none(),
+            "Expected skipped fragment field a9_name to be absent. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["birthday"]).is_none(),
+            "Expected skipped fragment field birthday to be absent. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["id"]).is_none(),
+            "Expected skipped fragment field id to be absent. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["reviews"]).is_none(),
+            "Expected skipped fragment field reviews to be absent. Response body: {}",
             json_body
         );
     }
@@ -193,7 +238,6 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
                         upc
                         name @skip(if: $skip) @include(if: $include)
                     }
@@ -235,13 +279,62 @@ mod conditional_directives_e2e_tests {
         }
     "#;
 
+    const SKIPPED_INLINE_FRAGMENT_DOES_NOT_LEAK_INTO_NESTED_AUTHOR_QUERY: &str = r#"
+        query {
+            me {
+                reviews {
+                    a7_author: author {
+                        a8_id: id
+                        ... on User @skip(if: true) @include(if: true) {
+                            username
+                            birthday
+                            a9_name: name
+                            id
+                            reviews {
+                                __typename
+                            }
+                        }
+                        name
+                        __typename
+                        username
+                    }
+                }
+            }
+        }
+    "#;
+
+    const SKIPPED_FRAGMENT_SPREAD_DOES_NOT_LEAK_INTO_NESTED_AUTHOR_QUERY: &str = r#"
+        query {
+            me {
+                reviews {
+                    a7_author: author {
+                        a8_id: id
+                        ...SkippedUserFields @skip(if: true) @include(if: true)
+                        name
+                        __typename
+                        username
+                    }
+                }
+            }
+        }
+
+        fragment SkippedUserFields on User {
+            username
+            birthday
+            a9_name: name
+            id
+            reviews {
+                __typename
+            }
+        }
+    "#;
+
     const FIELD_CONDITIONS_INCLUDE_THEN_SKIP_QUERY: &'static str = r#"
         query($skip: Boolean!, $include: Boolean!) {
             me {
                 name
                 reviews {
                     product {
-                        upc 
                         upc
                         name @include(if: $include) @skip(if: $skip)
                     }
@@ -256,7 +349,6 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
                         upc
                         ... on Product @skip(if: $skip) @include(if: $include) {
                             name
@@ -273,7 +365,6 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
                         upc
                         ... on Product @include(if: $include) @skip(if: $skip) {
                             name
@@ -451,6 +542,26 @@ mod conditional_directives_e2e_tests {
                 "includeAuthor": true,
             }),
             check_skipped_parent_branch_does_not_leak_nested_fields_response,
+        )
+        .await;
+    }
+
+    #[ntex::test]
+    async fn skipped_inline_fragment_does_not_leak_fields_into_nested_author_projection() {
+        run_test_with_variables(
+            SKIPPED_INLINE_FRAGMENT_DOES_NOT_LEAK_INTO_NESTED_AUTHOR_QUERY,
+            sonic_rs::json!({}),
+            check_skipped_inline_fragment_does_not_leak_into_nested_author_response,
+        )
+        .await;
+    }
+
+    #[ntex::test]
+    async fn skipped_fragment_spread_does_not_leak_fields_into_nested_author_projection() {
+        run_test_with_variables(
+            SKIPPED_FRAGMENT_SPREAD_DOES_NOT_LEAK_INTO_NESTED_AUTHOR_QUERY,
+            sonic_rs::json!({}),
+            check_skipped_inline_fragment_does_not_leak_into_nested_author_response,
         )
         .await;
     }
