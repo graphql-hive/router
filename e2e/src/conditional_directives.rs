@@ -10,6 +10,7 @@ mod conditional_directives_e2e_tests {
     use sonic_rs::{pointer, JsonValueTrait};
 
     use crate::testkit::{ClientResponseExt, Started, TestRouter, TestSubgraphs};
+    use crate::testkit::{ClientResponseExt, RequestLike, Started, TestRouter, TestSubgraphs};
 
     async fn build_router_with_supergraph() -> (TestSubgraphs<Started>, TestRouter<Started>) {
         let subgraphs = TestSubgraphs::builder().build().start().await;
@@ -47,12 +48,17 @@ mod conditional_directives_e2e_tests {
         }
     }
 
+    async fn run_test(query: &str, skip: bool, include: bool, expected_included: bool) {
     async fn run_test_with_variables(
         query: &str,
         variables: sonic_rs::Value,
         assert_response: impl FnOnce(sonic_rs::Value),
     ) {
         let (_subgraphs, router) = build_router_with_supergraph().await;
+        let variables = sonic_rs::json!({
+            "include": include,
+            "skip": skip,
+        });
         let res = router
             .send_graphql_request(query, Some(variables), None)
             .await;
@@ -72,6 +78,7 @@ mod conditional_directives_e2e_tests {
             json_body
         );
 
+        check_response_includes_product_name(json_body, expected_included);
         assert_response(json_body);
     }
 
@@ -162,12 +169,31 @@ mod conditional_directives_e2e_tests {
         );
     }
 
+    fn first_subgraph_query(requests: &[RequestLike]) -> String {
+        let request = requests
+            .first()
+            .expect("expected at least one subgraph request");
+        let body = request
+            .body
+            .as_ref()
+            .expect("expected subgraph request body");
+        let payload: sonic_rs::Value =
+            sonic_rs::from_slice(body).expect("failed to parse subgraph request body as JSON");
+
+        payload
+            .pointer(&pointer!["query"])
+            .and_then(|value| value.as_str())
+            .expect("expected subgraph request payload to include a query string")
+            .to_string()
+    }
+
     const FIELD_CONDITIONS_SKIP_THEN_INCLUDE_QUERY: &'static str = r#"
         query($skip: Boolean!, $include: Boolean!) {
             me {
                 name
                 reviews {
                     product {
+                        upc 
                         upc
                         name @skip(if: $skip) @include(if: $include)
                     }
@@ -198,12 +224,24 @@ mod conditional_directives_e2e_tests {
         }
     "#;
 
+    const EMPTY_COMPOSITE_SELECTION_QUERY: &str = r#"
+        query($skipUsers: Boolean!) {
+            users @skip(if: $skipUsers) {
+                __typename
+                reviews {
+                    hiddenBody: body @skip(if: false) @include(if: false)
+                }
+            }
+        }
+    "#;
+
     const FIELD_CONDITIONS_INCLUDE_THEN_SKIP_QUERY: &'static str = r#"
         query($skip: Boolean!, $include: Boolean!) {
             me {
                 name
                 reviews {
                     product {
+                        upc 
                         upc
                         name @include(if: $include) @skip(if: $skip)
                     }
@@ -218,6 +256,7 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
+                        upc 
                         upc
                         ... on Product @skip(if: $skip) @include(if: $include) {
                             name
@@ -234,6 +273,7 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
+                        upc 
                         upc
                         ... on Product @include(if: $include) @skip(if: $skip) {
                             name
@@ -413,5 +453,65 @@ mod conditional_directives_e2e_tests {
             check_skipped_parent_branch_does_not_leak_nested_fields_response,
         )
         .await;
+    }
+
+    #[ntex::test]
+    async fn empty_composite_selection_preserves_response_shape_with_structural_typename() {
+        let (subgraphs, router) = build_router_with_supergraph().await;
+
+        let res = router
+            .send_graphql_request(
+                EMPTY_COMPOSITE_SELECTION_QUERY,
+                Some(sonic_rs::json!({
+                    "skipUsers": false,
+                })),
+                None,
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let json_body = res.json_body().await;
+        assert!(
+            json_body
+                .pointer(&pointer!["errors"])
+                .is_none_or(|value| value.is_null()),
+            "Expected response.errors to be null or missing. Response body: {}",
+            json_body
+        );
+
+        let first_user = json_body
+            .pointer(&pointer!["data", "users", 0])
+            .expect("expected at least one user in response");
+        let first_review = first_user
+            .pointer(&pointer!["reviews"])
+            .and_then(|value| value.get(0))
+            .expect("expected at least one review in response");
+
+        assert!(
+            first_review.is_object(),
+            "Expected review item to be an object. Response body: {}",
+            json_body
+        );
+        assert_eq!(
+            first_review.to_string(),
+            "{}",
+            "Expected review item to be an empty object. Response body: {}",
+            json_body
+        );
+
+        let reviews_requests = subgraphs
+            .get_requests_log("reviews")
+            .expect("expected requests sent to reviews subgraph");
+        let reviews_query = first_subgraph_query(&reviews_requests);
+
+        assert!(
+            reviews_query.contains("reviews{__typename}")
+                || reviews_query.contains("reviews {__typename}")
+                || reviews_query.contains("reviews{ __typename }")
+                || reviews_query.contains("reviews { __typename }"),
+            "Expected reviews subgraph fetch to include structural __typename. Subgraph query: {}",
+            reviews_query
+        );
     }
 }
