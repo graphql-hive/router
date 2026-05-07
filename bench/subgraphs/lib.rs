@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod graphql_with_subscriptions;
 pub mod inventory;
+pub mod monolith;
 pub mod products;
 pub mod reviews;
 
@@ -117,6 +118,10 @@ pub fn subgraphs_app(subscriptions_protocol: HTTPStreamingSubscriptionProtocol) 
                 reviews::get_subgraph(),
                 subscriptions_protocol,
             )),
+        )
+        .route(
+            "/monolith",
+            post_service(GraphQL::new(monolith::get_schema())),
         )
         .route_layer(middleware::from_fn(add_subgraph_header))
         .route_layer(middleware::from_fn(delay_middleware))

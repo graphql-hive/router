@@ -1,13 +1,12 @@
-use std::io::Read;
-
 use async_graphql::{
     Context, EmptySubscription, InputObject, Object, Schema, SimpleObject, Upload, ID,
 };
+use futures::AsyncReadExt;
 use lazy_static::lazy_static;
 use tokio::io::AsyncWriteExt;
 
 lazy_static! {
-    static ref PRODUCTS: Vec<Product> = vec![
+    pub static ref PRODUCTS: Vec<Product> = vec![
         Product {
             upc: "1".to_string(),
             name: Some("Table".to_string()),
@@ -84,12 +83,12 @@ lazy_static! {
 }
 #[derive(SimpleObject, Clone)]
 pub struct Product {
-    upc: String,
-    name: Option<String>,
-    price: Option<i64>,
-    weight: Option<i64>,
-    notes: Option<String>,
-    internal: Option<String>,
+    pub(crate) upc: String,
+    pub(crate) name: Option<String>,
+    pub(crate) price: Option<i64>,
+    pub(crate) weight: Option<i64>,
+    pub(crate) notes: Option<String>,
+    pub(crate) internal: Option<String>,
 }
 
 pub struct Query;
@@ -137,7 +136,11 @@ impl Mutation {
         let uploaded_file = file.unwrap().value(ctx).unwrap();
         let path = format!("/tmp/{}", uploaded_file.filename);
         let mut buf = vec![];
-        let _ = uploaded_file.into_read().read_to_end(&mut buf);
+        uploaded_file
+            .into_async_read()
+            .read_to_end(&mut buf)
+            .await
+            .unwrap();
         let mut tmp_file_on_disk = tokio::fs::File::create(&path).await.unwrap();
         tmp_file_on_disk.write_all(&buf).await.unwrap();
         path
