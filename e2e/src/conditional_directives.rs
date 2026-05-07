@@ -219,7 +219,14 @@ mod conditional_directives_e2e_tests {
     ) {
         let nested_review = json_body
             .pointer(&pointer![
-                "data", "topProducts", 0, "reviews", 0, "author", "reviews", 0
+                "data",
+                "topProducts",
+                0,
+                "reviews",
+                0,
+                "author",
+                "reviews",
+                0
             ])
             .expect("expected nested review in response");
 
