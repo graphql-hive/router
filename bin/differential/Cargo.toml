@@ -1,10 +1,10 @@
 [package]
-name = "graphql-harness"
+name = "graphql-differential"
 edition = "2021"
 publish = false
 
 [[bin]]
-name = "harness"
+name = "graphql-diff"
 path = "src/main.rs"
 
 [dependencies]

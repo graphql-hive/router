@@ -679,20 +679,20 @@ async fn execute_query(
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 3 {
+    if args.len() < 4 {
         eprintln!(
-            "Usage: {} <endpoint1> <endpoint2> [schema.graphql]",
+            "Usage: {} <baseline-endpoint> <candidate-endpoint> <schema.graphql>",
             args[0]
         );
         eprintln!(
-            "Example: {} http://localhost:4000/graphql http://localhost:4001/graphql",
+            "Example: {} http://localhost:4300/graphql http://localhost:4000/graphql bench/schema.graphql",
             args[0]
         );
         return;
     }
 
-    let endpoint1 = &args[1];
-    let endpoint2 = &args[2];
+    let baseline_endpoint = &args[1];
+    let candidate_endpoint = &args[2];
 
     let schema_str = match std::fs::read_to_string(&args[3]) {
         Ok(content) => content,
@@ -718,13 +718,13 @@ async fn main() {
     let mut differences = 0;
     let mut num_queries = 100;
 
-    if let Ok(val) = std::env::var("HARNESS_QUERIES") {
+    if let Ok(val) = std::env::var("GRAPHQL_DIFF_QUERIES") {
         num_queries = val.parse().unwrap_or(10);
     }
 
-    println!("Running {} queries against:", num_queries);
-    println!("  1: {}", endpoint1);
-    println!("  2: {}", endpoint2);
+    println!("Running {} differential queries against:", num_queries);
+    println!("  baseline: {}", baseline_endpoint);
+    println!("  candidate: {}", candidate_endpoint);
     println!("--------------------------------------------------");
 
     for i in 0..num_queries {
@@ -733,8 +733,18 @@ async fn main() {
 
         println!("Query #{}:", i + 1);
 
-        let res1_future = execute_query(&client, endpoint1, &case.document, &case.variables_json);
-        let res2_future = execute_query(&client, endpoint2, &case.document, &case.variables_json);
+        let res1_future = execute_query(
+            &client,
+            baseline_endpoint,
+            &case.document,
+            &case.variables_json,
+        );
+        let res2_future = execute_query(
+            &client,
+            candidate_endpoint,
+            &case.document,
+            &case.variables_json,
+        );
 
         let (res1, res2) = tokio::join!(res1_future, res2_future);
 
@@ -785,15 +795,15 @@ async fn main() {
             }
             (Err(e1), Err(e2)) => {
                 println!("⚠️ Both endpoints failed");
-                println!("  1: {}", e1);
-                println!("  2: {}", e2);
+                println!("  baseline: {}", e1);
+                println!("  candidate: {}", e2);
             }
             (Err(e1), Ok(_)) => {
-                println!("❌ Endpoint 1 failed: {}", e1);
+                println!("❌ Baseline endpoint failed: {}", e1);
                 differences += 1;
             }
             (Ok(_), Err(e2)) => {
-                println!("❌ Endpoint 2 failed: {}", e2);
+                println!("❌ Candidate endpoint failed: {}", e2);
                 differences += 1;
             }
         }
