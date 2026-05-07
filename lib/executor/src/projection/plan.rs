@@ -707,7 +707,7 @@ impl FieldProjectionPlan {
         let new_plan = if matches!(
             field.selections.items.as_slice(),
             [SelectionItem::Field(FieldSelection {
-                skip_in_response_projection: true,
+                omit_from_response: true,
                 ..
             })]
         ) {

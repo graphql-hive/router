@@ -1268,7 +1268,7 @@ fn process_plain_field_edge(
                         c.to_include_if()
                     }
                 }),
-                skip_in_response_projection: false,
+                omit_from_response: false,
             })],
         },
     )?;
@@ -1413,7 +1413,7 @@ fn process_requires_field_edge(
                 arguments: query_node.selection_arguments().cloned(),
                 skip_if: None,
                 include_if: None,
-                skip_in_response_projection: false,
+                omit_from_response: false,
             })],
         },
     )?;

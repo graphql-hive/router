@@ -496,7 +496,7 @@ fn create_output_operation(
                 ),
                 skip_if: None,
                 include_if: None,
-                skip_in_response_projection: false,
+                omit_from_response: false,
             })],
         },
     };

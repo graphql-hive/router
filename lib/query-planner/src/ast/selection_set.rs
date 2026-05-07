@@ -138,8 +138,14 @@ pub struct FieldSelection {
     pub skip_if: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_if: Option<String>,
+    /// Whether to skip this field in response projection.
+    /// Defaults to `false`.
+    /// The only case so far for it is when the selection set becomes empty,
+    /// due to a field being `@skip(if: true)` or `@include(if: false)`,
+    /// and used to avoid sending empty selection sets,
+    /// and to project an empty object.
     #[serde(default)]
-    pub skip_in_response_projection: bool,
+    pub omit_from_response: bool,
 }
 
 impl Hash for FieldSelection {
@@ -175,7 +181,7 @@ impl FieldSelection {
             arguments: self.arguments.clone(),
             skip_if: self.skip_if.clone(),
             include_if: self.include_if.clone(),
-            skip_in_response_projection: self.skip_in_response_projection,
+            omit_from_response: self.omit_from_response,
         }
     }
 
@@ -211,7 +217,7 @@ impl FieldSelection {
             arguments: None,
             skip_if: None,
             include_if: None,
-            skip_in_response_projection: false,
+            omit_from_response: false,
         }
     }
 
@@ -224,7 +230,7 @@ impl FieldSelection {
             arguments: None,
             skip_if: None,
             include_if: None,
-            skip_in_response_projection: true,
+            omit_from_response: true,
         }
     }
 
@@ -690,7 +696,7 @@ mod tests {
                     arguments: None,
                     skip_if: None,
                     include_if: None,
-                    skip_in_response_projection: false,
+                    omit_from_response: false,
                 }),
                 SelectionItem::Field(FieldSelection {
                     name: "field2".to_string(),
@@ -702,14 +708,14 @@ mod tests {
                             arguments: Some(("a".to_string(), Value::Int(1)).into()),
                             skip_if: None,
                             include_if: None,
-                            skip_in_response_projection: false,
+                            omit_from_response: false,
                         })],
                     },
                     alias: Some("f2".to_string()),
                     arguments: None,
                     skip_if: None,
                     include_if: None,
-                    skip_in_response_projection: false,
+                    omit_from_response: false,
                 }),
             ],
         };
@@ -730,7 +736,7 @@ mod tests {
                 arguments: None,
                 skip_if: None,
                 include_if: None,
-                skip_in_response_projection: false,
+                omit_from_response: false,
             })],
         };
 
@@ -750,7 +756,7 @@ mod tests {
                 arguments: Some(vec![("id".to_string(), Value::Int(1))].into()),
                 skip_if: None,
                 include_if: None,
-                skip_in_response_projection: false,
+                omit_from_response: false,
             })],
         };
 
@@ -788,7 +794,7 @@ mod tests {
                 ),
                 skip_if: None,
                 include_if: None,
-                skip_in_response_projection: false,
+                omit_from_response: false,
             })],
         };
 
@@ -808,7 +814,7 @@ mod tests {
                 arguments: None,
                 skip_if: None,
                 include_if: Some("first".to_string()),
-                skip_in_response_projection: false,
+                omit_from_response: false,
             })],
         };
         let source = SelectionSet {
@@ -819,7 +825,7 @@ mod tests {
                 arguments: None,
                 skip_if: None,
                 include_if: Some("second".to_string()),
-                skip_in_response_projection: false,
+                omit_from_response: false,
             })],
         };
 
@@ -841,14 +847,14 @@ mod tests {
                         arguments: None,
                         skip_if: None,
                         include_if: None,
-                        skip_in_response_projection: false,
+                        omit_from_response: false,
                     })],
                 },
                 alias: None,
                 arguments: None,
                 skip_if: None,
                 include_if: Some("cond".to_string()),
-                skip_in_response_projection: false,
+                omit_from_response: false,
             })],
         };
         let source = SelectionSet {
@@ -862,14 +868,14 @@ mod tests {
                         arguments: None,
                         skip_if: None,
                         include_if: None,
-                        skip_in_response_projection: false,
+                        omit_from_response: false,
                     })],
                 },
                 alias: None,
                 arguments: None,
                 skip_if: None,
                 include_if: Some("cond".to_string()),
-                skip_in_response_projection: false,
+                omit_from_response: false,
             })],
         };
 
@@ -924,7 +930,7 @@ mod tests {
             arguments: None,
             skip_if: Some("skip".to_string()),
             include_if: Some("include".to_string()),
-            skip_in_response_projection: false,
+            omit_from_response: false,
         };
         assert!(!field_condition_equal(&skip_cond, &field));
         assert!(!field_condition_equal(&include_cond, &field));

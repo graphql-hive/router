@@ -190,7 +190,7 @@ impl ASTHash for &FieldSelection {
             var_name.hash(hasher);
         }
 
-        self.skip_in_response_projection.hash(hasher);
+        self.omit_from_response.hash(hasher);
     }
 
     fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
@@ -211,7 +211,7 @@ impl ASTHash for &FieldSelection {
             var_name.hash(hasher);
         }
 
-        self.skip_in_response_projection.hash(hasher);
+        self.omit_from_response.hash(hasher);
     }
 }
 
@@ -374,7 +374,7 @@ mod tests {
                         arguments: None,
                         include_if: None,
                         skip_if: None,
-                        skip_in_response_projection: false,
+                        omit_from_response: false,
                     }),
                     SelectionItem::Field(FieldSelection {
                         name: "name".to_string(),
@@ -383,14 +383,14 @@ mod tests {
                         arguments: None,
                         include_if: Some("includeName".to_string()),
                         skip_if: None,
-                        skip_in_response_projection: false,
+                        omit_from_response: false,
                     }),
                 ],
             },
             arguments: Some(arguments),
             include_if: None,
             skip_if: Some("skipUsers".to_string()),
-            skip_in_response_projection: false,
+            omit_from_response: false,
         };
 
         let selection_set = SelectionSet {
