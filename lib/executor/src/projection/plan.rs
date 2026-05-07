@@ -376,12 +376,16 @@ impl FieldProjectionPlan {
         }
     }
 
-    /// Combines two optional conditions with OR logic
+    /// Merges optional projection conditions.
     fn or_optional(
         left: Option<FieldProjectionCondition>,
         right: Option<FieldProjectionCondition>,
     ) -> Option<FieldProjectionCondition> {
-        Self::combine_optional(left, right, |l, r| l.or(r))
+        match (left, right) {
+            // `None` means "always project", so it wins over any condition.
+            (None, _) | (_, None) => None,
+            (Some(l), Some(r)) => Some(l.or(r)),
+        }
     }
 
     /// Combines two optional conditions with AND logic
@@ -392,32 +396,36 @@ impl FieldProjectionPlan {
         Self::combine_optional(left, right, |l, r| l.and(r))
     }
 
-    /// When merging selections from different type fragments (e.g., Book and Magazine),
-    /// each condition must remain associated with its original type guard to ensure
-    /// correct runtime evaluation.
-    fn merge_conditions(
-        left_guard: &Option<TypeCondition>,
-        left_condition: Option<FieldProjectionCondition>,
-        right_guard: &Option<TypeCondition>,
-        right_condition: Option<FieldProjectionCondition>,
+    /// Keeps only the parts of a parent condition that still apply to child selections.
+    /// After we move into a field value, checks for the old parent object no longer fit.
+    /// Only `@include` and `@skip` checks still make sense.
+    fn conditions_for_child_selections(
+        condition: &FieldProjectionCondition,
     ) -> Option<FieldProjectionCondition> {
-        match (left_guard, right_guard, left_condition, right_condition) {
-            // No conditions to merge - return None
-            (_, _, None, None) => None,
+        use FieldProjectionCondition::*;
+        match condition {
+            IncludeIfVariable(variable_name) => Some(IncludeIfVariable(variable_name.clone())),
+            SkipIfVariable(variable_name) => Some(SkipIfVariable(variable_name.clone())),
+            And(left, right) => Self::and_optional(
+                Self::conditions_for_child_selections(left),
+                Self::conditions_for_child_selections(right),
+            ),
+            Or(left, right) => Self::or_optional(
+                Self::conditions_for_child_selections(left),
+                Self::conditions_for_child_selections(right),
+            ),
+            ParentTypeCondition(_) | FieldTypeCondition(_) | EnumValuesCondition(_) => None,
+        }
+    }
 
-            // Both have guards AND guards differ - must preserve guard associations
-            // This happens when merging fragments on different types (e.g., Book + Magazine)
-            (Some(lg), Some(rg), lc, rc) if lg != rg => {
-                Some(Self::condition_with_guard(lg, lc).or(Self::condition_with_guard(rg, rc)))
-            }
-
-            // Catch-all for remaining cases - simple OR merge
-            // These cases are safe to merge without guard wrapping because:
-            // - Both guards are identical (l == r), so conditions apply to same type
-            // - One or both guards are None, meaning selections apply to all types
-            //   (merge_plan treats None as "all types", so if either
-            //   is None, the merged guard is None, making simple OR safe)
-            (_, _, lc, rc) => Self::or_optional(lc, rc),
+    /// Adds the type guard back when the condition must keep that type scope.
+    fn condition_with_optional_guard(
+        guard: &Option<TypeCondition>,
+        condition: Option<FieldProjectionCondition>,
+    ) -> Option<FieldProjectionCondition> {
+        match guard {
+            None => condition,
+            Some(guard) => Some(Self::condition_with_guard(guard, condition)),
         }
     }
 
@@ -436,6 +444,38 @@ impl FieldProjectionPlan {
             Some(cond) => parent_check.and(cond),
             None => parent_check,
         }
+    }
+
+    /// Merges two field conditions and keeps the parent type scope correct.
+    ///
+    /// If both conditions use the same scope, they can be merged directly.
+    /// If they use different scopes, each condition must keep its own guard.
+    fn merge_conditions(
+        left_guard: &Option<TypeCondition>,
+        left_condition: Option<FieldProjectionCondition>,
+        right_guard: &Option<TypeCondition>,
+        right_condition: Option<FieldProjectionCondition>,
+    ) -> Option<FieldProjectionCondition> {
+        // If both guards are the same, both conditions apply in the same type scope.
+        // In that case, "always project" wins over a conditional branch.
+        if left_guard == right_guard {
+            return Self::or_optional(left_condition, right_condition);
+        }
+
+        // If the guards are different, each condition must keep its own type scope.
+        //
+        // Example:
+        //   name @include(if: $cond)
+        //   ... on User { name }
+        //
+        // This must become:
+        //   Include($cond) OR ParentType(User)
+        //
+        // We must not drop the conditions and return `None`.
+        let left = Self::condition_with_optional_guard(left_guard, left_condition);
+        let right = Self::condition_with_optional_guard(right_guard, right_condition);
+
+        Self::or_optional(left, right)
     }
 
     /// When the same field appears in multiple fragments,
@@ -564,11 +604,7 @@ impl FieldProjectionPlan {
                 let left_simplified = Self::simplify_condition(*left, parent_type_guard);
                 let right_simplified = Self::simplify_condition(*right, parent_type_guard);
 
-                match (left_simplified, right_simplified) {
-                    (None, None) => None,
-                    (Some(cond), None) | (None, Some(cond)) => Some(cond),
-                    (Some(l), Some(r)) => Some(l.or(r)),
-                }
+                Self::or_optional(left_simplified, right_simplified)
             }
 
             // Keep other conditions as-is
@@ -624,10 +660,16 @@ impl FieldProjectionPlan {
         };
 
         let parent_type_guard = parent_condition.as_ref().and_then(Self::get_type_guard);
+        let inherited_selection_conditions = parent_condition
+            .as_ref()
+            .and_then(Self::conditions_for_child_selections);
         let conditions_for_selections = Self::apply_directive_conditions(
-            parent_type_guard
-                .as_ref()
-                .map(|_| FieldProjectionCondition::ParentTypeCondition(type_condition.clone())),
+            Self::and_optional(
+                inherited_selection_conditions,
+                parent_type_guard
+                    .as_ref()
+                    .map(|_| FieldProjectionCondition::ParentTypeCondition(type_condition.clone())),
+            ),
             &field.include_if,
             &field.skip_if,
         );
