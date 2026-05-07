@@ -15,7 +15,6 @@ use reqwest::Client;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::time::Duration;
-use tokio;
 
 #[derive(Debug, Clone)]
 pub struct GeneratorConfig {
@@ -136,7 +135,7 @@ impl<'a> QueryGenerator<'a> {
         let mut defs = Vec::new();
 
         let mut query_vars = Vec::new();
-        for (_, def) in &self.variable_defs {
+        for def in self.variable_defs.values() {
             query_vars.push(VariableDefinition {
                 position: Pos::default(),
                 name: def.name.clone(),
@@ -190,20 +189,20 @@ impl<'a> QueryGenerator<'a> {
         let mut selections = Vec::new();
 
         if let Some(type_def) = type_def_opt {
-            if type_def.is_composite_type() {
-                if self.rng.random_bool(0.55) || type_def.is_union_type() {
-                    selections.push(Selection::Field(QueryField {
-                        position: Pos::default(),
-                        alias: None,
-                        name: "__typename".to_string(),
-                        arguments: Vec::new(),
-                        directives: Vec::new(),
-                        selection_set: SelectionSet {
-                            span: (Pos::default(), Pos::default()),
-                            items: Vec::new(),
-                        },
-                    }));
-                }
+            if type_def.is_composite_type()
+                && (self.rng.random_bool(0.55) || type_def.is_union_type())
+            {
+                selections.push(Selection::Field(QueryField {
+                    position: Pos::default(),
+                    alias: None,
+                    name: "__typename".to_string(),
+                    arguments: Vec::new(),
+                    directives: Vec::new(),
+                    selection_set: SelectionSet {
+                        span: (Pos::default(), Pos::default()),
+                        items: Vec::new(),
+                    },
+                }));
             }
 
             if !type_def.is_union_type() {
@@ -302,7 +301,7 @@ impl<'a> QueryGenerator<'a> {
 
                 for field in scalar_fields
                     .into_iter()
-                    .take(self.config.max_width.min(3).max(1))
+                    .take(self.config.max_width.clamp(1, 3))
                 {
                     selections.push(self.field_selection(field, self.config.max_depth));
                 }
@@ -401,9 +400,7 @@ impl<'a> QueryGenerator<'a> {
                     "s{}",
                     self.rng.random_range(0..1000)
                 ))),
-                "Int" => Some(QueryValue::Int(
-                    (self.rng.random_range(0..100) as i32).into(),
-                )),
+                "Int" => Some(QueryValue::Int(self.rng.random_range(0..100).into())),
                 "Float" => Some(QueryValue::Float(self.rng.random_range(0.0..100.0))),
                 "Boolean" => Some(QueryValue::Boolean(self.rng.random_bool(0.5))),
                 other => {
