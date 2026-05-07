@@ -59,7 +59,9 @@ fn handle_selection_set<'a>(
                     handle_selection_set(&mut inline_frag.selection_set)?;
                 }
             }
-            Selection::FragmentSpread(_) => {}
+            Selection::FragmentSpread(ref spread) => {
+                should_add = should_keep(&spread.directives);
+            }
         }
 
         if should_add {

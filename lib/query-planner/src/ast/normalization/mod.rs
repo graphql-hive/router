@@ -5,6 +5,7 @@ pub mod error;
 pub mod pipeline;
 pub mod utils;
 
+use crate::ast;
 use crate::ast::document::NormalizedDocument;
 use crate::ast::normalization::context::{NormalizationContext, RootTypes};
 use crate::ast::normalization::pipeline::drop_skipped_fields;
@@ -16,7 +17,7 @@ use crate::ast::normalization::pipeline::merge_inline_fragments;
 use crate::ast::normalization::pipeline::normalize_fields;
 use crate::ast::normalization::pipeline::type_expand;
 use crate::ast::normalization::pipeline::{drop_duplicated_fields, drop_fragment_definitions};
-use crate::state::supergraph_state::SupergraphState;
+use crate::state::supergraph_state::{OperationKind, SupergraphState};
 use error::NormalizationError;
 
 /// Normalizes the operation by mutating it
@@ -77,6 +78,7 @@ pub fn normalize_operation(
         .map(|n| n.to_string());
 
     Ok(create_normalized_document(
+        supergraph,
         op_def.to_owned(),
         operation_name,
     ))
@@ -84,12 +86,79 @@ pub fn normalize_operation(
 
 #[inline]
 pub fn create_normalized_document<'a>(
+    supergraph: &SupergraphState,
     operation_ast: query_ast::OperationDefinition<'a, String>,
     operation_name: Option<String>,
 ) -> NormalizedDocument {
+    let mut operation: ast::operation::OperationDefinition = operation_ast.into();
+    inject_skipped_typename_for_empty_composites(&mut operation, supergraph);
+
     NormalizedDocument {
-        operation: operation_ast.into(),
+        operation,
         operation_name,
+    }
+}
+
+fn inject_skipped_typename_for_empty_composites(
+    operation: &mut ast::operation::OperationDefinition,
+    supergraph: &SupergraphState,
+) {
+    let root_type_name = match operation.operation_kind.as_ref() {
+        Some(OperationKind::Query) | None => supergraph.query_type.as_str(),
+        Some(OperationKind::Mutation) => supergraph
+            .mutation_type
+            .as_deref()
+            .expect("mutation root type should exist"),
+        Some(OperationKind::Subscription) => supergraph
+            .subscription_type
+            .as_deref()
+            .expect("subscription root type should exist"),
+    };
+    inject_skipped_typename_for_selection_set(
+        &mut operation.selection_set,
+        root_type_name,
+        supergraph,
+    );
+}
+
+fn inject_skipped_typename_for_selection_set(
+    selection_set: &mut ast::selection_set::SelectionSet,
+    parent_type_name: &str,
+    supergraph: &SupergraphState,
+) {
+    use ast::selection_item::SelectionItem;
+    use ast::selection_set::FieldSelection;
+
+    for item in &mut selection_set.items {
+        let SelectionItem::Field(field) = item else {
+            continue;
+        };
+        let Some(field_type_name) = supergraph
+            .definitions
+            .get(parent_type_name)
+            .and_then(|definition| definition.fields().get(&field.name))
+            .map(|field_definition| field_definition.field_type.inner_type())
+        else {
+            continue;
+        };
+        let is_composite = supergraph
+            .definitions
+            .get(field_type_name)
+            .is_some_and(|definition| definition.is_composite_type());
+        if !is_composite {
+            continue;
+        }
+        inject_skipped_typename_for_selection_set(
+            &mut field.selections,
+            field_type_name,
+            supergraph,
+        );
+        if field.selections.items.is_empty() {
+            field
+                .selections
+                .items
+                .push(SelectionItem::Field(FieldSelection::new_skipped_typename()));
+        }
     }
 }
 

@@ -153,6 +153,7 @@ impl SelectionItem {
                 arguments: None,
                 include_if: None,
                 skip_if: None,
+                skip_in_response_projection: field_selection.skip_in_response_projection,
             }),
             SelectionItem::InlineFragment(fragment_selection) => {
                 SelectionItem::InlineFragment(InlineFragmentSelection {
@@ -291,6 +292,7 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::Field<'a, T>> for FieldSelectio
             selections: field.selection_set.into(),
             skip_if: conditions.skip_if,
             include_if: conditions.include_if,
+            skip_in_response_projection: false,
         }
     }
 }

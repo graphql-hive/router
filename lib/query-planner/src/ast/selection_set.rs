@@ -138,6 +138,8 @@ pub struct FieldSelection {
     pub skip_if: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_if: Option<String>,
+    #[serde(default)]
+    pub skip_in_response_projection: bool,
 }
 
 impl Hash for FieldSelection {
@@ -173,6 +175,7 @@ impl FieldSelection {
             arguments: self.arguments.clone(),
             skip_if: self.skip_if.clone(),
             include_if: self.include_if.clone(),
+            skip_in_response_projection: self.skip_in_response_projection,
         }
     }
 
@@ -208,6 +211,20 @@ impl FieldSelection {
             arguments: None,
             skip_if: None,
             include_if: None,
+            skip_in_response_projection: false,
+        }
+    }
+
+    // Returns a field selection that skips the `__typename` field in the response.
+    pub fn new_skipped_typename() -> Self {
+        FieldSelection {
+            name: "__typename".to_string(),
+            alias: None,
+            selections: SelectionSet::default(),
+            arguments: None,
+            skip_if: None,
+            include_if: None,
+            skip_in_response_projection: true,
         }
     }
 
@@ -673,6 +690,7 @@ mod tests {
                     arguments: None,
                     skip_if: None,
                     include_if: None,
+                    skip_in_response_projection: false,
                 }),
                 SelectionItem::Field(FieldSelection {
                     name: "field2".to_string(),
@@ -684,12 +702,14 @@ mod tests {
                             arguments: Some(("a".to_string(), Value::Int(1)).into()),
                             skip_if: None,
                             include_if: None,
+                            skip_in_response_projection: false,
                         })],
                     },
                     alias: Some("f2".to_string()),
                     arguments: None,
                     skip_if: None,
                     include_if: None,
+                    skip_in_response_projection: false,
                 }),
             ],
         };
@@ -710,6 +730,7 @@ mod tests {
                 arguments: None,
                 skip_if: None,
                 include_if: None,
+                skip_in_response_projection: false,
             })],
         };
 
@@ -729,6 +750,7 @@ mod tests {
                 arguments: Some(vec![("id".to_string(), Value::Int(1))].into()),
                 skip_if: None,
                 include_if: None,
+                skip_in_response_projection: false,
             })],
         };
 
@@ -766,6 +788,7 @@ mod tests {
                 ),
                 skip_if: None,
                 include_if: None,
+                skip_in_response_projection: false,
             })],
         };
 
@@ -785,6 +808,7 @@ mod tests {
                 arguments: None,
                 skip_if: None,
                 include_if: Some("first".to_string()),
+                skip_in_response_projection: false,
             })],
         };
         let source = SelectionSet {
@@ -795,6 +819,7 @@ mod tests {
                 arguments: None,
                 skip_if: None,
                 include_if: Some("second".to_string()),
+                skip_in_response_projection: false,
             })],
         };
 
@@ -816,12 +841,14 @@ mod tests {
                         arguments: None,
                         skip_if: None,
                         include_if: None,
+                        skip_in_response_projection: false,
                     })],
                 },
                 alias: None,
                 arguments: None,
                 skip_if: None,
                 include_if: Some("cond".to_string()),
+                skip_in_response_projection: false,
             })],
         };
         let source = SelectionSet {
@@ -835,12 +862,14 @@ mod tests {
                         arguments: None,
                         skip_if: None,
                         include_if: None,
+                        skip_in_response_projection: false,
                     })],
                 },
                 alias: None,
                 arguments: None,
                 skip_if: None,
                 include_if: Some("cond".to_string()),
+                skip_in_response_projection: false,
             })],
         };
 
@@ -895,6 +924,7 @@ mod tests {
             arguments: None,
             skip_if: Some("skip".to_string()),
             include_if: Some("include".to_string()),
+            skip_in_response_projection: false,
         };
         assert!(!field_condition_equal(&skip_cond, &field));
         assert!(!field_condition_equal(&include_cond, &field));

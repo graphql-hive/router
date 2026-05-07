@@ -221,6 +221,7 @@ fn transform_field(
             },
             skip_if: field.skip_if.take(),
             include_if: field.include_if.take(),
+            skip_in_response_projection: field.skip_in_response_projection,
         }));
     }
 
@@ -246,6 +247,7 @@ fn transform_field(
         selections: new_selections,
         skip_if: field.skip_if.take(),
         include_if: field.include_if.take(),
+        skip_in_response_projection: field.skip_in_response_projection,
     }))
 }
 

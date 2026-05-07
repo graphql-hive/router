@@ -78,6 +78,7 @@ fn partition_selection_set(
                         selections,
                         skip_if,
                         include_if,
+                        skip_in_response_projection,
                     } = field;
 
                     let (downstream_selections, introspection_selections) =
@@ -103,6 +104,7 @@ fn partition_selection_set(
                             skip_if: take_or_clone(&mut skip_if, need_intro),
                             include_if: take_or_clone(&mut include_if, need_intro),
                             selections: downstream_selections,
+                            skip_in_response_projection,
                         }));
                     }
 
@@ -114,6 +116,7 @@ fn partition_selection_set(
                             skip_if: skip_if.take(),
                             include_if: include_if.take(),
                             selections: introspection_selections,
+                            skip_in_response_projection,
                         }));
                     }
                 }

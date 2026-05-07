@@ -662,21 +662,44 @@ impl FieldProjectionPlan {
         let final_conditions =
             condition_for_field.and_then(|cond| Self::simplify_condition(cond, &parent_type_guard));
 
-        let new_plan = FieldProjectionPlan {
-            field_name: field_name.to_string(),
-            response_key,
-            parent_type_guard,
-            is_typename: field_name == TYPENAME_FIELD_NAME,
-            conditions: final_conditions,
-            value: ProjectionValueSource::ResponseData {
-                selections: Self::from_selection_set(
-                    &field.selections,
-                    schema_metadata,
-                    &field_type,
-                    &conditions_for_selections,
-                )
-                .map(Arc::new),
-            },
+        let new_plan = if matches!(
+            field.selections.items.as_slice(),
+            [SelectionItem::Field(FieldSelection {
+                skip_in_response_projection: true,
+                ..
+            })]
+        ) {
+            // We hit a case where the field is marked as `skip_in_response_projection`,
+            // but we still need to project it as an object with no children.
+            FieldProjectionPlan {
+                field_name: field.name.to_string(),
+                response_key,
+                parent_type_guard,
+                is_typename: field_name == TYPENAME_FIELD_NAME,
+                conditions: final_conditions,
+                // We use Some(vec![]) as it means "project an object, but with no children".
+                // None would be treated as "no projection plan available".
+                value: ProjectionValueSource::ResponseData {
+                    selections: Some(Arc::new(Vec::new())),
+                },
+            }
+        } else {
+            FieldProjectionPlan {
+                field_name: field_name.to_string(),
+                response_key,
+                parent_type_guard,
+                is_typename: field_name == TYPENAME_FIELD_NAME,
+                conditions: final_conditions,
+                value: ProjectionValueSource::ResponseData {
+                    selections: Self::from_selection_set(
+                        &field.selections,
+                        schema_metadata,
+                        &field_type,
+                        &conditions_for_selections,
+                    )
+                    .map(Arc::new),
+                },
+            }
         };
 
         Self::merge_plan(field_selections, new_plan);

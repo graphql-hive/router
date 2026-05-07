@@ -164,6 +164,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 ),
                 skip_if: None,
                 include_if: None,
+                skip_in_response_projection: false,
             }));
 
         self.batched_aliases.push(EntityBatchAlias {
