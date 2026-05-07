@@ -136,6 +136,32 @@ mod conditional_directives_e2e_tests {
         );
     }
 
+    fn check_skipped_parent_branch_does_not_leak_nested_fields_response(
+        json_body: sonic_rs::Value,
+    ) {
+        let nested_review = json_body
+            .pointer(&pointer!["data", "me", "reviews", 0, "author", "reviews", 0])
+            .expect("expected nested review in response");
+
+        assert!(
+            nested_review.pointer(&pointer!["id"]).is_some(),
+            "Expected active author.reviews branch to include id. Response body: {}",
+            json_body
+        );
+
+        assert!(
+            nested_review.pointer(&pointer!["product", "upc"]).is_some(),
+            "Expected active author.reviews branch to include product.upc. Response body: {}",
+            json_body
+        );
+
+        assert!(
+            nested_review.pointer(&pointer!["leakedBody"]).is_none(),
+            "Expected leakedBody from skipped parent branch to be absent. Response body: {}",
+            json_body
+        );
+    }
+
     const FIELD_CONDITIONS_SKIP_THEN_INCLUDE_QUERY: &'static str = r#"
         query($skip: Boolean!, $include: Boolean!) {
             me {
@@ -144,6 +170,28 @@ mod conditional_directives_e2e_tests {
                     product {
                         upc
                         name @skip(if: $skip) @include(if: $include)
+                    }
+                }
+            }
+        }
+    "#;
+
+    const SKIPPED_PARENT_BRANCH_DOES_NOT_LEAK_NESTED_FIELDS_QUERY: &str = r#"
+        query($skipAuthor: Boolean!, $includeAuthor: Boolean!) {
+            me {
+                reviews {
+                    author @skip(if: $skipAuthor) @include(if: $includeAuthor) {
+                        reviews {
+                            leakedBody: body
+                        }
+                    }
+                    author {
+                        reviews {
+                            id
+                            product {
+                                upc
+                            }
+                        }
                     }
                 }
             }
@@ -350,6 +398,19 @@ mod conditional_directives_e2e_tests {
                 "showAliasedShipping": true,
             }),
             check_duplicate_field_projection_response,
+        )
+        .await;
+    }
+
+    #[ntex::test]
+    async fn skipped_parent_branch_does_not_leak_nested_fields_into_merged_projection() {
+        run_test_with_variables(
+            SKIPPED_PARENT_BRANCH_DOES_NOT_LEAK_NESTED_FIELDS_QUERY,
+            sonic_rs::json!({
+                "skipAuthor": true,
+                "includeAuthor": true,
+            }),
+            check_skipped_parent_branch_does_not_leak_nested_fields_response,
         )
         .await;
     }
