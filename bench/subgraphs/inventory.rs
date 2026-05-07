@@ -99,24 +99,18 @@ impl Query {
     #[graphql(entity)]
     async fn find_product_by_id(
         &self,
-        upc: ID,
         #[graphql(key)] upc: ID,
         price: Option<i64>,
         weight: Option<i64>,
-    ) -> Product {
     ) -> Option<Product> {
         let product = INVENTORY
             .iter()
-            .find(|product| product.upc == upc.to_string())
-            .unwrap();
-        Product {
             .find(|product| product.upc == upc.to_string())?;
 
         Some(Product {
             price,
             weight,
             ..product.clone()
-        }
         })
     }
 }
