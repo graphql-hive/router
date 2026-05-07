@@ -197,7 +197,7 @@ impl<'a> QueryGenerator<'a> {
                         alias: None,
                         name: "__typename".to_string(),
                         arguments: Vec::new(),
-                        directives: self.maybe_directives(),
+                        directives: Vec::new(),
                         selection_set: SelectionSet {
                             span: (Pos::default(), Pos::default()),
                             items: Vec::new(),
@@ -267,7 +267,7 @@ impl<'a> QueryGenerator<'a> {
                     alias: None,
                     name: "__typename".to_string(),
                     arguments: Vec::new(),
-                    directives: self.maybe_directives(),
+                    directives: Vec::new(),
                     selection_set: SelectionSet {
                         span: (Pos::default(), Pos::default()),
                         items: Vec::new(),
@@ -284,7 +284,7 @@ impl<'a> QueryGenerator<'a> {
                 alias: None,
                 name: "__typename".to_string(),
                 arguments: Vec::new(),
-                directives: self.maybe_directives(),
+                directives: Vec::new(),
                 selection_set: SelectionSet {
                     span: (Pos::default(), Pos::default()),
                     items: Vec::new(),
