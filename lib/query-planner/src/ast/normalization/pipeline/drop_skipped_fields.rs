@@ -44,25 +44,27 @@ fn handle_selection_set<'a>(
     let mut new_items = Vec::with_capacity(original_items.len());
 
     for mut current_item_candidate in original_items {
-        let mut should_add = true;
+        let should_add = match &mut current_item_candidate {
+            Selection::Field(field) => {
+                let should_add = should_keep(&field.directives);
 
-        match current_item_candidate {
-            Selection::Field(ref mut field) => {
-                should_add = should_keep(&field.directives);
                 if should_add {
                     handle_selection_set(&mut field.selection_set)?;
                 }
+
+                should_add
             }
-            Selection::InlineFragment(ref mut inline_frag) => {
-                should_add = should_keep(&inline_frag.directives);
+            Selection::InlineFragment(inline_frag) => {
+                let should_add = should_keep(&inline_frag.directives);
+
                 if should_add {
                     handle_selection_set(&mut inline_frag.selection_set)?;
                 }
+
+                should_add
             }
-            Selection::FragmentSpread(ref spread) => {
-                should_add = should_keep(&spread.directives);
-            }
-        }
+            Selection::FragmentSpread(spread) => should_keep(&spread.directives),
+        };
 
         if should_add {
             new_items.push(current_item_candidate);
