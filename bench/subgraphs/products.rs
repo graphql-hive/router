@@ -112,12 +112,11 @@ impl Query {
     }
 
     #[graphql(entity)]
-    async fn find_product_by_upc(&self, upc: ID) -> Product {
+    async fn find_product_by_upc(&self, upc: ID) -> Option<Product> {
         PRODUCTS
             .iter()
             .find(|product| product.upc == upc.as_str())
-            .unwrap()
-            .clone()
+            .cloned()
     }
 }
 

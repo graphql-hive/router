@@ -147,8 +147,8 @@ pub struct Query;
 #[Object(extends = true)]
 impl Query {
     #[graphql(entity)]
-    async fn find_review_by_id(&self, id: ID) -> Review {
-        REVIEWS.iter().find(|r| r.id == id).unwrap().clone()
+    async fn find_review_by_id(&self, id: ID) -> Option<Review> {
+        REVIEWS.iter().find(|r| r.id == id).cloned()
     }
 
     #[graphql(entity)]

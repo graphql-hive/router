@@ -3,7 +3,6 @@ pub mod graphql_with_subscriptions;
 pub mod inventory;
 pub mod products;
 pub mod reviews;
-pub mod monolith;
 
 use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use axum::{
@@ -118,14 +117,6 @@ pub fn subgraphs_app(subscriptions_protocol: HTTPStreamingSubscriptionProtocol) 
                 reviews::get_subgraph(),
                 subscriptions_protocol,
             )),
-        )
-        .route(
-            "/monolith/sdl",
-            get(|| async { monolith::get_schema().sdl() }),
-        )
-        .route(
-            "/monolith",
-            post_service(GraphQL::new(monolith::get_schema())),
         )
         .route_layer(middleware::from_fn(add_subgraph_header))
         .route_layer(middleware::from_fn(delay_middleware))

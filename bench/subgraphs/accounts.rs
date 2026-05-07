@@ -132,8 +132,8 @@ impl Query {
     }
 
     #[graphql(entity)]
-    async fn find_user_by_id(&self, id: ID) -> User {
-        USERS.iter().find(|user| user.id == id).cloned().unwrap()
+    async fn find_user_by_id(&self, id: ID) -> Option<User> {
+        USERS.iter().find(|user| user.id == id).cloned()
     }
 }
 

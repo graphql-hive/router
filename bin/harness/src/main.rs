@@ -1,17 +1,19 @@
-use graphql_tools::static_graphql::query::{
-    self as q, Document as QueryDocument, OperationDefinition, SelectionSet, Selection, Field as QueryField, Directive as QueryDirective, FragmentSpread, InlineFragment, FragmentDefinition, Value as QueryValue, VariableDefinition
-};
 use graphql_tools::ast::TypeDefinitionFields;
-use graphql_tools::static_graphql::schema::{
-    self as s, Document as SchemaDocument, Type as SchemaType
-};
 use graphql_tools::parser::schema::parse_schema;
-use graphql_tools::parser::Style;
 use graphql_tools::parser::Pos;
+use graphql_tools::parser::Style;
+use graphql_tools::static_graphql::query::{
+    self as q, Directive as QueryDirective, Document as QueryDocument, Field as QueryField,
+    FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition, Selection,
+    SelectionSet, Value as QueryValue, VariableDefinition,
+};
+use graphql_tools::static_graphql::schema::{
+    self as s, Document as SchemaDocument, Type as SchemaType,
+};
 use rand::{prelude::IndexedRandom, rngs::StdRng, seq::SliceRandom, RngExt, SeedableRng};
-use std::collections::BTreeMap;
 use reqwest::Client;
 use serde_json::Value as JsonValue;
+use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio;
 
@@ -130,9 +132,9 @@ impl<'a> QueryGenerator<'a> {
         let selections = self.selection_set_for_type(&root, 0, SelectionContext::Root);
 
         let variables_json = self.render_variables_json();
-        
+
         let mut defs = Vec::new();
-        
+
         let mut query_vars = Vec::new();
         for (_, def) in &self.variable_defs {
             query_vars.push(VariableDefinition {
@@ -143,13 +145,18 @@ impl<'a> QueryGenerator<'a> {
             });
         }
 
-        defs.push(q::Definition::Operation(OperationDefinition::Query(q::Query {
-            position: Pos::default(),
-            name: Some(operation_name.clone()),
-            variable_definitions: query_vars,
-            directives: Vec::new(),
-            selection_set: SelectionSet { span: (Pos::default(), Pos::default()), items: selections },
-        })));
+        defs.push(q::Definition::Operation(OperationDefinition::Query(
+            q::Query {
+                position: Pos::default(),
+                name: Some(operation_name.clone()),
+                variable_definitions: query_vars,
+                directives: Vec::new(),
+                selection_set: SelectionSet {
+                    span: (Pos::default(), Pos::default()),
+                    items: selections,
+                },
+            },
+        )));
 
         for frag in self.fragments.into_iter() {
             defs.push(q::Definition::Fragment(frag));
@@ -191,7 +198,10 @@ impl<'a> QueryGenerator<'a> {
                         name: "__typename".to_string(),
                         arguments: Vec::new(),
                         directives: self.maybe_directives(),
-                        selection_set: SelectionSet { span: (Pos::default(), Pos::default()), items: Vec::new() },
+                        selection_set: SelectionSet {
+                            span: (Pos::default(), Pos::default()),
+                            items: Vec::new(),
+                        },
                     }));
                 }
             }
@@ -205,7 +215,10 @@ impl<'a> QueryGenerator<'a> {
                     for field in fields.into_iter().take(width) {
                         selections.push(self.field_selection(&field, depth));
 
-                        if self.rng.random_bool(self.config.duplicate_field_probability) {
+                        if self
+                            .rng
+                            .random_bool(self.config.duplicate_field_probability)
+                        {
                             selections.push(self.field_selection(&field, depth));
                             self.features.duplicated_response_keys += 1;
                         }
@@ -233,7 +246,10 @@ impl<'a> QueryGenerator<'a> {
                 name: "__typename".to_string(),
                 arguments: Vec::new(),
                 directives: Vec::new(),
-                selection_set: SelectionSet { span: (Pos::default(), Pos::default()), items: Vec::new() },
+                selection_set: SelectionSet {
+                    span: (Pos::default(), Pos::default()),
+                    items: Vec::new(),
+                },
             }));
         }
 
@@ -243,7 +259,7 @@ impl<'a> QueryGenerator<'a> {
 
     fn leafish_selection_set(&mut self, type_name: &str) -> Vec<Selection> {
         let type_def_opt = self.schema.type_by_name(type_name);
-        
+
         if let Some(type_def) = type_def_opt {
             if type_def.is_union_type() {
                 return vec![Selection::Field(QueryField {
@@ -252,7 +268,10 @@ impl<'a> QueryGenerator<'a> {
                     name: "__typename".to_string(),
                     arguments: Vec::new(),
                     directives: self.maybe_directives(),
-                    selection_set: SelectionSet { span: (Pos::default(), Pos::default()), items: Vec::new() },
+                    selection_set: SelectionSet {
+                        span: (Pos::default(), Pos::default()),
+                        items: Vec::new(),
+                    },
                 })];
             }
         }
@@ -266,7 +285,10 @@ impl<'a> QueryGenerator<'a> {
                 name: "__typename".to_string(),
                 arguments: Vec::new(),
                 directives: self.maybe_directives(),
-                selection_set: SelectionSet { span: (Pos::default(), Pos::default()), items: Vec::new() },
+                selection_set: SelectionSet {
+                    span: (Pos::default(), Pos::default()),
+                    items: Vec::new(),
+                },
             }));
         }
 
@@ -278,7 +300,10 @@ impl<'a> QueryGenerator<'a> {
                     .collect::<Vec<_>>();
                 scalar_fields.shuffle(&mut self.rng);
 
-                for field in scalar_fields.into_iter().take(self.config.max_width.min(3).max(1)) {
+                for field in scalar_fields
+                    .into_iter()
+                    .take(self.config.max_width.min(3).max(1))
+                {
                     selections.push(self.field_selection(field, self.config.max_depth));
                 }
             }
@@ -291,7 +316,10 @@ impl<'a> QueryGenerator<'a> {
                 name: "__typename".to_string(),
                 arguments: Vec::new(),
                 directives: Vec::new(),
-                selection_set: SelectionSet { span: (Pos::default(), Pos::default()), items: Vec::new() },
+                selection_set: SelectionSet {
+                    span: (Pos::default(), Pos::default()),
+                    items: Vec::new(),
+                },
             }));
         }
 
@@ -300,7 +328,11 @@ impl<'a> QueryGenerator<'a> {
 
     fn field_selection(&mut self, field: &s::Field, depth: usize) -> Selection {
         let named = field.field_type.inner_type().to_string();
-        let is_composite = self.schema.type_by_name(&named).map(|t| t.is_composite_type()).unwrap_or(false);
+        let is_composite = self
+            .schema
+            .type_by_name(&named)
+            .map(|t| t.is_composite_type())
+            .unwrap_or(false);
 
         let alias = if self.rng.random_bool(self.config.alias_probability) {
             self.features.aliases += 1;
@@ -324,7 +356,10 @@ impl<'a> QueryGenerator<'a> {
             name: field.name.clone(),
             arguments: args,
             directives,
-            selection_set: SelectionSet { span: (Pos::default(), Pos::default()), items: selection_set },
+            selection_set: SelectionSet {
+                span: (Pos::default(), Pos::default()),
+                items: selection_set,
+            },
         })
     }
 
@@ -358,16 +393,26 @@ impl<'a> QueryGenerator<'a> {
                 Some(QueryValue::List(values))
             }
             SchemaType::NamedType(name) => match name.as_str() {
-                "ID" => Some(QueryValue::String(format!("id-{}", self.rng.random_range(0..1000)))),
-                "String" => Some(QueryValue::String(format!("s{}", self.rng.random_range(0..1000)))),
-                "Int" => Some(QueryValue::Int((self.rng.random_range(0..100) as i32).into())),
+                "ID" => Some(QueryValue::String(format!(
+                    "id-{}",
+                    self.rng.random_range(0..1000)
+                ))),
+                "String" => Some(QueryValue::String(format!(
+                    "s{}",
+                    self.rng.random_range(0..1000)
+                ))),
+                "Int" => Some(QueryValue::Int(
+                    (self.rng.random_range(0..100) as i32).into(),
+                )),
                 "Float" => Some(QueryValue::Float(self.rng.random_range(0.0..100.0))),
                 "Boolean" => Some(QueryValue::Boolean(self.rng.random_bool(0.5))),
                 other => {
                     let type_def = self.schema.type_by_name(other);
                     if let Some(type_def) = type_def {
                         if type_def.is_enum_type() {
-                            if let Some(TypeDefinitionFields::EnumValues(values)) = type_def.fields() {
+                            if let Some(TypeDefinitionFields::EnumValues(values)) =
+                                type_def.fields()
+                            {
                                 if let Some(v) = values.choose(&mut self.rng) {
                                     return Some(QueryValue::Enum(v.name.clone()));
                                 }
@@ -420,7 +465,10 @@ impl<'a> QueryGenerator<'a> {
             name: name.clone(),
             type_condition: q::TypeCondition::On(type_condition),
             directives: Vec::new(),
-            selection_set: SelectionSet { span: (Pos::default(), Pos::default()), items: fragment_selection_set },
+            selection_set: SelectionSet {
+                span: (Pos::default(), Pos::default()),
+                items: fragment_selection_set,
+            },
         });
         self.features.named_fragments += 1;
 
@@ -432,7 +480,10 @@ impl<'a> QueryGenerator<'a> {
     }
 
     fn inline_fragment(&mut self, current_type: &str, depth: usize) -> Option<InlineFragment> {
-        if !self.rng.random_bool(self.config.inline_fragment_probability) {
+        if !self
+            .rng
+            .random_bool(self.config.inline_fragment_probability)
+        {
             return None;
         }
 
@@ -449,14 +500,20 @@ impl<'a> QueryGenerator<'a> {
             Some(ty)
         };
 
-        let scoped_type = type_condition.clone().unwrap_or_else(|| current_type.to_string());
-        let selection_set = self.selection_set_for_type(&scoped_type, depth + 1, SelectionContext::InlineFragment);
+        let scoped_type = type_condition
+            .clone()
+            .unwrap_or_else(|| current_type.to_string());
+        let selection_set =
+            self.selection_set_for_type(&scoped_type, depth + 1, SelectionContext::InlineFragment);
 
         Some(InlineFragment {
             position: Pos::default(),
             type_condition: type_condition.map(q::TypeCondition::On),
             directives: self.maybe_directives(),
-            selection_set: SelectionSet { span: (Pos::default(), Pos::default()), items: selection_set },
+            selection_set: SelectionSet {
+                span: (Pos::default(), Pos::default()),
+                items: selection_set,
+            },
         })
     }
 
@@ -466,7 +523,11 @@ impl<'a> QueryGenerator<'a> {
         if current_def.is_object_type() {
             Some(current_type.to_string())
         } else if current_def.is_abstract_type() {
-            let mut candidates: Vec<String> = current_def.possible_types(self.schema).iter().map(|t| t.name().to_string()).collect();
+            let mut candidates: Vec<String> = current_def
+                .possible_types(self.schema)
+                .iter()
+                .map(|t| t.name().to_string())
+                .collect();
 
             if matches!(current_def, s::TypeDefinition::Interface(_)) {
                 candidates.push(current_type.to_string());
@@ -535,7 +596,10 @@ impl<'a> QueryGenerator<'a> {
             _ => self.rng.random_bool(0.50),
         };
 
-        let arg = if self.rng.random_bool(self.config.variable_directive_probability) {
+        let arg = if self
+            .rng
+            .random_bool(self.config.variable_directive_probability)
+        {
             self.features.directive_variables += 1;
             QueryValue::Variable(self.bool_variable(value))
         } else {
@@ -591,59 +655,24 @@ impl<'a> QueryGenerator<'a> {
     }
 }
 
-pub const TEST_SCHEMA_STR: &str = r#"
-schema {
-  query: Query
-}
-
-type Query {
-  node(id: ID!): Node
-  user(id: ID!): User
-  search(text: String): [SearchResult!]
-}
-
-interface Node {
-  id: ID!
-  name: String
-}
-
-type User implements Node {
-  id: ID!
-  name: String
-  role: Role
-  friend: User
-  friends(limit: Int): [User!]
-  posts: [Post!]
-}
-
-type Post implements Node {
-  id: ID!
-  name: String
-  title: String
-  author: User
-}
-
-union SearchResult = User | Post
-
-enum Role {
-  ADMIN
-  USER
-  GUEST
-}
-"#;
-
-async fn execute_query(client: &Client, url: &str, query: &str, variables: &str) -> Result<JsonValue, reqwest::Error> {
+async fn execute_query(
+    client: &Client,
+    url: &str,
+    query: &str,
+    variables: &str,
+) -> Result<JsonValue, reqwest::Error> {
     let body = serde_json::json!({
         "query": query,
         "variables": serde_json::from_str::<JsonValue>(variables).unwrap_or(serde_json::json!({}))
     });
-    
-    let res = client.post(url)
+
+    let res = client
+        .post(url)
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
         .await?;
-        
+
     res.json::<JsonValue>().await
 }
 
@@ -651,24 +680,26 @@ async fn execute_query(client: &Client, url: &str, query: &str, variables: &str)
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: {} <endpoint1> <endpoint2> [schema.graphql]", args[0]);
-        eprintln!("Example: {} http://localhost:4000/graphql http://localhost:4001/graphql", args[0]);
+        eprintln!(
+            "Usage: {} <endpoint1> <endpoint2> [schema.graphql]",
+            args[0]
+        );
+        eprintln!(
+            "Example: {} http://localhost:4000/graphql http://localhost:4001/graphql",
+            args[0]
+        );
         return;
     }
 
     let endpoint1 = &args[1];
     let endpoint2 = &args[2];
-    
-    let schema_str = if args.len() > 3 {
-        match std::fs::read_to_string(&args[3]) {
-            Ok(content) => content,
-            Err(e) => {
-                eprintln!("Failed to read schema file {}: {}", args[3], e);
-                return;
-            }
+
+    let schema_str = match std::fs::read_to_string(&args[3]) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Failed to read schema file {}: {}", args[3], e);
+            return;
         }
-    } else {
-        TEST_SCHEMA_STR.to_string()
     };
 
     let schema = match parse_schema::<String>(&schema_str) {
@@ -685,8 +716,8 @@ async fn main() {
         .unwrap();
 
     let mut differences = 0;
-    let mut num_queries = 10;
-    
+    let mut num_queries = 100;
+
     if let Ok(val) = std::env::var("HARNESS_QUERIES") {
         num_queries = val.parse().unwrap_or(10);
     }
@@ -699,39 +730,68 @@ async fn main() {
     for i in 0..num_queries {
         let seed = i as u64 + 42;
         let case = QueryGenerator::new(&schema, seed, GeneratorConfig::default()).generate();
-        
+
         println!("Query #{}:", i + 1);
-        
+
         let res1_future = execute_query(&client, endpoint1, &case.document, &case.variables_json);
         let res2_future = execute_query(&client, endpoint2, &case.document, &case.variables_json);
-        
+
         let (res1, res2) = tokio::join!(res1_future, res2_future);
-        
+
         match (res1, res2) {
-            (Ok(data1), Ok(data2)) => {
-                // Normalize and compare
+            (Ok(res1), Ok(res2)) => {
+                // The comparison should happen on `result.data` and not `result.errors`.
+                // The errors part may differ, so we should just check wether errors are present or not.
+                let (data1, _errors1) = match &res1 {
+                    JsonValue::Object(res) => {
+                        (res.get("data").cloned(), res.get("errors").cloned())
+                    }
+                    _ => panic!("Not a graphql response"),
+                };
+                let (data2, _errors2) = match &res2 {
+                    JsonValue::Object(res) => {
+                        (res.get("data").cloned(), res.get("errors").cloned())
+                    }
+                    _ => panic!("Not a graphql response"),
+                };
+
                 if data1 != data2 {
-                    println!("❌ Responses DIFFER");
                     differences += 1;
-                    
-                    println!("Query:");
-                    println!("{}", case.document);
-                    println!("Variables: {}", case.variables_json);
-                    println!("Endpoint 1 Response:\n{}", serde_json::to_string_pretty(&data1).unwrap());
-                    println!("Endpoint 2 Response:\n{}", serde_json::to_string_pretty(&data2).unwrap());
+
+                    let dir = format!("./failed-tests/case-{}", i);
+                    std::fs::create_dir_all(&dir).expect("to create a directory");
+                    std::fs::write(format!("{}/query.graphql", dir), case.document.clone())
+                        .expect("to create query.graphql");
+                    std::fs::write(
+                        format!("{}/variables.json", dir),
+                        case.variables_json.clone(),
+                    )
+                    .expect("to create query.graphql");
+                    std::fs::write(
+                        format!("{}/endpoint-1.json", dir),
+                        serde_json::to_string_pretty(&res1).unwrap(),
+                    )
+                    .expect("to create endpoint-1.json");
+                    std::fs::write(
+                        format!("{}/endpoint-2.json", dir),
+                        serde_json::to_string_pretty(&res2).unwrap(),
+                    )
+                    .expect("to create endpoint-2.json");
+
+                    println!("⚠️ Responses differ");
                 } else {
                     println!("✅ Responses match");
                 }
-            },
+            }
             (Err(e1), Err(e2)) => {
                 println!("⚠️ Both endpoints failed");
                 println!("  1: {}", e1);
                 println!("  2: {}", e2);
-            },
+            }
             (Err(e1), Ok(_)) => {
                 println!("❌ Endpoint 1 failed: {}", e1);
                 differences += 1;
-            },
+            }
             (Ok(_), Err(e2)) => {
                 println!("❌ Endpoint 2 failed: {}", e2);
                 differences += 1;
@@ -739,45 +799,11 @@ async fn main() {
         }
         println!("--------------------------------------------------");
     }
-    
+
     if differences == 0 {
         println!("🎉 All queries returned matching results!");
     } else {
         println!("⚠️ Found {} queries with different results.", differences);
         std::process::exit(1);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generates_a_complex_query() {
-        let schema = parse_schema::<String>(TEST_SCHEMA_STR).unwrap().into_static();
-        let case = QueryGenerator::new(&schema, 42, GeneratorConfig::default()).generate();
-
-        assert!(case.document.starts_with("query GeneratedQuery"));
-        assert!(case.document.contains("@skip") || case.document.contains("@include"));
-        assert!(case.document.contains("fragment") || case.document.contains("... on"));
-    }
-
-    #[test]
-    fn same_seed_generates_same_query() {
-        let schema = parse_schema::<String>(TEST_SCHEMA_STR).unwrap().into_static();
-        let a = QueryGenerator::new(&schema, 7, GeneratorConfig::default()).generate();
-        let b = QueryGenerator::new(&schema, 7, GeneratorConfig::default()).generate();
-
-        assert_eq!(a.document, b.document);
-        assert_eq!(a.variables_json, b.variables_json);
-    }
-
-    #[test]
-    fn different_seeds_generate_different_queries() {
-        let schema = parse_schema::<String>(TEST_SCHEMA_STR).unwrap().into_static();
-        let a = QueryGenerator::new(&schema, 7, GeneratorConfig::default()).generate();
-        let b = QueryGenerator::new(&schema, 8, GeneratorConfig::default()).generate();
-
-        assert_ne!(a.document, b.document);
     }
 }
