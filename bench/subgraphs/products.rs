@@ -3,6 +3,7 @@ use std::io::Read;
 use async_graphql::{
     Context, EmptySubscription, InputObject, Object, Schema, SimpleObject, Upload, ID,
 };
+use futures::AsyncReadExt;
 use lazy_static::lazy_static;
 use tokio::io::AsyncWriteExt;
 
@@ -138,7 +139,11 @@ impl Mutation {
         let uploaded_file = file.unwrap().value(ctx).unwrap();
         let path = format!("/tmp/{}", uploaded_file.filename);
         let mut buf = vec![];
-        let _ = uploaded_file.into_read().read_to_end(&mut buf);
+        uploaded_file
+            .into_async_read()
+            .read_to_end(&mut buf)
+            .await
+            .unwrap();
         let mut tmp_file_on_disk = tokio::fs::File::create(&path).await.unwrap();
         tmp_file_on_disk.write_all(&buf).await.unwrap();
         path
