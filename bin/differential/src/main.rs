@@ -749,20 +749,20 @@ async fn main() {
             (Ok(res1), Ok(res2)) => {
                 // The comparison should happen on `result.data` and not `result.errors`.
                 // The errors part may differ, so we should just check wether errors are present or not.
-                let (data1, _errors1) = match &res1 {
+                let (data1, errors1) = match &res1 {
                     JsonValue::Object(res) => {
                         (res.get("data").cloned(), res.get("errors").cloned())
                     }
                     _ => panic!("Not a graphql response"),
                 };
-                let (data2, _errors2) = match &res2 {
+                let (data2, errors2) = match &res2 {
                     JsonValue::Object(res) => {
                         (res.get("data").cloned(), res.get("errors").cloned())
                     }
                     _ => panic!("Not a graphql response"),
                 };
 
-                if data1 != data2 {
+                if data1 != data2 || errors1.is_some() != errors2.is_some() {
                     differences += 1;
 
                     let dir = format!("./failed-tests/case-{}", i);
