@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use http::{HeaderMap, Uri};
+use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
 use sonic_rs::Value;
 
 use crate::{
@@ -53,6 +54,7 @@ pub struct SubgraphExecutionRequest<'a> {
     pub headers: HeaderMap,
     pub raw_variable_values: Option<Vec<(&'a str, Vec<u8>)>>,
     pub extensions: Option<SubgraphRequestExtensions>,
+    pub opaque_scalar_paths: Option<&'a OpaqueScalarPaths>,
 }
 
 impl SubgraphExecutionRequest<'_> {

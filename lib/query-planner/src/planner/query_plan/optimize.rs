@@ -69,8 +69,8 @@ use crate::{
     },
     planner::error::QueryPlanError,
     planner::plan_nodes::{
-        hash_minified_query, BatchFetchNode, EntityBatch, EntityBatchAlias, FetchRewrite,
-        FlattenNodePath, PlanNode,
+        hash_minified_query, opaque_scalar_paths_from_selection_set, BatchFetchNode, EntityBatch,
+        EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
 };
@@ -279,6 +279,11 @@ impl<'a> BatchFetchBuilder<'a> {
                 document_str,
                 hash,
             },
+            opaque_scalar_paths: opaque_scalar_paths_from_selection_set(
+                &first_candidate.type_name,
+                &first_candidate.entities_selection,
+                supergraph,
+            ),
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
             },
@@ -305,6 +310,7 @@ struct EntityFetch {
     service_name: String,
     flatten_path: FlattenNodePath,
     variable_usages: Option<BTreeSet<String>>,
+    type_name: String,
     requires: SelectionSet,
     entities_selection: SelectionSet,
     input_rewrites: Option<Vec<FetchRewrite>>,
@@ -398,6 +404,14 @@ impl EntityFetch {
             service_name: fetch_node.service_name.clone(),
             flatten_path: flatten_node.path.clone(),
             variable_usages: fetch_node.variable_usages.clone(),
+            type_name: entities_selection
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    SelectionItem::InlineFragment(fragment) => Some(fragment.type_condition.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "Query".to_string()),
             requires,
             entities_selection,
             input_rewrites,
@@ -2260,6 +2274,7 @@ mod tests {
             operation_kind: Some(OperationKind::Query),
             operation_name: None,
             operation,
+            opaque_scalar_paths: None,
             requires: Some(requires),
             input_rewrites: None,
             output_rewrites: None,
@@ -2322,6 +2337,7 @@ mod tests {
             operation_kind: Some(OperationKind::Query),
             operation_name: None,
             operation,
+            opaque_scalar_paths: None,
             requires: None,
             input_rewrites: None,
             output_rewrites: None,

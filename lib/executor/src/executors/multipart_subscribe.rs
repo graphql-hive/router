@@ -222,7 +222,7 @@ fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, Pars
                 // transport error: payload is null, check for top-level errors
                 if let Ok(errors_lv) = sonic_rs::get_from_str(body, &["errors"]) {
                     let transport_err = format!(r#"{{"errors":{}}}"#, errors_lv.as_raw_str());
-                    return SubgraphResponse::deserialize_from_bytes(Bytes::from(transport_err))
+                    return SubgraphResponse::deserialize_from_bytes(Bytes::from(transport_err), None)
                         .map_err(ParseError::InvalidSubgraphResponse)
                         .map(Some);
                 }
@@ -230,13 +230,13 @@ fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, Pars
             }
 
             // happy path: deserialize the raw payload substring directly - no re-serialization
-            SubgraphResponse::deserialize_from_bytes(Bytes::copy_from_slice(raw.as_bytes()))
+            SubgraphResponse::deserialize_from_bytes(Bytes::copy_from_slice(raw.as_bytes()), None)
                 .map_err(ParseError::InvalidSubgraphResponse)
                 .map(Some)
         }
         Err(e) if e.is_not_found() => {
             // no payload wrapper, treat the whole body as a subgraph response
-            SubgraphResponse::deserialize_from_bytes(Bytes::from(body.to_owned()))
+            SubgraphResponse::deserialize_from_bytes(Bytes::from(body.to_owned()), None)
                 .map_err(ParseError::InvalidSubgraphResponse)
                 .map(Some)
         }

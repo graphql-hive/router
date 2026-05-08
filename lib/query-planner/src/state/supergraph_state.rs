@@ -224,6 +224,10 @@ impl SupergraphState {
         self.known_scalars.contains(type_name)
     }
 
+    pub fn is_custom_scalar_type(&self, type_name: &str) -> bool {
+        !BUILDIB_SCALARS.contains(&type_name) && self.known_scalars.contains(type_name)
+    }
+
     pub fn is_interface_object_in_subgraph(&self, type_name: &str, graph_id: &str) -> bool {
         self.interface_object_types_in_subgraphs
             .get(type_name)

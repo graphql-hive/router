@@ -249,7 +249,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 match msg {
                     CallbackMessage::Next { payload } => {
                         trace!(subscription_id = %subscription_id, "received next payload");
-                        match SubgraphResponse::deserialize_from_bytes(payload) {
+                        match SubgraphResponse::deserialize_from_bytes(payload, None) {
                             Ok(response) => yield Ok(response),
                             Err(e) => {
                                 error!(

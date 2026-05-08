@@ -42,7 +42,7 @@ where
                     Ok(Some(sse_event)) => {
                         match sse_event.event.as_deref() {
                             Some("next") if !sse_event.data.is_empty() => {
-                                match SubgraphResponse::deserialize_from_bytes(Bytes::from(sse_event.data.clone())) {
+                                match SubgraphResponse::deserialize_from_bytes(Bytes::from(sse_event.data.clone()), None) {
                                     Ok(response) => {
                                         yield Ok(response);
                                     }

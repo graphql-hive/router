@@ -439,7 +439,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
         ServerMessage::Next { id, payload } => {
             if let Some(tx) = state.borrow().subscriptions.get(&id) {
                 let payload_bytes = Bytes::from(sonic_rs::to_vec(&payload).unwrap_or_default());
-                let response = match SubgraphResponse::deserialize_from_bytes(payload_bytes) {
+                let response = match SubgraphResponse::deserialize_from_bytes(payload_bytes, None) {
                     Ok(response) => response,
                     Err(e) => {
                         tracing::warn!("Failed to deserialize payload: {}", e);

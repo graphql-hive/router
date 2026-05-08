@@ -11,6 +11,7 @@ use crate::hooks::on_subgraph_http_request::{
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::plugins::hooks;
+use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
 use crate::response::subgraph_response::SubgraphResponse;
 use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
@@ -470,7 +471,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             response = end_payload.response;
         }
 
-        let response_result = response.deserialize_http_response();
+        let response_result =
+            response.deserialize_http_response(execution_request.opaque_scalar_paths);
         if let Some(mut http_request_capture) = http_request_capture {
             finish_capture_from_subgraph_result(
                 &mut http_request_capture.capture,
@@ -643,8 +645,11 @@ pub struct SubgraphHttpResponse {
 }
 
 impl SubgraphHttpResponse {
-    fn deserialize_http_response<'a>(self) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
-        SubgraphResponse::deserialize_from_bytes(self.body.clone()).map(
+    fn deserialize_http_response<'a>(
+        self,
+        opaque_scalar_paths: Option<&OpaqueScalarPaths>,
+    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+        SubgraphResponse::deserialize_from_bytes(self.body.clone(), opaque_scalar_paths).map(
             |mut resp: SubgraphResponse<'a>| {
                 // headers are under arc, zero cost clone
                 resp.headers = Some(self.headers.clone());

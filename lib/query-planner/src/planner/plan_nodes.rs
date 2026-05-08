@@ -15,7 +15,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
     hash::{Hash, Hasher},
 };
@@ -115,6 +115,8 @@ pub struct FetchNode {
     pub operation_name: Option<String>,
     pub operation: SubgraphFetchOperation,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub opaque_scalar_paths: Option<OpaqueScalarPaths>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub requires: Option<SelectionSet>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
@@ -135,7 +137,127 @@ pub struct BatchFetchNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_name: Option<String>,
     pub operation: SubgraphFetchOperation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opaque_scalar_paths: Option<OpaqueScalarPaths>,
     pub entity_batch: EntityBatch,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpaqueScalarPaths {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub children: BTreeMap<String, OpaqueScalarPaths>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub terminal: bool,
+}
+
+impl OpaqueScalarPaths {
+    pub fn insert_path<I, S>(&mut self, path: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut node = self;
+        for segment in path {
+            node = node.children.entry(segment.as_ref().to_string()).or_default();
+        }
+        node.terminal = true;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.terminal && self.children.is_empty()
+    }
+}
+
+fn collect_opaque_scalar_paths(
+    paths: &mut OpaqueScalarPaths,
+    response_path: &mut Vec<String>,
+    parent_type_name: &str,
+    selections: &SelectionSet,
+    supergraph: &SupergraphState,
+) {
+    let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
+        return;
+    };
+
+    let parent_fields = parent_def.fields();
+
+    for item in &selections.items {
+        match item {
+            SelectionItem::Field(field) => {
+                let Some(field_def) = parent_fields.get(&field.name) else {
+                    continue;
+                };
+
+                let response_key = field.selection_identifier();
+                let field_type_name = field_def.field_type.inner_type();
+
+                response_path.push(response_key.to_string());
+
+                if supergraph.is_custom_scalar_type(field_type_name) {
+                    paths.insert_path(response_path.iter().map(String::as_str));
+                } else if !field.selections.is_empty() {
+                    collect_opaque_scalar_paths(
+                        paths,
+                        response_path,
+                        field_type_name,
+                        &field.selections,
+                        supergraph,
+                    );
+                }
+
+                response_path.pop();
+            }
+            SelectionItem::InlineFragment(fragment) => {
+                collect_opaque_scalar_paths(
+                    paths,
+                    response_path,
+                    &fragment.type_condition,
+                    &fragment.selections,
+                    supergraph,
+                );
+            }
+            SelectionItem::FragmentSpread(_) => {}
+        }
+    }
+}
+
+pub fn opaque_scalar_paths_from_selection_set(
+    parent_type_name: &str,
+    selections: &SelectionSet,
+    supergraph: &SupergraphState,
+) -> Option<OpaqueScalarPaths> {
+    let mut paths = OpaqueScalarPaths::default();
+    let mut response_path = Vec::new();
+    collect_opaque_scalar_paths(
+        &mut paths,
+        &mut response_path,
+        parent_type_name,
+        selections,
+        supergraph,
+    );
+
+    (!paths.is_empty()).then_some(paths)
+}
+
+fn opaque_scalar_paths_from_fetch_output(
+    output: &FetchStepSelections<MultiTypeFetchStep>,
+    supergraph: &SupergraphState,
+) -> Option<OpaqueScalarPaths> {
+    let mut paths = OpaqueScalarPaths::default();
+
+    for (type_name, selection_set) in output.iter_selections() {
+        let mut response_path = Vec::new();
+        collect_opaque_scalar_paths(
+            &mut paths,
+            &mut response_path,
+            type_name,
+            selection_set,
+            supergraph,
+        );
+    }
+
+    (!paths.is_empty()).then_some(paths)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -536,6 +658,7 @@ impl FetchNode {
                 operation_kind: Some(OperationKind::Query),
                 operation_name: None,
                 operation: create_output_operation(step, supergraph),
+                opaque_scalar_paths: opaque_scalar_paths_from_fetch_output(&step.output, supergraph),
                 requires: Some(create_input_selection_set(&step.input)),
                 input_rewrites: step.input_rewrites.clone(),
                 output_rewrites: step.output_rewrites.clone(),
@@ -563,6 +686,7 @@ impl FetchNode {
                         document_str,
                         hash,
                     },
+                    opaque_scalar_paths: opaque_scalar_paths_from_fetch_output(&step.output, supergraph),
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
