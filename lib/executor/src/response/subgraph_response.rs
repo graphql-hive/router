@@ -130,6 +130,10 @@ impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
     where
         D: Deserializer<'de>,
     {
+        if self.custom_scalar_paths.is_empty() {
+            return Value::deserialize(deserializer);
+        }
+
         if self.custom_scalar_paths.terminal {
             let raw = LazyValue::deserialize(deserializer)?;
             return Ok(Value::RawJson(raw.as_raw_cow()));
@@ -212,14 +216,12 @@ impl<'a, 'de> Visitor<'de> for ValueVisitorWithCustomScalarPaths<'a> {
     {
         let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0));
         while let Some(key) = map.next_key::<&'de str>()? {
-            let child_paths = self
-                .custom_scalar_paths
-                .children
-                .get(key)
-                .unwrap_or(&EMPTY_CUSTOM_SCALAR_PATHS);
-            let value = map.next_value_seed(ValueSeed {
-                custom_scalar_paths: child_paths,
-            })?;
+            let value = match self.custom_scalar_paths.children.get(key) {
+                Some(child_paths) if !child_paths.is_empty() => map.next_value_seed(ValueSeed {
+                    custom_scalar_paths: child_paths,
+                })?,
+                _ => map.next_value()?,
+            };
             entries.push((key, value));
         }
         entries.sort_unstable_by_key(|(key, _)| *key);
