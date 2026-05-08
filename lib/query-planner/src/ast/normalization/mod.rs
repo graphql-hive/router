@@ -11,6 +11,7 @@ use crate::ast::normalization::context::{NormalizationContext, RootTypes};
 use crate::ast::normalization::pipeline::drop_skipped_fields;
 use crate::ast::normalization::pipeline::drop_unused_operations;
 use crate::ast::normalization::pipeline::flatten_fragments;
+use crate::ast::normalization::pipeline::flatten_matching_object_fragments;
 use crate::ast::normalization::pipeline::inline_fragment_spreads;
 use crate::ast::normalization::pipeline::merge_fields;
 use crate::ast::normalization::pipeline::merge_inline_fragments;
@@ -45,6 +46,7 @@ pub fn normalize_operation_mut(
     flatten_fragments(&mut ctx)?;
     type_expand(&mut ctx)?;
     merge_inline_fragments(&mut ctx)?;
+    flatten_matching_object_fragments(&mut ctx)?;
     merge_fields(&mut ctx)?;
     drop_duplicated_fields(&mut ctx)?;
 

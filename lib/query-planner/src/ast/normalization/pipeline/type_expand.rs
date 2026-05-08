@@ -226,7 +226,6 @@ fn handle_selection_set(
     selection_set.items = new_items;
     Ok(())
 }
-
 type ShouldContinue = bool;
 
 #[inline]
