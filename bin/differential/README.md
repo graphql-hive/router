@@ -4,6 +4,18 @@
 
 It generates randomized GraphQL operations from a schema, sends the same operation and variables to both endpoints, and compares the returned `data` payloads. When the payloads differ, it writes the query, variables, and both responses to `failed-tests/case-*` for inspection.
 
+```mermaid
+flowchart LR
+  A["Schema"] -->|"parse"| B["QueryGenerator"]
+  B -->|"generate randomized queries"| C["Query Cases"]
+  C -->|"execute"| D["Baseline Endpoint"]
+  C -->|"execute"| E["Candidate Endpoint"]
+  D -->|"compare data"| F["Differential Tester"]
+  E -->|"compare data"| F
+  F -->|"mismatch"| G["failed-tests/case-*"]
+  F -->|"match"| H["✅ Pass"]
+```
+
 ## In this repository
 
 The intended benchmark comparison is:
