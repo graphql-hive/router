@@ -380,7 +380,7 @@ impl serde::Serialize for Value<'_> {
             Value::F64(n) => serializer.serialize_f64(*n),
             Value::String(s) => serializer.serialize_str(s),
             Value::RawJson(raw) => {
-                let value: SonicValue =
+                let value: sonic_rs::LazyValue =
                     sonic_rs::from_str(raw).map_err(serde::ser::Error::custom)?;
                 value.serialize(serializer)
             }
