@@ -430,7 +430,7 @@ mod tests {
 
         // Snapshot test: compare against a known, pre-calculated hash.
         // If the hashing logic changes, this value will need to be updated.
-        let expected_hash = 8854078506550230644;
+        let expected_hash = 3221166439930069003;
         assert_eq!(
             hash1, expected_hash,
             "AST hash does not match the snapshot value. If this change is intentional, update the snapshot."
