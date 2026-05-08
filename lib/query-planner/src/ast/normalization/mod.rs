@@ -2226,4 +2226,159 @@ mod tests {
         "#
         );
     }
+
+    #[test]
+    fn matching_concrete_wrapper_with_typename_and_directive_is_not_flattened() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              account: Account
+            }
+
+            type Account {
+              id: ID!
+              username: String!
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($cond: Boolean!) {
+                          account {
+                            ... on Account @include(if: $cond) {
+                              id
+                              __typename
+                            }
+                            username
+                          }
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query($cond: Boolean!) {
+          account {
+            ... on Account @include(if: $cond) {
+              id
+              __typename
+            }
+            username
+          }
+        }
+        "#
+        );
+    }
+
+    #[test]
+    fn matching_concrete_wrapper_with_both_directives_is_not_flattened() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              account: Account
+            }
+
+            type Account {
+              id: ID!
+              username: String!
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($include: Boolean!, $skip: Boolean!) {
+                          account {
+                            ... on Account @include(if: $include) @skip(if: $skip) {
+                              id
+                            }
+                            username
+                          }
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query($include: Boolean!, $skip: Boolean!) {
+          account {
+            ... on Account @skip(if: $skip) @include(if: $include) {
+              id
+            }
+            username
+          }
+        }
+        "#
+        );
+    }
+
+    #[test]
+    fn matching_concrete_wrapper_with_directive_is_not_flattened() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              account: Account
+            }
+
+            type Account {
+              id: ID!
+              username: String!
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($cond: Boolean!) {
+                          account {
+                            ... on Account @include(if: $cond) {
+                              id
+                            }
+                            username
+                          }
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r#"
+        query($cond: Boolean!) {
+          account {
+            ... on Account @include(if: $cond) {
+              id
+            }
+            username
+          }
+        }
+        "#
+        );
+    }
 }
