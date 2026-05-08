@@ -13,6 +13,10 @@ use crate::inventory::INVENTORY;
 use crate::products::PRODUCTS;
 use crate::reviews::REVIEWS;
 
+#[expect(
+    clippy::duplicated_attributes,
+    reason = "async-graphql Interface fields each require their own `ty`. Clippy treats nested proc-macro args as duplicated attributes"
+)]
 #[derive(Interface, Clone)]
 #[graphql(
     field(name = "url", ty = "String"),
@@ -273,7 +277,7 @@ impl Mutation {
         let uploaded_file = file.unwrap().value(ctx).unwrap();
         let path = format!("/tmp/{}", uploaded_file.filename);
         let mut buf = vec![];
-        let _ = uploaded_file.into_async_read().read_to_end(&mut buf);
+        let _ = uploaded_file.into_async_read().read_to_end(&mut buf).await;
         let mut tmp_file_on_disk = tokio::fs::File::create(&path).await.unwrap();
         tmp_file_on_disk.write_all(&buf).await.unwrap();
         path
