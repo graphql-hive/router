@@ -116,6 +116,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.53 (2026-05-08)
+
+### Fixes
+
+#### Fix conditional directive handling in response projection.
+
+This fixes several edge cases where `@skip` and `@include` could produce an incorrect final response after query planning and projection planning.
+
 ## 0.0.52 (2026-05-05)
 
 ### Features

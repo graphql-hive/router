@@ -1,4 +1,12 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.25 (2026-05-08)
+
+### Features
+
+#### Fix conditional directive handling in response projection.
+
+This fixes several edge cases where `@skip` and `@include` could produce an incorrect final response after query planning and projection planning.
+
 ## 0.0.24 (2026-05-05)
 
 ### Fixes

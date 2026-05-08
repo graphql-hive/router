@@ -10,7 +10,7 @@ homepage = "https://github.com/graphql-hive/router"
 authors = ["The Guild"]
 
 [dependencies]
-graphql-tools =  { path = "../graphql-tools", version = "0.5.3" }
+graphql-tools =  { path = "../graphql-tools", version = "0.5.4" }
 
 async-trait = { workspace = true }
 thiserror = { workspace = true }
