@@ -5,6 +5,7 @@
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**authorization**](#authorization)|`object`|Default: `{"directives":{"enabled":true,"unauthorized":{"mode":"filter"}}}`<br/>|yes|
+|[**coprocessor**](#coprocessor)|`object`, `null`|Configuration for coprocessor.<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
@@ -23,6 +24,8 @@
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"ip_header":null,"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
 |[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -134,6 +137,7 @@ subscriptions:
 supergraph: {}
 telemetry:
   client_identification:
+    ip_header: null
     name_header: graphql-client-name
     version_header: graphql-client-version
   hive: null
@@ -277,6 +281,285 @@ unauthorized:
 
 ```yaml
 mode: filter
+
+```
+
+<a name="coprocessor"></a>
+## coprocessor: object,null
+
+Configuration for coprocessor.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**protocol**||Transport protocol used to call the coprocessor service.<br/>|yes|
+|[**stages**](#coprocessorstages)|`object`|Stage-specific configuration.<br/>Default: `{"graphql":{},"router":{}}`<br/>|no|
+|**timeout**|`string`|Per-stage timeout for a coprocessor call.<br/><br/>Defaults to `1s`.<br/>Default: `"1s"`<br/>|no|
+|**url**|`string`|Endpoint for the external coprocessor service.<br/><br/>Supported formats:<br/>- `http://host[:port][/path]`<br/>- `unix:///absolute/path/to/socket.sock`<br/>- `unix:///absolute/path/to/socket.sock?path=/request/path`<br/>|yes|
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstages"></a>
+### coprocessor\.stages: object
+
+Stage-specific configuration.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**graphql**](#coprocessorstagesgraphql)|`object`|Hooks around GraphQL processing<br/>Default: `{}`<br/>||
+|[**router**](#coprocessorstagesrouter)|`object`|Hooks around the router HTTP boundary<br/>Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+graphql: {}
+router: {}
+
+```
+
+<a name="coprocessorstagesgraphql"></a>
+#### coprocessor\.stages\.graphql: object
+
+Hooks around GraphQL processing
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**analysis**](#coprocessorstagesgraphqlanalysis)|`object`, `null`|Configuration for `graphql.analysis` hook.<br/>||
+|[**request**](#coprocessorstagesgraphqlrequest)|`object`, `null`|Configuration for `graphql.request` hook.<br/>||
+|[**response**](#coprocessorstagesgraphqlresponse)|`object`, `null`|Configuration for `graphql.response` hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlanalysis"></a>
+##### coprocessor\.stages\.graphql\.analysis: object,null
+
+Configuration for `graphql.analysis` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesgraphqlanalysisinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlanalysisinclude"></a>
+###### coprocessor\.stages\.graphql\.analysis\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**||Include GraphQL request body fields.<br/><br/>Accepts `true`, `false`, or a list of fields.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include request headers.<br/>Default: `false`<br/>||
+|**method**|`boolean`|Include request method.<br/>Default: `false`<br/>||
+|**path**|`boolean`|Include request path.<br/>Default: `false`<br/>||
+|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+sdl: false
+
+```
+
+<a name="coprocessorstagesgraphqlrequest"></a>
+##### coprocessor\.stages\.graphql\.request: object,null
+
+Configuration for `graphql.request` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesgraphqlrequestinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlrequestinclude"></a>
+###### coprocessor\.stages\.graphql\.request\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**||Include GraphQL request body fields.<br/><br/>Accepts `true`, `false`, or a list of fields.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include request headers.<br/>Default: `false`<br/>||
+|**method**|`boolean`|Include request method.<br/>Default: `false`<br/>||
+|**path**|`boolean`|Include request path.<br/>Default: `false`<br/>||
+|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+sdl: false
+
+```
+
+<a name="coprocessorstagesgraphqlresponse"></a>
+##### coprocessor\.stages\.graphql\.response: object,null
+
+Configuration for `graphql.response` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesgraphqlresponseinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlresponseinclude"></a>
+###### coprocessor\.stages\.graphql\.response\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Include GraphQL response body.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include response headers.<br/>Default: `false`<br/>||
+|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
+|**status\_code**|`boolean`|Include response status code.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+sdl: false
+status_code: false
+
+```
+
+<a name="coprocessorstagesrouter"></a>
+#### coprocessor\.stages\.router: object
+
+Hooks around the router HTTP boundary
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**request**](#coprocessorstagesrouterrequest)|`object`, `null`|Configuration for `router.request` hook.<br/>||
+|[**response**](#coprocessorstagesrouterresponse)|`object`, `null`|Configuration for `router.response` hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterrequest"></a>
+##### coprocessor\.stages\.router\.request: object,null
+
+Configuration for `router.request` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesrouterrequestinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterrequestinclude"></a>
+###### coprocessor\.stages\.router\.request\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Include the inbound HTTP request body.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include inbound HTTP request headers.<br/>Default: `false`<br/>||
+|**method**|`boolean`|Include inbound HTTP request method.<br/>Default: `false`<br/>||
+|**path**|`boolean`|Include inbound HTTP request path.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+
+```
+
+<a name="coprocessorstagesrouterresponse"></a>
+##### coprocessor\.stages\.router\.response: object,null
+
+Configuration for `router.response` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesrouterresponseinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterresponseinclude"></a>
+###### coprocessor\.stages\.router\.response\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Include outbound HTTP response body.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include outbound HTTP response headers.<br/>Default: `false`<br/>||
+|**status\_code**|`boolean`|Include outbound HTTP response status code.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+status_code: false
 
 ```
 
@@ -770,7 +1053,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -992,7 +1275,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1245,7 +1528,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1467,7 +1750,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -2222,7 +2505,7 @@ max_retries: 10
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
+|[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"ip_header":null,"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
 |[**hive**](#telemetryhive)|`object`, `null`|||
 |[**metrics**](#telemetrymetrics)|`object`|Configures metrics collection, processing, and export.<br/>Default: `{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}}`<br/>||
 |[**resource**](#telemetryresource)|`object`|Default: `{"attributes":{}}`<br/>||
@@ -2233,6 +2516,7 @@ max_retries: 10
 
 ```yaml
 client_identification:
+  ip_header: null
   name_header: graphql-client-name
   version_header: graphql-client-version
 hive: null
@@ -2309,13 +2593,15 @@ tracing:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**name\_header**|`string`|Default: `"graphql-client-name"`<br/>||
-|**version\_header**|`string`|Default: `"graphql-client-version"`<br/>||
+|**ip\_header**||Defines how the client IP address is determined.<br/><br/>Important: HTTP headers like `x-forwarded-for` can be spoofed by clients.<br/>Use it only with trusted proxies.<br/><br/>It's null by default and uses the socket peer address.<br/><br/>Use the left-most value from the specified header:<br/>```ignore<br/>ip_header: "x-forwarded-for"<br/>```<br/><br/>If peer socket address is trusted, meaning it's part of `trusted_proxies` list,<br/>Router evaluates values from right to left and picks the first non-trusted value.<br/>If all values are trusted, uses the left-most value.<br/>```ignore<br/>ip_header:<br/>  name: "x-forwarded-for"<br/>  trusted_proxies:<br/>    - 10.0.0.0/8<br/>    - 127.0.0.1/32<br/>```<br/>||
+|**name\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"graphql-client-name"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
+|**version\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"graphql-client-version"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
+ip_header: null
 name_header: graphql-client-name
 version_header: graphql-client-version
 
@@ -2331,7 +2617,7 @@ version_header: graphql-client-version
 |**target**||A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
 |**token**||Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
 |[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":false,"endpoint":"https://api.graphql-hive.com/otel/v1/traces"}`<br/>||
-|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
+|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":null,"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2410,7 +2696,7 @@ scheduled_delay: 5s
 |**connect\_timeout**|`string`|A timeout for only the connect phase of a request to Hive Console<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
 |**enabled**|`boolean`|Default: `false`<br/>||
 |**endpoint**|`string`|For self-hosting, you can override `/usage` endpoint (defaults to `https://app.graphql-hive.com/usage`).<br/>Default: `"https://app.graphql-hive.com/usage"`<br/>||
-|[**exclude**](#telemetryhiveusage_reportingexclude)|`string[]`|A list of operations (by name) to be ignored by Hive.<br/>Default: <br/>||
+|**exclude**||An expression in VRL to exclude certain operations from being sent to Hive Console.<br/>Returning `true` from this expression will exclude the operation, while `false` will include it.<br/>This expression is a VRL expression that has access to the request and operation details;<br/><br/>```vrl<br/> if (.request.operation.name == "ExcludeMe") {<br/>   true<br/> } else {<br/>   false<br/> }<br/>```<br/>Backward compatible with both:<br/>- an expression object: `{ expression: "..." }`<br/>- a list of operation names<br/>||
 |**flush\_interval**|`string`|Frequency of flushing the buffer to the server<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
 |**request\_timeout**|`string`|A timeout for the entire request to Hive Console<br/>Default: 15 seconds<br/>Default: `"15s"`<br/>||
 |**sample\_rate**|`string`|Sample rate to determine sampling.<br/>0% = never being sent<br/>50% = half of the requests being sent<br/>100% = always being sent<br/>Default: 100%<br/>Default: `"100%"`<br/>||
@@ -2424,23 +2710,13 @@ buffer_size: 1000
 connect_timeout: 5s
 enabled: false
 endpoint: https://app.graphql-hive.com/usage
-exclude: []
+exclude: null
 flush_interval: 5s
 request_timeout: 15s
 sample_rate: 100%
 
 ```
 
-<a name="telemetryhiveusage_reportingexclude"></a>
-##### telemetry\.hive\.usage\_reporting\.exclude\[\]: array
-
-A list of operations (by name) to be ignored by Hive.
-Example: ["IntrospectionQuery", "MeQuery"]
-
-
-**Items**
-
-**Item Type:** `string`  
 <a name="telemetrymetrics"></a>
 ### telemetry\.metrics: object
 

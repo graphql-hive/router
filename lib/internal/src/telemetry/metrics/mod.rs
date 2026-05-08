@@ -2,13 +2,13 @@ pub mod cache_metrics;
 mod capture;
 pub mod catalog;
 pub mod circuit_breaker_metrics;
+pub mod coprocessor_metrics;
 pub mod graphql_metrics;
 pub mod http_client_metrics;
 pub mod http_server_metrics;
 pub mod persisted_documents_metrics;
 pub mod setup;
 pub mod supergraph_metrics;
-
 pub use opentelemetry::metrics::ObservableGauge;
 pub use setup::{build_meter_provider_from_config, MetricsSetup, PrometheusRuntimeConfig};
 
@@ -16,6 +16,7 @@ use opentelemetry::metrics::Meter;
 
 use crate::telemetry::metrics::cache_metrics::CacheMetrics;
 use crate::telemetry::metrics::circuit_breaker_metrics::CircuitBreakerMetrics;
+use crate::telemetry::metrics::coprocessor_metrics::CoprocessorMetrics;
 use crate::telemetry::metrics::graphql_metrics::GraphQLMetrics;
 use crate::telemetry::metrics::http_client_metrics::HttpClientMetrics;
 use crate::telemetry::metrics::http_server_metrics::HttpServerMetrics;
@@ -30,6 +31,7 @@ pub struct Metrics {
     pub cache: CacheMetrics,
     pub circuit_breaker: CircuitBreakerMetrics,
     pub persisted_documents: PersistedDocumentsMetrics,
+    pub coprocessor: CoprocessorMetrics,
 }
 
 impl Metrics {
@@ -42,6 +44,7 @@ impl Metrics {
             cache: CacheMetrics::new(meter),
             circuit_breaker: CircuitBreakerMetrics::new(meter),
             persisted_documents: PersistedDocumentsMetrics::new(meter),
+            coprocessor: CoprocessorMetrics::new(meter),
         }
     }
 }

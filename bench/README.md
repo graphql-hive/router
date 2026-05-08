@@ -17,14 +17,26 @@ cargo build --release -p hive-router
 ./target/release/hive_router bench/supergraph.graphql
 ```
 
-## Load test
-
-Defaults: 50 vus for 30s
+## Coprocessor benchmark server (h2c over UDS)
 
 ```
-k6 run k6.js
+cargo build -p bench-coprocessor --release
+./target/release/bench_coprocessor
+```
+
+## Load test
+
+Defaults: 50 connections for 30s
+
+```
+./bench/run-benchmark.sh
 
 # Custom settings
-k6 run k6.js -e BENCH_VUS=69
-k6 run k6.js -e BENCH_OVER_TIME=10s
+BENCH_CONNECTIONS=69 ./bench/run-benchmark.sh
+BENCH_DURATION=10s ./bench/run-benchmark.sh
+BENCH_PERSISTED_MODE=true BENCH_DOCUMENT_ID=bench_test_query ./bench/run-benchmark.sh
+
+# Backward-compatible env names
+BENCH_VUS=69 ./bench/run-benchmark.sh
+BENCH_OVER_TIME=10s ./bench/run-benchmark.sh
 ```

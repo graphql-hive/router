@@ -33,6 +33,8 @@ pub enum HiveSpanKind {
     GraphqlOperation,
     #[strum(serialize = "graphql.subgraph.operation")]
     GraphQLSubgraphOperation,
+    #[strum(serialize = "coprocessor")]
+    Coprocessor,
 }
 
 impl HiveSpanKind {

@@ -1,3 +1,106 @@
+## 0.0.20 (2026-05-05)
+
+### Features
+
+#### Improve HTTP server request OTel tracing with client and peer network attributes.
+
+The `http.server` span now includes:
+- `client.address` and `client.port` from a configurable request header
+- `network.peer.address` and `network.peer.port` from the address of the incoming connection
+
+```yaml
+telemetry:
+  client_identification:
+    # Default - use socket peer only
+    ip_header: null
+    
+    # Header name - use the left-most valid IP from the header
+    ip_header: x-forwarded-for
+    
+    # Trusted proxies - only trust the header when the socket peer is trusted
+    ip_header:
+      name: x-forwarded-for
+      trusted_proxies:
+        - 10.0.0.0/8
+        - 192.168.0.0/16
+```
+
+In trusted proxies scenario, the Router scans the configured header from right to left, skips trusted proxy IP ranges, and records the first non-trusted IP as `client.address`.
+If no valid client IP can be resolved, the Router falls back to the socket peer address.
+
+#### Coprocessors
+
+Introduces Coprocessors as language agnostic way to extend Hive Router.
+
+**Supports coprocessor stages:**
+- `router.request`
+- `router.response`
+- `graphql.request`
+- `graphql.analysis`
+- `graphql.response`
+
+**Stage capabilities:**
+- include selected request/response fields in stage payloads (headers, body, context, and optional SDL depending on stage config)
+- mutate request body/headers/context for downstream pipeline execution
+- short-circuit and return an immediate HTTP response from a stage
+
+**Transport and endpoint support:**
+- `http://` and `unix://` (unix socket domain) endpoints
+- http/1, http/2 and h2c protocols
+
+**Error handling:**
+- coprocessor failures map to server-side failures (500)
+- client-facing GraphQL errors are masked as Internal server error
+- structured error codes are preserved in GraphQL extensions.code
+- detailed coprocessor failure reasons remain in server logs/telemetry only
+
+**Adds coprocessor metrics:**
+- hive.router.coprocessor.requests_total
+- hive.router.coprocessor.duration
+- hive.router.coprocessor.errors_total
+
+### Fixes
+
+- Adjustments in operation's kind being Enum and not &'static str
+
+#### Dynamic Exclusions
+
+### Dynamic Exclusions in Hive Router
+
+Hive Router now supports dynamic exclusions, allowing you to exclude specific requests from usage reporting based on custom logic. This feature is useful for scenarios where you want to skip telemetry for certain requests, such as health checks or specific endpoints.
+
+The previous operation-name list format is still supported for backward compatibility.
+
+#### Usage
+```diff
+- exclude: ['ExcludedOp']
++ exclude:
++   expression: '.request.operation.name == "ExcludedOp"'
+```
+
+Both of the following are valid and supported:
+
+```yaml
+## legacy format
+exclude:
+  - ExcludedOp
+
+## dynamic expression format
+exclude:
+  expression: '.request.operation.name == "ExcludedOp"'
+```
+
+The details about expression context is documented in the [Hive Router documentation](https://the-guild.dev/graphql/hive/docs/router/configuration/expressions).
+
+### Dynamic Exclusions in Apollo Router
+
+As in Hive Router, Apollo Router used to support only operation name based exclusions. With the new dynamic exclusions feature, you can now specify custom logic to exclude requests from usage reporting.
+
+
+## New `add_report_with_request` method in Hive Console SDK
+
+In order to support exclusions based on request properties, a new method `add_report_with_request` has been added to the Hive Console SDK. This method allows you to include the request information in the report, which can then be used in the dynamic exclusion logic.
+
 ## 0.0.19 (2026-04-27)
 
 ### Fixes

@@ -82,6 +82,54 @@ fn inline_fragment_condition(fragment: &InlineFragmentSelection) -> Option<Condi
     fragment.into()
 }
 
+// Returns a condition only when every top-level selection item is an inline fragment
+// with the same type condition and all those fragments use the exact same condition (include/skip).
+// A mixed selection like `isCheap` and `name @include($showName)` must stay scoped at selection level,
+// otherwise `isCheap` would incorrectly disappear when `$showName` is false.
+fn shared_top_level_fragment_condition(
+    type_name: &str,
+    selection_set: &SelectionSet,
+) -> Option<Condition> {
+    let mut condition = None;
+
+    for item in selection_set.items.iter() {
+        let SelectionItem::InlineFragment(fragment) = item else {
+            return None;
+        };
+
+        if fragment.type_condition != type_name {
+            return None;
+        }
+
+        let fragment_condition = inline_fragment_condition(fragment)?;
+
+        match &condition {
+            Some(condition) => {
+                if condition != &fragment_condition {
+                    return None;
+                }
+            }
+            None => condition = Some(fragment_condition),
+        }
+    }
+
+    condition
+}
+
+// Clears only the top-level wrapper condition after it has been lifted to the
+// fetch step. Inner field/fragment conditions are preserved because those still
+// describe selection-level behavior, not whole-fetch behavior.
+fn clear_top_level_fragment_conditions(type_name: &str, selection_set: &mut SelectionSet) {
+    for item in selection_set.items.iter_mut() {
+        if let SelectionItem::InlineFragment(fragment) = item {
+            if fragment.type_condition == type_name {
+                fragment.include_if = None;
+                fragment.skip_if = None;
+            }
+        }
+    }
+}
+
 /// Attempts to lift a common condition from the top-level inline fragments for
 /// `type_name` into the wrapper `... on Type` fragment we build in `From`.
 ///
@@ -459,6 +507,39 @@ impl FetchStepSelections<MultiTypeFetchStep> {
             }
         }
     }
+
+    // Tries to lift a shared output condition into the fetch step.
+    // A step-level condition means the whole fetch can be skipped.
+    // `Some` only when every type is guarded by the same top-level condition.
+    // The lifted wrapper directives are cleared from the output
+    // to avoid duplicating the same condition at both fetch and selection level.
+    pub fn take_shared_top_level_fragment_condition(&mut self) -> Option<Condition> {
+        if self.is_empty() {
+            return None;
+        }
+
+        let mut common_condition = None;
+
+        for (type_name, selection_set) in self.iter() {
+            let condition = shared_top_level_fragment_condition(type_name, selection_set)?;
+
+            match &common_condition {
+                Some(common_condition) => {
+                    if common_condition != &condition {
+                        return None;
+                    }
+                }
+                None => common_condition = Some(condition),
+            }
+        }
+
+        let condition = common_condition?;
+        for (type_name, selection_set) in self.selections.iter_mut() {
+            clear_top_level_fragment_conditions(type_name, selection_set);
+        }
+
+        Some(condition)
+    }
 }
 
 impl FetchStepSelections<SingleTypeFetchStep> {
@@ -561,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn lifts_uniform_condition_from_multiple_fragments() {
+    fn lifts_shared_condition_from_multiple_fragments() {
         let fetch_selections = multi_type_from_top_level_inline_fragments(
             r#"
             {
