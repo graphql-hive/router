@@ -19,7 +19,7 @@ use crate::{
 
 use super::subgraph_state::SubgraphState;
 
-static BUILDIB_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
+static BUILTIN_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 
 pub type SchemaDocument = input::Document<'static, String>;
 
@@ -217,7 +217,7 @@ impl SupergraphState {
     }
 
     pub fn is_scalar_type(&self, type_name: &str) -> bool {
-        if BUILDIB_SCALARS.contains(&type_name) {
+        if BUILTIN_SCALARS.contains(&type_name) {
             return true;
         }
 
@@ -225,7 +225,7 @@ impl SupergraphState {
     }
 
     pub fn is_custom_scalar_type(&self, type_name: &str) -> bool {
-        !BUILDIB_SCALARS.contains(&type_name) && self.known_scalars.contains(type_name)
+        !BUILTIN_SCALARS.contains(&type_name) && self.known_scalars.contains(type_name)
     }
 
     pub fn is_interface_object_in_subgraph(&self, type_name: &str, graph_id: &str) -> bool {
@@ -293,7 +293,7 @@ impl SupergraphState {
             }
         }
 
-        for builtin in BUILDIB_SCALARS {
+        for builtin in BUILTIN_SCALARS {
             set.insert(builtin.to_string());
         }
 
