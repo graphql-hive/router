@@ -132,34 +132,45 @@ fn inject_skipped_typename_for_selection_set(
     use ast::selection_set::FieldSelection;
 
     for item in &mut selection_set.items {
-        let SelectionItem::Field(field) = item else {
-            continue;
-        };
-        let Some(field_type_name) = supergraph
-            .definitions
-            .get(parent_type_name)
-            .and_then(|definition| definition.fields().get(&field.name))
-            .map(|field_definition| field_definition.field_type.inner_type())
-        else {
-            continue;
-        };
-        let is_composite = supergraph
-            .definitions
-            .get(field_type_name)
-            .is_some_and(|definition| definition.is_composite_type());
-        if !is_composite {
-            continue;
-        }
-        inject_skipped_typename_for_selection_set(
-            &mut field.selections,
-            field_type_name,
-            supergraph,
-        );
-        if field.selections.items.is_empty() {
-            field
-                .selections
-                .items
-                .push(SelectionItem::Field(FieldSelection::new_skipped_typename()));
+        match item {
+            SelectionItem::Field(field) => {
+                let Some(field_type_name) = supergraph
+                    .definitions
+                    .get(parent_type_name)
+                    .and_then(|definition| definition.fields().get(&field.name))
+                    .map(|field_definition| field_definition.field_type.inner_type())
+                else {
+                    continue;
+                };
+                let is_composite = supergraph
+                    .definitions
+                    .get(field_type_name)
+                    .is_some_and(|definition| definition.is_composite_type());
+                if !is_composite {
+                    continue;
+                }
+                inject_skipped_typename_for_selection_set(
+                    &mut field.selections,
+                    field_type_name,
+                    supergraph,
+                );
+                if field.selections.items.is_empty() {
+                    field
+                        .selections
+                        .items
+                        .push(SelectionItem::Field(FieldSelection::new_skipped_typename()));
+                }
+            }
+            SelectionItem::InlineFragment(fragment) => {
+                inject_skipped_typename_for_selection_set(
+                    &mut fragment.selections,
+                    fragment.type_condition.as_str(),
+                    supergraph,
+                );
+            }
+            SelectionItem::FragmentSpread(_) => {
+                // Fragment spreads are removed earlier in normalization.
+            }
         }
     }
 }
@@ -224,6 +235,66 @@ mod tests {
           __typename
           __schema {
             __typename
+          }
+        }
+        "
+        );
+    }
+
+    #[test]
+    fn empty_composite_under_inline_fragment_gets_skipped_typename_sentinel() {
+        let schema = parse_schema(
+            r#"
+              interface Node {
+                id: ID!
+              }
+
+              type Profile {
+                name: String
+              }
+
+              type Account implements Node {
+                id: ID!
+                profile: Profile
+              }
+
+              type Query {
+                node: Node
+              }
+            "#,
+        );
+
+        let supergraph = SupergraphState::new(&schema);
+        let normalized = normalize_operation(
+            &supergraph,
+            &parse_query(
+                r#"
+                  query {
+                    node {
+                      ... on Account {
+                        profile {
+                          name @include(if: false)
+                        }
+                      }
+                    }
+                  }
+                "#,
+            )
+            .expect("to parse"),
+            None,
+        )
+        .unwrap();
+
+        insta::assert_snapshot!(
+            pretty_query(normalized.to_string()),
+            @r"
+        {
+          node {
+            ... on Account {
+              profile {
+                __typename
+              }
+            }
           }
         }
         "
