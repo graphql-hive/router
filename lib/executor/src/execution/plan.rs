@@ -16,7 +16,7 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
 use hive_router_query_planner::ast::operation::SubgraphFetchOperation;
-use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
+use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
@@ -199,7 +199,7 @@ pub async fn execute_query_plan<'exec>(
             headers: headers_map,
             raw_variable_values: None,
             extensions: None,
-            opaque_scalar_paths: fetch_node.opaque_scalar_paths.as_ref(),
+            custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
         };
 
         // TODO: otel instrumentation and stuff
@@ -598,7 +598,7 @@ struct PrepareExecutionJobOpts<'exec> {
     // Output rewrites
     output_rewrites: Option<&'exec [FetchRewrite]>,
     // Response paths whose values should stay raw JSON in `data`
-    opaque_scalar_paths: Option<&'exec OpaqueScalarPaths>,
+    custom_scalar_paths: Option<&'exec CustomScalarPaths>,
     // If the fetch job is for a flatten node, we pass the filtered representations,
     raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
     // and the path to the representations in the original response for error handling and normalization
@@ -670,7 +670,7 @@ impl<'exec> Executor<'exec> {
                     operation_kind: fetch_node.operation_kind.as_ref(),
                     operation: &fetch_node.operation,
                     output_rewrites: fetch_node.output_rewrites.as_deref(),
-                    opaque_scalar_paths: fetch_node.opaque_scalar_paths.as_ref(),
+                    custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                     raw_variable_values: None,
                     affected_path: None,
                 })
@@ -701,7 +701,7 @@ impl<'exec> Executor<'exec> {
                         operation_kind: batch_fetch_node.operation_kind.as_ref(),
                         operation: &batch_fetch_node.operation,
                         output_rewrites: None,
-                        opaque_scalar_paths: batch_fetch_node.opaque_scalar_paths.as_ref(),
+                        custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
                         raw_variable_values: Some(raw_variable_values),
                         affected_path: None,
                     })
@@ -789,7 +789,7 @@ impl<'exec> Executor<'exec> {
                         operation_kind: fetch_node.operation_kind.as_ref(),
                         operation: &fetch_node.operation,
                         output_rewrites: fetch_node.output_rewrites.as_deref(),
-                        opaque_scalar_paths: fetch_node.opaque_scalar_paths.as_ref(),
+                        custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                         raw_variable_values: Some(vec![(
                             "representations",
                             filtered_representations,
@@ -1317,7 +1317,7 @@ impl<'exec> Executor<'exec> {
                 raw_variable_values: opts.raw_variable_values,
                 headers: headers_map,
                 extensions: None,
-                opaque_scalar_paths: opts.opaque_scalar_paths,
+                custom_scalar_paths: opts.custom_scalar_paths,
             };
 
             let client_document_hash_str = opts.operation.hash.to_string();
@@ -1773,7 +1773,7 @@ mod tests {
                                 document: dummy_doc.clone(),
                                 hash: 0,
                             },
-                            opaque_scalar_paths: None,
+                            custom_scalar_paths: None,
                             operation_name: None,
                             requires: None,
                             input_rewrites: None,
@@ -1789,7 +1789,7 @@ mod tests {
                                 document: dummy_doc.clone(),
                                 hash: 0,
                             },
-                            opaque_scalar_paths: None,
+                            custom_scalar_paths: None,
                             operation_name: None,
                             requires: None,
                             input_rewrites: None,

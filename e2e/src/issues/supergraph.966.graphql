@@ -47,6 +47,7 @@ scalar join__FieldSet
 
 enum join__Graph {
   LABELS @join__graph(name: "labels", url: "http://0.0.0.0:4200/labels")
+  PRODUCTS @join__graph(name: "products", url: "http://0.0.0.0:4200/products")
 }
 
 scalar link__Import
@@ -63,8 +64,50 @@ enum link__Purpose {
   EXECUTION
 }
 
-scalar Labels @join__type(graph: LABELS)
+scalar JSONBlob @join__type(graph: LABELS) @join__type(graph: PRODUCTS)
 
-type Query @join__type(graph: LABELS) {
-  labels: Labels @join__field(graph: LABELS)
+interface SearchResult @join__type(graph: LABELS) {
+  id: ID! @join__field(graph: LABELS)
+}
+
+type LabeledThing implements SearchResult
+  @join__type(graph: LABELS)
+  @join__implements(graph: LABELS, interface: "SearchResult") {
+  id: ID! @join__field(graph: LABELS)
+  metadata: JSONBlob @join__field(graph: LABELS)
+}
+
+type PlainThing implements SearchResult
+  @join__type(graph: LABELS)
+  @join__implements(graph: LABELS, interface: "SearchResult") {
+  id: ID! @join__field(graph: LABELS)
+  title: String @join__field(graph: LABELS)
+}
+
+type Product
+  @join__type(graph: LABELS, key: "id")
+  @join__type(graph: PRODUCTS, key: "id") {
+  id: ID!
+  metadata: JSONBlob
+    @join__field(graph: LABELS, external: true)
+    @join__field(graph: PRODUCTS)
+}
+
+type Catalog @join__type(graph: LABELS) {
+  metadata: JSONBlob @join__field(graph: LABELS)
+  metadataList: [JSONBlob!]! @join__field(graph: LABELS)
+}
+
+type Query @join__type(graph: LABELS) @join__type(graph: PRODUCTS) {
+  labels: JSONBlob @join__field(graph: LABELS)
+  labelsArray: JSONBlob @join__field(graph: LABELS)
+  labelsText: JSONBlob @join__field(graph: LABELS)
+  labelsNumber: JSONBlob @join__field(graph: LABELS)
+  labelsBool: JSONBlob @join__field(graph: LABELS)
+  labelsNull: JSONBlob @join__field(graph: LABELS)
+  catalog: Catalog @join__field(graph: LABELS)
+  abstractThing: SearchResult @join__field(graph: LABELS)
+  abstractThings: [SearchResult!]! @join__field(graph: LABELS)
+  productRef(id: ID!): Product @join__field(graph: LABELS)
+  product(id: ID!): Product @join__field(graph: PRODUCTS)
 }

@@ -2,7 +2,7 @@ use core::fmt;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
+use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 use http::HeaderMap;
 use serde::{
     de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor},
@@ -30,19 +30,19 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
         D: Deserializer<'de>,
     {
         SubgraphResponseSeed {
-            opaque_scalar_paths: &EMPTY_OPAQUE_SCALAR_PATHS,
+            custom_scalar_paths: &EMPTY_CUSTOM_SCALAR_PATHS,
         }
         .deserialize(deserializer)
     }
 }
 
-static EMPTY_OPAQUE_SCALAR_PATHS: OpaqueScalarPaths = OpaqueScalarPaths {
+static EMPTY_CUSTOM_SCALAR_PATHS: CustomScalarPaths = CustomScalarPaths {
     children: std::collections::BTreeMap::new(),
     terminal: false,
 };
 
 struct SubgraphResponseSeed<'a> {
-    opaque_scalar_paths: &'a OpaqueScalarPaths,
+    custom_scalar_paths: &'a CustomScalarPaths,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for SubgraphResponseSeed<'a> {
@@ -53,14 +53,14 @@ impl<'a, 'de> DeserializeSeed<'de> for SubgraphResponseSeed<'a> {
         D: Deserializer<'de>,
     {
         deserializer.deserialize_map(SubgraphResponseVisitor {
-            opaque_scalar_paths: self.opaque_scalar_paths,
+            custom_scalar_paths: self.custom_scalar_paths,
             _marker: std::marker::PhantomData,
         })
     }
 }
 
 struct SubgraphResponseVisitor<'a, 'de> {
-    opaque_scalar_paths: &'a OpaqueScalarPaths,
+    custom_scalar_paths: &'a CustomScalarPaths,
     _marker: std::marker::PhantomData<&'de ()>,
 }
 
@@ -86,7 +86,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a, 'de> {
                         return Err(de::Error::duplicate_field("data"));
                     }
                     data = Some(map.next_value_seed(ValueSeed {
-                        opaque_scalar_paths: self.opaque_scalar_paths,
+                        custom_scalar_paths: self.custom_scalar_paths,
                     })?);
                 }
                 "errors" => {
@@ -120,7 +120,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a, 'de> {
 
 #[derive(Clone, Copy)]
 struct ValueSeed<'a> {
-    opaque_scalar_paths: &'a OpaqueScalarPaths,
+    custom_scalar_paths: &'a CustomScalarPaths,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
@@ -130,22 +130,22 @@ impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
     where
         D: Deserializer<'de>,
     {
-        if self.opaque_scalar_paths.terminal {
+        if self.custom_scalar_paths.terminal {
             let raw = LazyValue::deserialize(deserializer)?;
             return Ok(Value::RawJson(raw.as_raw_cow()));
         }
 
-        deserializer.deserialize_any(ValueVisitorWithOpaquePaths {
-            opaque_scalar_paths: self.opaque_scalar_paths,
+        deserializer.deserialize_any(ValueVisitorWithCustomScalarPaths {
+            custom_scalar_paths: self.custom_scalar_paths,
         })
     }
 }
 
-struct ValueVisitorWithOpaquePaths<'a> {
-    opaque_scalar_paths: &'a OpaqueScalarPaths,
+struct ValueVisitorWithCustomScalarPaths<'a> {
+    custom_scalar_paths: &'a CustomScalarPaths,
 }
 
-impl<'a, 'de> Visitor<'de> for ValueVisitorWithOpaquePaths<'a> {
+impl<'a, 'de> Visitor<'de> for ValueVisitorWithCustomScalarPaths<'a> {
     type Value = Value<'de>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -199,7 +199,7 @@ impl<'a, 'de> Visitor<'de> for ValueVisitorWithOpaquePaths<'a> {
     {
         let mut elements = Vec::with_capacity(seq.size_hint().unwrap_or(0));
         while let Some(elem) = seq.next_element_seed(ValueSeed {
-            opaque_scalar_paths: self.opaque_scalar_paths,
+            custom_scalar_paths: self.custom_scalar_paths,
         })? {
             elements.push(elem);
         }
@@ -213,12 +213,12 @@ impl<'a, 'de> Visitor<'de> for ValueVisitorWithOpaquePaths<'a> {
         let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0));
         while let Some(key) = map.next_key::<&'de str>()? {
             let child_paths = self
-                .opaque_scalar_paths
+                .custom_scalar_paths
                 .children
                 .get(key)
-                .unwrap_or(&EMPTY_OPAQUE_SCALAR_PATHS);
+                .unwrap_or(&EMPTY_CUSTOM_SCALAR_PATHS);
             let value = map.next_value_seed(ValueSeed {
-                opaque_scalar_paths: child_paths,
+                custom_scalar_paths: child_paths,
             })?;
             entries.push((key, value));
         }
@@ -230,7 +230,7 @@ impl<'a, 'de> Visitor<'de> for ValueVisitorWithOpaquePaths<'a> {
 impl<'a> SubgraphResponse<'a> {
     pub fn deserialize_from_bytes(
         bytes: Bytes,
-        opaque_scalar_paths: Option<&OpaqueScalarPaths>,
+        custom_scalar_paths: Option<&CustomScalarPaths>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         let bytes_ref: &[u8] = &bytes;
 
@@ -244,7 +244,7 @@ impl<'a> SubgraphResponse<'a> {
         let mut deserializer = sonic_rs::Deserializer::from_slice(bytes_ref);
 
         SubgraphResponseSeed {
-            opaque_scalar_paths: opaque_scalar_paths.unwrap_or(&EMPTY_OPAQUE_SCALAR_PATHS),
+            custom_scalar_paths: custom_scalar_paths.unwrap_or(&EMPTY_CUSTOM_SCALAR_PATHS),
         }
         .deserialize(&mut deserializer)
         .map_err(SubgraphExecutorError::ResponseDeserializationFailure)
@@ -261,7 +261,7 @@ impl<'a> SubgraphResponse<'a> {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
+    use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 
     use crate::response::value::Value;
 
@@ -296,8 +296,8 @@ mod tests {
     }
 
     #[test]
-    fn deserializes_opaque_scalar_data_field_as_raw_json() {
-        let mut paths = OpaqueScalarPaths::default();
+    fn deserializes_custom_scalar_data_field_as_raw_json() {
+        let mut paths = CustomScalarPaths::default();
         paths.insert_path(["labels"]);
 
         let response = super::SubgraphResponse::deserialize_from_bytes(

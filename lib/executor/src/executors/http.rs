@@ -18,7 +18,7 @@ use hive_router_internal::inflight::InFlightRole;
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
 use hive_router_internal::telemetry::TelemetryContext;
-use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
+use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 
 use async_trait::async_trait;
 
@@ -472,7 +472,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }
 
         let response_result =
-            response.deserialize_http_response(execution_request.opaque_scalar_paths);
+            response.deserialize_http_response(execution_request.custom_scalar_paths);
         if let Some(mut http_request_capture) = http_request_capture {
             finish_capture_from_subgraph_result(
                 &mut http_request_capture.capture,
@@ -647,9 +647,9 @@ pub struct SubgraphHttpResponse {
 impl SubgraphHttpResponse {
     fn deserialize_http_response<'a>(
         self,
-        opaque_scalar_paths: Option<&OpaqueScalarPaths>,
+        custom_scalar_paths: Option<&CustomScalarPaths>,
     ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
-        SubgraphResponse::deserialize_from_bytes(self.body.clone(), opaque_scalar_paths).map(
+        SubgraphResponse::deserialize_from_bytes(self.body.clone(), custom_scalar_paths).map(
             |mut resp: SubgraphResponse<'a>| {
                 // headers are under arc, zero cost clone
                 resp.headers = Some(self.headers.clone());

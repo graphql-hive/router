@@ -115,7 +115,7 @@ pub struct FetchNode {
     pub operation_name: Option<String>,
     pub operation: SubgraphFetchOperation,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub opaque_scalar_paths: Option<OpaqueScalarPaths>,
+    pub custom_scalar_paths: Option<CustomScalarPaths>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires: Option<SelectionSet>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,20 +138,20 @@ pub struct BatchFetchNode {
     pub operation_name: Option<String>,
     pub operation: SubgraphFetchOperation,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub opaque_scalar_paths: Option<OpaqueScalarPaths>,
+    pub custom_scalar_paths: Option<CustomScalarPaths>,
     pub entity_batch: EntityBatch,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct OpaqueScalarPaths {
+pub struct CustomScalarPaths {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub children: BTreeMap<String, OpaqueScalarPaths>,
+    pub children: BTreeMap<String, CustomScalarPaths>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub terminal: bool,
 }
 
-impl OpaqueScalarPaths {
+impl CustomScalarPaths {
     pub fn insert_path<I, S>(&mut self, path: I)
     where
         I: IntoIterator<Item = S>,
@@ -172,8 +172,8 @@ impl OpaqueScalarPaths {
     }
 }
 
-fn collect_opaque_scalar_paths(
-    paths: &mut OpaqueScalarPaths,
+fn collect_custom_scalar_paths(
+    paths: &mut CustomScalarPaths,
     response_path: &mut Vec<String>,
     parent_type_name: &str,
     selections: &SelectionSet,
@@ -200,7 +200,7 @@ fn collect_opaque_scalar_paths(
                 if supergraph.is_custom_scalar_type(field_type_name) {
                     paths.insert_path(response_path.iter().map(String::as_str));
                 } else if !field.selections.is_empty() {
-                    collect_opaque_scalar_paths(
+                    collect_custom_scalar_paths(
                         paths,
                         response_path,
                         field_type_name,
@@ -212,7 +212,7 @@ fn collect_opaque_scalar_paths(
                 response_path.pop();
             }
             SelectionItem::InlineFragment(fragment) => {
-                collect_opaque_scalar_paths(
+                collect_custom_scalar_paths(
                     paths,
                     response_path,
                     &fragment.type_condition,
@@ -225,15 +225,18 @@ fn collect_opaque_scalar_paths(
     }
 }
 
-fn opaque_scalar_paths_from_fetch_output(
+fn custom_scalar_paths_from_fetch_output(
     output: &FetchStepSelections<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
-) -> Option<OpaqueScalarPaths> {
-    let mut paths = OpaqueScalarPaths::default();
+    entities_root_key: Option<&str>,
+) -> Option<CustomScalarPaths> {
+    let mut paths = CustomScalarPaths::default();
 
     for (type_name, selection_set) in output.iter_selections() {
-        let mut response_path = Vec::new();
-        collect_opaque_scalar_paths(
+        let mut response_path = entities_root_key
+            .map(|root| vec![root.to_string()])
+            .unwrap_or_default();
+        collect_custom_scalar_paths(
             &mut paths,
             &mut response_path,
             type_name,
@@ -245,14 +248,14 @@ fn opaque_scalar_paths_from_fetch_output(
     (!paths.is_empty()).then_some(paths)
 }
 
-pub fn opaque_scalar_paths_for_type_selection(
+pub fn custom_scalar_paths_for_type_selection(
     type_name: &str,
     selection_set: &SelectionSet,
     supergraph: &SupergraphState,
-) -> Option<OpaqueScalarPaths> {
-    let mut paths = OpaqueScalarPaths::default();
+) -> Option<CustomScalarPaths> {
+    let mut paths = CustomScalarPaths::default();
     let mut response_path = Vec::new();
-    collect_opaque_scalar_paths(
+    collect_custom_scalar_paths(
         &mut paths,
         &mut response_path,
         type_name,
@@ -660,9 +663,10 @@ impl FetchNode {
                 operation_kind: Some(OperationKind::Query),
                 operation_name: None,
                 operation: create_output_operation(step, supergraph),
-                opaque_scalar_paths: opaque_scalar_paths_from_fetch_output(
+                custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                     &step.output,
                     supergraph,
+                    Some("_entities"),
                 ),
                 requires: Some(create_input_selection_set(&step.input)),
                 input_rewrites: step.input_rewrites.clone(),
@@ -691,9 +695,10 @@ impl FetchNode {
                         document_str,
                         hash,
                     },
-                    opaque_scalar_paths: opaque_scalar_paths_from_fetch_output(
+                    custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                         &step.output,
                         supergraph,
+                        None,
                     ),
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),

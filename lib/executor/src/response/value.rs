@@ -195,7 +195,13 @@ impl<'a> Value<'a> {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::String(s) => Some(s),
-            Value::RawJson(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_raw_json(&self) -> Option<&str> {
+        match self {
+            Value::RawJson(raw) => Some(raw),
             _ => None,
         }
     }

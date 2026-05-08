@@ -69,8 +69,8 @@ use crate::{
     },
     planner::error::QueryPlanError,
     planner::plan_nodes::{
-        hash_minified_query, opaque_scalar_paths_for_type_selection, BatchFetchNode, EntityBatch,
-        EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
+        custom_scalar_paths_for_type_selection, hash_minified_query, BatchFetchNode,
+        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
 };
@@ -105,6 +105,7 @@ struct BatchFetchBuilder<'a> {
     representations_var_index: usize,
     variable_usages: BTreeSet<String>,
     representations_var_by_input_key: HashMap<RepresentationsInputKey, String>,
+    custom_scalar_paths: CustomScalarPaths,
 }
 
 impl<'a> BatchFetchBuilder<'a> {
@@ -126,6 +127,7 @@ impl<'a> BatchFetchBuilder<'a> {
             representations_var_index: 0,
             variable_usages: BTreeSet::new(),
             representations_var_by_input_key: HashMap::new(),
+            custom_scalar_paths: CustomScalarPaths::default(),
         }
     }
 
@@ -133,6 +135,7 @@ impl<'a> BatchFetchBuilder<'a> {
         &mut self,
         alias_index: usize,
         shape_group: &[EntityFetch],
+        supergraph: &SupergraphState,
     ) -> Result<(), QueryPlanError> {
         let representative = shape_group.first().ok_or_else(|| {
             QueryPlanError::Internal("Batched entities shape group cannot be empty".to_string())
@@ -165,6 +168,16 @@ impl<'a> BatchFetchBuilder<'a> {
                 skip_if: None,
                 include_if: None,
             }));
+
+        if let Some(alias_paths) = custom_scalar_paths_for_type_selection(
+            &representative.type_name,
+            &representative.entities_selection,
+            supergraph,
+        ) {
+            self.custom_scalar_paths
+                .children
+                .insert(alias.clone(), alias_paths);
+        }
 
         self.batched_aliases.push(EntityBatchAlias {
             alias,
@@ -279,11 +292,8 @@ impl<'a> BatchFetchBuilder<'a> {
                 document_str,
                 hash,
             },
-            opaque_scalar_paths: opaque_scalar_paths_for_type_selection(
-                &first_candidate.type_name,
-                &first_candidate.entities_selection,
-                supergraph,
-            ),
+            custom_scalar_paths: (!self.custom_scalar_paths.is_empty())
+                .then_some(self.custom_scalar_paths),
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
             },
@@ -824,7 +834,7 @@ fn build_batched_fetch_node(
         BatchFetchBuilder::new(merged_non_representation_variables, shape_groups.len());
 
     for (index, shape_group) in shape_groups.iter().enumerate() {
-        builder.add_shape_group(index, shape_group)?;
+        builder.add_shape_group(index, shape_group, supergraph)?;
     }
 
     builder.finish(first_candidate, supergraph)
@@ -2276,7 +2286,7 @@ mod tests {
             operation_kind: Some(OperationKind::Query),
             operation_name: None,
             operation,
-            opaque_scalar_paths: None,
+            custom_scalar_paths: None,
             requires: Some(requires),
             input_rewrites: None,
             output_rewrites: None,
@@ -2339,7 +2349,7 @@ mod tests {
             operation_kind: Some(OperationKind::Query),
             operation_name: None,
             operation,
-            opaque_scalar_paths: None,
+            custom_scalar_paths: None,
             requires: None,
             input_rewrites: None,
             output_rewrites: None,
