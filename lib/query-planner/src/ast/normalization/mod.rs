@@ -302,6 +302,67 @@ mod tests {
     }
 
     #[test]
+    fn explicit_typename_wins_over_skipped_typename() {
+        let schema = parse_schema(
+            r#"
+              interface Node {
+                id: ID!
+              }
+
+              type Profile {
+                name: String
+              }
+
+              type Account implements Node {
+                id: ID!
+                profile: Profile
+              }
+
+              type Query {
+                node: Node
+              }
+            "#,
+        );
+
+        let supergraph = SupergraphState::new(&schema);
+        let normalized = normalize_operation(
+            &supergraph,
+            &parse_query(
+                r#"
+                  query {
+                    node {
+                      ... on Account {
+                        profile {
+                          name @include(if: false)
+                          __typename
+                        }
+                      }
+                    }
+                  }
+                "#,
+            )
+            .expect("to parse"),
+            None,
+        )
+        .unwrap();
+
+        insta::assert_snapshot!(
+            pretty_query(normalized.to_string()),
+            @r"
+        {
+          node {
+            ... on Account {
+              profile {
+                __typename
+              }
+            }
+          }
+        }
+        "
+        );
+    }
+
+    #[test]
     fn normalize_fields() {
         let schema = parse_schema(
             r#"

@@ -474,6 +474,7 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
                         )
                     {
                         found = true;
+                        merge_field_omit_from_response(target_field, source_field);
                         merge_selection_set(
                             &mut target_field.selections,
                             &source_field.selections,
@@ -518,6 +519,15 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
         } else {
             target.items.extend(pending_items);
         }
+    }
+}
+
+#[inline]
+fn merge_field_omit_from_response(target: &mut FieldSelection, source: &FieldSelection) {
+    // A skipped `__typename` is only there for an empty object.
+    // If the client explicitly requested `__typename`, keep the visible field.
+    if target.name == "__typename" {
+        target.omit_from_response &= source.omit_from_response;
     }
 }
 
@@ -912,6 +922,25 @@ mod tests {
         merge_selection_set(&mut target, &source, false);
 
         assert_eq!(target.items.len(), 2);
+    }
+
+    #[test]
+    fn merge_selection_set_prefers_visible_typename_over_skipped() {
+        let mut target = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection::new_skipped_typename())],
+        };
+        let source = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection::new_typename())],
+        };
+
+        merge_selection_set(&mut target, &source, false);
+
+        let [SelectionItem::Field(field)] = target.items.as_slice() else {
+            panic!("expected exactly one __typename field");
+        };
+
+        assert_eq!(field.name, "__typename");
+        assert!(!field.omit_from_response);
     }
 
     #[test]
