@@ -202,4 +202,60 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/966
+    async fn issue_966_custom_scalar_with_escaped_object_key() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.966.graphql
+                  query_planner:
+                    allow_expose: true
+                  override_subgraph_urls:
+                    labels:
+                      url: "http://{host}/labels"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let labels_mock = server
+            .mock("POST", "/labels")
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "data": {
+                    "labels": {
+                      "generic.learnMore.button\t": "Learn more"
+                    }
+                  }
+                }
+                "#,
+            )
+            .create();
+
+        let res = router.send_graphql_request("{ labels }", None, None).await;
+
+        labels_mock.assert();
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "labels": {
+              "generic.learnMore.button\t": "Learn more"
+            }
+          }
+        }
+        "#);
+    }
 }
