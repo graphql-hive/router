@@ -544,6 +544,7 @@ mod tests {
     use hive_router_query_planner::{
         ast::{document::NormalizedDocument, normalization::create_normalized_document},
         consumer_schema::ConsumerSchema,
+        state::supergraph_state::SupergraphState,
         utils::parsing::parse_operation,
     };
     use sonic_rs::json;
@@ -591,8 +592,12 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        let normalized_operation: NormalizedDocument =
-            create_normalized_document(operation_ast.clone(), Some("GetMetadata".into()));
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let normalized_operation: NormalizedDocument = create_normalized_document(
+            &supergraph_state,
+            operation_ast.clone(),
+            Some("GetMetadata".into()),
+        );
         let (operation_type_name, selections) =
             FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
         let data_json = json!({
@@ -698,8 +703,12 @@ mod tests {
             })
             .unwrap();
 
-        let normalized_operation: NormalizedDocument =
-            create_normalized_document(operation_ast.clone(), Some("SearchQuery".into()));
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let normalized_operation: NormalizedDocument = create_normalized_document(
+            &supergraph_state,
+            operation_ast.clone(),
+            Some("SearchQuery".into()),
+        );
         let (operation_type_name, selections) =
             FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
 

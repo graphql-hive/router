@@ -368,15 +368,15 @@ fn expand_abstract_fragment(
             .cloned()
             .collect();
 
-        // Collect ALL matching sub-fragments for this concrete type (not just the first one).
+        // Collect all child fragments that apply to this concrete type, including
+        // nested abstract fragments like `... on Node` while expanding `Node` to `Account`.
         let specific_sub_fragments: Vec<&InlineFragment<'static, String>> = fragment
             .selection_set
             .items
             .iter()
             .filter_map(|s| {
                 if let Selection::InlineFragment(f) = s {
-                    if f.type_condition.as_ref().map(extract_type_condition) == Some(obj_type_name)
-                    {
+                    if fragment_applies_to_object(possible_types, f, obj_type_name) {
                         return Some(f);
                     }
                 }
@@ -405,7 +405,11 @@ fn expand_abstract_fragment(
                 obj_type_def,
                 &mut inherited_fragment.selection_set,
             )?;
-            new_items.push(Selection::InlineFragment(inherited_fragment));
+            // Recursive normalization can eliminate every inherited selection, so
+            // avoid emitting an empty inline fragment like `... on Account {}`.
+            if !inherited_fragment.selection_set.items.is_empty() {
+                new_items.push(Selection::InlineFragment(inherited_fragment));
+            }
 
             // then a separate fragment for each sub-fragment's fields and directives.
             // Propagate any parent directives (e.g. @skip/@include) into each sub-fragment
@@ -422,6 +426,8 @@ fn expand_abstract_fragment(
             //     / `@skip` are non-repeatable so they can't co-exist on the same fragment.
             for sub_fragment in &specific_sub_fragments {
                 let mut specific_fragment = (*sub_fragment).clone();
+                specific_fragment.type_condition =
+                    Some(TypeCondition::On(obj_type_name.to_string()));
 
                 let mut needs_wrapping = false;
                 let mut directives_to_merge: Vec<_> = Vec::new();
@@ -452,6 +458,10 @@ fn expand_abstract_fragment(
                     obj_type_def,
                     &mut specific_fragment.selection_set,
                 )?;
+
+                if specific_fragment.selection_set.items.is_empty() {
+                    continue;
+                }
 
                 if needs_wrapping {
                     let wrapper = InlineFragment {
@@ -500,7 +510,25 @@ fn expand_abstract_fragment(
             obj_type_def,
             &mut new_fragment.selection_set,
         )?;
-        new_items.push(Selection::InlineFragment(new_fragment));
+        // Recursive normalization can eliminate every child selection, so avoid
+        // emitting an empty inline fragment like `... on Account {}`.
+        if !new_fragment.selection_set.items.is_empty() {
+            new_items.push(Selection::InlineFragment(new_fragment));
+        }
     }
     Ok(new_items)
+}
+
+fn fragment_applies_to_object(
+    possible_types: &PossibleTypesMap,
+    fragment: &InlineFragment<'static, String>,
+    obj_type_name: &str,
+) -> bool {
+    match fragment.type_condition.as_ref().map(extract_type_condition) {
+        Some(type_condition) if type_condition == obj_type_name => true,
+        Some(type_condition) => possible_types
+            .get(type_condition)
+            .is_some_and(|possible_types| possible_types.contains(obj_type_name)),
+        None => true,
+    }
 }
