@@ -29,12 +29,20 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
     where
         D: Deserializer<'de>,
     {
-        SubgraphResponseSeed { opaque_scalar_paths: None }.deserialize(deserializer)
+        SubgraphResponseSeed {
+            opaque_scalar_paths: &EMPTY_OPAQUE_SCALAR_PATHS,
+        }
+        .deserialize(deserializer)
     }
 }
 
+static EMPTY_OPAQUE_SCALAR_PATHS: OpaqueScalarPaths = OpaqueScalarPaths {
+    children: std::collections::BTreeMap::new(),
+    terminal: false,
+};
+
 struct SubgraphResponseSeed<'a> {
-    opaque_scalar_paths: Option<&'a OpaqueScalarPaths>,
+    opaque_scalar_paths: &'a OpaqueScalarPaths,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for SubgraphResponseSeed<'a> {
@@ -52,7 +60,7 @@ impl<'a, 'de> DeserializeSeed<'de> for SubgraphResponseSeed<'a> {
 }
 
 struct SubgraphResponseVisitor<'a, 'de> {
-    opaque_scalar_paths: Option<&'a OpaqueScalarPaths>,
+    opaque_scalar_paths: &'a OpaqueScalarPaths,
     _marker: std::marker::PhantomData<&'de ()>,
 }
 
@@ -112,7 +120,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a, 'de> {
 
 #[derive(Clone, Copy)]
 struct ValueSeed<'a> {
-    opaque_scalar_paths: Option<&'a OpaqueScalarPaths>,
+    opaque_scalar_paths: &'a OpaqueScalarPaths,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
@@ -122,9 +130,9 @@ impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
     where
         D: Deserializer<'de>,
     {
-        if self.opaque_scalar_paths.is_some_and(|paths| paths.terminal) {
+        if self.opaque_scalar_paths.terminal {
             let raw = LazyValue::deserialize(deserializer)?;
-            return Ok(Value::RawJson(raw.as_raw_str().to_owned().into()));
+            return Ok(Value::RawJson(raw.as_raw_cow()));
         }
 
         deserializer.deserialize_any(ValueVisitorWithOpaquePaths {
@@ -134,7 +142,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
 }
 
 struct ValueVisitorWithOpaquePaths<'a> {
-    opaque_scalar_paths: Option<&'a OpaqueScalarPaths>,
+    opaque_scalar_paths: &'a OpaqueScalarPaths,
 }
 
 impl<'a, 'de> Visitor<'de> for ValueVisitorWithOpaquePaths<'a> {
@@ -206,7 +214,9 @@ impl<'a, 'de> Visitor<'de> for ValueVisitorWithOpaquePaths<'a> {
         while let Some(key) = map.next_key::<&'de str>()? {
             let child_paths = self
                 .opaque_scalar_paths
-                .and_then(|paths| paths.children.get(key));
+                .children
+                .get(key)
+                .unwrap_or(&EMPTY_OPAQUE_SCALAR_PATHS);
             let value = map.next_value_seed(ValueSeed {
                 opaque_scalar_paths: child_paths,
             })?;
@@ -233,7 +243,9 @@ impl<'a> SubgraphResponse<'a> {
         let bytes_ref: &'static [u8] = unsafe { std::mem::transmute(bytes_ref) };
         let mut deserializer = sonic_rs::Deserializer::from_slice(bytes_ref);
 
-        SubgraphResponseSeed { opaque_scalar_paths }
+        SubgraphResponseSeed {
+            opaque_scalar_paths: opaque_scalar_paths.unwrap_or(&EMPTY_OPAQUE_SCALAR_PATHS),
+        }
             .deserialize(&mut deserializer)
             .map_err(SubgraphExecutorError::ResponseDeserializationFailure)
             .and_then(|mut resp: SubgraphResponse<'static>| {

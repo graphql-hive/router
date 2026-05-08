@@ -222,24 +222,6 @@ fn collect_opaque_scalar_paths(
     }
 }
 
-pub fn opaque_scalar_paths_from_selection_set(
-    parent_type_name: &str,
-    selections: &SelectionSet,
-    supergraph: &SupergraphState,
-) -> Option<OpaqueScalarPaths> {
-    let mut paths = OpaqueScalarPaths::default();
-    let mut response_path = Vec::new();
-    collect_opaque_scalar_paths(
-        &mut paths,
-        &mut response_path,
-        parent_type_name,
-        selections,
-        supergraph,
-    );
-
-    (!paths.is_empty()).then_some(paths)
-}
-
 fn opaque_scalar_paths_from_fetch_output(
     output: &FetchStepSelections<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
@@ -257,6 +239,23 @@ fn opaque_scalar_paths_from_fetch_output(
         );
     }
 
+    (!paths.is_empty()).then_some(paths)
+}
+
+pub fn opaque_scalar_paths_for_type_selection(
+    type_name: &str,
+    selection_set: &SelectionSet,
+    supergraph: &SupergraphState,
+) -> Option<OpaqueScalarPaths> {
+    let mut paths = OpaqueScalarPaths::default();
+    let mut response_path = Vec::new();
+    collect_opaque_scalar_paths(
+        &mut paths,
+        &mut response_path,
+        type_name,
+        selection_set,
+        supergraph,
+    );
     (!paths.is_empty()).then_some(paths)
 }
 

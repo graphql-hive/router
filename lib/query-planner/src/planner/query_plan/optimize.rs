@@ -69,7 +69,7 @@ use crate::{
     },
     planner::error::QueryPlanError,
     planner::plan_nodes::{
-        hash_minified_query, opaque_scalar_paths_from_selection_set, BatchFetchNode, EntityBatch,
+        hash_minified_query, opaque_scalar_paths_for_type_selection, BatchFetchNode, EntityBatch,
         EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
@@ -279,7 +279,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 document_str,
                 hash,
             },
-            opaque_scalar_paths: opaque_scalar_paths_from_selection_set(
+            opaque_scalar_paths: opaque_scalar_paths_for_type_selection(
                 &first_candidate.type_name,
                 &first_candidate.entities_selection,
                 supergraph,
