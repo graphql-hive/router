@@ -15,8 +15,8 @@ use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetri
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
-use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
 use hive_router_query_planner::ast::operation::SubgraphFetchOperation;
+use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
 use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,

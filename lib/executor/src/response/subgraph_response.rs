@@ -246,15 +246,15 @@ impl<'a> SubgraphResponse<'a> {
         SubgraphResponseSeed {
             opaque_scalar_paths: opaque_scalar_paths.unwrap_or(&EMPTY_OPAQUE_SCALAR_PATHS),
         }
-            .deserialize(&mut deserializer)
-            .map_err(SubgraphExecutorError::ResponseDeserializationFailure)
-            .and_then(|mut resp: SubgraphResponse<'static>| {
-                deserializer
-                    .end()
-                    .map_err(SubgraphExecutorError::ResponseDeserializationFailure)?;
-                resp.bytes = Some(bytes);
-                Ok(resp)
-            })
+        .deserialize(&mut deserializer)
+        .map_err(SubgraphExecutorError::ResponseDeserializationFailure)
+        .and_then(|mut resp: SubgraphResponse<'static>| {
+            deserializer
+                .end()
+                .map_err(SubgraphExecutorError::ResponseDeserializationFailure)?;
+            resp.bytes = Some(bytes);
+            Ok(resp)
+        })
     }
 }
 

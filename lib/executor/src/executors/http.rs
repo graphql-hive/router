@@ -11,7 +11,6 @@ use crate::hooks::on_subgraph_http_request::{
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::plugins::hooks;
-use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
 use crate::response::subgraph_response::SubgraphResponse;
 use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
@@ -19,6 +18,7 @@ use hive_router_internal::inflight::InFlightRole;
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
 use hive_router_internal::telemetry::TelemetryContext;
+use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
 
 use async_trait::async_trait;
 

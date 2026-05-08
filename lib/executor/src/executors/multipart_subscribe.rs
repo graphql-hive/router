@@ -222,9 +222,12 @@ fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, Pars
                 // transport error: payload is null, check for top-level errors
                 if let Ok(errors_lv) = sonic_rs::get_from_str(body, &["errors"]) {
                     let transport_err = format!(r#"{{"errors":{}}}"#, errors_lv.as_raw_str());
-                    return SubgraphResponse::deserialize_from_bytes(Bytes::from(transport_err), None)
-                        .map_err(ParseError::InvalidSubgraphResponse)
-                        .map(Some);
+                    return SubgraphResponse::deserialize_from_bytes(
+                        Bytes::from(transport_err),
+                        None,
+                    )
+                    .map_err(ParseError::InvalidSubgraphResponse)
+                    .map(Some);
                 }
                 return Ok(None);
             }

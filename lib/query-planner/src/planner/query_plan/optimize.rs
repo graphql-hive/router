@@ -408,7 +408,9 @@ impl EntityFetch {
                 .items
                 .iter()
                 .find_map(|item| match item {
-                    SelectionItem::InlineFragment(fragment) => Some(fragment.type_condition.clone()),
+                    SelectionItem::InlineFragment(fragment) => {
+                        Some(fragment.type_condition.clone())
+                    }
                     _ => None,
                 })
                 .unwrap_or_else(|| "Query".to_string()),

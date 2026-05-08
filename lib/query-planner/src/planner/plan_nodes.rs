@@ -159,7 +159,10 @@ impl OpaqueScalarPaths {
     {
         let mut node = self;
         for segment in path {
-            node = node.children.entry(segment.as_ref().to_string()).or_default();
+            node = node
+                .children
+                .entry(segment.as_ref().to_string())
+                .or_default();
         }
         node.terminal = true;
     }
@@ -657,7 +660,10 @@ impl FetchNode {
                 operation_kind: Some(OperationKind::Query),
                 operation_name: None,
                 operation: create_output_operation(step, supergraph),
-                opaque_scalar_paths: opaque_scalar_paths_from_fetch_output(&step.output, supergraph),
+                opaque_scalar_paths: opaque_scalar_paths_from_fetch_output(
+                    &step.output,
+                    supergraph,
+                ),
                 requires: Some(create_input_selection_set(&step.input)),
                 input_rewrites: step.input_rewrites.clone(),
                 output_rewrites: step.output_rewrites.clone(),
@@ -685,7 +691,10 @@ impl FetchNode {
                         document_str,
                         hash,
                     },
-                    opaque_scalar_paths: opaque_scalar_paths_from_fetch_output(&step.output, supergraph),
+                    opaque_scalar_paths: opaque_scalar_paths_from_fetch_output(
+                        &step.output,
+                        supergraph,
+                    ),
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),

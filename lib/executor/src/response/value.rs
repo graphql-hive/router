@@ -374,7 +374,8 @@ impl serde::Serialize for Value<'_> {
             Value::F64(n) => serializer.serialize_f64(*n),
             Value::String(s) => serializer.serialize_str(s),
             Value::RawJson(raw) => {
-                let value: SonicValue = sonic_rs::from_str(raw).map_err(serde::ser::Error::custom)?;
+                let value: SonicValue =
+                    sonic_rs::from_str(raw).map_err(serde::ser::Error::custom)?;
                 value.serialize(serializer)
             }
             Value::Array(arr) => {
@@ -406,7 +407,9 @@ impl From<&Value<'_>> for SonicValue {
             },
             Value::I64(n) => (*n).into(),
             Value::U64(n) => (*n).into(),
-            Value::RawJson(raw) => sonic_rs::from_str(raw).unwrap_or_else(|_| SonicValue::new_null()),
+            Value::RawJson(raw) => {
+                sonic_rs::from_str(raw).unwrap_or_else(|_| SonicValue::new_null())
+            }
             Value::Array(l) => {
                 let mut array_value = SonicValue::new_array_with(l.len());
 

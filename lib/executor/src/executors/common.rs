@@ -2,8 +2,8 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use http::{HeaderMap, Uri};
 use hive_router_query_planner::planner::plan_nodes::OpaqueScalarPaths;
+use http::{HeaderMap, Uri};
 use sonic_rs::Value;
 
 use crate::{
