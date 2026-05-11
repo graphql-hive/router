@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 use hyper_rustls::ConfigBuilderExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
@@ -128,8 +129,14 @@ pub async fn connect(
     }
 }
 
+#[derive(Clone)]
+struct ClientSubscription {
+    sender: mpsc::Sender<SubgraphResponse<'static>>,
+    custom_scalar_paths: Option<CustomScalarPaths>,
+}
+
 /// The client's WebSocket state. Its subscriptions map subscription IDs to their response senders.
-type WsStateRef = Rc<RefCell<WsState<mpsc::Sender<SubgraphResponse<'static>>>>>;
+type WsStateRef = Rc<RefCell<WsState<ClientSubscription>>>;
 
 /// GraphQL over WebSocket client implementing the graphql-transport-ws protocol.
 ///
@@ -272,15 +279,19 @@ impl WsClient {
     pub async fn subscribe(
         &mut self,
         subscribe_payload: SubscribePayload,
+        custom_scalar_paths: Option<CustomScalarPaths>,
     ) -> LocalBoxStream<'static, SubgraphResponse<'static>> {
         let subscribe_id = self.next_subscription_id();
 
         let (tx, rx) = mpsc::channel();
 
-        self.state
-            .borrow_mut()
-            .subscriptions
-            .insert(subscribe_id.clone(), tx);
+        self.state.borrow_mut().subscriptions.insert(
+            subscribe_id.clone(),
+            ClientSubscription {
+                sender: tx,
+                custom_scalar_paths,
+            },
+        );
 
         let _ = self
             .sink
@@ -380,9 +391,11 @@ async fn dispatch_loop(
                     }
                     Err(FrameNotParsedToText::Closed) => {
                         // notify all subscriptions that the connection was closed
-                        for (_, tx) in state.borrow_mut().subscriptions.drain() {
-                            let _ = tx.send(WsClientError::ConnectionClosed.into());
-                            tx.close();
+                        for (_, subscription) in state.borrow_mut().subscriptions.drain() {
+                            let _ = subscription
+                                .sender
+                                .send(WsClientError::ConnectionClosed.into());
+                            subscription.sender.close();
                         }
                         return;
                     }
@@ -407,9 +420,11 @@ struct DispatcherGuard {
 
 impl Drop for DispatcherGuard {
     fn drop(&mut self) {
-        for (_, tx) in self.state.borrow_mut().subscriptions.drain() {
-            let _ = tx.send(WsClientError::ConnectionClosed.into());
-            tx.close();
+        for (_, subscription) in self.state.borrow_mut().subscriptions.drain() {
+            let _ = subscription
+                .sender
+                .send(WsClientError::ConnectionClosed.into());
+            subscription.sender.close();
         }
     }
 }
@@ -437,9 +452,12 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
             None
         }
         ServerMessage::Next { id, payload } => {
-            if let Some(tx) = state.borrow().subscriptions.get(&id) {
+            if let Some(subscription) = state.borrow().subscriptions.get(&id) {
                 let payload_bytes = Bytes::from(sonic_rs::to_vec(&payload).unwrap_or_default());
-                let response = match SubgraphResponse::deserialize_from_bytes(payload_bytes) {
+                let response = match SubgraphResponse::deserialize_from_bytes(
+                    payload_bytes,
+                    subscription.custom_scalar_paths.as_ref(),
+                ) {
                     Ok(response) => response,
                     Err(e) => {
                         tracing::warn!("Failed to deserialize payload: {}", e);
@@ -447,23 +465,23 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
                     }
                 };
                 // TODO: should we be strict and close the connection if id did not match any subscription?
-                let _ = tx.send(response);
+                let _ = subscription.sender.send(response);
             }
             None
         }
         ServerMessage::Error { id, payload } => {
-            if let Some(tx) = state.borrow_mut().subscriptions.remove(&id) {
-                let _ = tx.send(SubgraphResponse {
+            if let Some(subscription) = state.borrow_mut().subscriptions.remove(&id) {
+                let _ = subscription.sender.send(SubgraphResponse {
                     errors: Some(payload),
                     ..Default::default()
                 });
-                tx.close();
+                subscription.sender.close();
             }
             None
         }
         ServerMessage::Complete { id } => {
-            if let Some(tx) = state.borrow_mut().subscriptions.remove(&id) {
-                tx.close();
+            if let Some(subscription) = state.borrow_mut().subscriptions.remove(&id) {
+                subscription.sender.close();
             }
             None
         }
@@ -484,3 +502,36 @@ fn text_to_server_message(text: &str) -> Result<ServerMessage, ws::Message> {
 }
 
 // TODO: hella tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+
+    #[tokio::test]
+    async fn handle_text_frame_uses_subscription_custom_scalar_paths() {
+        let (ack_tx, _ack_rx) = oneshot::channel();
+        let state: WsStateRef = Rc::new(RefCell::new(WsState::new(ack_tx)));
+        let (tx, mut rx) = mpsc::channel();
+        let mut custom_scalar_paths = CustomScalarPaths::default();
+        custom_scalar_paths.insert_path(["custom"]);
+
+        state.borrow_mut().subscriptions.insert(
+            "1".to_string(),
+            ClientSubscription {
+                sender: tx,
+                custom_scalar_paths: Some(custom_scalar_paths),
+            },
+        );
+
+        let text =
+            r#"{"type":"next","id":"1","payload":{"data":{"custom":{"escaped.key\t":"value"}}}}"#
+                .to_string();
+
+        assert!(handle_text_frame(text, &state).is_none());
+
+        let response = rx.next().await.expect("response");
+        let data = response.data.as_object().unwrap();
+        assert!(data[0].1.as_raw_json().is_some());
+    }
+}

@@ -155,6 +155,7 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
         Value::I64(num) => write_i64(buffer, *num),
         Value::F64(num) => write_f64(buffer, *num),
         Value::String(value) => write_and_escape_string(buffer, value),
+        Value::RawJson(raw) => buffer.put_slice(raw.as_bytes()),
         Value::Object(value) => {
             buffer.put(OPEN_BRACE);
             let mut first = true;
