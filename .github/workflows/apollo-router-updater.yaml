@@ -55,7 +55,7 @@ jobs:
           commit-message: Update apollo-router to version ${{ steps.check.outputs.latest_version }}
           branch: apollo-router-update-${{ steps.check.outputs.latest_version }}
           delete-branch: true
-          title: ${{ steps.check.outputs.title }}
+          title: "deps(apollo-router): update to ${{ steps.check.outputs.latest_version }}"
           body: |
             Automatic update of apollo-router to version ${{ steps.check.outputs.latest_version }}.
           assignees: kamilkisiela,dotansimha
