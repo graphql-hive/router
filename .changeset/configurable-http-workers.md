@@ -1,6 +1,6 @@
 ---
-hive-router: minor
-hive-router-config: minor
+hive-router: patch
+hive-router-config: patch
 ---
 
 # Allow overriding number of HTTP server workers
