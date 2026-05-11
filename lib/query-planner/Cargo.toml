@@ -19,6 +19,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 tokio-util = { workspace = true }
 xxhash-rust = { workspace = true }
+faststr = { version = "0.2.34" }
 
 petgraph = "0.8.2"
 bitflags = "2.9.1"
