@@ -1,3 +1,11 @@
+## 0.5.4 (2026-05-08)
+
+### Fixes
+
+#### Use Mutation and Subscription as default names for root types
+
+`graphql-tools ` assumed the schema definition object provides them, but in case the schema definition object is not present, we use `Mutation` and `Subscription` as default names for root types.
+
 ## 0.5.3 (2026-03-16)
 
 ### Features
