@@ -9,7 +9,7 @@ mod conditional_directives_e2e_tests {
 
     use sonic_rs::{pointer, JsonValueTrait};
 
-    use crate::testkit::{ClientResponseExt, Started, TestRouter, TestSubgraphs};
+    use crate::testkit::{ClientResponseExt, RequestLike, Started, TestRouter, TestSubgraphs};
 
     async fn build_router_with_supergraph() -> (TestSubgraphs<Started>, TestRouter<Started>) {
         let subgraphs = TestSubgraphs::builder().build().start().await;
@@ -47,12 +47,12 @@ mod conditional_directives_e2e_tests {
         }
     }
 
-    async fn run_test(query: &str, skip: bool, include: bool, expected_included: bool) {
+    async fn run_test_with_variables(
+        query: &str,
+        variables: sonic_rs::Value,
+        assert_response: impl FnOnce(sonic_rs::Value),
+    ) {
         let (_subgraphs, router) = build_router_with_supergraph().await;
-        let variables = sonic_rs::json!({
-            "include": include,
-            "skip": skip,
-        });
         let res = router
             .send_graphql_request(query, Some(variables), None)
             .await;
@@ -72,7 +72,193 @@ mod conditional_directives_e2e_tests {
             json_body
         );
 
-        check_response_includes_product_name(json_body, expected_included);
+        assert_response(json_body);
+    }
+
+    async fn run_test(query: &str, skip: bool, include: bool, expected_included: bool) {
+        run_test_with_variables(
+            query,
+            sonic_rs::json!({
+                "include": include,
+                "skip": skip,
+            }),
+            |json_body| check_response_includes_product_name(json_body, expected_included),
+        )
+        .await;
+    }
+
+    const DUPLICATE_FIELD_PROJECTION_QUERY: &str = r#"
+        query($showConditionalInStock: Boolean!, $showAliasedShipping: Boolean!) {
+            me {
+                reviews {
+                    author {
+                        reviews {
+                            product {
+                                upc
+                                inStock
+                                inStock @include(if: $showConditionalInStock)
+                                shippingEstimate
+                                aliasedShippingEstimate: shippingEstimate @include(if: $showAliasedShipping)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    "#;
+
+    fn check_duplicate_field_projection_response(json_body: sonic_rs::Value) {
+        let product = json_body
+            .pointer(&pointer![
+                "data", "me", "reviews", 0, "author", "reviews", 0, "product"
+            ])
+            .expect("expected nested product in response");
+
+        let in_stock = product.pointer(&pointer!["inStock"]);
+        assert!(
+            in_stock.is_some(),
+            "Expected unconditional inStock to be present. Response body: {}",
+            json_body
+        );
+
+        let shipping_estimate = product.pointer(&pointer!["shippingEstimate"]);
+        assert!(
+            shipping_estimate.is_some(),
+            "Expected unconditional shippingEstimate to be present. Response body: {}",
+            json_body
+        );
+
+        let aliased_shipping_estimate = product.pointer(&pointer!["aliasedShippingEstimate"]);
+        assert!(
+            aliased_shipping_estimate.is_some(),
+            "Expected conditional aliasedShippingEstimate to be present. Response body: {}",
+            json_body
+        );
+    }
+
+    fn check_skipped_parent_branch_does_not_leak_nested_fields_response(
+        json_body: sonic_rs::Value,
+    ) {
+        let nested_review = json_body
+            .pointer(&pointer![
+                "data", "me", "reviews", 0, "author", "reviews", 0
+            ])
+            .expect("expected nested review in response");
+
+        assert!(
+            nested_review.pointer(&pointer!["id"]).is_some(),
+            "Expected active author.reviews branch to include id. Response body: {}",
+            json_body
+        );
+
+        assert!(
+            nested_review.pointer(&pointer!["product", "upc"]).is_some(),
+            "Expected active author.reviews branch to include product.upc. Response body: {}",
+            json_body
+        );
+
+        assert!(
+            nested_review.pointer(&pointer!["leakedBody"]).is_none(),
+            "Expected leakedBody from skipped parent branch to be absent. Response body: {}",
+            json_body
+        );
+    }
+
+    fn check_skipped_inline_fragment_does_not_leak_into_nested_author_response(
+        json_body: sonic_rs::Value,
+    ) {
+        let author = json_body
+            .pointer(&pointer!["data", "me", "reviews", 0, "a7_author"])
+            .expect("expected nested author in response");
+
+        assert!(
+            author.pointer(&pointer!["a8_id"]).is_some(),
+            "Expected active branch to include a8_id. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["name"]).is_some(),
+            "Expected active branch to include name. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["username"]).is_some(),
+            "Expected active branch to include username. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["__typename"]).is_some(),
+            "Expected active branch to include __typename. Response body: {}",
+            json_body
+        );
+
+        assert!(
+            author.pointer(&pointer!["a9_name"]).is_none(),
+            "Expected skipped fragment field a9_name to be absent. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["birthday"]).is_none(),
+            "Expected skipped fragment field birthday to be absent. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["id"]).is_none(),
+            "Expected skipped fragment field id to be absent. Response body: {}",
+            json_body
+        );
+        assert!(
+            author.pointer(&pointer!["reviews"]).is_none(),
+            "Expected skipped fragment field reviews to be absent. Response body: {}",
+            json_body
+        );
+    }
+
+    fn check_runtime_empty_nested_review_selection_preserves_object_shape(
+        json_body: sonic_rs::Value,
+    ) {
+        let nested_review = json_body
+            .pointer(&pointer![
+                "data",
+                "topProducts",
+                0,
+                "reviews",
+                0,
+                "author",
+                "reviews",
+                0
+            ])
+            .expect("expected nested review in response");
+
+        assert!(
+            nested_review.is_object(),
+            "Expected runtime-empty nested review item to remain an object. Response body: {}",
+            json_body
+        );
+        assert_eq!(
+            nested_review.to_string(),
+            "{}",
+            "Expected runtime-empty nested review item to be an empty object. Response body: {}",
+            json_body
+        );
+    }
+
+    fn first_subgraph_query(requests: &[RequestLike]) -> String {
+        let request = requests
+            .first()
+            .expect("expected at least one subgraph request");
+        let body = request
+            .body
+            .as_ref()
+            .expect("expected subgraph request body");
+        let payload: sonic_rs::Value =
+            sonic_rs::from_slice(body).expect("failed to parse subgraph request body as JSON");
+
+        payload
+            .pointer(&pointer!["query"])
+            .and_then(|value| value.as_str())
+            .expect("expected subgraph request payload to include a query string")
+            .to_string()
     }
 
     const FIELD_CONDITIONS_SKIP_THEN_INCLUDE_QUERY: &'static str = r#"
@@ -81,8 +267,105 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
+                        upc
                         name @skip(if: $skip) @include(if: $include)
+                    }
+                }
+            }
+        }
+    "#;
+
+    const SKIPPED_PARENT_BRANCH_DOES_NOT_LEAK_NESTED_FIELDS_QUERY: &str = r#"
+        query($skipAuthor: Boolean!, $includeAuthor: Boolean!) {
+            me {
+                reviews {
+                    author @skip(if: $skipAuthor) @include(if: $includeAuthor) {
+                        reviews {
+                            leakedBody: body
+                        }
+                    }
+                    author {
+                        reviews {
+                            id
+                            product {
+                                upc
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    "#;
+
+    const EMPTY_COMPOSITE_SELECTION_QUERY: &str = r#"
+        query($skipUsers: Boolean!) {
+            users @skip(if: $skipUsers) {
+                __typename
+                reviews {
+                    hiddenBody: body @skip(if: false) @include(if: false)
+                }
+            }
+        }
+    "#;
+
+    const SKIPPED_INLINE_FRAGMENT_DOES_NOT_LEAK_INTO_NESTED_AUTHOR_QUERY: &str = r#"
+        query {
+            me {
+                reviews {
+                    a7_author: author {
+                        a8_id: id
+                        ... on User @skip(if: true) @include(if: true) {
+                            username
+                            birthday
+                            a9_name: name
+                            id
+                            reviews {
+                                __typename
+                            }
+                        }
+                        name
+                        __typename
+                        username
+                    }
+                }
+            }
+        }
+    "#;
+
+    const SKIPPED_FRAGMENT_SPREAD_DOES_NOT_LEAK_INTO_NESTED_AUTHOR_QUERY: &str = r#"
+        query {
+            me {
+                reviews {
+                    a7_author: author {
+                        a8_id: id
+                        ...SkippedUserFields @skip(if: true) @include(if: true)
+                        name
+                        __typename
+                        username
+                    }
+                }
+            }
+        }
+
+        fragment SkippedUserFields on User {
+            username
+            birthday
+            a9_name: name
+            id
+            reviews {
+                __typename
+            }
+        }
+    "#;
+
+    const RUNTIME_EMPTY_NESTED_REVIEW_SELECTION_PRESERVES_OBJECT_SHAPE_QUERY: &str = r#"
+        query($skipId: Boolean!, $includeId: Boolean!) {
+            topProducts(first: 1) {
+                reviews {
+                    author {
+                        reviews {
+                            hiddenId: id @skip(if: $skipId) @include(if: $includeId)
+                        }
                     }
                 }
             }
@@ -95,7 +378,7 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
+                        upc
                         name @include(if: $include) @skip(if: $skip)
                     }
                 }
@@ -109,7 +392,7 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
+                        upc
                         ... on Product @skip(if: $skip) @include(if: $include) {
                             name
                         }
@@ -125,7 +408,7 @@ mod conditional_directives_e2e_tests {
                 name
                 reviews {
                     product {
-                        upc 
+                        upc
                         ... on Product @include(if: $include) @skip(if: $skip) {
                             name
                         }
@@ -278,5 +561,124 @@ mod conditional_directives_e2e_tests {
             false,
         )
         .await;
+    }
+
+    #[ntex::test]
+    async fn duplicate_field_projection_preserves_unconditional_fields() {
+        run_test_with_variables(
+            DUPLICATE_FIELD_PROJECTION_QUERY,
+            sonic_rs::json!({
+                "showConditionalInStock": false,
+                "showAliasedShipping": true,
+            }),
+            check_duplicate_field_projection_response,
+        )
+        .await;
+    }
+
+    #[ntex::test]
+    async fn skipped_parent_branch_does_not_leak_nested_fields_into_merged_projection() {
+        run_test_with_variables(
+            SKIPPED_PARENT_BRANCH_DOES_NOT_LEAK_NESTED_FIELDS_QUERY,
+            sonic_rs::json!({
+                "skipAuthor": true,
+                "includeAuthor": true,
+            }),
+            check_skipped_parent_branch_does_not_leak_nested_fields_response,
+        )
+        .await;
+    }
+
+    #[ntex::test]
+    async fn skipped_inline_fragment_does_not_leak_fields_into_nested_author_projection() {
+        run_test_with_variables(
+            SKIPPED_INLINE_FRAGMENT_DOES_NOT_LEAK_INTO_NESTED_AUTHOR_QUERY,
+            sonic_rs::json!({}),
+            check_skipped_inline_fragment_does_not_leak_into_nested_author_response,
+        )
+        .await;
+    }
+
+    #[ntex::test]
+    async fn skipped_fragment_spread_does_not_leak_fields_into_nested_author_projection() {
+        run_test_with_variables(
+            SKIPPED_FRAGMENT_SPREAD_DOES_NOT_LEAK_INTO_NESTED_AUTHOR_QUERY,
+            sonic_rs::json!({}),
+            check_skipped_inline_fragment_does_not_leak_into_nested_author_response,
+        )
+        .await;
+    }
+
+    #[ntex::test]
+    async fn runtime_empty_nested_review_selection_preserves_object_shape() {
+        run_test_with_variables(
+            RUNTIME_EMPTY_NESTED_REVIEW_SELECTION_PRESERVES_OBJECT_SHAPE_QUERY,
+            sonic_rs::json!({
+                "skipId": true,
+                "includeId": true,
+            }),
+            check_runtime_empty_nested_review_selection_preserves_object_shape,
+        )
+        .await;
+    }
+
+    #[ntex::test]
+    async fn empty_composite_selection_preserves_response_shape_with_structural_typename() {
+        let (subgraphs, router) = build_router_with_supergraph().await;
+
+        let res = router
+            .send_graphql_request(
+                EMPTY_COMPOSITE_SELECTION_QUERY,
+                Some(sonic_rs::json!({
+                    "skipUsers": false,
+                })),
+                None,
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let json_body = res.json_body().await;
+        assert!(
+            json_body
+                .pointer(&pointer!["errors"])
+                .is_none_or(|value| value.is_null()),
+            "Expected response.errors to be null or missing. Response body: {}",
+            json_body
+        );
+
+        let first_user = json_body
+            .pointer(&pointer!["data", "users", 0])
+            .expect("expected at least one user in response");
+        let first_review = first_user
+            .pointer(&pointer!["reviews"])
+            .and_then(|value| value.get(0))
+            .expect("expected at least one review in response");
+
+        assert!(
+            first_review.is_object(),
+            "Expected review item to be an object. Response body: {}",
+            json_body
+        );
+        assert_eq!(
+            first_review.to_string(),
+            "{}",
+            "Expected review item to be an empty object. Response body: {}",
+            json_body
+        );
+
+        let reviews_requests = subgraphs
+            .get_requests_log("reviews")
+            .expect("expected requests sent to reviews subgraph");
+        let reviews_query = first_subgraph_query(&reviews_requests);
+
+        assert!(
+            reviews_query.contains("reviews{__typename}")
+                || reviews_query.contains("reviews {__typename}")
+                || reviews_query.contains("reviews{ __typename }")
+                || reviews_query.contains("reviews { __typename }"),
+            "Expected reviews subgraph fetch to include structural __typename. Subgraph query: {}",
+            reviews_query
+        );
     }
 }

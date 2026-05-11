@@ -189,6 +189,8 @@ impl ASTHash for &FieldSelection {
             "@skip".hash(hasher);
             var_name.hash(hasher);
         }
+
+        self.omit_from_response.hash(hasher);
     }
 
     fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
@@ -208,6 +210,8 @@ impl ASTHash for &FieldSelection {
             "@skip".hash(hasher);
             var_name.hash(hasher);
         }
+
+        self.omit_from_response.hash(hasher);
     }
 }
 
@@ -370,6 +374,7 @@ mod tests {
                         arguments: None,
                         include_if: None,
                         skip_if: None,
+                        omit_from_response: false,
                     }),
                     SelectionItem::Field(FieldSelection {
                         name: "name".to_string(),
@@ -378,12 +383,14 @@ mod tests {
                         arguments: None,
                         include_if: Some("includeName".to_string()),
                         skip_if: None,
+                        omit_from_response: false,
                     }),
                 ],
             },
             arguments: Some(arguments),
             include_if: None,
             skip_if: Some("skipUsers".to_string()),
+            omit_from_response: false,
         };
 
         let selection_set = SelectionSet {
@@ -423,7 +430,7 @@ mod tests {
 
         // Snapshot test: compare against a known, pre-calculated hash.
         // If the hashing logic changes, this value will need to be updated.
-        let expected_hash = 8854078506550230644;
+        let expected_hash = 3221166439930069003;
         assert_eq!(
             hash1, expected_hash,
             "AST hash does not match the snapshot value. If this change is intentional, update the snapshot."

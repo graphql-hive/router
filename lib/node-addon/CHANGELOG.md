@@ -1,4 +1,20 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.26 (2026-05-11)
+
+### Fixes
+
+#### Preserve custom scalars as raw JSON
+
+Custom scalar fields marked by the query planner are now preserved as raw JSON instead of being parsed and rebuilt as structured response values. This improves correctness for JSON passthrough custom scalars while avoiding performance regressions for normal response handling.
+
+## 0.0.25 (2026-05-08)
+
+### Features
+
+#### Fix conditional directive handling in response projection.
+
+This fixes several edge cases where `@skip` and `@include` could produce an incorrect final response after query planning and projection planning.
+
 ## 0.0.24 (2026-05-05)
 
 ### Fixes
