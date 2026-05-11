@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt::Display,
+    fmt::{Display, Write},
     hash::Hash,
     mem,
 };
@@ -197,13 +197,37 @@ impl From<&mut Value> for SonicValue {
     }
 }
 
+/// Writes a string as a GraphQL string literal, escaping special characters
+/// per the GraphQL spec (https://spec.graphql.org/draft/#StringCharacter).
+///
+/// The string contents are decoded values (e.g. parsed from `"\"aValue\""` into
+/// `"aValue"`), so we must re-escape `"`, `\`, and control characters when
+/// re-emitting them as a GraphQL literal.
+fn write_graphql_string_literal(f: &mut std::fmt::Formatter<'_>, s: &str) -> std::fmt::Result {
+    f.write_char('"')?;
+    for c in s.chars() {
+        match c {
+            '"' => f.write_str("\\\"")?,
+            '\\' => f.write_str("\\\\")?,
+            '\n' => f.write_str("\\n")?,
+            '\r' => f.write_str("\\r")?,
+            '\t' => f.write_str("\\t")?,
+            '\u{0008}' => f.write_str("\\b")?,
+            '\u{000C}' => f.write_str("\\f")?,
+            c if (c as u32) < 0x20 => write!(f, "\\u{:04x}", c as u32)?,
+            c => f.write_char(c)?,
+        }
+    }
+    f.write_char('"')
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Variable(name) => write!(f, "${}", name),
             Value::Int(i) => write!(f, "{}", i),
             Value::Float(fl) => write!(f, "{}", fl),
-            Value::String(s) => write!(f, "\"{}\"", s),
+            Value::String(s) => write_graphql_string_literal(f, s),
             Value::Boolean(b) => write!(f, "{}", b),
             Value::Null => write!(f, "null"),
             Value::Enum(e) => write!(f, "{}", e),
@@ -252,6 +276,26 @@ mod tests {
         insta::assert_snapshot!(
           Value::String("test".to_string()),
           @r#""test""#);
+
+        // String containing a quote: must be escaped as \"
+        insta::assert_snapshot!(
+          Value::String("\"aValue\"".to_string()),
+          @r#""\"aValue\"""#);
+
+        // String containing a backslash: must be escaped as \\
+        insta::assert_snapshot!(
+          Value::String("a\\b".to_string()),
+          @r#""a\\b""#);
+
+        // String containing common control characters: must be escaped
+        insta::assert_snapshot!(
+          Value::String("line1\nline2\t\r".to_string()),
+          @r#""line1\nline2\t\r""#);
+
+        // String containing a less common control character: must be \u escaped
+        insta::assert_snapshot!(
+          Value::String("\x01".to_string()),
+          @r#""\u0001""#);
 
         insta::assert_snapshot!(
           Value::Boolean(false),

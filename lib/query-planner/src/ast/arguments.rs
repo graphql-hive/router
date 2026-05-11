@@ -113,3 +113,24 @@ impl Display for ArgumentsMap {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arguments_map_display_escapes_string_values() {
+        // Reproduces the issue where a string field whose decoded value contains
+        // a quote character would be re-emitted as invalid GraphQL because the
+        // surrounding quotes weren't escaped (e.g. `value: ""aValue""`).
+        let args = ArgumentsMap::from(vec![
+            ("name".to_string(), Value::String("cF-2".to_string())),
+            ("value".to_string(), Value::String("\"aValue\"".to_string())),
+        ]);
+
+        insta::assert_snapshot!(
+            args.to_string(),
+            @r#"name: "cF-2", value: "\"aValue\"""#
+        );
+    }
+}
