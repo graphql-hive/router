@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +24,7 @@ pub struct HttpServerConfig {
     #[serde(default = "http_server_port_default")]
     pub port: u16,
 
-    /// The number of worker threads to use for the HTTP server.
+    /// The number of worker threads to use for the HTTP server. Must be at least `1`.
     ///
     /// Defaults to the number of physical CPU cores available to the process.
     ///
@@ -33,7 +35,7 @@ pub struct HttpServerConfig {
     ///
     /// Can also be set via the `WORKERS` environment variable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workers: Option<usize>,
+    pub workers: Option<NonZeroUsize>,
 }
 
 impl Default for HttpServerConfig {

@@ -185,7 +185,7 @@ impl HiveRouterConfig {
         self.http.port
     }
 
-    pub fn workers(&self) -> Option<usize> {
+    pub fn workers(&self) -> Option<std::num::NonZeroUsize> {
         self.http.workers
     }
 

@@ -32,7 +32,7 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "HOST")]
     pub http_host: Option<String>,
     #[envconfig(from = "WORKERS")]
-    pub http_workers: Option<u64>,
+    pub http_workers: Option<usize>,
 
     // Supergraph overrides
     #[envconfig(from = "SUPERGRAPH_FILE_PATH")]
@@ -93,7 +93,9 @@ impl EnvVarOverrides {
 
         if let Some(http_workers) = self.http_workers.take() {
             debug!("[config-override] 'http.workers' = {}", http_workers);
-            config = config.set_override("http.workers", http_workers)?;
+            // cast to u64 because the `config` crate doesn't implement `Into<Value>` for `usize`;
+            // the value is then deserialized into `Option<NonZeroUsize>`, which rejects `0`.
+            config = config.set_override("http.workers", http_workers as u64)?;
         }
 
         if self.supergraph_file_path.is_some() && self.hive_console_cdn_endpoint.is_some() {
