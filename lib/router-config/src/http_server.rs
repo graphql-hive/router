@@ -33,7 +33,7 @@ pub struct HttpServerConfig {
     /// assigned to the container. In such cases, you should set this to match the
     /// container's CPU limit to avoid oversubscribing worker threads.
     ///
-    /// Can also be set via the `WORKERS` environment variable.
+    /// Can also be set via the `ROUTER_HTTP_WORKERS` environment variable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workers: Option<NonZeroUsize>,
 }

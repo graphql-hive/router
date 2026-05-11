@@ -31,7 +31,7 @@ pub struct EnvVarOverrides {
     pub http_port: Option<u64>,
     #[envconfig(from = "HOST")]
     pub http_host: Option<String>,
-    #[envconfig(from = "WORKERS")]
+    #[envconfig(from = "ROUTER_HTTP_WORKERS")]
     pub http_workers: Option<usize>,
 
     // Supergraph overrides
