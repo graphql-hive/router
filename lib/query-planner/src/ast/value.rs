@@ -279,8 +279,8 @@ mod tests {
 
         // String containing a quote: must be escaped as \"
         insta::assert_snapshot!(
-          Value::String("\"aValue\"".to_string()),
-          @r#""\"aValue\"""#);
+          Value::String("\"quoted\"".to_string()),
+          @r#""\"quoted\"""#);
 
         // String containing a backslash: must be escaped as \\
         insta::assert_snapshot!(
