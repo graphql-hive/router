@@ -2,8 +2,8 @@ use std::str::Utf8Error;
 
 use bytes::{Buf, Bytes};
 use futures::stream::BoxStream;
-use http_body_util::BodyExt;
 use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use http_body_util::BodyExt;
 use hyper::body::Body;
 
 use crate::{
@@ -245,8 +245,8 @@ fn extract_payload(
                 Bytes::copy_from_slice(raw.as_bytes()),
                 custom_scalar_paths,
             )
-                .map_err(ParseError::InvalidSubgraphResponse)
-                .map(Some)
+            .map_err(ParseError::InvalidSubgraphResponse)
+            .map(Some)
         }
         Err(e) if e.is_not_found() => {
             // no payload wrapper, treat the whole body as a subgraph response
@@ -254,8 +254,8 @@ fn extract_payload(
                 Bytes::from(body.to_owned()),
                 custom_scalar_paths,
             )
-                .map_err(ParseError::InvalidSubgraphResponse)
-                .map(Some)
+            .map_err(ParseError::InvalidSubgraphResponse)
+            .map(Some)
         }
         Err(e) => Err(ParseError::InvalidSubgraphResponse(
             SubgraphExecutorError::ResponseDeserializationFailure(e),

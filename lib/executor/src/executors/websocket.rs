@@ -94,7 +94,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     subgraph_name, endpoint
                 );
 
-                let mut stream = client.subscribe(subscribe_payload, custom_scalar_paths).await;
+                let mut stream = client
+                    .subscribe(subscribe_payload, custom_scalar_paths)
+                    .await;
 
                 match stream.next().await {
                     Some(response) => Ok(response),
@@ -172,7 +174,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 subgraph_name, endpoint
             );
 
-            let mut stream = client.subscribe(subscribe_payload, custom_scalar_paths).await;
+            let mut stream = client
+                .subscribe(subscribe_payload, custom_scalar_paths)
+                .await;
 
             while let Some(response) = stream.next().await {
                 match tx.try_send(Ok(response)) {

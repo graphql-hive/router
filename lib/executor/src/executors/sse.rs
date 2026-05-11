@@ -1,7 +1,7 @@
 use bytes::{Buf, Bytes};
 use futures::stream::BoxStream;
-use http_body_util::BodyExt;
 use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use http_body_util::BodyExt;
 use hyper::body::Body;
 
 use crate::{
