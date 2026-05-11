@@ -29,10 +29,7 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
     where
         D: Deserializer<'de>,
     {
-        SubgraphResponseSeed {
-            custom_scalar_paths: &EMPTY_CUSTOM_SCALAR_PATHS,
-        }
-        .deserialize(deserializer)
+        deserialize_subgraph_response_with_paths(deserializer, &EMPTY_CUSTOM_SCALAR_PATHS)
     }
 }
 
@@ -52,19 +49,27 @@ impl<'a, 'de> DeserializeSeed<'de> for SubgraphResponseSeed<'a> {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_map(SubgraphResponseVisitor {
-            custom_scalar_paths: self.custom_scalar_paths,
-            _marker: std::marker::PhantomData,
-        })
+        deserialize_subgraph_response_with_paths(deserializer, self.custom_scalar_paths)
     }
 }
 
-struct SubgraphResponseVisitor<'a, 'de> {
+fn deserialize_subgraph_response_with_paths<'a, 'de, D>(
+    deserializer: D,
     custom_scalar_paths: &'a CustomScalarPaths,
-    _marker: std::marker::PhantomData<&'de ()>,
+) -> Result<SubgraphResponse<'de>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserializer.deserialize_map(SubgraphResponseVisitor {
+        custom_scalar_paths,
+    })
 }
 
-impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a, 'de> {
+struct SubgraphResponseVisitor<'a> {
+    custom_scalar_paths: &'a CustomScalarPaths,
+}
+
+impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
     type Value = SubgraphResponse<'de>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -130,26 +135,36 @@ impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
     where
         D: Deserializer<'de>,
     {
-        if self.custom_scalar_paths.is_empty() {
-            return Value::deserialize(deserializer);
-        }
-
-        if self.custom_scalar_paths.terminal {
-            let raw = LazyValue::deserialize(deserializer)?;
-            return Ok(Value::RawJson(raw.as_raw_cow()));
-        }
-
-        deserializer.deserialize_any(ValueVisitorWithCustomScalarPaths {
-            custom_scalar_paths: self.custom_scalar_paths,
-        })
+        deserialize_value_with_paths(deserializer, self.custom_scalar_paths)
     }
 }
 
-struct ValueVisitorWithCustomScalarPaths<'a> {
+fn deserialize_value_with_paths<'a, 'de, D>(
+    deserializer: D,
+    custom_scalar_paths: &'a CustomScalarPaths,
+) -> Result<Value<'de>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    if custom_scalar_paths.is_empty() {
+        return Value::deserialize(deserializer);
+    }
+
+    if custom_scalar_paths.terminal {
+        let raw = LazyValue::deserialize(deserializer)?;
+        return Ok(Value::RawJson(raw.as_raw_cow()));
+    }
+
+    deserializer.deserialize_any(PathAwareValueVisitor {
+        custom_scalar_paths,
+    })
+}
+
+struct PathAwareValueVisitor<'a> {
     custom_scalar_paths: &'a CustomScalarPaths,
 }
 
-impl<'a, 'de> Visitor<'de> for ValueVisitorWithCustomScalarPaths<'a> {
+impl<'a, 'de> Visitor<'de> for PathAwareValueVisitor<'a> {
     type Value = Value<'de>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
