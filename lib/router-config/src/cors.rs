@@ -1,4 +1,4 @@
-use std::{collections::HashMap, vec};
+use std::collections::HashMap;
 
 use http::HeaderMap;
 use schemars::JsonSchema;
@@ -48,9 +48,9 @@ pub struct CORSConfig {
     /// - `allow_headers` and `expose_headers`: A policy's behavior for these header lists depends on the value provided:
     ///   - If a list with specific headers is provided (e.g., `["Content-Type"]`), it completely overrides the global list.
     ///   - If an empty list (`[]`) is provided, the policy will inherit the headers from the global configuration.
-    /// - `methods`: This setting has three distinct states for inheritance:
-    ///   - If `methods` is not specified at all (`null`), the policy inherits the global methods.
-    ///   - If an empty list (`[]`) is provided, no methods are allowed for that policy.
+    /// - `methods`: A policy's behavior for this header list depends on the value provided:
+    ///   - If `methods` is not specified at all (`null`) or set to an empty list (`[]`),
+    ///     the policy inherits the methods from the global configuration.
     ///   - If the list contains specific methods (e.g., `["GET", "POST"]`), only those methods are used, overriding the global list.
     /// - `preflight_response_headers`: Per-policy entries are merged on top of the global map.
     ///   Keys defined in the policy override the global ones, while keys defined only globally are still applied.
@@ -97,7 +97,7 @@ pub struct CORSConfig {
     /// `Server-Timing`, `X-*` custom headers) to those preflight responses.
     ///
     /// Keys must be valid HTTP header names (RFC 7230) and values must be
-    /// valid HTTP header values.
+   /// valid HTTP header values.
     ///
     /// The headers provided here are applied after the CORS engine's managed headers
     /// (`Access-Control-*`, `Vary`) and therefore override them when keys collide.

@@ -267,9 +267,7 @@ fn merge_preflight_headers(
         return global.clone();
     }
     let mut out = global.clone();
-    for (name, value) in overrides {
-        out.insert(name.clone(), value.into());
-    }
+    out.extend(overrides.iter().map(|(k, v)| (k.clone(), v.clone())));
     out
 }
 
