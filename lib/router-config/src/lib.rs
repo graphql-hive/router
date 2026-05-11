@@ -185,6 +185,10 @@ impl HiveRouterConfig {
         self.http.port
     }
 
+    pub fn workers(&self) -> Option<usize> {
+        self.http.workers
+    }
+
     pub fn graphql_path(&self) -> &str {
         &self.http.graphql_endpoint
     }

@@ -291,7 +291,8 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let long_lived_client_limit_service =
         LongLivedClientLimitService::new(&shared_state.router_config);
 
-    let server = web::HttpServer::new(async move || {
+    let workers = shared_state_clone.router_config.workers();
+    let mut server = web::HttpServer::new(async move || {
         let landing_page_path = graphql_path.clone();
         let prometheus = prometheus.clone();
         let long_lived_client_limit_service = long_lived_client_limit_service.clone();
@@ -316,6 +317,10 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
                 landing_page_handler(landing_page_path.clone())
             }))
     });
+    if let Some(workers) = workers {
+        info!("configuring HTTP server with {} worker(s)", workers);
+        server = server.workers(workers);
+    }
 
     let tls_config = shared_state_clone
         .router_config

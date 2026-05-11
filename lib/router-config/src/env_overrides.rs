@@ -31,6 +31,8 @@ pub struct EnvVarOverrides {
     pub http_port: Option<u64>,
     #[envconfig(from = "HOST")]
     pub http_host: Option<String>,
+    #[envconfig(from = "WORKERS")]
+    pub http_workers: Option<u64>,
 
     // Supergraph overrides
     #[envconfig(from = "SUPERGRAPH_FILE_PATH")]
@@ -87,6 +89,11 @@ impl EnvVarOverrides {
         if let Some(http_host) = self.http_host.take() {
             debug!("[config-override] 'http.host' = {}", http_host);
             config = config.set_override("http.host", http_host)?;
+        }
+
+        if let Some(http_workers) = self.http_workers.take() {
+            debug!("[config-override] 'http.workers' = {}", http_workers);
+            config = config.set_override("http.workers", http_workers)?;
         }
 
         if self.supergraph_file_path.is_some() && self.hive_console_cdn_endpoint.is_some() {
