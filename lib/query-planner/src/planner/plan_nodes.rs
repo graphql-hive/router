@@ -15,7 +15,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
     hash::{Hash, Hasher},
 };
@@ -115,6 +115,8 @@ pub struct FetchNode {
     pub operation_name: Option<String>,
     pub operation: SubgraphFetchOperation,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_scalar_paths: Option<CustomScalarPaths>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub requires: Option<SelectionSet>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
@@ -135,7 +137,190 @@ pub struct BatchFetchNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_name: Option<String>,
     pub operation: SubgraphFetchOperation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_scalar_paths: Option<CustomScalarPaths>,
     pub entity_batch: EntityBatch,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomScalarPaths {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub children: BTreeMap<String, CustomScalarPaths>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub terminal: bool,
+}
+
+impl CustomScalarPaths {
+    pub fn insert_path<I, S>(&mut self, path: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut node = self;
+        for segment in path {
+            node = node
+                .children
+                .entry(segment.as_ref().to_string())
+                .or_default();
+        }
+        node.terminal = true;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.terminal && self.children.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CustomScalarPathState {
+    children: BTreeMap<String, CustomScalarPathState>,
+    custom_scalar_seen: bool,
+    standard_scalar_seen: bool,
+}
+
+impl CustomScalarPathState {
+    fn mark_custom_scalar<I, S>(&mut self, path: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut node = self;
+        for segment in path {
+            node = node
+                .children
+                .entry(segment.as_ref().to_string())
+                .or_default();
+        }
+        node.custom_scalar_seen = true;
+    }
+
+    fn mark_standard_scalar<I, S>(&mut self, path: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut node = self;
+        for segment in path {
+            node = node
+                .children
+                .entry(segment.as_ref().to_string())
+                .or_default();
+        }
+        node.standard_scalar_seen = true;
+    }
+
+    fn into_custom_scalar_paths(self) -> Option<CustomScalarPaths> {
+        let mut children = BTreeMap::new();
+
+        for (key, child) in self.children {
+            if let Some(paths) = child.into_custom_scalar_paths() {
+                children.insert(key, paths);
+            }
+        }
+
+        let terminal = self.custom_scalar_seen && !self.standard_scalar_seen && children.is_empty();
+        let paths = CustomScalarPaths { children, terminal };
+
+        (!paths.is_empty()).then_some(paths)
+    }
+}
+
+fn collect_custom_scalar_path_state(
+    path_kinds: &mut CustomScalarPathState,
+    response_path: &mut Vec<String>,
+    parent_type_name: &str,
+    selections: &SelectionSet,
+    supergraph: &SupergraphState,
+) {
+    let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
+        return;
+    };
+
+    let parent_fields = parent_def.fields();
+
+    for item in &selections.items {
+        match item {
+            SelectionItem::Field(field) => {
+                let Some(field_def) = parent_fields.get(&field.name) else {
+                    continue;
+                };
+
+                let response_key = field.selection_identifier();
+                let field_type_name = field_def.field_type.inner_type();
+
+                response_path.push(response_key.to_string());
+
+                if supergraph.is_custom_scalar_type(field_type_name) {
+                    path_kinds.mark_custom_scalar(response_path.iter().map(String::as_str));
+                } else {
+                    path_kinds.mark_standard_scalar(response_path.iter().map(String::as_str));
+
+                    if !field.selections.is_empty() {
+                        collect_custom_scalar_path_state(
+                            path_kinds,
+                            response_path,
+                            field_type_name,
+                            &field.selections,
+                            supergraph,
+                        );
+                    }
+                }
+
+                response_path.pop();
+            }
+            SelectionItem::InlineFragment(fragment) => {
+                collect_custom_scalar_path_state(
+                    path_kinds,
+                    response_path,
+                    &fragment.type_condition,
+                    &fragment.selections,
+                    supergraph,
+                );
+            }
+            SelectionItem::FragmentSpread(_) => {}
+        }
+    }
+}
+
+fn custom_scalar_paths_from_fetch_output(
+    output: &FetchStepSelections<MultiTypeFetchStep>,
+    supergraph: &SupergraphState,
+    entities_root_key: Option<&str>,
+) -> Option<CustomScalarPaths> {
+    let mut state = CustomScalarPathState::default();
+
+    for (type_name, selection_set) in output.iter_selections() {
+        let mut response_path = entities_root_key
+            .map(|root| vec![root.to_string()])
+            .unwrap_or_default();
+        collect_custom_scalar_path_state(
+            &mut state,
+            &mut response_path,
+            type_name,
+            selection_set,
+            supergraph,
+        );
+    }
+
+    state.into_custom_scalar_paths()
+}
+
+pub fn custom_scalar_paths_for_type_selection(
+    type_name: &str,
+    selection_set: &SelectionSet,
+    supergraph: &SupergraphState,
+) -> Option<CustomScalarPaths> {
+    let mut state = CustomScalarPathState::default();
+    let mut response_path = Vec::new();
+    collect_custom_scalar_path_state(
+        &mut state,
+        &mut response_path,
+        type_name,
+        selection_set,
+        supergraph,
+    );
+    state.into_custom_scalar_paths()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -537,6 +722,11 @@ impl FetchNode {
                 operation_kind: Some(OperationKind::Query),
                 operation_name: None,
                 operation: create_output_operation(step, supergraph),
+                custom_scalar_paths: custom_scalar_paths_from_fetch_output(
+                    &step.output,
+                    supergraph,
+                    Some("_entities"),
+                ),
                 requires: Some(create_input_selection_set(&step.input)),
                 input_rewrites: step.input_rewrites.clone(),
                 output_rewrites: step.output_rewrites.clone(),
@@ -564,6 +754,11 @@ impl FetchNode {
                         document_str,
                         hash,
                     },
+                    custom_scalar_paths: custom_scalar_paths_from_fetch_output(
+                        &step.output,
+                        supergraph,
+                        None,
+                    ),
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
@@ -805,4 +1000,67 @@ pub fn hash_minified_query(minified_query: &str) -> u64 {
     let mut hasher = Xxh3::new();
     minified_query.hash(&mut hasher);
     hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        planner::fetch::{selections::FetchStepSelections, state::SingleTypeFetchStep},
+        state::supergraph_state::SupergraphState,
+        utils::parsing::parse_schema,
+    };
+
+    use super::{custom_scalar_paths_from_fetch_output, SelectionSet};
+
+    fn selection_set_for_field(field_name: &str) -> SelectionSet {
+        let selection = format!("{{ {field_name} }}");
+
+        graphql_tools::parser::parse_query(&selection)
+            .unwrap()
+            .into_static()
+            .definitions
+            .into_iter()
+            .find_map(|definition| match definition {
+                graphql_tools::parser::query::Definition::Operation(
+                    graphql_tools::parser::query::OperationDefinition::SelectionSet(selection_set),
+                ) => Some(selection_set.into()),
+                _ => None,
+            })
+            .expect("selection set")
+    }
+
+    #[test]
+    fn custom_scalar_paths_do_not_mark_custom_scalar_vs_builtin_scalar_collision() {
+        let schema = parse_schema(
+            r#"
+            scalar JSONBlob
+
+            type TypeA {
+              meta: JSONBlob
+            }
+
+            type TypeB {
+              meta: String
+            }
+
+            type Query {
+              root: String
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        let mut output = FetchStepSelections::<SingleTypeFetchStep>::new_empty().into_multi_type();
+        output.declare_known_type("TypeA");
+        output.declare_known_type("TypeB");
+        *output.selections_for_definition_mut("TypeA").unwrap() = selection_set_for_field("meta");
+        *output.selections_for_definition_mut("TypeB").unwrap() = selection_set_for_field("meta");
+
+        let paths = custom_scalar_paths_from_fetch_output(&output, &supergraph, Some("_entities"));
+
+        assert!(
+            paths.is_none(),
+            "custom-scalar vs built-in-scalar collision must not emit a terminal custom scalar path"
+        );
+    }
 }
