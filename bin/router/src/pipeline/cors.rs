@@ -164,7 +164,7 @@ impl CompiledOriginRule {
 }
 
 pub enum Cors {
-    AllowAll { policy: CompiledCORSPolicy },
+    AllowAll { policy: Box<CompiledCORSPolicy> },
     ByOrigin { rules: Vec<CompiledOriginRule> },
 }
 
@@ -191,7 +191,9 @@ impl Cors {
         };
 
         if config.allow_any_origin {
-            return Ok(Some(Cors::AllowAll { policy: global }));
+            return Ok(Some(Cors::AllowAll {
+                policy: global.into(),
+            }));
         }
 
         // Resolve all origin rules
@@ -255,7 +257,7 @@ fn header_value_from_list(vec: &Option<Vec<String>>) -> Option<HeaderValue> {
     }
 }
 
-/// Merge global preflight headers with a policy override map. 
+/// Merge global preflight headers with a policy override map.
 /// Policy keys win on conflict; global-only keys are preserved.
 fn merge_preflight_headers(
     global: &http::HeaderMap,
