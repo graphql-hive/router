@@ -113,3 +113,80 @@ impl Display for ArgumentsMap {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arguments_map_display_escapes_string_values() {
+        // Decoded string values that carry GraphQL-special characters (such as
+        // a quote) must be re-escaped on output, otherwise the rendered query
+        // is invalid GraphQL (e.g. `payload: ""quoted""` instead of the proper
+        // `payload: "\"quoted\""`).
+        let args = ArgumentsMap::from(vec![
+            ("label".to_string(), Value::String("plain".to_string())),
+            (
+                "payload".to_string(),
+                Value::String("\"quoted\"".to_string()),
+            ),
+        ]);
+
+        insta::assert_snapshot!(
+            args.to_string(),
+            @r#"label: "plain", payload: "\"quoted\"""#
+        );
+    }
+
+    #[test]
+    fn parse_and_render_mutation_with_escaped_string_argument() {
+        // End-to-end check that a string argument whose decoded value contains
+        // GraphQL-special characters (quotes, backslashes, newlines) round-trips
+        // through parse + render without losing its escapes on the way out.
+        use crate::ast::operation::OperationDefinition;
+        use crate::utils::parsing::parse_operation;
+        use graphql_tools::parser::query::Definition;
+
+        let input = r#"
+            mutation {
+              writeEntry(
+                bucket: "primary"
+                attempt: 1
+                entries: [
+                  {
+                    upsert: {
+                      schemaKey: "Entry"
+                      attributes: [
+                        { key: "field-1", payload: "\"quoted\"" }
+                      ]
+                    }
+                  }
+                ]
+              ) { id }
+            }
+        "#;
+
+        let document = parse_operation(input);
+        let op_def = document
+            .definitions
+            .into_iter()
+            .find_map(|def| match def {
+                Definition::Operation(op) => Some(OperationDefinition::from(op)),
+                _ => None,
+            })
+            .expect("mutation operation");
+
+        let rendered = op_def.to_string();
+
+        // The inner string `"quoted"` must come out as `\"quoted\"` so the
+        // resulting GraphQL is well-formed when forwarded to a subgraph.
+        assert!(
+            rendered.contains(r#"payload: "\"quoted\"""#),
+            "expected rendered query to keep escaped quotes, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains(r#"payload: ""quoted"""#),
+            "rendered query must not contain unescaped quotes, got: {rendered}"
+        );
+    }
+}
