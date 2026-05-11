@@ -1,5 +1,6 @@
-use std::vec;
+use std::{collections::HashMap, vec};
 
+use http::HeaderMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +52,8 @@ pub struct CORSConfig {
     ///   - If `methods` is not specified at all (`null`), the policy inherits the global methods.
     ///   - If an empty list (`[]`) is provided, no methods are allowed for that policy.
     ///   - If the list contains specific methods (e.g., `["GET", "POST"]`), only those methods are used, overriding the global list.
+    /// - `preflight_response_headers`: Per-policy entries are merged on top of the global map.
+    ///   Keys defined in the policy override the global ones, while keys defined only globally are still applied.
     pub policies: Vec<CORSPolicyConfig>,
 
     /// Set to true to allow credentials (cookies, authorization headers, or TLS client certificates) in cross-origin requests.
@@ -85,6 +88,32 @@ pub struct CORSConfig {
     /// Example: 86400 (24 hours)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_age: Option<u64>,
+
+    /// Additional headers to set on CORS preflight (OPTIONS) responses.
+    ///
+    /// The `headers` configuration block does not affect preflight responses
+    /// because they are returned early by the CORS layer. This map provides a
+    /// first-class way to attach arbitrary headers (e.g. `Cache-Control`,
+    /// `Server-Timing`, `X-*` custom headers) to those preflight responses.
+    ///
+    /// Keys must be valid HTTP header names (RFC 7230) and values must be
+    /// valid HTTP header values.
+    ///
+    /// The headers provided here are applied after the CORS engine's managed headers
+    /// (`Access-Control-*`, `Vary`) and therefore override them when keys collide.
+    ///
+    /// Example:
+    /// ```yaml
+    /// preflight_response_headers:
+    ///   Cache-Control: "public, max-age=86400"
+    /// ```
+    #[serde(
+        default,
+        with = "http_serde::header_map",
+        skip_serializing_if = "HeaderMap::is_empty"
+    )]
+    #[schemars(with = "HashMap<String, String>")]
+    pub preflight_response_headers: HeaderMap,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
@@ -135,6 +164,21 @@ pub struct CORSPolicyConfig {
     /// Example: 86400 (24 hours)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_age: Option<u64>,
+
+    /// Additional headers to set on CORS preflight (OPTIONS) responses for this policy.
+    ///
+    /// Entries are merged on top of the global `cors.preflight_response_headers` map.
+    /// Keys defined here override the global value for the same key, while keys defined only
+    /// globally still apply.
+    ///
+    /// See `cors.preflight_response_headers` for details and caveats.
+    #[serde(
+        default,
+        with = "http_serde::header_map",
+        skip_serializing_if = "HeaderMap::is_empty"
+    )]
+    #[schemars(with = "HashMap<String, String>")]
+    pub preflight_response_headers: HeaderMap,
 }
 
 fn default_cors_enabled() -> bool {
@@ -169,6 +213,14 @@ fn cors_example_1() -> CORSConfig {
         ]),
         expose_headers: None,
         max_age: Some(120),
+        preflight_response_headers: {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                http::header::CACHE_CONTROL,
+                http::HeaderValue::from_static("public, max-age=86400"),
+            );
+            headers
+        },
     }
 }
 fn cors_example_2() -> CORSConfig {

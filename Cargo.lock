@@ -2596,6 +2596,7 @@ dependencies = [
  "config",
  "envconfig",
  "http",
+ "http-serde",
  "human-size",
  "humantime",
  "humantime-serde",
