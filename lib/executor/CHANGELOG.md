@@ -94,6 +94,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.13.2 (2026-05-11)
+
+### Fixes
+
+#### Fix subgraph response deserialization for custom scalar object
+
+Values whose JSON keys contain escaped characters such as `\t` are now deserialized correctly.
+
+#### Preserve custom scalars as raw JSON
+
+Custom scalar fields marked by the query planner are now preserved as raw JSON instead of being parsed and rebuilt as structured response values. This improves correctness for JSON passthrough custom scalars while avoiding performance regressions for normal response handling.
+
 ## 6.13.1 (2026-05-08)
 
 ### Fixes
