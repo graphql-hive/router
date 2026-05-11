@@ -811,4 +811,112 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// Inline string arguments must be re-escaped per the GraphQL spec when
+    /// the router emits the operation to a subgraph. A value such as
+    /// `"\"quoted\""` is decoded to `"quoted"` while parsing the incoming
+    /// operation; if it is re-emitted bare, the subgraph receives the invalid
+    /// literal `payload: ""quoted""`.
+    async fn escape_inline_string_arguments_for_subgraph() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.escape-string-arguments.graphql
+                  override_subgraph_urls:
+                    entries:
+                      url: "http://{host}/entries"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let entries_mock = server
+            .mock("POST", "/entries")
+            .match_request(|r| {
+                use sonic_rs::JsonValueTrait;
+
+                let body = r.body().unwrap();
+                let body_str = String::from_utf8(body.clone()).unwrap();
+
+                let parsed: sonic_rs::Value =
+                    sonic_rs::from_slice(body).expect("subgraph body must be valid JSON");
+                let query = parsed
+                    .get(&"query")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    .expect("subgraph body must contain a `query` string");
+
+                let has_escaped = query.contains(r#"payload: "\"quoted\"""#);
+                let has_unescaped = query.contains(r#"payload: ""quoted"""#);
+
+                assert!(
+                    has_escaped,
+                    "expected escaped string literal in subgraph query, got: {body_str}"
+                );
+                assert!(
+                    !has_unescaped,
+                    "subgraph query must not contain unescaped quotes, got: {body_str}"
+                );
+
+                true
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "data": {
+                    "writeEntry": { "id": "primary" }
+                  }
+                }
+                "#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                mutation {
+                  writeEntry(
+                    bucket: "primary"
+                    attempt: 1
+                    entries: [
+                      {
+                        upsert: {
+                          schemaKey: "Entry"
+                          attributes: [
+                            { key: "field-1", payload: "\"quoted\"" }
+                          ]
+                        }
+                      }
+                    ]
+                  ) {
+                    id
+                  }
+                }
+                "#,
+                None,
+                None,
+            )
+            .await;
+
+        entries_mock.assert();
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "writeEntry": {
+              "id": "primary"
+            }
+          }
+        }
+        "#);
+    }
 }
