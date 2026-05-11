@@ -264,6 +264,14 @@ impl<'a> SubgraphResponse<'a> {
 mod tests {
     use bytes::Bytes;
     use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+    use hive_router_query_planner::{
+        graph::PlannerOverrideContext,
+        planner::{plan_nodes::PlanNode, Planner},
+        utils::{
+            cancellation::CancellationToken,
+            parsing::{parse_operation, parse_schema},
+        },
+    };
 
     use crate::response::value::Value;
 
@@ -313,5 +321,346 @@ mod tests {
 
         let extensions = response.extensions.unwrap();
         assert!(matches!(extensions, Value::Object(_)));
+    }
+
+    #[test]
+    fn deserializes_mixed_sibling_paths_with_only_marked_path_as_raw_json() {
+        let mut paths = CustomScalarPaths::default();
+        paths.insert_path(["custom"]);
+
+        let response = super::SubgraphResponse::deserialize_from_bytes(
+            Bytes::from_static(
+                br#"{
+                    "data": {
+                        "custom": {
+                            "generic.learnMore.button\t": "Learn more"
+                        },
+                        "plain": {
+                            "message": "hello",
+                            "nested": {
+                                "count": 1
+                            }
+                        }
+                    }
+                }"#,
+            ),
+            Some(&paths),
+        )
+        .unwrap();
+
+        let data = response.data.as_object().unwrap();
+
+        let custom = data
+            .iter()
+            .find(|(key, _)| *key == "custom")
+            .unwrap()
+            .1
+            .as_raw_json()
+            .expect("custom path should deserialize as raw json");
+        assert!(custom.contains("\"generic.learnMore.button\\t\""));
+        assert!(custom.contains("\"Learn more\""));
+
+        let plain = data
+            .iter()
+            .find(|(key, _)| *key == "plain")
+            .unwrap()
+            .1
+            .as_object()
+            .expect("plain path should stay structured");
+        let message = plain
+            .iter()
+            .find(|(key, _)| *key == "message")
+            .unwrap()
+            .1
+            .as_str();
+        assert_eq!(message, Some("hello"));
+
+        let nested = plain
+            .iter()
+            .find(|(key, _)| *key == "nested")
+            .unwrap()
+            .1
+            .as_object()
+            .expect("nested object should stay structured");
+        assert!(matches!(nested[0].1, Value::U64(1)));
+    }
+
+    #[test]
+    fn custom_and_builtin_scalar_sharing_response_path() {
+        let schema = parse_schema(
+            r#"
+            schema
+              @link(url: "https://specs.apollo.dev/link/v1.0")
+              @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+              query: Query
+            }
+
+            directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+            directive @join__field(
+              graph: join__Graph
+              requires: join__FieldSet
+              provides: join__FieldSet
+              type: String
+              external: Boolean
+              override: String
+              usedOverridden: Boolean
+            ) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+            directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+            directive @join__implements(
+              graph: join__Graph!
+              interface: String!
+            ) repeatable on OBJECT | INTERFACE
+            directive @join__type(
+              graph: join__Graph!
+              key: join__FieldSet
+              extension: Boolean! = false
+              resolvable: Boolean! = true
+              isInterfaceObject: Boolean! = false
+            ) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+            directive @join__unionMember(
+              graph: join__Graph!
+              member: String!
+            ) repeatable on UNION
+            directive @link(
+              url: String
+              as: String
+              for: link__Purpose
+              import: [link__Import]
+            ) repeatable on SCHEMA
+
+            scalar join__FieldSet
+            scalar link__Import
+
+            enum join__Graph {
+              TEST @join__graph(name: "test", url: "http://example.com/graphql")
+            }
+
+            enum link__Purpose {
+              SECURITY
+              EXECUTION
+            }
+
+            scalar JSONBlob @join__type(graph: TEST)
+
+            interface InterfaceThing @join__type(graph: TEST) {
+              id: ID! @join__field(graph: TEST)
+            }
+
+            type JsonInterfaceThing implements InterfaceThing
+              @join__type(graph: TEST)
+              @join__implements(graph: TEST, interface: "InterfaceThing") {
+              id: ID! @join__field(graph: TEST)
+              meta: JSONBlob @join__field(graph: TEST)
+            }
+
+            type StringInterfaceThing implements InterfaceThing
+              @join__type(graph: TEST)
+              @join__implements(graph: TEST, interface: "InterfaceThing") {
+              id: ID! @join__field(graph: TEST)
+              meta: String @join__field(graph: TEST)
+            }
+
+            type JsonUnionThing @join__type(graph: TEST) {
+              meta: JSONBlob @join__field(graph: TEST)
+            }
+
+            type StringUnionThing @join__type(graph: TEST) {
+              meta: String @join__field(graph: TEST)
+            }
+
+            union UnionThing
+              @join__type(graph: TEST)
+              @join__unionMember(graph: TEST, member: "JsonUnionThing")
+              @join__unionMember(graph: TEST, member: "StringUnionThing") = JsonUnionThing | StringUnionThing
+
+            type Query @join__type(graph: TEST) {
+              interfaceThing: InterfaceThing @join__field(graph: TEST)
+              unionThing: UnionThing @join__field(graph: TEST)
+            }
+            "#,
+        );
+        let planner = Planner::new_from_supergraph(&schema).expect("planner");
+        let operation = parse_operation(
+            r#"
+            {
+              interfaceThing {
+                __typename
+                ... on JsonInterfaceThing {
+                  meta
+                }
+                ... on StringInterfaceThing {
+                  meta
+                }
+              }
+              unionThing {
+                __typename
+                ... on JsonUnionThing {
+                  meta
+                }
+                ... on StringUnionThing {
+                  meta
+                }
+              }
+            }
+            "#,
+        );
+        let normalized = hive_router_query_planner::ast::normalization::normalize_operation(
+            &planner.supergraph,
+            &operation,
+            None,
+        )
+        .expect("normalized operation");
+        let plan = planner
+            .plan_from_normalized_operation(
+                normalized.executable_operation(),
+                PlannerOverrideContext::default(),
+                &CancellationToken::new(),
+            )
+            .expect("query plan");
+
+        insta::assert_snapshot!(format!("{}", plan), @r#"
+        QueryPlan {
+          Fetch(service: "test") {
+            {
+              interfaceThing {
+                __typename
+                ... on JsonInterfaceThing {
+                  meta
+                }
+                ... on StringInterfaceThing {
+                  _internal_qp_alias_0: meta
+                }
+              }
+              unionThing {
+                __typename
+                ... on JsonUnionThing {
+                  meta
+                }
+                ... on StringUnionThing {
+                  _internal_qp_alias_0: meta
+                }
+              }
+            }
+          },
+        },
+        "#);
+
+        let custom_scalar_paths = find_fetch_custom_scalar_paths(plan.node.as_ref(), "test")
+            .expect("custom scalar paths");
+
+        let interface_paths = custom_scalar_paths
+            .children
+            .get("interfaceThing")
+            .expect("interfaceThing paths");
+        assert!(
+            interface_paths
+                .children
+                .get("meta")
+                .is_some_and(|path| path.terminal),
+            "json interface branch should keep a terminal custom-scalar path"
+        );
+        assert!(!interface_paths
+            .children
+            .contains_key("_internal_qp_alias_0"));
+
+        let union_paths = custom_scalar_paths
+            .children
+            .get("unionThing")
+            .expect("unionThing paths");
+        assert!(
+            union_paths
+                .children
+                .get("meta")
+                .is_some_and(|path| path.terminal),
+            "json union branch should keep a terminal custom-scalar path"
+        );
+        assert!(!union_paths.children.contains_key("_internal_qp_alias_0"));
+
+        let response = super::SubgraphResponse::deserialize_from_bytes(
+            Bytes::from_static(
+                br#"{
+                    "data": {
+                        "interfaceThing": {
+                            "__typename": "StringInterfaceThing",
+                            "_internal_qp_alias_0": "interface string"
+                        },
+                        "unionThing": {
+                            "__typename": "JsonUnionThing",
+                            "meta": {
+                                "union.key\t": "union value"
+                            }
+                        }
+                    }
+                }"#,
+            ),
+            Some(custom_scalar_paths),
+        )
+        .unwrap();
+
+        let data = response.data.as_object().unwrap();
+
+        let interface_thing = data
+            .iter()
+            .find(|(key, _)| *key == "interfaceThing")
+            .unwrap()
+            .1
+            .as_object()
+            .expect("interfaceThing should stay structured");
+        let interface_meta = interface_thing
+            .iter()
+            .find(|(key, _)| *key == "_internal_qp_alias_0")
+            .unwrap()
+            .1
+            .as_str();
+        assert_eq!(interface_meta, Some("interface string"));
+
+        let union_thing = data
+            .iter()
+            .find(|(key, _)| *key == "unionThing")
+            .unwrap()
+            .1
+            .as_object()
+            .expect("unionThing should stay structured");
+        let union_meta = union_thing
+            .iter()
+            .find(|(key, _)| *key == "meta")
+            .unwrap()
+            .1
+            .as_raw_json()
+            .expect("json union branch should deserialize as raw json");
+        assert!(union_meta.contains("union.key\\t"));
+    }
+
+    fn find_fetch_custom_scalar_paths<'a>(
+        node: Option<&'a PlanNode>,
+        service_name: &str,
+    ) -> Option<&'a CustomScalarPaths> {
+        match node? {
+            PlanNode::Fetch(fetch) if fetch.service_name == service_name => {
+                fetch.custom_scalar_paths.as_ref()
+            }
+            PlanNode::BatchFetch(fetch) if fetch.service_name == service_name => {
+                fetch.custom_scalar_paths.as_ref()
+            }
+            PlanNode::Sequence(sequence) => sequence
+                .nodes
+                .iter()
+                .find_map(|node| find_fetch_custom_scalar_paths(Some(node), service_name)),
+            PlanNode::Parallel(parallel) => parallel
+                .nodes
+                .iter()
+                .find_map(|node| find_fetch_custom_scalar_paths(Some(node), service_name)),
+            PlanNode::Flatten(flatten) => {
+                find_fetch_custom_scalar_paths(Some(&flatten.node), service_name)
+            }
+            PlanNode::Condition(condition) => find_fetch_custom_scalar_paths(
+                condition
+                    .if_clause
+                    .as_deref()
+                    .or(condition.else_clause.as_deref()),
+                service_name,
+            ),
+            _ => None,
+        }
     }
 }

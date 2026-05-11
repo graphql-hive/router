@@ -81,6 +81,7 @@ type PlainThing implements SearchResult
   @join__type(graph: LABELS)
   @join__implements(graph: LABELS, interface: "SearchResult") {
   id: ID! @join__field(graph: LABELS)
+  catalog: Catalog @join__field(graph: LABELS)
   title: String @join__field(graph: LABELS)
 }
 
