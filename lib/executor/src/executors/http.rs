@@ -493,6 +493,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
+        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         let body = build_request_body(&execution_request)?;
 
         let mut req = hyper::Request::builder()
@@ -566,7 +567,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
             let boundary = multipart_subscribe::parse_boundary_from_header(content_type)
                 .map_err(|e| SubgraphExecutorError::MultipartBoundaryParseFailure(e.to_string()))?;
-            let stream = multipart_subscribe::parse_to_stream(boundary, body_stream);
+            let stream = multipart_subscribe::parse_to_stream(
+                boundary,
+                body_stream,
+                custom_scalar_paths.clone(),
+            );
 
             Ok(Box::pin(async_stream::stream! {
                 trace!("multipart subscription stream started");
@@ -590,7 +595,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 self.endpoint.to_string(),
             );
 
-            let stream = sse::parse_to_stream(body_stream);
+            let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone());
 
             Ok(Box::pin(async_stream::stream! {
                 trace!("SSE subscription stream started");

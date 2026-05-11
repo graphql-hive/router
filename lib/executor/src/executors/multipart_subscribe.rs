@@ -3,6 +3,7 @@ use std::str::Utf8Error;
 use bytes::{Buf, Bytes};
 use futures::stream::BoxStream;
 use http_body_util::BodyExt;
+use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 use hyper::body::Body;
 
 use crate::{
@@ -75,6 +76,7 @@ pub fn parse_boundary_from_header(content_type: &str) -> Result<&str, ParseError
 pub fn parse_to_stream<B>(
     boundary: &str,
     body_stream: B,
+    custom_scalar_paths: Option<CustomScalarPaths>,
 ) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
     B: Body + Send + Unpin + 'static,
@@ -101,7 +103,7 @@ where
                 buffer.drain(..skip_len);
 
                 if !part_bytes.is_empty() {
-                    match parse_part(&part_bytes) {
+                    match parse_part(&part_bytes, custom_scalar_paths.as_ref()) {
                         Ok(Some(response)) => {
                             yield Ok(response);
                         }
@@ -185,7 +187,10 @@ fn find_next_part(
     Some((next_delimiter_pos, skip_len, is_end))
 }
 
-fn parse_part(raw: &[u8]) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
+fn parse_part(
+    raw: &[u8],
+    custom_scalar_paths: Option<&CustomScalarPaths>,
+) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     let text = std::str::from_utf8(raw)?;
     let body = extract_body_after_headers(text);
 
@@ -193,7 +198,7 @@ fn parse_part(raw: &[u8]) -> Result<Option<SubgraphResponse<'static>>, ParseErro
         return Ok(None);
     }
 
-    extract_payload(body)
+    extract_payload(body, custom_scalar_paths)
 }
 
 fn extract_body_after_headers(content: &str) -> &str {
@@ -206,7 +211,10 @@ fn extract_body_after_headers(content: &str) -> &str {
     }
 }
 
-fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
+fn extract_payload(
+    body: &str,
+    custom_scalar_paths: Option<&CustomScalarPaths>,
+) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     // cheap heartbeat check: subgraphs send `{}` as a keep-alive ping
     if body == "{}" {
         return Ok(None);
@@ -224,7 +232,7 @@ fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, Pars
                     let transport_err = format!(r#"{{"errors":{}}}"#, errors_lv.as_raw_str());
                     return SubgraphResponse::deserialize_from_bytes(
                         Bytes::from(transport_err),
-                        None,
+                        custom_scalar_paths,
                     )
                     .map_err(ParseError::InvalidSubgraphResponse)
                     .map(Some);
@@ -233,13 +241,19 @@ fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, Pars
             }
 
             // happy path: deserialize the raw payload substring directly - no re-serialization
-            SubgraphResponse::deserialize_from_bytes(Bytes::copy_from_slice(raw.as_bytes()), None)
+            SubgraphResponse::deserialize_from_bytes(
+                Bytes::copy_from_slice(raw.as_bytes()),
+                custom_scalar_paths,
+            )
                 .map_err(ParseError::InvalidSubgraphResponse)
                 .map(Some)
         }
         Err(e) if e.is_not_found() => {
             // no payload wrapper, treat the whole body as a subgraph response
-            SubgraphResponse::deserialize_from_bytes(Bytes::from(body.to_owned()), None)
+            SubgraphResponse::deserialize_from_bytes(
+                Bytes::from(body.to_owned()),
+                custom_scalar_paths,
+            )
                 .map_err(ParseError::InvalidSubgraphResponse)
                 .map(Some)
         }
@@ -253,6 +267,7 @@ fn extract_payload(body: &str) -> Result<Option<SubgraphResponse<'static>>, Pars
 mod tests {
     use super::*;
     use bytes::Bytes;
+    use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 
     #[test]
     fn test_parse_boundary_from_header_simple() {
@@ -393,7 +408,7 @@ mod tests {
         let part_data =
             b"Content-Type: application/json\r\n\r\n{\"payload\":{\"data\":{\"reviewAdded\":{\"id\":\"1\"}}}}";
 
-        let response = parse_part(part_data)
+        let response = parse_part(part_data, None)
             .expect("Should parse valid part")
             .expect("Should have response");
 
@@ -404,7 +419,7 @@ mod tests {
     fn test_parse_part_without_headers() {
         let part_data = b"\r\n{\"payload\":{\"data\":{\"value\":1}}}";
 
-        let response = parse_part(part_data)
+        let response = parse_part(part_data, None)
             .expect("Should parse part without headers")
             .expect("Should have response");
 
@@ -415,7 +430,7 @@ mod tests {
     fn test_extract_payload_with_payload_property() {
         let body = r#"{"payload":{"data":{"reviewAdded":{"id":"1"}}}}"#;
 
-        let response = extract_payload(body)
+        let response = extract_payload(body, None)
             .expect("Should extract payload")
             .expect("Should have response");
 
@@ -426,7 +441,7 @@ mod tests {
     fn test_extract_payload_without_payload_property() {
         let body = r#"{"data":{"user":{"name":"Alice"}}}"#;
 
-        let response = extract_payload(body)
+        let response = extract_payload(body, None)
             .expect("Should extract payload")
             .expect("Should have response");
 
@@ -437,7 +452,7 @@ mod tests {
     fn test_extract_payload_heartbeat() {
         let body = "{}";
 
-        let payload = extract_payload(body).expect("Should parse heartbeat");
+        let payload = extract_payload(body, None).expect("Should parse heartbeat");
 
         assert!(payload.is_none(), "Heartbeat should return None");
     }
@@ -446,7 +461,7 @@ mod tests {
     fn test_extract_payload_transport_error() {
         let body = r#"{"payload":null,"errors":[{"message":"Connection lost"}]}"#;
 
-        let response = extract_payload(body)
+        let response = extract_payload(body, None)
             .expect("Should extract error")
             .expect("Should have error response");
 
@@ -469,7 +484,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("graphql", body);
+        let mut stream = parse_to_stream("graphql", body, None);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -501,7 +516,7 @@ mod tests {
         ];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("graphql", body);
+        let mut stream = parse_to_stream("graphql", body, None);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -534,7 +549,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("graphql", body);
+        let mut stream = parse_to_stream("graphql", body, None);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -560,7 +575,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("graphql", body);
+        let mut stream = parse_to_stream("graphql", body, None);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -589,7 +604,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("myboundary", body);
+        let mut stream = parse_to_stream("myboundary", body, None);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -615,7 +630,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("boundary", body);
+        let mut stream = parse_to_stream("boundary", body, None);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -626,5 +641,28 @@ mod tests {
 
         let second = stream.next().await;
         assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_parse_to_stream_uses_custom_scalar_paths() {
+        use futures::StreamExt;
+        use http_body_util::StreamBody;
+        use hyper::body::Frame;
+
+        let chunks: Vec<Result<Frame<Bytes>, std::convert::Infallible>> = vec![Ok(Frame::data(
+            Bytes::from(
+                "--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{\"custom\":{\"escaped.key\\t\":\"value\"}}}}\r\n--graphql--\r\n",
+            ),
+        ))];
+
+        let mut custom_scalar_paths = CustomScalarPaths::default();
+        custom_scalar_paths.insert_path(["custom"]);
+
+        let body = StreamBody::new(futures::stream::iter(chunks));
+        let mut stream = parse_to_stream("graphql", body, Some(custom_scalar_paths));
+
+        let first = stream.next().await.unwrap().unwrap();
+        let data = first.data.as_object().unwrap();
+        assert!(data[0].1.as_raw_json().is_some());
     }
 }
