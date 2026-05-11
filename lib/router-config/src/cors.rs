@@ -97,7 +97,7 @@ pub struct CORSConfig {
     /// `Server-Timing`, `X-*` custom headers) to those preflight responses.
     ///
     /// Keys must be valid HTTP header names (RFC 7230) and values must be
-   /// valid HTTP header values.
+    /// valid HTTP header values.
     ///
     /// The headers provided here are applied after the CORS engine's managed headers
     /// (`Access-Control-*`, `Vary`) and therefore override them when keys collide.
