@@ -200,24 +200,43 @@ impl From<&mut Value> for SonicValue {
 /// Writes a string as a GraphQL string literal, escaping special characters
 /// per the GraphQL spec (https://spec.graphql.org/draft/#StringCharacter).
 ///
-/// The string contents are decoded values (e.g. parsed from `"\"aValue\""` into
-/// `"aValue"`), so we must re-escape `"`, `\`, and control characters when
+/// The string contents are decoded values (e.g. parsed from `"\"quoted\""` into
+/// `"quoted"`), so we must re-escape `"`, `\`, and control characters when
 /// re-emitting them as a GraphQL literal.
+///
+/// Strings without any escapable characters are written in a single
+/// `write_str` call; otherwise we flush the run of safe bytes preceding each
+/// escape sequence in one go, which is significantly cheaper than emitting
+/// every character individually through the formatter.
 fn write_graphql_string_literal(f: &mut std::fmt::Formatter<'_>, s: &str) -> std::fmt::Result {
     f.write_char('"')?;
-    for c in s.chars() {
-        match c {
-            '"' => f.write_str("\\\"")?,
-            '\\' => f.write_str("\\\\")?,
-            '\n' => f.write_str("\\n")?,
-            '\r' => f.write_str("\\r")?,
-            '\t' => f.write_str("\\t")?,
-            '\u{0008}' => f.write_str("\\b")?,
-            '\u{000C}' => f.write_str("\\f")?,
-            c if (c as u32) < 0x20 => write!(f, "\\u{:04x}", c as u32)?,
-            c => f.write_char(c)?,
-        }
+    let mut last = 0;
+    for (i, c) in s.char_indices() {
+        let esc = match c {
+            '"' => "\\\"",
+            '\\' => "\\\\",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '\t' => "\\t",
+            '\u{0008}' => "\\b",
+            '\u{000C}' => "\\f",
+            // ASCII C0 control characters (< 0x20) and DEL (0x7F) are escaped
+            // defensively. DEL is technically a valid SourceCharacter per the
+            // GraphQL spec, but emitting it bare can trip strict downstream
+            // parsers.
+            c if (c as u32) < 0x20 || (c as u32) == 0x7F => {
+                f.write_str(&s[last..i])?;
+                write!(f, "\\u{:04x}", c as u32)?;
+                last = i + c.len_utf8();
+                continue;
+            }
+            _ => continue,
+        };
+        f.write_str(&s[last..i])?;
+        f.write_str(esc)?;
+        last = i + c.len_utf8();
     }
+    f.write_str(&s[last..])?;
     f.write_char('"')
 }
 
@@ -296,6 +315,16 @@ mod tests {
         insta::assert_snapshot!(
           Value::String("\x01".to_string()),
           @r#""\u0001""#);
+
+        // String containing the DEL control character (U+007F): escaped \u007f
+        insta::assert_snapshot!(
+          Value::String("\u{007F}".to_string()),
+          @r#""\u007f""#);
+
+        // String with mixed safe/escapable runs: safe runs are emitted in bulk
+        insta::assert_snapshot!(
+          Value::String("hello \"world\"\nbye".to_string()),
+          @r#""hello \"world\"\nbye""#);
 
         insta::assert_snapshot!(
           Value::Boolean(false),
