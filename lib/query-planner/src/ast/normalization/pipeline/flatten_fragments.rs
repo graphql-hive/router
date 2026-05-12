@@ -75,23 +75,21 @@ fn build_possible_types_map<'a>(ctx: &NormalizationContext<'a>) -> PossibleTypes
 
     for (name, def) in &ctx.supergraph.definitions {
         match def {
-            SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => {
-                if maybe_subgraph_name.is_none()
+            SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_)
+                if (maybe_subgraph_name.is_none()
                     || maybe_subgraph_name.is_some_and(|subgraph_name| {
                         def.is_defined_in_subgraph(subgraph_name.as_str())
-                    })
-                {
-                    abstract_types_list.push((name, def));
-                }
+                    })) =>
+            {
+                abstract_types_list.push((name, def));
             }
-            SupergraphDefinition::Object(_) => {
-                if maybe_subgraph_name.is_none()
+            SupergraphDefinition::Object(_)
+                if (maybe_subgraph_name.is_none()
                     || maybe_subgraph_name.is_some_and(|subgraph_name| {
                         def.is_defined_in_subgraph(subgraph_name.as_str())
-                    })
-                {
-                    object_types_list.push((name, def));
-                }
+                    })) =>
+            {
+                object_types_list.push((name, def));
             }
             _ => {}
         }
