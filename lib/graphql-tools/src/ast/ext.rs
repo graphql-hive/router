@@ -323,8 +323,7 @@ impl Value {
         match self {
             Value::Variable(v) => vec![v],
             Value::List(list) => list.iter().flat_map(|v| v.variables_in_use()).collect(),
-            Value::Object(object) => object.values().flat_map(|v| v.variables_in_use())
-                .collect(),
+            Value::Object(object) => object.values().flat_map(|v| v.variables_in_use()).collect(),
             _ => vec![],
         }
     }
@@ -380,7 +379,9 @@ impl TypeDefinition {
             TypeDefinition::Enum(_) => vec![],
             TypeDefinition::Scalar(_) => vec![],
             TypeDefinition::Interface(i) => schema
-                .type_map().values().filter_map(|type_def| {
+                .type_map()
+                .values()
+                .filter_map(|type_def| {
                     if i.is_implemented_by(type_def) {
                         return Some(*type_def);
                     }

@@ -94,48 +94,47 @@ impl SafeSelectionSetMerger {
                         if source_field.selection_identifier()
                             == target_field.selection_identifier()
                             && source_field.include_if == target_field.include_if
-                            && source_field.skip_if == target_field.skip_if
-                        => {
-                            let has_conflict = source_field.arguments_hash()
-                                != target_field.arguments_hash()
-                                || source_field.alias != target_field.alias;
+                            && source_field.skip_if == target_field.skip_if =>
+                    {
+                        let has_conflict = source_field.arguments_hash()
+                            != target_field.arguments_hash()
+                            || source_field.alias != target_field.alias;
 
-                            if !has_conflict {
-                                trace!(
-                                    "found a matching field {}, will proceed with merging",
-                                    source_field.name,
-                                );
-                                decision = ConflictsLookupResult::Merged;
+                        if !has_conflict {
+                            trace!(
+                                "found a matching field {}, will proceed with merging",
+                                source_field.name,
+                            );
+                            decision = ConflictsLookupResult::Merged;
 
-                                let next_path = response_path.push(Segment::Field(
-                                    source_field.name.clone(),
-                                    source_field.arguments_hash(),
-                                    source_field.into(),
-                                ));
+                            let next_path = response_path.push(Segment::Field(
+                                source_field.name.clone(),
+                                source_field.arguments_hash(),
+                                source_field.into(),
+                            ));
 
-                                self.merge_selection_set_inner(
-                                    &mut target_field.selections,
-                                    &source_field.selections,
-                                    (self_used_for_requires, other_used_for_requires),
-                                    as_first,
-                                    next_path,
-                                    aliases_performed,
-                                );
+                            self.merge_selection_set_inner(
+                                &mut target_field.selections,
+                                &source_field.selections,
+                                (self_used_for_requires, other_used_for_requires),
+                                as_first,
+                                next_path,
+                                aliases_performed,
+                            );
 
-                                break;
-                            } else {
-                                let conflict =
-                                    match (self_used_for_requires, other_used_for_requires) {
-                                        (true, false) => {
-                                            ConflictResolutionLocation::Target { target_item_idx }
-                                        }
-                                        (false, true) | (true, true) => {
-                                            ConflictResolutionLocation::Source { source_item_idx }
-                                        }
-                                        (false, false) => panic!("Unexpected conflict"),
-                                    };
+                            break;
+                        } else {
+                            let conflict = match (self_used_for_requires, other_used_for_requires) {
+                                (true, false) => {
+                                    ConflictResolutionLocation::Target { target_item_idx }
+                                }
+                                (false, true) | (true, true) => {
+                                    ConflictResolutionLocation::Source { source_item_idx }
+                                }
+                                (false, false) => panic!("Unexpected conflict"),
+                            };
 
-                                trace!(
+                            trace!(
                                     "found a conflicting field '{}' ({} != {}), will resolve the conflict on the {:?} side",
                                     source_field.name,
                                     source_field.arguments_hash(),
@@ -143,34 +142,33 @@ impl SafeSelectionSetMerger {
                                     conflict
                                 );
 
-                                decision = ConflictsLookupResult::Conflict(conflict);
-                            }
+                            decision = ConflictsLookupResult::Conflict(conflict);
                         }
+                    }
                     (
                         SelectionItem::InlineFragment(source_fragment),
                         SelectionItem::InlineFragment(target_fragment),
-                    )
-                        if source_fragment.type_condition == target_fragment.type_condition
-                            && source_fragment.include_if == target_fragment.include_if
-                            && source_fragment.skip_if == target_fragment.skip_if
-                        => {
-                            decision = ConflictsLookupResult::Merged;
+                    ) if source_fragment.type_condition == target_fragment.type_condition
+                        && source_fragment.include_if == target_fragment.include_if
+                        && source_fragment.skip_if == target_fragment.skip_if =>
+                    {
+                        decision = ConflictsLookupResult::Merged;
 
-                            let next_path = response_path.push(Segment::TypeCondition(
-                                BTreeSet::from([source_fragment.type_condition.clone()]),
-                                source_fragment.into(),
-                            ));
+                        let next_path = response_path.push(Segment::TypeCondition(
+                            BTreeSet::from([source_fragment.type_condition.clone()]),
+                            source_fragment.into(),
+                        ));
 
-                            self.merge_selection_set_inner(
-                                &mut target_fragment.selections,
-                                &source_fragment.selections,
-                                (self_used_for_requires, other_used_for_requires),
-                                as_first,
-                                next_path,
-                                aliases_performed,
-                            );
-                            break;
-                        }
+                        self.merge_selection_set_inner(
+                            &mut target_fragment.selections,
+                            &source_fragment.selections,
+                            (self_used_for_requires, other_used_for_requires),
+                            as_first,
+                            next_path,
+                            aliases_performed,
+                        );
+                        break;
+                    }
                     _ => {}
                 }
             }

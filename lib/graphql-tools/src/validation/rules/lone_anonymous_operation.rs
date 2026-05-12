@@ -47,41 +47,45 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for LoneAnonymousOperation
         for definition in &document.definitions {
             match definition {
                 Definition::Operation(OperationDefinition::SelectionSet(_))
-                    if operations_count > 1 => {
-                        user_context.report_error(ValidationError {
-                            error_code: self.error_code(),
-                            message: "This anonymous operation must be the only defined operation."
-                                .to_string(),
-                            locations: vec![],
-                        })
-                    }
+                    if operations_count > 1 =>
+                {
+                    user_context.report_error(ValidationError {
+                        error_code: self.error_code(),
+                        message: "This anonymous operation must be the only defined operation."
+                            .to_string(),
+                        locations: vec![],
+                    })
+                }
                 Definition::Operation(OperationDefinition::Query(query))
-                    if query.name.is_none() && operations_count > 1 => {
-                        user_context.report_error(ValidationError {
-                            error_code: self.error_code(),
-                            message: "This anonymous operation must be the only defined operation."
-                                .to_string(),
-                            locations: vec![query.position],
-                        })
-                    }
+                    if query.name.is_none() && operations_count > 1 =>
+                {
+                    user_context.report_error(ValidationError {
+                        error_code: self.error_code(),
+                        message: "This anonymous operation must be the only defined operation."
+                            .to_string(),
+                        locations: vec![query.position],
+                    })
+                }
                 Definition::Operation(OperationDefinition::Mutation(mutation))
-                    if mutation.name.is_none() && operations_count > 1 => {
-                        user_context.report_error(ValidationError {
-                            error_code: self.error_code(),
-                            message: "This anonymous operation must be the only defined operation."
-                                .to_string(),
-                            locations: vec![mutation.position],
-                        })
-                    }
+                    if mutation.name.is_none() && operations_count > 1 =>
+                {
+                    user_context.report_error(ValidationError {
+                        error_code: self.error_code(),
+                        message: "This anonymous operation must be the only defined operation."
+                            .to_string(),
+                        locations: vec![mutation.position],
+                    })
+                }
                 Definition::Operation(OperationDefinition::Subscription(subscription))
-                    if subscription.name.is_none() && operations_count > 1 => {
-                        user_context.report_error(ValidationError {
-                            error_code: self.error_code(),
-                            message: "This anonymous operation must be the only defined operation."
-                                .to_string(),
-                            locations: vec![subscription.position],
-                        })
-                    }
+                    if subscription.name.is_none() && operations_count > 1 =>
+                {
+                    user_context.report_error(ValidationError {
+                        error_code: self.error_code(),
+                        message: "This anonymous operation must be the only defined operation."
+                            .to_string(),
+                        locations: vec![subscription.position],
+                    })
+                }
                 _ => {}
             };
         }
