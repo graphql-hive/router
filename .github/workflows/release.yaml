@@ -69,6 +69,12 @@ jobs:
         run: |
           cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-console-sdk }}
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        if: env.PUBLISH_HIVE_APOLLO_ROUTER_PLUGIN == 'true'
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: publish hive-apollo-router-plugin lib
         if: env.PUBLISH_HIVE_APOLLO_ROUTER_PLUGIN == 'true'
         env:
