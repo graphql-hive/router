@@ -69,8 +69,8 @@ use crate::{
     },
     planner::error::QueryPlanError,
     planner::plan_nodes::{
-        hash_minified_query, BatchFetchNode, EntityBatch, EntityBatchAlias, FetchRewrite,
-        FlattenNodePath, PlanNode,
+        custom_scalar_paths_for_type_selection, hash_minified_query, BatchFetchNode,
+        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
 };
@@ -105,6 +105,7 @@ struct BatchFetchBuilder<'a> {
     representations_var_index: usize,
     variable_usages: BTreeSet<String>,
     representations_var_by_input_key: HashMap<RepresentationsInputKey, String>,
+    custom_scalar_paths: CustomScalarPaths,
 }
 
 impl<'a> BatchFetchBuilder<'a> {
@@ -126,6 +127,7 @@ impl<'a> BatchFetchBuilder<'a> {
             representations_var_index: 0,
             variable_usages: BTreeSet::new(),
             representations_var_by_input_key: HashMap::new(),
+            custom_scalar_paths: CustomScalarPaths::default(),
         }
     }
 
@@ -133,6 +135,7 @@ impl<'a> BatchFetchBuilder<'a> {
         &mut self,
         alias_index: usize,
         shape_group: &[EntityFetch],
+        supergraph: &SupergraphState,
     ) -> Result<(), QueryPlanError> {
         let representative = shape_group.first().ok_or_else(|| {
             QueryPlanError::Internal("Batched entities shape group cannot be empty".to_string())
@@ -166,6 +169,16 @@ impl<'a> BatchFetchBuilder<'a> {
                 include_if: None,
                 omit_from_response: false,
             }));
+
+        if let Some(alias_paths) = custom_scalar_paths_for_type_selection(
+            &representative.type_name,
+            &representative.entities_selection,
+            supergraph,
+        ) {
+            self.custom_scalar_paths
+                .children
+                .insert(alias.clone(), alias_paths);
+        }
 
         self.batched_aliases.push(EntityBatchAlias {
             alias,
@@ -280,6 +293,8 @@ impl<'a> BatchFetchBuilder<'a> {
                 document_str,
                 hash,
             },
+            custom_scalar_paths: (!self.custom_scalar_paths.is_empty())
+                .then_some(self.custom_scalar_paths),
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
             },
@@ -306,6 +321,7 @@ struct EntityFetch {
     service_name: String,
     flatten_path: FlattenNodePath,
     variable_usages: Option<BTreeSet<String>>,
+    type_name: String,
     requires: SelectionSet,
     entities_selection: SelectionSet,
     input_rewrites: Option<Vec<FetchRewrite>>,
@@ -399,6 +415,16 @@ impl EntityFetch {
             service_name: fetch_node.service_name.clone(),
             flatten_path: flatten_node.path.clone(),
             variable_usages: fetch_node.variable_usages.clone(),
+            type_name: entities_selection
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    SelectionItem::InlineFragment(fragment) => {
+                        Some(fragment.type_condition.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| "Query".to_string()),
             requires,
             entities_selection,
             input_rewrites,
@@ -809,7 +835,7 @@ fn build_batched_fetch_node(
         BatchFetchBuilder::new(merged_non_representation_variables, shape_groups.len());
 
     for (index, shape_group) in shape_groups.iter().enumerate() {
-        builder.add_shape_group(index, shape_group)?;
+        builder.add_shape_group(index, shape_group, supergraph)?;
     }
 
     builder.finish(first_candidate, supergraph)
@@ -2261,6 +2287,7 @@ mod tests {
             operation_kind: Some(OperationKind::Query),
             operation_name: None,
             operation,
+            custom_scalar_paths: None,
             requires: Some(requires),
             input_rewrites: None,
             output_rewrites: None,
@@ -2323,6 +2350,7 @@ mod tests {
             operation_kind: Some(OperationKind::Query),
             operation_name: None,
             operation,
+            custom_scalar_paths: None,
             requires: None,
             input_rewrites: None,
             output_rewrites: None,

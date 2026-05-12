@@ -2309,6 +2309,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
+name = "graphql-differential"
+version = "0.0.0"
+dependencies = [
+ "graphql-tools",
+ "hive-router-plan-executor",
+ "hive-router-query-planner",
+ "rand 0.10.1",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "graphql-tools"
 version = "0.5.4"
 dependencies = [
@@ -2526,7 +2539,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.53"
+version = "0.0.55"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2659,7 +2672,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "6.13.1"
+version = "6.13.2"
 dependencies = [
  "ahash",
  "async-stream",
@@ -2706,7 +2719,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-query-planner"
-version = "2.8.0"
+version = "2.8.2"
 dependencies = [
  "bitflags 2.11.1",
  "criterion",
@@ -3880,7 +3893,7 @@ dependencies = [
 
 [[package]]
 name = "node-addon"
-version = "0.0.25"
+version = "0.0.27"
 dependencies = [
  "graphql-tools",
  "hive-router-query-planner",

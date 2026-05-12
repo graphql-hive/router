@@ -466,41 +466,38 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
         let mut found = false;
         for target_item in target.items.iter_mut() {
             match (source_item, target_item) {
-                (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
+                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
                     if source_field == target_field
                         && field_condition_equal(
                             &Option::<Condition>::from(source_field),
                             target_field,
-                        )
-                    {
-                        found = true;
-                        merge_field_omit_from_response(target_field, source_field);
-                        merge_selection_set(
-                            &mut target_field.selections,
-                            &source_field.selections,
-                            as_first,
-                        );
-                        break;
-                    }
+                        ) =>
+                {
+                    found = true;
+                    merge_field_omit_from_response(target_field, source_field);
+                    merge_selection_set(
+                        &mut target_field.selections,
+                        &source_field.selections,
+                        as_first,
+                    );
+                    break;
                 }
                 (
                     SelectionItem::InlineFragment(source_fragment),
                     SelectionItem::InlineFragment(target_fragment),
-                ) => {
-                    if source_fragment.type_condition == target_fragment.type_condition
-                        && fragment_condition_equal(
-                            &Option::<Condition>::from(source_fragment),
-                            target_fragment,
-                        )
-                    {
-                        found = true;
-                        merge_selection_set(
-                            &mut target_fragment.selections,
-                            &source_fragment.selections,
-                            as_first,
-                        );
-                        break;
-                    }
+                ) if source_fragment.type_condition == target_fragment.type_condition
+                    && fragment_condition_equal(
+                        &Option::<Condition>::from(source_fragment),
+                        target_fragment,
+                    ) =>
+                {
+                    found = true;
+                    merge_selection_set(
+                        &mut target_fragment.selections,
+                        &source_fragment.selections,
+                        as_first,
+                    );
+                    break;
                 }
                 _ => {}
             }

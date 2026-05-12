@@ -9,6 +9,7 @@ members = [
   "lib/hive-console-sdk",
   "bin/dev-cli",
   "bin/router",
+  "bin/differential",
   "e2e",
   "bench/coprocessor",
   "bench/subgraphs",
