@@ -1781,6 +1781,7 @@ Configuration for the HTTP server/listener.
 |**graphql\_endpoint**|`string`|The endpoint to serve GraphQL requests. By default, `/graphql` is used.<br/>Default: `"/graphql"`<br/>||
 |**host**|`string`|The host address to bind the HTTP server to.<br/><br/>Can also be set via the `HOST` environment variable.<br/>Default: `"0.0.0.0"`<br/>||
 |**port**|`integer`|The port to bind the HTTP server to.<br/><br/>Can also be set via the `PORT` environment variable.<br/><br/>If you are running the router inside a Docker container, please ensure that the port is exposed correctly using `-p <host_port>:<container_port>` flag.<br/>Default: `4000`<br/>Format: `"uint16"`<br/>Minimum: `0`<br/>Maximum: `65535`<br/>||
+|**workers**|`integer`, `null`|The number of worker threads to use for the HTTP server. Must be at least `1`.<br/><br/>Defaults to the number of physical CPU cores available to the process.<br/><br/>Useful in containerized environments (e.g., Kubernetes) where the number of<br/>physical cores reported by the OS is higher than the actual CPU limit<br/>assigned to the container. In such cases, you should set this to match the<br/>container's CPU limit to avoid oversubscribing worker threads.<br/><br/>Can also be set via the `ROUTER_HTTP_WORKERS` environment variable.<br/>Format: `"uint"`<br/>Minimum: `1`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
