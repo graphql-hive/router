@@ -2309,6 +2309,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
+name = "graphql-differential"
+version = "0.0.0"
+dependencies = [
+ "graphql-tools",
+ "hive-router-plan-executor",
+ "hive-router-query-planner",
+ "rand 0.10.1",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "graphql-tools"
 version = "0.5.4"
 dependencies = [

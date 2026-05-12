@@ -4,7 +4,7 @@ use async_graphql::{
 use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref USERS: Vec<User> = vec![
+    pub static ref USERS: Vec<User> = vec![
         User {
             id: ID("1".to_string()),
             name: Some("Uri Goldshtein".to_string()),
@@ -57,25 +57,25 @@ pub enum SocialAccount {
 
 #[derive(SimpleObject, Clone)]
 pub struct TwitterAccount {
-    url: String,
-    handle: String,
-    followers: i32,
+    pub(crate) url: String,
+    pub(crate) handle: String,
+    pub(crate) followers: i32,
 }
 
 #[derive(SimpleObject, Clone)]
 pub struct GitHubAccount {
-    url: String,
-    handle: String,
-    repo_count: i32,
+    pub(crate) url: String,
+    pub(crate) handle: String,
+    pub(crate) repo_count: i32,
 }
 
 #[derive(SimpleObject, Clone)]
 #[graphql(complex)]
 pub struct User {
-    id: ID,
-    name: Option<String>,
-    username: Option<String>,
-    birthday: Option<i32>,
+    pub(crate) id: ID,
+    pub(crate) name: Option<String>,
+    pub(crate) username: Option<String>,
+    pub(crate) birthday: Option<i32>,
 }
 
 #[ComplexObject]
@@ -132,8 +132,8 @@ impl Query {
     }
 
     #[graphql(entity)]
-    async fn find_user_by_id(&self, id: ID) -> User {
-        USERS.iter().find(|user| user.id == id).cloned().unwrap()
+    async fn find_user_by_id(&self, id: ID) -> Option<User> {
+        USERS.iter().find(|user| user.id == id).cloned()
     }
 }
 

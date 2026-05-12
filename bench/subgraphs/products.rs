@@ -6,7 +6,7 @@ use lazy_static::lazy_static;
 use tokio::io::AsyncWriteExt;
 
 lazy_static! {
-    static ref PRODUCTS: Vec<Product> = vec![
+    pub static ref PRODUCTS: Vec<Product> = vec![
         Product {
             upc: "1".to_string(),
             name: Some("Table".to_string()),
@@ -83,12 +83,12 @@ lazy_static! {
 }
 #[derive(SimpleObject, Clone)]
 pub struct Product {
-    upc: String,
-    name: Option<String>,
-    price: Option<i64>,
-    weight: Option<i64>,
-    notes: Option<String>,
-    internal: Option<String>,
+    pub(crate) upc: String,
+    pub(crate) name: Option<String>,
+    pub(crate) price: Option<i64>,
+    pub(crate) weight: Option<i64>,
+    pub(crate) notes: Option<String>,
+    pub(crate) internal: Option<String>,
 }
 
 pub struct Query;
@@ -111,12 +111,11 @@ impl Query {
     }
 
     #[graphql(entity)]
-    async fn find_product_by_upc(&self, upc: ID) -> Product {
+    async fn find_product_by_upc(&self, upc: ID) -> Option<Product> {
         PRODUCTS
             .iter()
             .find(|product| product.upc == upc.as_str())
-            .unwrap()
-            .clone()
+            .cloned()
     }
 }
 

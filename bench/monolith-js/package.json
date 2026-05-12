@@ -1,0 +1,15 @@
+{
+  "name": "monolith-js",
+  "version": "0.0.1",
+  "description": "GraphQL Yoga monolith for benchmarking",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "graphql": "16.14.0",
+    "graphql-yoga": "5.21.0"
+  },
+  "private": false
+}

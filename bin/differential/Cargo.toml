@@ -1,0 +1,17 @@
+[package]
+name = "graphql-differential"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "graphql-diff"
+path = "src/main.rs"
+
+[dependencies]
+hive-router-query-planner = { path = "../../lib/query-planner" }
+hive-router-plan-executor = { path = "../../lib/executor" }
+graphql-tools =  { path = "../../lib/graphql-tools" }
+rand = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
