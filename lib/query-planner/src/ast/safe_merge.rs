@@ -90,12 +90,12 @@ impl SafeSelectionSetMerger {
 
             for (target_item_idx, target_item) in target.items.iter_mut().enumerate() {
                 match (source_item, target_item) {
-                    (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
+                    (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
                         if source_field.selection_identifier()
                             == target_field.selection_identifier()
                             && source_field.include_if == target_field.include_if
                             && source_field.skip_if == target_field.skip_if
-                        {
+                        => {
                             let has_conflict = source_field.arguments_hash()
                                 != target_field.arguments_hash()
                                 || source_field.alias != target_field.alias;
@@ -146,15 +146,14 @@ impl SafeSelectionSetMerger {
                                 decision = ConflictsLookupResult::Conflict(conflict);
                             }
                         }
-                    }
                     (
                         SelectionItem::InlineFragment(source_fragment),
                         SelectionItem::InlineFragment(target_fragment),
-                    ) => {
+                    )
                         if source_fragment.type_condition == target_fragment.type_condition
                             && source_fragment.include_if == target_fragment.include_if
                             && source_fragment.skip_if == target_fragment.skip_if
-                        {
+                        => {
                             decision = ConflictsLookupResult::Merged;
 
                             let next_path = response_path.push(Segment::TypeCondition(
@@ -172,7 +171,6 @@ impl SafeSelectionSetMerger {
                             );
                             break;
                         }
-                    }
                     _ => {}
                 }
             }

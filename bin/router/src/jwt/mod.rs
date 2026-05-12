@@ -243,13 +243,12 @@ impl JwtAuthRuntime {
         };
 
         match (&self.config.issuers, &token_data.claims.iss) {
-            (Some(issuers), Some(token_iss)) => {
-                if !issuers.contains(token_iss) {
+            (Some(issuers), Some(token_iss))
+                if !issuers.contains(token_iss) => {
                     return Err(JwtError::FailedToDecodeToken(
                         jsonwebtoken::errors::ErrorKind::InvalidIssuer.into(),
                     ));
                 }
-            }
             (Some(_), None) => {
                 return Err(JwtError::FailedToDecodeToken(
                     jsonwebtoken::errors::ErrorKind::InvalidIssuer.into(),

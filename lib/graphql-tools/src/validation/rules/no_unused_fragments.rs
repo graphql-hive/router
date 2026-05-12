@@ -31,9 +31,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedFragments<'a> 
         _document: &Document,
     ) {
         visitor_context
-            .known_fragments
-            .iter()
-            .filter_map(|(fragment_name, _fragment)| {
+            .known_fragments.keys().filter_map(|fragment_name| {
                 if !self.fragments_in_use.contains(fragment_name) {
                     Some(fragment_name)
                 } else {
