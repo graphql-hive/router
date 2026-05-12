@@ -1,7 +1,7 @@
 use hive_router_config::cors::{CORSConfig, CORSPolicyConfig};
 use http::{header, StatusCode};
 use ntex::{
-    http::{header::HeaderValue, HeaderMap},
+    http::{header::HeaderValue, HeaderMap, Method},
     web::{self, HttpRequest},
 };
 // use regex::Regex;
@@ -22,6 +22,8 @@ pub struct CompiledCORSPolicy {
     expose_headers_value: Option<HeaderValue>,
     allow_credentials_value: Option<HeaderValue>,
     max_age_value: Option<HeaderValue>,
+    /// Extra headers applied to preflight (OPTIONS) responses.
+    preflight_response_headers: http::HeaderMap,
 }
 
 impl CompiledCORSPolicy {
@@ -43,6 +45,10 @@ impl CompiledCORSPolicy {
             } else {
                 global.max_age_value.clone()
             },
+            preflight_response_headers: merge_preflight_headers(
+                &global.preflight_response_headers,
+                &policy_config.preflight_response_headers,
+            ),
         }
     }
 
@@ -89,6 +95,16 @@ impl CompiledCORSPolicy {
         }
         if let Some(v) = &self.max_age_value {
             response_headers.insert(header::ACCESS_CONTROL_MAX_AGE, v.clone());
+        }
+
+        // User-provided preflight headers. Applied last so they override any
+        // CORS-managed default (e.g. `Cache-Control`, `Access-Control-Max-Age`,
+        // even `Access-Control-Allow-Origin`) for users who explicitly opt in.
+        // Only used on OPTIONS responses.
+        if req.method() == Method::OPTIONS {
+            for (name, value) in &self.preflight_response_headers {
+                response_headers.insert(name.into(), value.into());
+            }
         }
     }
 }
@@ -148,7 +164,7 @@ impl CompiledOriginRule {
 }
 
 pub enum Cors {
-    AllowAll { policy: CompiledCORSPolicy },
+    AllowAll { policy: Box<CompiledCORSPolicy> },
     ByOrigin { rules: Vec<CompiledOriginRule> },
 }
 
@@ -171,10 +187,13 @@ impl Cors {
             max_age_value: config
                 .max_age
                 .and_then(|v| HeaderValue::from_str(&v.to_string()).ok()),
+            preflight_response_headers: config.preflight_response_headers.clone(),
         };
 
         if config.allow_any_origin {
-            return Ok(Some(Cors::AllowAll { policy: global }));
+            return Ok(Some(Cors::AllowAll {
+                policy: global.into(),
+            }));
         }
 
         // Resolve all origin rules
@@ -236,6 +255,20 @@ fn header_value_from_list(vec: &Option<Vec<String>>) -> Option<HeaderValue> {
         None | Some([]) => None,
         Some(v) => HeaderValue::from_str(&v.join(", ")).ok(),
     }
+}
+
+/// Merge global preflight headers with a policy override map.
+/// Policy keys win on conflict; global-only keys are preserved.
+fn merge_preflight_headers(
+    global: &http::HeaderMap,
+    overrides: &http::HeaderMap,
+) -> http::HeaderMap {
+    if overrides.is_empty() {
+        return global.clone();
+    }
+    let mut out = global.clone();
+    out.extend(overrides.iter().map(|(k, v)| (k.clone(), v.clone())));
+    out
 }
 
 fn append_vary(headers: &mut HeaderMap, token: &str) {
@@ -459,6 +492,192 @@ mod tests {
             assert_eq!(
                 headers.get("vary").unwrap(),
                 "Origin, Access-Control-Request-Headers"
+            );
+        }
+    }
+
+    mod preflight_response_headers {
+        use super::*;
+
+        fn create_http_header_map(entries: &[(&'static str, &'static str)]) -> http::HeaderMap {
+            let mut map = http::HeaderMap::new();
+            for (k, v) in entries {
+                map.insert(
+                    http::HeaderName::from_static(k),
+                    http::HeaderValue::from_static(v),
+                );
+            }
+            map
+        }
+
+        #[test]
+        fn extra_headers_are_set_on_preflight_response() {
+            let cors_config = CORSConfig {
+                enabled: true,
+                allow_any_origin: true,
+                preflight_response_headers: create_http_header_map(&[
+                    ("cache-control", "public, max-age=86400"),
+                    ("x-custom", "hello"),
+                ]),
+                ..CORSConfig::default()
+            };
+            let cors = Cors::from_config(&cors_config).unwrap().unwrap();
+            let req = TestRequest::with_uri("/graphql")
+                .method(Method::OPTIONS)
+                .header(header::ORIGIN, "https://example.com")
+                .to_http_request();
+            let mut headers = header::HeaderMap::new();
+            cors.set_headers(&req, &mut headers);
+            assert_eq!(
+                headers.get(header::CACHE_CONTROL).unwrap(),
+                "public, max-age=86400"
+            );
+            assert_eq!(headers.get("x-custom").unwrap(), "hello");
+        }
+
+        #[test]
+        fn extra_headers_are_not_set_on_non_preflight_response() {
+            let cors_config = CORSConfig {
+                enabled: true,
+                allow_any_origin: true,
+                preflight_response_headers: create_http_header_map(&[(
+                    "cache-control",
+                    "public, max-age=86400",
+                )]),
+                ..CORSConfig::default()
+            };
+            let cors = Cors::from_config(&cors_config).unwrap().unwrap();
+            let req = TestRequest::with_uri("/graphql")
+                .method(Method::POST)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::ORIGIN, "https://example.com")
+                .to_http_request();
+            let mut headers = header::HeaderMap::new();
+            cors.set_headers(&req, &mut headers);
+            assert!(headers.get(header::CACHE_CONTROL).is_none());
+        }
+
+        #[test]
+        fn no_extra_headers_when_unconfigured() {
+            let cors_config = CORSConfig {
+                enabled: true,
+                allow_any_origin: true,
+                ..CORSConfig::default()
+            };
+            let cors = Cors::from_config(&cors_config).unwrap().unwrap();
+            let req = TestRequest::with_uri("/graphql")
+                .method(Method::OPTIONS)
+                .header(header::ORIGIN, "https://example.com")
+                .to_http_request();
+            let mut headers = header::HeaderMap::new();
+            cors.set_headers(&req, &mut headers);
+            assert!(headers.get(header::CACHE_CONTROL).is_none());
+        }
+
+        #[test]
+        fn user_values_override_cors_managed_defaults() {
+            let cors_config = CORSConfig {
+                enabled: true,
+                allow_any_origin: true,
+                max_age: Some(60),
+                preflight_response_headers: create_http_header_map(&[
+                    ("access-control-allow-origin", "https://override.example"),
+                    ("access-control-max-age", "3600"),
+                ]),
+                ..CORSConfig::default()
+            };
+            let cors = Cors::from_config(&cors_config).unwrap().unwrap();
+            let req = TestRequest::with_uri("/graphql")
+                .method(Method::OPTIONS)
+                .header(header::ORIGIN, "https://example.com")
+                .to_http_request();
+            let mut headers = header::HeaderMap::new();
+            cors.set_headers(&req, &mut headers);
+            assert_eq!(
+                headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+                "https://override.example"
+            );
+            assert_eq!(headers.get(header::ACCESS_CONTROL_MAX_AGE).unwrap(), "3600");
+        }
+
+        #[test]
+        fn policy_extra_headers_merge_with_global() {
+            let cors_config = CORSConfig {
+                enabled: true,
+                allow_any_origin: false,
+                preflight_response_headers: create_http_header_map(&[
+                    ("cache-control", "public, max-age=60"),
+                    ("x-global", "g"),
+                ]),
+                policies: vec![
+                    CORSPolicyConfig {
+                        origins: Some(vec!["https://example.com".to_string()]),
+                        preflight_response_headers: create_http_header_map(&[
+                            ("cache-control", "public, max-age=3600"),
+                            ("x-policy", "p"),
+                        ]),
+                        ..Default::default()
+                    },
+                    CORSPolicyConfig {
+                        origins: Some(vec!["https://another.com".to_string()]),
+                        ..Default::default()
+                    },
+                ],
+                ..CORSConfig::default()
+            };
+            let cors = Cors::from_config(&cors_config).unwrap().unwrap();
+
+            // First origin: policy overrides Cache-Control, keeps global X-Global, adds X-Policy.
+            let req = TestRequest::with_uri("/graphql")
+                .method(Method::OPTIONS)
+                .header(header::ORIGIN, "https://example.com")
+                .to_http_request();
+            let mut headers = header::HeaderMap::new();
+            cors.set_headers(&req, &mut headers);
+            assert_eq!(
+                headers.get(header::CACHE_CONTROL).unwrap(),
+                "public, max-age=3600"
+            );
+            assert_eq!(headers.get("x-global").unwrap(), "g");
+            assert_eq!(headers.get("x-policy").unwrap(), "p");
+
+            // Second origin: inherits global preflight headers untouched.
+            let req = TestRequest::with_uri("/graphql")
+                .method(Method::OPTIONS)
+                .header(header::ORIGIN, "https://another.com")
+                .to_http_request();
+            let mut headers = header::HeaderMap::new();
+            cors.set_headers(&req, &mut headers);
+            assert_eq!(
+                headers.get(header::CACHE_CONTROL).unwrap(),
+                "public, max-age=60"
+            );
+            assert_eq!(headers.get("x-global").unwrap(), "g");
+            assert!(headers.get("x-policy").is_none());
+        }
+
+        #[test]
+        fn invalid_header_entries_fail_to_deserialize() {
+            // Invalid header names/values no longer fail silently at runtime:
+            // they're rejected by serde at config-load time.
+            let bad_name = r#"{
+                "enabled": true,
+                "allow_any_origin": true,
+                "preflight_response_headers": { "invalid header name": "ok" }
+            }"#;
+            assert!(
+                serde_json::from_str::<CORSConfig>(bad_name).is_err(),
+                "expected invalid-header-name to fail deserialization"
+            );
+
+            let bad_value = r#"{
+                "enabled": true,
+                "allow_any_origin": true,
+                "preflight_response_headers": { "X-Custom": "line1\nline2" }
+            }"#;
+            assert!(
+                serde_json::from_str::<CORSConfig>(bad_value).is_err(),
+                "expected invalid-header-value to fail deserialization"
             );
         }
     }
