@@ -42,6 +42,7 @@ jobs:
       PUBLISH_ROUTER_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router"') }}
       PUBLISH_GRAPHQL_TOOLS_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"graphql-tools"') }}
       PUBLISH_CONSOLE_SDK_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-console-sdk"') }}
+      PUBLISH_HIVE_APOLLO_ROUTER_PLUGIN: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-apollo-router-plugin"') }}
     if: ${{ github.repository_owner == 'graphql-hive' && needs.check.outputs.crates_to_publish != '{}' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -49,7 +50,6 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
         with:
           cache: false
-
 
       - name: authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@v1
@@ -68,6 +68,13 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-console-sdk }}
+
+      - name: publish hive-apollo-router-plugin lib
+        if: env.PUBLISH_HIVE_APOLLO_ROUTER_PLUGIN == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-apollo-router-plugin }}
 
       - name: publish config lib
         if: env.PUBLISH_CONFIG_CRATE == 'true'

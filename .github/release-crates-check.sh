@@ -3,37 +3,45 @@
 set -e
 set -o pipefail
 
-echo "fetching workspace metadata from Cargo..."
+IGNORED_CRATES=("node-addon")
+IGNORED_JSON=$(printf '%s\n' "${IGNORED_CRATES[@]}" | jq -R . | jq -s .)
 
-METADATA=$(cargo metadata --format-version 1 --no-deps)
-
-CRATES_TO_CHECK=$(echo "$METADATA" | jq -r '
-    .workspace_members as $members | .packages[] |
-    select(.id | IN($members[])) |
-    select(.publish != []) |
-    [.name, .version, .manifest_path] | @tsv
-')
-
-if [ -z "$CRATES_TO_CHECK" ]; then
-    echo "🤷 No publishable workspace crates found."
-    exit 0
-fi
-
-echo "---"
+WORKSPACE_DIRS=("." "apollo-router-workspace")
 
 publish_list=""
 
-while IFS=$'\t' read -r name version manifest_path; do
-    echo "checking $name@$version (manifest: $manifest_path) ..."
+for dir in "${WORKSPACE_DIRS[@]}"; do
+    echo "fetching workspace metadata from Cargo in '$dir'..."
 
-    if ! cargo info "$name@$version" --registry crates-io; then
-      echo "   [ ] NOT PUBLISHED"
-      publish_list="${publish_list}${name}\t${manifest_path}\n"
-    else
-      echo "   [x] ALREADY PUBLISHED"
+    METADATA=$(cargo metadata --format-version 1 --no-deps --manifest-path "$dir/Cargo.toml")
+
+    CRATES_TO_CHECK=$(echo "$METADATA" | jq -r --argjson ignored "$IGNORED_JSON" '
+        .workspace_members as $members | .packages[] |
+        select(.id | IN($members[])) |
+        select(.publish != []) |
+        select(.name | IN($ignored[]) | not) |
+        [.name, .version, .manifest_path] | @tsv
+    ')
+
+    if [ -z "$CRATES_TO_CHECK" ]; then
+        echo "🤷 No publishable workspace crates found in '$dir'."
+        continue
     fi
+
     echo "---"
-done <<< "$CRATES_TO_CHECK"
+
+    while IFS=$'\t' read -r name version manifest_path; do
+        echo "checking $name@$version (manifest: $manifest_path) ..."
+
+        if ! cargo info "$name@$version" --registry crates-io; then
+          echo "   [ ] NOT PUBLISHED"
+          publish_list="${publish_list}${name}\t${manifest_path}\n"
+        else
+          echo "   [x] ALREADY PUBLISHED"
+        fi
+        echo "---"
+    done <<< "$CRATES_TO_CHECK"
+done
 
 CRATES_TO_PUBLISH_JSON=$(echo -e "$publish_list" | jq -R -s '
     split("\n") |                 # Split the input string by newlines
