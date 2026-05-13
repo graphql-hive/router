@@ -46,7 +46,8 @@ impl CircuitBreakerBuilder {
         self.volume_threshold = threshold;
         self
     }
-    /// After what time the circuit breaker is attempting to retry sending requests in milliseconds.
+    /// How long the circuit breaker waits in the `Open` state before transitioning to `HalfOpen`
+    /// and retrying requests. Accepts a [`Duration`] (e.g. `Duration::from_secs(30)`).
     /// Default: 30s
     pub fn reset_timeout(mut self, timeout: Duration) -> Self {
         self.reset_timeout = timeout;
