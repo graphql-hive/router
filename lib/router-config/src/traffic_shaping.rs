@@ -1,11 +1,8 @@
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::{borrow::Cow, collections::HashMap, fmt, time::Duration};
 
 use http::StatusCode;
-use schemars::{JsonSchema, Schema, SchemaGenerator};
-use serde::{Deserialize, Serialize};
+use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
+use serde::{de, Deserialize, Serialize};
 
 use crate::primitives::{
     file_path::FilePath, http_header::HttpHeaderName, percentage::Percentage,
@@ -382,64 +379,173 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     /// HTTP status codes returned by the subgraph that should be counted as
     /// failures by the circuit breaker.
     ///
-    /// Only responses whose status code is contained in this list will be
-    /// recorded as failures. Responses with any other status code (including
-    /// other 5xx codes) are treated as successes from the circuit breaker's
+    /// Each entry can be either an exact status code (integer or string,
+    /// e.g. `503` or `"503"`) or a wildcard pattern in one of these forms:
+    ///
+    /// - `"5xx"` - matches every 500-599 status (`[1-5]xx` accepted),
+    /// - `"50x"` - matches every 500-509 status (`[1-5][0-9]x` accepted).
+    ///
+    /// Wildcards are case-insensitive (`"5XX"` works too). Patterns can be
+    /// freely mixed with exact codes in the same list, for example:
+    ///
+    /// ```yaml
+    /// error_status_codes: [501, "5xx", "52x"]
+    /// ```
+    ///
+    /// Only responses whose status code matches at least one entry in this
+    /// list are recorded as failures by the circuit breaker. Responses with
+    /// any other status code are treated as successes from the breaker's
     /// point of view.
     ///
-    /// Default: `[503]`
-    #[serde(
-        default,
-        deserialize_with = "deserialize_status_codes",
-        serialize_with = "serialize_status_codes",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(schema_with = "schema_status_codes")]
-    pub error_status_codes: Option<HashSet<StatusCode>>,
+    /// Default: `[500, 502, 503, 504]`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_status_codes: Option<Vec<StatusCodeMatcher>>,
 }
 
-pub fn serialize_status_codes<S>(
-    status_codes: &Option<HashSet<StatusCode>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match status_codes {
-        Some(codes) => {
-            let codes_as_u16: Vec<u16> = codes.iter().map(|code| code.as_u16()).collect();
-            codes_as_u16.serialize(serializer)
+/// Matches an HTTP status code either exactly or via a wildcard pattern.
+///
+/// See [`TrafficShapingSubgraphCircuitBreakerConfig::error_status_codes`] for
+/// the accepted syntax.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StatusCodeMatcher {
+    /// A single exact HTTP status code, e.g. `503`.
+    Exact(StatusCode),
+    /// A `Nxx` wildcard matching every status in the `N00..=N99` range.
+    /// `N` is stored as `1..=5` (e.g. `5` for `"5xx"`).
+    Hundreds(u8),
+    /// A `NNx` wildcard matching every status in the `NN0..=NN9` range.
+    /// The prefix is stored as `10..=59` (e.g. `50` for `"50x"`).
+    Tens(u16),
+}
+
+impl StatusCodeMatcher {
+    /// Returns `true` if the given status code is covered by this matcher.
+    pub fn matches(&self, status: StatusCode) -> bool {
+        match self {
+            StatusCodeMatcher::Exact(code) => *code == status,
+            StatusCodeMatcher::Hundreds(n) => {
+                let lower = u16::from(*n) * 100;
+                let value = status.as_u16();
+                value >= lower && value <= lower + 99
+            }
+            StatusCodeMatcher::Tens(n) => {
+                let lower = *n * 10;
+                let value = status.as_u16();
+                value >= lower && value <= lower + 9
+            }
         }
-        None => serializer.serialize_none(),
+    }
+
+    fn parse_str(input: &str) -> Result<Self, String> {
+        let lower = input.to_ascii_lowercase();
+        if lower.len() == 3 {
+            if lower.ends_with("xx") {
+                let n: u8 = lower[..1].parse().map_err(|_| {
+                    format!("invalid wildcard status code pattern '{input}': expected '[1-5]xx'")
+                })?;
+                if !(1..=5).contains(&n) {
+                    return Err(format!(
+                        "invalid wildcard status code pattern '{input}': hundreds digit must be in 1-5"
+                    ));
+                }
+                return Ok(StatusCodeMatcher::Hundreds(n));
+            }
+            if lower.ends_with('x') {
+                let n: u16 = lower[..2].parse().map_err(|_| {
+                    format!(
+                        "invalid wildcard status code pattern '{input}': expected '[1-5][0-9]x'"
+                    )
+                })?;
+                if !(10..=59).contains(&n) {
+                    return Err(format!(
+                        "invalid wildcard status code pattern '{input}': tens prefix must be in 10-59"
+                    ));
+                }
+                return Ok(StatusCodeMatcher::Tens(n));
+            }
+        }
+
+        let code: u16 = input
+            .parse()
+            .map_err(|_| format!("invalid HTTP status code or wildcard pattern '{input}'"))?;
+        StatusCode::from_u16(code)
+            .map(StatusCodeMatcher::Exact)
+            .map_err(|_| format!("invalid HTTP status code '{input}'"))
     }
 }
 
-pub fn deserialize_status_codes<'de, D>(
-    deserializer: D,
-) -> Result<Option<HashSet<StatusCode>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let opt_vec = Option::<Vec<u16>>::deserialize(deserializer)?;
-    Ok(opt_vec.map(|vec| {
-        vec.into_iter()
-            .filter_map(|code| StatusCode::from_u16(code).ok())
-            .collect()
-    }))
+impl Serialize for StatusCodeMatcher {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            StatusCodeMatcher::Exact(code) => serializer.serialize_u16(code.as_u16()),
+            StatusCodeMatcher::Hundreds(n) => serializer.serialize_str(&format!("{n}xx")),
+            StatusCodeMatcher::Tens(n) => serializer.serialize_str(&format!("{n}x")),
+        }
+    }
 }
 
-pub fn schema_status_codes(_generator: &mut SchemaGenerator) -> Schema {
-    // Schema for `Option<HashSet<StatusCode>>` represented as an array of valid HTTP
-    // status codes (integers in the range 100-599) or null.
-    schemars::json_schema!({
-        "type": ["array", "null"],
-        "items": {
-            "type": "integer",
-            "minimum": 100,
-            "maximum": 599
-        },
-        "uniqueItems": true
-    })
+impl<'de> Deserialize<'de> for StatusCodeMatcher {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> de::Visitor<'de> for Visitor {
+            type Value = StatusCodeMatcher;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str(
+                    "an HTTP status code (integer 100-599) or a wildcard pattern like \"5xx\" or \"50x\"",
+                )
+            }
+
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                let code = u16::try_from(value)
+                    .map_err(|_| E::custom(format!("invalid HTTP status code: {value}")))?;
+                StatusCode::from_u16(code)
+                    .map(StatusCodeMatcher::Exact)
+                    .map_err(|_| E::custom(format!("invalid HTTP status code: {value}")))
+            }
+
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                let value: u64 = value
+                    .try_into()
+                    .map_err(|_| E::custom(format!("invalid HTTP status code: {value}")))?;
+                self.visit_u64(value)
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                StatusCodeMatcher::parse_str(value).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl JsonSchema for StatusCodeMatcher {
+    fn schema_name() -> Cow<'static, str> {
+        "StatusCodeMatcher".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "description": "Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) or a wildcard pattern: '[1-5]xx' (e.g. '5xx') or '[1-5][0-9]x' (e.g. '50x'). Case-insensitive.",
+            "oneOf": [
+                {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599
+                },
+                {
+                    "type": "string",
+                    "pattern": "^(?:[1-5][0-9][0-9]|[1-5][xX][xX]|[1-5][0-9][xX])$"
+                }
+            ]
+        })
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

@@ -1523,8 +1523,8 @@ mod circuit_breaker_e2e_tests {
     }
 
     /// 503 subgraph responses that carry a valid GraphQL body must still count
-    /// as failures for the circuit breaker (503 is the default tracked status
-    /// code). The first few requests should receive the upstream body, then
+    /// as failures for the circuit breaker (503 is among the default tracked
+    /// status codes). The first few requests should receive the upstream body, then
     /// the breaker must open and short-circuit subsequent requests with
     /// `SUBGRAPH_CIRCUIT_BREAKER_REJECTED`.
     #[ntex::test]
@@ -1628,21 +1628,22 @@ mod circuit_breaker_e2e_tests {
         );
     }
 
-    /// By default, only HTTP 503 responses count as failures for the circuit
-    /// breaker. Other 5xx codes (like 500) must NOT trip the breaker, so the
-    /// subgraph keeps being called for every request.
+    /// By default the circuit breaker only tracks the canonical infrastructure
+    /// 5xx codes (`500`, `502`, `503`, `504`). Other 5xx statuses (e.g. `505`)
+    /// must NOT count as failures, so the subgraph keeps being called for
+    /// every request.
     #[ntex::test]
-    async fn should_not_open_circuit_breaker_on_500_by_default() {
+    async fn should_not_open_circuit_breaker_for_status_outside_default_set() {
         let mut accounts_server = mockito::Server::new_async().await;
         let host = accounts_server.host_with_port();
 
-        // Subgraph returns a valid GraphQL body alongside the 500 status,
+        // Subgraph returns a valid GraphQL body alongside the 505 status,
         // so the executor surfaces it as a successful response (with the
         // upstream status). Without a body the executor would return an
         // error which the breaker counts regardless of status code.
         let error_mock = accounts_server
             .mock("POST", "/accounts")
-            .with_status(500)
+            .with_status(505)
             .with_header("content-type", "application/json")
             .with_body(r#"{"data":null,"errors":[{"message":"oops"}]}"#)
             .expect(6)
@@ -1680,7 +1681,7 @@ mod circuit_breaker_e2e_tests {
             let body = res.json_body_string_pretty().await;
             assert!(
                 !body.contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
-                "breaker must not open for 500 by default, got: {body}"
+                "breaker must not open for status codes outside the default set, got: {body}"
             );
         }
 
@@ -1755,6 +1756,237 @@ mod circuit_breaker_e2e_tests {
     }
   ]
 }"###
+        );
+
+        error_mock.assert_async().await;
+    }
+
+    /// A `"5xx"` wildcard entry in `error_status_codes` must treat every
+    /// `500..=599` response as a failure, without requiring users to
+    /// enumerate every status code by hand.
+    #[ntex::test]
+    async fn should_trip_circuit_breaker_on_5xx_wildcard_status_code() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        // 599 is outside the default-tracked set, so this trip can only
+        // happen because the `"5xx"` wildcard expanded to cover it.
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(599)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":null,"errors":[{"message":"server error"}]}"#)
+            .expect(4)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 30s
+                            error_status_codes: ["5xx"]
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=4 {
+            let _ = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+        }
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        let body = res.json_body_string_pretty().await;
+        assert!(
+            body.contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+            "expected the breaker to trip after 4x 599 with [\"5xx\"], got: {body}"
+        );
+
+        error_mock.assert_async().await;
+    }
+
+    /// A `"50x"` wildcard entry must cover the `500..=509` range. 504 is
+    /// inside that range, so 4 failing responses must be enough to trip
+    /// the breaker.
+    #[ntex::test]
+    async fn should_trip_circuit_breaker_on_50x_wildcard_status_code() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(504)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":null,"errors":[{"message":"gateway timeout"}]}"#)
+            .expect(4)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 30s
+                            error_status_codes: ["50x"]
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=4 {
+            let _ = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+        }
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        let body = res.json_body_string_pretty().await;
+        assert!(
+            body.contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+            "expected the breaker to trip after 4x 504 with [\"50x\"], got: {body}"
+        );
+
+        error_mock.assert_async().await;
+    }
+
+    /// Status codes that fall outside the wildcard's range must not be
+    /// counted as failures. 510 is outside `"50x"` (500..=509), so 6
+    /// failing responses in a row must keep the breaker closed.
+    #[ntex::test]
+    async fn should_not_trip_circuit_breaker_for_status_code_outside_wildcard_range() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(510)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":null,"errors":[{"message":"not extended"}]}"#)
+            .expect(6)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 30s
+                            error_status_codes: ["50x"]
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=6 {
+            let res = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+            let body = res.json_body_string_pretty().await;
+            assert!(
+                !body.contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+                "510 must not match the \"50x\" wildcard, so the breaker must stay closed, got: {body}"
+            );
+        }
+
+        error_mock.assert_async().await;
+    }
+
+    /// Integer codes and wildcard patterns must be acceptable side by side
+    /// in the same `error_status_codes` list. With `[501, "52x"]`, 520 is
+    /// only matched by the wildcard, so seeing the breaker trip on 520
+    /// proves that wildcards still apply when mixed with explicit codes.
+    #[ntex::test]
+    async fn should_accept_mixed_integer_and_wildcard_status_codes() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(520)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":null,"errors":[{"message":"cloudflare unknown"}]}"#)
+            .expect(4)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 30s
+                            error_status_codes: [501, "52x"]
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=4 {
+            let _ = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+        }
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        let body = res.json_body_string_pretty().await;
+        assert!(
+            body.contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+            "expected the breaker to trip after 4x 520 with [501, \"52x\"], got: {body}"
         );
 
         error_mock.assert_async().await;
@@ -2125,6 +2357,15 @@ mod circuit_breaker_e2e_tests {
                             error_threshold: 50%
                             volume_threshold: 3
                             reset_timeout: 30s
+                    subgraphs:
+                        # We rely on the products subgraph keeping on serving
+                        # 500s so the entity-resolution errors surface in the
+                        # subscription stream. Disabling the breaker for it
+                        # isolates the test to the `reviews` breaker, which
+                        # is what we actually care about here.
+                        products:
+                            circuit_breaker:
+                                enabled: false
                 "#
             ))
             .build()

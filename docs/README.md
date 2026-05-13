@@ -3460,7 +3460,7 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**|`boolean`, `null`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/><br/>When unset on a subgraph-level configuration, the value falls back<br/>to the value defined in the global (`all`) circuit breaker<br/>configuration.<br/>||
-|[**error\_status\_codes**](#traffic_shapingallcircuit_breakererror_status_codes)|`integer[]`|HTTP status codes returned by the subgraph that should be counted as<br/>||
+|[**error\_status\_codes**](#traffic_shapingallcircuit_breakererror_status_codes)|`array`|HTTP status codes returned by the subgraph that should be counted as<br/>||
 |**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
 |**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Count of requests before starting evaluating.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
@@ -3472,20 +3472,43 @@ The circuit breaker will be triggered based on the error rate of requests to the
 HTTP status codes returned by the subgraph that should be counted as
 failures by the circuit breaker.
 
-Only responses whose status code is contained in this list will be
-recorded as failures. Responses with any other status code (including
-other 5xx codes) are treated as successes from the circuit breaker's
+Each entry can be either an exact status code (integer or string,
+e.g. `503` or `"503"`) or a wildcard pattern in one of these forms:
+
+- `"5xx"` - matches every 500-599 status (`[1-5]xx` accepted),
+- `"50x"` - matches every 500-509 status (`[1-5][0-9]x` accepted).
+
+Wildcards are case-insensitive (`"5XX"` works too). Patterns can be
+freely mixed with exact codes in the same list, for example:
+
+```yaml
+error_status_codes: [501, "5xx", "52x"]
+```
+
+Only responses whose status code matches at least one entry in this
+list are recorded as failures by the circuit breaker. Responses with
+any other status code are treated as successes from the breaker's
 point of view.
 
-Default: `[503]`
+Default: `[500, 502, 503, 504]`
 
 
 **Items**
 
-**Item Type:** `integer`  
-**Item Minimum:** `100`  
-**Item Maximum:** `599`  
-**Unique Items:** yes  
+
+Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) or a wildcard pattern: '[1-5]xx' (e.g. '5xx') or '[1-5][0-9]x' (e.g. '50x'). Case-insensitive.
+
+   
+**Option 1 (alternative):** 
+**Type:** `integer`  
+**Minimum:** `100`  
+**Maximum:** `599`  
+
+   
+**Option 2 (alternative):** 
+**Type:** `string`  
+**Pattern:** `^(?:[1-5][0-9][0-9]\|[1-5][xX][xX]\|[1-5][0-9][xX])$`  
+
 <a name="traffic_shapingalltls"></a>
 #### traffic\_shaping\.all\.tls: object,null
 
@@ -3618,7 +3641,7 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**|`boolean`, `null`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/><br/>When unset on a subgraph-level configuration, the value falls back<br/>to the value defined in the global (`all`) circuit breaker<br/>configuration.<br/>||
-|[**error\_status\_codes**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breakererror_status_codes)|`integer[]`|HTTP status codes returned by the subgraph that should be counted as<br/>||
+|[**error\_status\_codes**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breakererror_status_codes)|`array`|HTTP status codes returned by the subgraph that should be counted as<br/>||
 |**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
 |**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Count of requests before starting evaluating.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
@@ -3630,20 +3653,43 @@ The circuit breaker will be triggered based on the error rate of requests to the
 HTTP status codes returned by the subgraph that should be counted as
 failures by the circuit breaker.
 
-Only responses whose status code is contained in this list will be
-recorded as failures. Responses with any other status code (including
-other 5xx codes) are treated as successes from the circuit breaker's
+Each entry can be either an exact status code (integer or string,
+e.g. `503` or `"503"`) or a wildcard pattern in one of these forms:
+
+- `"5xx"` - matches every 500-599 status (`[1-5]xx` accepted),
+- `"50x"` - matches every 500-509 status (`[1-5][0-9]x` accepted).
+
+Wildcards are case-insensitive (`"5XX"` works too). Patterns can be
+freely mixed with exact codes in the same list, for example:
+
+```yaml
+error_status_codes: [501, "5xx", "52x"]
+```
+
+Only responses whose status code matches at least one entry in this
+list are recorded as failures by the circuit breaker. Responses with
+any other status code are treated as successes from the breaker's
 point of view.
 
-Default: `[503]`
+Default: `[500, 502, 503, 504]`
 
 
 **Items**
 
-**Item Type:** `integer`  
-**Item Minimum:** `100`  
-**Item Maximum:** `599`  
-**Unique Items:** yes  
+
+Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) or a wildcard pattern: '[1-5]xx' (e.g. '5xx') or '[1-5][0-9]x' (e.g. '50x'). Case-insensitive.
+
+   
+**Option 1 (alternative):** 
+**Type:** `integer`  
+**Minimum:** `100`  
+**Maximum:** `599`  
+
+   
+**Option 2 (alternative):** 
+**Type:** `string`  
+**Pattern:** `^(?:[1-5][0-9][0-9]\|[1-5][xX][xX]\|[1-5][0-9][xX])$`  
+
 <a name="traffic_shapingsubgraphsadditionalpropertiestls"></a>
 ##### traffic\_shaping\.subgraphs\.additionalProperties\.tls: object,null
 

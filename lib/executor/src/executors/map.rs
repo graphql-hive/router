@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     sync::Arc,
     time::Duration,
 };
@@ -8,8 +8,10 @@ use dashmap::DashMap;
 use futures::{stream::BoxStream, FutureExt};
 use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerError};
 use hive_router_config::{
-    override_subgraph_urls::UrlOrExpression, subscriptions::SubscriptionProtocol,
-    traffic_shaping::DurationOrExpression, HiveRouterConfig,
+    override_subgraph_urls::UrlOrExpression,
+    subscriptions::SubscriptionProtocol,
+    traffic_shaping::{DurationOrExpression, StatusCodeMatcher},
+    HiveRouterConfig,
 };
 use hive_router_internal::expressions::{
     vrl::{core::Value as VrlValue, prelude::Function},
@@ -58,19 +60,33 @@ type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
 #[derive(Clone)]
 struct SubgraphCircuitBreaker {
     recloser: AsyncRecloser,
-    /// HTTP status codes that should be counted as failures by the
-    /// circuit breaker. Wrapped in `Arc` so the value is cheap to clone
+    /// HTTP status code matchers that should be counted as failures by the
+    /// circuit breaker. A response counts as a failure if its status code
+    /// matches any entry. Wrapped in `Arc` so the value is cheap to clone
     /// out of the `DashMap`.
-    error_status_codes: Arc<HashSet<StatusCode>>,
+    error_status_codes: Arc<Vec<StatusCodeMatcher>>,
 }
 type CircuitBreakersBySubgraph = DashMap<SubgraphName, SubgraphCircuitBreaker>;
 
 lazy_static::lazy_static! {
-    static ref DEFAULT_CIRCUIT_BREAKER_ERROR_STATUS_CODES: Arc<HashSet<StatusCode>> = Arc::new({
-        let mut set = HashSet::new();
-        set.insert(StatusCode::SERVICE_UNAVAILABLE);
-        set
-    });
+    /// Default HTTP statuses tracked as failures by the circuit breaker when
+    /// the user does not configure `error_status_codes` explicitly. These
+    /// cover the most common "infrastructure" 5xx codes that indicate the
+    /// subgraph cannot serve the request right now (as opposed to a
+    /// resolver-level error returned with a 200/2xx response):
+    ///
+    /// - 500 Internal Server Error
+    /// - 502 Bad Gateway
+    /// - 503 Service Unavailable
+    /// - 504 Gateway Timeout
+    static ref DEFAULT_CIRCUIT_BREAKER_ERROR_STATUS_CODES: Arc<Vec<StatusCodeMatcher>> = Arc::new(
+        vec![
+            StatusCodeMatcher::Exact(StatusCode::INTERNAL_SERVER_ERROR),
+            StatusCodeMatcher::Exact(StatusCode::BAD_GATEWAY),
+            StatusCodeMatcher::Exact(StatusCode::SERVICE_UNAVAILABLE),
+            StatusCodeMatcher::Exact(StatusCode::GATEWAY_TIMEOUT),
+        ],
+    );
 }
 
 struct ResolvedSubgraphConfig<'a> {
@@ -250,13 +266,13 @@ impl SubgraphExecutorMap {
                             error_status_codes,
                         } = circuit_breaker;
                         // Treat configured status codes as errors so the
-                        // circuit breaker can track them. Default: only 503.
+                        // circuit breaker can track them. Default: 500, 502,
+                        // 503 and 504.
                         let exec_fut = exec_fut.map(move |exec_res| match exec_res {
                             Ok(succ_res) => {
-                                if succ_res
-                                    .status
-                                    .is_some_and(|status| error_status_codes.contains(&status))
-                                {
+                                if succ_res.status.is_some_and(|status| {
+                                    error_status_codes.iter().any(|m| m.matches(status))
+                                }) {
                                     // Save the original response in case the circuit breaker treats it as an error and returns it through the error variant
                                     Err(SubgraphExecutorError::InternalServerError(succ_res.into()))
                                 } else {
@@ -812,13 +828,7 @@ impl SubgraphExecutorMap {
             let error_status_codes = subgraph_circuit_breaker_cfg
                 .and_then(|c| c.error_status_codes.as_ref())
                 .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.error_status_codes.as_ref()))
-                .map(|codes| {
-                    codes
-                        .iter()
-                        .copied()
-                        .collect::<HashSet<StatusCode>>()
-                        .into()
-                })
+                .map(|codes| Arc::new(codes.clone()))
                 .unwrap_or_else(|| DEFAULT_CIRCUIT_BREAKER_ERROR_STATUS_CODES.clone());
 
             self.circuit_breakers_by_subgraph.insert(
