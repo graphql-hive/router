@@ -265,27 +265,35 @@ impl SubgraphExecutorMap {
                             }
                             Err(err) => Err(err),
                         });
+                        let circuit_breaker_metrics =
+                            &self.telemetry_context.metrics.circuit_breaker;
                         recloser
                             .call(exec_fut)
                             .map(|exec_res| match exec_res {
-                                Err(recloser::Error::Inner(e)) => match e {
-                                    // If it's an error we wrapped above, unwrap it and return the original successful response instead of treating it as a failure for the caller
-                                    // This allows the circuit breaker to track 5xx responses without impacting the actual response returned to the client,
-                                    // which is important for use cases where clients want to handle 5xx responses differently but still want the circuit breaker to be aware of them.
-                                    SubgraphExecutorError::InternalServerError(succ_ress) => {
-                                        Ok(*succ_ress)
+                                Err(recloser::Error::Inner(e)) => {
+                                    // The call was permitted by the breaker but the
+                                    // inner future returned an error. The breaker
+                                    // counts it as a failure regardless of whether
+                                    // we surface the original response or not.
+                                    circuit_breaker_metrics.record_failure(subgraph_name);
+                                    match e {
+                                        // If it's an error we wrapped above, unwrap it and return the original successful response instead of treating it as a failure for the caller
+                                        // This allows the circuit breaker to track 5xx responses without impacting the actual response returned to the client,
+                                        // which is important for use cases where clients want to handle 5xx responses differently but still want the circuit breaker to be aware of them.
+                                        SubgraphExecutorError::InternalServerError(succ_ress) => {
+                                            Ok(*succ_ress)
+                                        }
+                                        other_err => Err(other_err),
                                     }
-                                    other_err => Err(other_err),
-                                },
+                                }
                                 Err(recloser::Error::Rejected) => {
-                                    // Record circuit breaker rejection in metrics
-                                    self.telemetry_context
-                                        .metrics
-                                        .circuit_breaker
-                                        .record_rejected_request(subgraph_name);
+                                    circuit_breaker_metrics.record_short_circuit(subgraph_name);
                                     Err(SubgraphExecutorError::CircuitBreakerRejected)
                                 }
-                                Ok(res) => Ok(res),
+                                Ok(res) => {
+                                    circuit_breaker_metrics.record_success(subgraph_name);
+                                    Ok(res)
+                                }
                             })
                             .await?
                     }
@@ -338,7 +346,42 @@ impl SubgraphExecutorMap {
 
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
 
-        executor.subscribe(execution_request, timeout).await
+        let subscribe_fut = executor.subscribe(execution_request, timeout);
+
+        // The circuit breaker only guards the establishment of the
+        // subscription (the first `Result` returned by `subscribe`). Errors
+        // emitted by the returned stream are intentionally ignored because
+        // once the subscription is established we already know the subgraph
+        // is reachable, and treating in-stream errors as failures would
+        // incorrectly trigger the breaker.
+        let circuit_breaker = self
+            .circuit_breakers_by_subgraph
+            .get(subgraph_name)
+            .map(|r| r.value().clone());
+
+        match circuit_breaker {
+            Some(SubgraphCircuitBreaker { recloser, .. }) => {
+                let circuit_breaker_metrics = &self.telemetry_context.metrics.circuit_breaker;
+                recloser
+                    .call(subscribe_fut)
+                    .map(|res| match res {
+                        Ok(stream) => {
+                            circuit_breaker_metrics.record_success(subgraph_name);
+                            Ok(stream)
+                        }
+                        Err(recloser::Error::Inner(e)) => {
+                            circuit_breaker_metrics.record_failure(subgraph_name);
+                            Err(e)
+                        }
+                        Err(recloser::Error::Rejected) => {
+                            circuit_breaker_metrics.record_short_circuit(subgraph_name);
+                            Err(SubgraphExecutorError::CircuitBreakerRejected)
+                        }
+                    })
+                    .await
+            }
+            None => subscribe_fut.await,
+        }
     }
 
     fn resolve_subgraph_timeout(
@@ -785,6 +828,11 @@ impl SubgraphExecutorMap {
                     error_status_codes,
                 },
             );
+
+            self.telemetry_context
+                .metrics
+                .circuit_breaker
+                .register_subgraph(subgraph_name);
         }
 
         Ok(())
