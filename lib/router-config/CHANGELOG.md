@@ -66,6 +66,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.34 (2026-05-12)
+
+### Features
+
+#### Allow overriding number of HTTP server workers
+
+Adds a new `http.workers` configuration option (and `ROUTER_HTTP_WORKERS` environment variable) to control the number of HTTP server worker threads.
+
+By default, the router spawns one worker per physical CPU core. In containerized environments such as Kubernetes the number of physical cores reported by the OS is often higher than the CPU limit assigned to the container, which leads to oversubscribed worker threads. Set `http.workers` (or `ROUTER_HTTP_WORKERS`) to match the container's CPU limit to avoid this.
+
+```yaml
+http:
+  workers: 4
+```
+
+#### Add `cors.preflight_response_headers` to attach headers to CORS preflight (OPTIONS) responses
+
+Adds a new optional `preflight_response_headers` map to the `cors` configuration block, and to each entry under `cors.policies`. The map allows attaching arbitrary headers (e.g. `Cache-Control`, `Server-Timing`, custom `X-*` headers) to CORS preflight (OPTIONS) responses.
+
+This is useful because the `headers` configuration block does not affect preflight responses (they are returned early by the CORS layer), so there was previously no way to control headers like `Cache-Control` for `OPTIONS` requests.
+
+Example:
+
+```yaml
+cors:
+  enabled: true
+  allow_any_origin: true
+  max_age: 86400
+  preflight_response_headers:
+    Cache-Control: "public, max-age=86400"
+```
+
 ## 0.0.33 (2026-05-05)
 
 ### Features
