@@ -152,8 +152,8 @@ impl SubgraphExecutorMap {
 
         // The `all` expression is configured once but evaluated against each subgraph.
         // It only applies as a fallback when there is no per-subgraph override.
-        let all_url_config = config.override_subgraph_urls.get_all_url().cloned();
-        if let Some(UrlOrExpression::Expression { expression }) = &all_url_config {
+        let all_url_config = config.override_subgraph_urls.get_all_url();
+        if let Some(UrlOrExpression::Expression { expression }) = all_url_config {
             subgraph_executor_map.register_all_endpoint_expression(expression)?;
         }
 
@@ -181,7 +181,7 @@ impl SubgraphExecutorMap {
                         .register_endpoint_expression(subgraph_name, expression)?;
                     original_endpoint_str
                 }
-                None => match &all_url_config {
+                None => match all_url_config {
                     // A static `all` URL is unusual but supported: it points every
                     // subgraph at the same endpoint.
                     Some(UrlOrExpression::Url(url)) => url,
@@ -353,10 +353,8 @@ impl SubgraphExecutorMap {
                     .into(),
             );
 
-            let subgraph_value = VrlValue::Object(BTreeMap::from([(
-                "name".into(),
-                VrlValue::Bytes(subgraph_name.to_string().into()),
-            )]));
+            let subgraph_value =
+                VrlValue::Object(BTreeMap::from([("name".into(), subgraph_name.into())]));
 
             let value = VrlValue::Object(BTreeMap::from([
                 ("request".into(), client_request.into()),

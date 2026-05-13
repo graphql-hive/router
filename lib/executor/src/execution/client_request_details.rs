@@ -1,6 +1,5 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use bytes::Bytes;
 use hive_router_internal::expressions::{vrl::core::Value, ToVrlValue};
 use http::{Method, Uri};
 use ntex::{http::HeaderMap as NtexHeaderMap, router::Path};
@@ -168,7 +167,7 @@ fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Size
         details
             .url_matches()
             .iter()
-            .map(|(k, v)| (k.into(), Value::Bytes(Bytes::from(v.to_string()))))
+            .map(|(k, v)| (k.into(), v.into()))
             .collect(),
     );
 
@@ -188,7 +187,7 @@ fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Size
             scopes,
         } => Value::Object(BTreeMap::from([
             ("authenticated".into(), Value::Boolean(true)),
-            ("token".into(), token.to_string().into()),
+            ("token".into(), token.as_str().into()),
             (
                 "prefix".into(),
                 prefix.as_deref().unwrap_or_default().into(),
@@ -197,12 +196,9 @@ fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Size
             (
                 "scopes".into(),
                 match scopes {
-                    Some(scopes) => Value::Array(
-                        scopes
-                            .iter()
-                            .map(|v| Value::Bytes(Bytes::from(v.clone())))
-                            .collect(),
-                    ),
+                    Some(scopes) => {
+                        Value::Array(scopes.iter().map(|v| v.as_str().into()).collect())
+                    }
                     None => Value::Array(vec![]),
                 },
             ),
