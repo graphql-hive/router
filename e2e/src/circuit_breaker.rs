@@ -2431,4 +2431,191 @@ mod circuit_breaker_e2e_tests {
             "reviews breaker must remain closed after post-establishment errors, got {state}"
         );
     }
+
+    /// `half_open_attempts` controls how many probe requests fill the
+    /// breaker's rolling sample after `reset_timeout` elapses. The probe
+    /// that follows the filled sample is the one whose result decides
+    /// whether to transition back to `Closed` or `Open`. With
+    /// `half_open_attempts: 2` three probes pass through; if all three
+    /// fail the breaker must transition back to `Open` and reject the
+    /// very next request.
+    #[ntex::test]
+    async fn should_reopen_circuit_breaker_when_half_open_probes_fail() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        // 4 requests are required to trip the breaker (volume_threshold: 3,
+        // 4th call rolls the buffer past the threshold), then 3 probe
+        // requests during half-open (half_open_attempts: 2 fills the
+        // sample, the 3rd probe triggers the transition). We expect
+        // exactly 7 calls.
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(503)
+            .expect(7)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 1s
+                            half_open_attempts: 2
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=4 {
+            let _ = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+        }
+
+        let rejected = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert!(
+            rejected
+                .json_body_string_pretty()
+                .await
+                .contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+            "breaker must be open after volume_threshold failing requests"
+        );
+
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+
+        for _ in 1..=3 {
+            let res = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+            let body = res.json_body_string_pretty().await;
+            assert!(
+                !body.contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+                "half-open probes must reach the failing subgraph, got: {body}"
+            );
+        }
+
+        let reopened = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        let body = reopened.json_body_string_pretty().await;
+        assert!(
+            body.contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+            "after the half-open sample fills with failures the breaker must transition back to open, got: {body}"
+        );
+
+        error_mock.assert_async().await;
+    }
+
+    /// Mirror test: with `half_open_attempts: 2` three successful probes
+    /// (two filling the sample plus a third that triggers evaluation)
+    /// must transition the breaker from `HalfOpen` back to `Closed`,
+    /// restoring normal traffic to the recovered subgraph.
+    #[ntex::test]
+    async fn should_close_circuit_breaker_when_half_open_probes_succeed() {
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        let error_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(503)
+            .expect(4)
+            .create_async()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        circuit_breaker:
+                            enabled: true
+                            error_threshold: 50%
+                            volume_threshold: 3
+                            reset_timeout: 1s
+                            half_open_attempts: 2
+                override_subgraph_urls:
+                    accounts:
+                        url: "http://{host}/accounts"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        for _ in 1..=4 {
+            let _ = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+        }
+
+        let rejected = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert!(
+            rejected
+                .json_body_string_pretty()
+                .await
+                .contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+            "breaker must be open after volume_threshold failing requests"
+        );
+
+        error_mock.assert_async().await;
+
+        let success_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(200)
+            .with_body(r#"{"data":{"users":[{"id":"1"}]}}"#)
+            .expect_at_least(4)
+            .create_async()
+            .await;
+
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+
+        for _ in 1..=3 {
+            let res = router
+                .send_graphql_request("{ users { id } }", None, None)
+                .await;
+            let body = res.json_body_string_pretty().await;
+            assert!(
+                !body.contains("SUBGRAPH_CIRCUIT_BREAKER_REJECTED"),
+                "half-open probes must reach the recovered subgraph, got: {body}"
+            );
+        }
+
+        let closed = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        insta::assert_snapshot!(
+            closed.json_body_string_pretty().await,
+            @r###"{
+  "data": {
+    "users": [
+      {
+        "id": "1"
+      }
+    ]
+  }
+}"###
+        );
+
+        success_mock.assert_async().await;
+    }
 }

@@ -821,6 +821,13 @@ impl SubgraphExecutorMap {
                 builder = builder.reset_timeout(reset_timeout);
             }
 
+            if let Some(half_open_attempts) = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.half_open_attempts)
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.half_open_attempts))
+            {
+                builder = builder.half_open_attempts(half_open_attempts);
+            }
+
             let recloser = builder.build_async().map_err(|e| {
                 SubgraphExecutorError::CircuitBreakerCreationError(e, subgraph_name.to_string())
             })?;

@@ -363,7 +363,12 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     #[serde(default)]
     #[schemars(with = "String")]
     pub error_threshold: Option<Percentage>,
-    /// Count of requests before starting evaluating.
+    /// Size of the rolling sample used to decide whether the breaker
+    /// should open while closed. The breaker fills this sample with the
+    /// outcomes of the last `volume_threshold` requests; the next request
+    /// after the sample is full is the one whose result is evaluated
+    /// against `error_threshold`. In practice the breaker can trip only
+    /// after at least `volume_threshold + 1` requests have been observed.
     /// Default: 5
     #[serde(default)]
     pub volume_threshold: Option<usize>,
@@ -376,6 +381,22 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     )]
     #[schemars(with = "String")]
     pub reset_timeout: Option<Duration>,
+    /// Size of the rolling sample of probe requests collected while the
+    /// breaker is in the half-open state after `reset_timeout` elapses.
+    /// The breaker fills this sample first; the next probe after the
+    /// sample is full is the one whose result is evaluated against
+    /// `error_threshold` to decide whether to transition back to `closed`
+    /// (resuming normal traffic) or to `open` (waiting for another
+    /// `reset_timeout` window). In practice at least
+    /// `half_open_attempts + 1` probes pass through before the breaker
+    /// can transition.
+    ///
+    /// Lower values make recovery faster but more aggressive; higher
+    /// values gather more samples before re-closing the circuit.
+    ///
+    /// Default: 10
+    #[serde(default)]
+    pub half_open_attempts: Option<usize>,
     /// HTTP status codes returned by the subgraph that should be counted as
     /// failures by the circuit breaker.
     ///
