@@ -1,6 +1,8 @@
 ---
 hive-router-config: minor
 hive-router: minor
+hive-router-internal: patch
+hive-router-plan-executor: patch
 ---
 
 # Add `cors.preflight_response_headers` to attach headers to CORS preflight (OPTIONS) responses
