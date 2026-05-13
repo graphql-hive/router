@@ -50,6 +50,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
+        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         debug!(
             "establishing WebSocket connection to subgraph {} at {}",
             subgraph_name, endpoint
@@ -93,7 +94,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     subgraph_name, endpoint
                 );
 
-                let mut stream = client.subscribe(subscribe_payload).await;
+                let mut stream = client
+                    .subscribe(subscribe_payload, custom_scalar_paths)
+                    .await;
 
                 match stream.next().await {
                     Some(response) => Ok(response),
@@ -129,6 +132,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
+        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
 
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
 
@@ -170,7 +174,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 subgraph_name, endpoint
             );
 
-            let mut stream = client.subscribe(subscribe_payload).await;
+            let mut stream = client
+                .subscribe(subscribe_payload, custom_scalar_paths)
+                .await;
 
             while let Some(response) = stream.next().await {
                 match tx.try_send(Ok(response)) {

@@ -5,7 +5,7 @@ use futures::stream::{self, Stream};
 use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref REVIEWS: Vec<Review> = vec![
+    pub static ref REVIEWS: Vec<Review> = vec![
         Review {
             id: ID("1".to_string()),
             body: Some("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.".to_string()),
@@ -110,17 +110,17 @@ impl Review {
 #[graphql(extends)]
 pub struct User {
     #[graphql(external)]
-    id: ID,
+    pub(crate) id: ID,
     #[graphql(external)]
-    username: Option<String>,
-    reviews: Option<Vec<Option<Review>>>,
+    pub(crate) username: Option<String>,
+    pub(crate) reviews: Option<Vec<Option<Review>>>,
 }
 
 #[derive(SimpleObject, Clone)]
 #[graphql(extends, complex)]
 pub struct Product {
     #[graphql(external)]
-    upc: String,
+    pub(crate) upc: String,
 }
 
 #[ComplexObject]
@@ -147,8 +147,8 @@ pub struct Query;
 #[Object(extends = true)]
 impl Query {
     #[graphql(entity)]
-    async fn find_review_by_id(&self, id: ID) -> Review {
-        REVIEWS.iter().find(|r| r.id == id).unwrap().clone()
+    async fn find_review_by_id(&self, id: ID) -> Option<Review> {
+        REVIEWS.iter().find(|r| r.id == id).cloned()
     }
 
     #[graphql(entity)]

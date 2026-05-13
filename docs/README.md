@@ -48,6 +48,8 @@ cors:
     - origins:
         - https://example.com
         - https://another.com
+  preflight_response_headers:
+    cache-control: public, max-age=86400
 csrf:
   enabled: true
   required_headers:
@@ -579,6 +581,7 @@ Configuration for CORS (Cross-Origin Resource Sharing).
 |**max\_age**|`integer`, `null`|The maximum time (in seconds) that the results of a preflight request can be cached by the client.<br/>This will set the `Access-Control-Max-Age` header.<br/>If not set, the browser will not cache the preflight response.<br/>Example: 86400 (24 hours)<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
 |[**methods**](#corsmethods)|`string[]`|List of methods that the server allows for cross-origin requests.<br/>|no|
 |[**policies**](#corspolicies)|`object[]`|List of CORS policies. The first policy that matches the request origin will be applied.<br/>|yes|
+|[**preflight\_response\_headers**](#corspreflight_response_headers)|`object`|Additional headers to set on CORS preflight (OPTIONS) responses.<br/>|no|
 
 **Example**
 
@@ -595,6 +598,8 @@ policies:
   - origins:
       - https://example.com
       - https://another.com
+preflight_response_headers:
+  cache-control: public, max-age=86400
 
 ```
 
@@ -679,10 +684,12 @@ Here's a breakdown of how inheritance works for each field:
 - `allow_headers` and `expose_headers`: A policy's behavior for these header lists depends on the value provided:
   - If a list with specific headers is provided (e.g., `["Content-Type"]`), it completely overrides the global list.
   - If an empty list (`[]`) is provided, the policy will inherit the headers from the global configuration.
-- `methods`: This setting has three distinct states for inheritance:
-  - If `methods` is not specified at all (`null`), the policy inherits the global methods.
-  - If an empty list (`[]`) is provided, no methods are allowed for that policy.
+- `methods`: A policy's behavior for this header list depends on the value provided:
+  - If `methods` is not specified at all (`null`) or set to an empty list (`[]`),
+    the policy inherits the methods from the global configuration.
   - If the list contains specific methods (e.g., `["GET", "POST"]`), only those methods are used, overriding the global list.
+- `preflight_response_headers`: Per-policy entries are merged on top of the global map.
+  Keys defined in the policy override the global ones, while keys defined only globally are still applied.
 
 
 **Items**
@@ -698,11 +705,12 @@ Here's a breakdown of how inheritance works for each field:
 |**max\_age**|`integer`, `null`|The maximum time (in seconds) that the results of a preflight request can be cached by the client.<br/>This will set the `Access-Control-Max-Age` header.<br/>If not set, the browser will not cache the preflight response.<br/>Example: 86400 (24 hours)<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>||
 |[**methods**](#corspoliciesmethods)|`string[]`|List of methods that the server allows for cross-origin requests.<br/>||
 |[**origins**](#corspoliciesorigins)|`string[]`|List of allowed origins. If `allow_any_origin` is true, this field is ignored.<br/>||
+|[**preflight\_response\_headers**](#corspoliciespreflight_response_headers)|`object`|Additional headers to set on CORS preflight (OPTIONS) responses for this policy.<br/>||
 
 **Example**
 
 ```yaml
-- {}
+- preflight_response_headers: {}
 
 ```
 
@@ -766,6 +774,53 @@ Example: "https://example.com", "http://localhost:3000"
 **Items**
 
 **Item Type:** `string`  
+<a name="corspoliciespreflight_response_headers"></a>
+#### cors\.policies\[\]\.preflight\_response\_headers: object
+
+Additional headers to set on CORS preflight (OPTIONS) responses for this policy.
+
+Entries are merged on top of the global `cors.preflight_response_headers` map.
+Keys defined here override the global value for the same key, while keys defined only
+globally still apply.
+
+See `cors.preflight_response_headers` for details and caveats.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**|`string`|||
+
+<a name="corspreflight_response_headers"></a>
+### cors\.preflight\_response\_headers: object
+
+Additional headers to set on CORS preflight (OPTIONS) responses.
+
+The `headers` configuration block does not affect preflight responses
+because they are returned early by the CORS layer. This map provides a
+first-class way to attach arbitrary headers (e.g. `Cache-Control`,
+`Server-Timing`, `X-*` custom headers) to those preflight responses.
+
+Keys must be valid HTTP header names (RFC 7230) and values must be
+valid HTTP header values.
+
+The headers provided here are applied after the CORS engine's managed headers
+(`Access-Control-*`, `Vary`) and therefore override them when keys collide.
+
+Example:
+```yaml
+preflight_response_headers:
+  Cache-Control: "public, max-age=86400"
+```
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**|`string`|||
+
 <a name="csrf"></a>
 ## csrf: object
 
@@ -1782,6 +1837,7 @@ Configuration for the HTTP server/listener.
 |**graphql\_endpoint**|`string`|The endpoint to serve GraphQL requests. By default, `/graphql` is used.<br/>Default: `"/graphql"`<br/>||
 |**host**|`string`|The host address to bind the HTTP server to.<br/><br/>Can also be set via the `HOST` environment variable.<br/>Default: `"0.0.0.0"`<br/>||
 |**port**|`integer`|The port to bind the HTTP server to.<br/><br/>Can also be set via the `PORT` environment variable.<br/><br/>If you are running the router inside a Docker container, please ensure that the port is exposed correctly using `-p <host_port>:<container_port>` flag.<br/>Default: `4000`<br/>Format: `"uint16"`<br/>Minimum: `0`<br/>Maximum: `65535`<br/>||
+|**workers**|`integer`, `null`|The number of worker threads to use for the HTTP server. Must be at least `1`.<br/><br/>Defaults to the number of physical CPU cores available to the process.<br/><br/>Useful in containerized environments (e.g., Kubernetes) where the number of<br/>physical cores reported by the OS is higher than the actual CPU limit<br/>assigned to the container. In such cases, you should set this to match the<br/>container's CPU limit to avoid oversubscribing worker threads.<br/><br/>Can also be set via the `ROUTER_HTTP_WORKERS` environment variable.<br/>Format: `"uint"`<br/>Minimum: `1`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**

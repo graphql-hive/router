@@ -18,6 +18,7 @@ use hive_router_internal::inflight::InFlightRole;
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
 use hive_router_internal::telemetry::TelemetryContext;
+use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 
 use async_trait::async_trait;
 
@@ -470,7 +471,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             response = end_payload.response;
         }
 
-        let response_result = response.deserialize_http_response();
+        let response_result =
+            response.deserialize_http_response(execution_request.custom_scalar_paths);
         if let Some(mut http_request_capture) = http_request_capture {
             finish_capture_from_subgraph_result(
                 &mut http_request_capture.capture,
@@ -491,6 +493,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
+        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         let body = build_request_body(&execution_request)?;
 
         let mut req = hyper::Request::builder()
@@ -564,7 +567,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
             let boundary = multipart_subscribe::parse_boundary_from_header(content_type)
                 .map_err(|e| SubgraphExecutorError::MultipartBoundaryParseFailure(e.to_string()))?;
-            let stream = multipart_subscribe::parse_to_stream(boundary, body_stream);
+            let stream = multipart_subscribe::parse_to_stream(
+                boundary,
+                body_stream,
+                custom_scalar_paths.clone(),
+            );
 
             Ok(Box::pin(async_stream::stream! {
                 trace!("multipart subscription stream started");
@@ -588,7 +595,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 self.endpoint.to_string(),
             );
 
-            let stream = sse::parse_to_stream(body_stream);
+            let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone());
 
             Ok(Box::pin(async_stream::stream! {
                 trace!("SSE subscription stream started");
@@ -643,11 +650,16 @@ pub struct SubgraphHttpResponse {
 }
 
 impl SubgraphHttpResponse {
-    fn deserialize_http_response(self) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
-        SubgraphResponse::deserialize_from_bytes(self.body).map(|mut resp: SubgraphResponse| {
-            resp.headers = Some(self.headers);
-            resp.status = Some(self.status);
-            resp
-        })
+    fn deserialize_http_response(
+        self,
+        custom_scalar_paths: Option<&CustomScalarPaths>,
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        SubgraphResponse::deserialize_from_bytes(self.body, custom_scalar_paths).map(
+            |mut resp: SubgraphResponse| {
+                resp.headers = Some(self.headers);
+                resp.status = Some(self.status);
+                resp
+            },
+        )
     }
 }

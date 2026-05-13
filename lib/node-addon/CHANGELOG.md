@@ -1,4 +1,22 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.27 (2026-05-11)
+
+### Fixes
+
+#### Escape inline string arguments when emitting subgraph operations
+
+Fixes a bug where string values inlined as arguments in subgraph operations were not re-escaped per the GraphQL spec. When an incoming operation contained a string literal whose decoded value carried a quote or backslash (for example `payload: "\"quoted\""`), the router forwarded the argument to the subgraph as `payload: ""quoted""`, producing invalid GraphQL. The same went for newlines, tabs, and other control characters.
+
+Now the characters are escaped properly per the [GraphQL spec](https://spec.graphql.org/draft/#StringCharacter).
+
+## 0.0.26 (2026-05-11)
+
+### Fixes
+
+#### Preserve custom scalars as raw JSON
+
+Custom scalar fields marked by the query planner are now preserved as raw JSON instead of being parsed and rebuilt as structured response values. This improves correctness for JSON passthrough custom scalars while avoiding performance regressions for normal response handling.
+
 ## 0.0.25 (2026-05-08)
 
 ### Features

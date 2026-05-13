@@ -56,6 +56,10 @@ pub fn project_requires(
             write_response_key(first, response_key, buffer);
             write_and_escape_string(buffer, s);
         }
+        Value::RawJson(raw) => {
+            write_response_key(first, response_key, buffer);
+            buffer.put_slice(raw.as_bytes());
+        }
         Value::Array(entity_array) => {
             write_response_key(first, response_key, buffer);
             buffer.put(OPEN_BRACKET);

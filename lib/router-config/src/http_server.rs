@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +23,19 @@ pub struct HttpServerConfig {
     /// If you are running the router inside a Docker container, please ensure that the port is exposed correctly using `-p <host_port>:<container_port>` flag.
     #[serde(default = "http_server_port_default")]
     pub port: u16,
+
+    /// The number of worker threads to use for the HTTP server. Must be at least `1`.
+    ///
+    /// Defaults to the number of physical CPU cores available to the process.
+    ///
+    /// Useful in containerized environments (e.g., Kubernetes) where the number of
+    /// physical cores reported by the OS is higher than the actual CPU limit
+    /// assigned to the container. In such cases, you should set this to match the
+    /// container's CPU limit to avoid oversubscribing worker threads.
+    ///
+    /// Can also be set via the `ROUTER_HTTP_WORKERS` environment variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workers: Option<NonZeroUsize>,
 }
 
 impl Default for HttpServerConfig {
@@ -29,6 +44,7 @@ impl Default for HttpServerConfig {
             host: http_server_host_default(),
             port: http_server_port_default(),
             graphql_endpoint: graphql_endpoint_default(),
+            workers: None,
         }
     }
 }
