@@ -22,10 +22,13 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{header::CONTENT_TYPE, Method};
+use http::{header::CONTENT_TYPE, Method, Uri};
 use ntex::{
-    http::body::{Body, ResponseBody},
-    http::HeaderMap,
+    http::{
+        body::{Body, ResponseBody},
+        HeaderMap,
+    },
+    router::Path,
     rt,
     web::{self, HttpRequest},
 };
@@ -353,6 +356,7 @@ pub async fn graphql_request_handler(
             req.method(),
             req.uri(),
             request_headers,
+            req.match_info(),
             graphql_params,
             &normalize_payload,
             supergraph,
@@ -435,6 +439,7 @@ pub async fn execute_planned_request<'exec>(
     method: &'exec Method,
     url: &'exec http::Uri,
     headers: HeaderMap,
+    url_matches: &'exec Path<Uri>,
     mut graphql_params: GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     supergraph: &'exec SupergraphData,
@@ -481,6 +486,7 @@ pub async fn execute_planned_request<'exec>(
             query: graphql_params.get_query()?,
         },
         jwt: jwt_request_details.into(),
+        url_matches,
     };
 
     match execute_pipeline(

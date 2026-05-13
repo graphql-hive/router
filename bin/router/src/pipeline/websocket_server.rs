@@ -467,6 +467,7 @@ async fn handle_text_frame(
                     &method,
                     ws_uri,
                     headers.as_ref().clone(),
+                    ws_path,
                     payload,
                     &normalize_payload,
                     supergraph,

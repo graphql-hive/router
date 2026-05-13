@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use bytes::Bytes;
 use hive_router_internal::expressions::{vrl::core::Value, ToVrlValue};
-use http::Method;
-use ntex::http::HeaderMap as NtexHeaderMap;
+use http::{Method, Uri};
+use ntex::{http::HeaderMap as NtexHeaderMap, router::Path};
 
 use crate::request_context::{RequestContextError, SharedRequestContext};
 
@@ -19,6 +19,7 @@ pub struct MutableClientRequestDetails<'exec> {
     pub headers: NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
     pub jwt: Arc<JwtRequestDetails>,
+    pub url_matches: &'exec Path<Uri>,
 }
 
 pub struct ClientRequestDetails<'exec> {
@@ -27,6 +28,9 @@ pub struct ClientRequestDetails<'exec> {
     pub headers: Arc<NtexHeaderMap>,
     pub operation: OperationDetails<'exec>,
     pub jwt: Arc<JwtRequestDetails>,
+    /// Path parameters captured from the GraphQL endpoint pattern (e.g. `/{tenant}/graphql`)
+    /// during URL routing. Exposed to VRL expressions as `.request.url_matches`.
+    pub url_matches: &'exec Path<Uri>,
 }
 
 // Trait for accessing read-only client request details.
@@ -37,6 +41,7 @@ pub trait ClientRequestDetailsView {
     fn headers(&self) -> &NtexHeaderMap;
     fn operation<'a>(&'a self) -> &'a OperationDetails<'a>;
     fn jwt(&self) -> &JwtRequestDetails;
+    fn url_matches(&self) -> &Path<Uri>;
 
     fn to_vrl_value(&self) -> Value {
         request_details_to_vrl_value(self)
@@ -63,6 +68,10 @@ impl ClientRequestDetailsView for MutableClientRequestDetails<'_> {
     fn jwt(&self) -> &JwtRequestDetails {
         &self.jwt
     }
+
+    fn url_matches(&self) -> &Path<Uri> {
+        self.url_matches
+    }
 }
 
 impl ClientRequestDetailsView for ClientRequestDetails<'_> {
@@ -85,6 +94,10 @@ impl ClientRequestDetailsView for ClientRequestDetails<'_> {
     fn jwt(&self) -> &JwtRequestDetails {
         &self.jwt
     }
+
+    fn url_matches(&self) -> &Path<Uri> {
+        self.url_matches
+    }
 }
 
 impl<'exec> MutableClientRequestDetails<'exec> {
@@ -95,6 +108,7 @@ impl<'exec> MutableClientRequestDetails<'exec> {
             headers: self.headers.into(),
             operation: self.operation,
             jwt: self.jwt,
+            url_matches: self.url_matches,
         }
     }
 }
@@ -148,6 +162,16 @@ fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Size
     // .request.url
     let url_value = details.url().to_vrl_value();
 
+    // .request.url_matches - parameters captured from the GraphQL endpoint pattern
+    // (e.g. `/{tenant}/graphql`).
+    let url_matches_value = Value::Object(
+        details
+            .url_matches()
+            .iter()
+            .map(|(k, v)| (k.into(), Value::Bytes(Bytes::from(v.to_string()))))
+            .collect(),
+    );
+
     // .request.operation
     let operation_value = Value::Object(BTreeMap::from([
         ("name".into(), details.operation().name.into()),
@@ -196,6 +220,7 @@ fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Size
         ("method".into(), details.method().as_str().into()),
         ("headers".into(), headers_value),
         ("url".into(), url_value),
+        ("url_matches".into(), url_matches_value),
         ("operation".into(), operation_value),
         ("jwt".into(), jwt_value),
     ]))

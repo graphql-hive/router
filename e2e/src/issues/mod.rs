@@ -17,10 +17,11 @@ mod issues_e2e_tests {
                   query_planner:
                     allow_expose: true
                   override_subgraph_urls:
-                    accounts:
-                      url: "http://{host}/accounts"
-                    products:
-                      url: "http://{host}/products"
+                    subgraphs:
+                      accounts:
+                        url: "http://{host}/accounts"
+                      products:
+                        url: "http://{host}/products"
                   "#
             ))
             .build()
@@ -213,10 +214,11 @@ mod issues_e2e_tests {
                   query_planner:
                     allow_expose: true
                   override_subgraph_urls:
-                    labels:
-                      url: "http://{host}/labels"
-                    products:
-                      url: "http://{host}/products"
+                    subgraphs:
+                      labels:
+                        url: "http://{host}/labels"
+                      products:
+                        url: "http://{host}/products"
                   "#
             ))
             .build()
@@ -829,8 +831,9 @@ mod issues_e2e_tests {
                     source: file
                     path: src/issues/supergraph.escape-string-arguments.graphql
                   override_subgraph_urls:
-                    entries:
-                      url: "http://{host}/entries"
+                    subgraphs:
+                      entries:
+                        url: "http://{host}/entries"
                   "#
             ))
             .build()

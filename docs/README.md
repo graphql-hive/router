@@ -107,20 +107,21 @@ log:
   level: info
 override_labels: {}
 override_subgraph_urls:
-  accounts:
-    url: https://accounts.example.com/graphql
-  products:
-    url:
-      expression: |2-
+  subgraphs:
+    accounts:
+      url: https://accounts.example.com/graphql
+    products:
+      url:
+        expression: |2-
 
-                if .request.headers."x-region" == "us-east" {
-                    "https://products-us-east.example.com/graphql"
-                } else if .request.headers."x-region" == "eu-west" {
-                    "https://products-eu-west.example.com/graphql"
-                } else {
-                  .default
-                }
-            
+                  if .request.headers."x-region" == "us-east" {
+                      "https://products-us-east.example.com/graphql"
+                  } else if .request.headers."x-region" == "eu-west" {
+                      "https://products-eu-west.example.com/graphql"
+                  } else {
+                    .default
+                  }
+              
 persisted_documents:
   enabled: false
   log_missing_id: false
@@ -2196,41 +2197,57 @@ Configuration for overriding labels.
 Configuration for overriding subgraph URLs.
 
 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**all**||Override applied to every subgraph that does not have its own<br/>per-subgraph override under `subgraphs.<name>`. Useful when the<br/>override logic is the same (or only depends on the subgraph name)<br/>for every subgraph in the supergraph.<br/><br/>The expression has access to the following variables:<br/>- `.request`: The incoming HTTP request, including headers, query<br/>  parameters, the parsed GraphQL operation, and `url_matches`<br/>  (path parameters captured from `http.graphql_endpoint`, e.g.<br/>  `/{tenant}/graphql`).<br/>- `.default`: The original URL of the subgraph (from supergraph SDL).<br/>- `.subgraph.name`: The name of the subgraph the URL is being<br/>  resolved for.<br/><br/>### Example<br/>```yaml<br/>override_subgraph_urls:<br/>  all:<br/>    expression: \|<br/>      if .subgraph.name == "products" && .request.headers."x-region" == "us-east" {<br/>        "https://products-us-east.example.com/graphql"<br/>      } else {<br/>        .default<br/>      }<br/>```<br/><br/>### Path parameter example<br/>When `http.graphql_endpoint` is set to `/{tenant}/graphql`, every<br/>path parameter captured from the request path becomes available<br/>under `.request.url_matches`:<br/>```yaml<br/>override_subgraph_urls:<br/>  all:<br/>    expression: \|<br/>      tenant = string!(.request.url_matches.tenant)<br/>      replace(string!(.default), "/api/", "/api/" + tenant + "/")<br/>```<br/>||
+|[**subgraphs**](#override_subgraph_urlssubgraphs)|`object`|Per-subgraph URL overrides, keyed by subgraph name.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+subgraphs:
+  accounts:
+    url: https://accounts.example.com/graphql
+  products:
+    url:
+      expression: |2-
+
+                if .request.headers."x-region" == "us-east" {
+                    "https://products-us-east.example.com/graphql"
+                } else if .request.headers."x-region" == "eu-west" {
+                    "https://products-eu-west.example.com/graphql"
+                } else {
+                  .default
+                }
+            
+
+```
+
+<a name="override_subgraph_urlssubgraphs"></a>
+### override\_subgraph\_urls\.subgraphs: object
+
+Per-subgraph URL overrides, keyed by subgraph name.
+
+
 **Additional Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**Additional Properties**](#override_subgraph_urlsadditionalproperties)|`object`||yes|
+|[**Additional Properties**](#override_subgraph_urlssubgraphsadditionalproperties)|`object`||yes|
 
-**Example**
-
-```yaml
-accounts:
-  url: https://accounts.example.com/graphql
-products:
-  url:
-    expression: |2-
-
-              if .request.headers."x-region" == "us-east" {
-                  "https://products-us-east.example.com/graphql"
-              } else if .request.headers."x-region" == "eu-west" {
-                  "https://products-eu-west.example.com/graphql"
-              } else {
-                .default
-              }
-          
-
-```
-
-<a name="override_subgraph_urlsadditionalproperties"></a>
-### override\_subgraph\_urls\.additionalProperties: object
+<a name="override_subgraph_urlssubgraphsadditionalproperties"></a>
+#### override\_subgraph\_urls\.subgraphs\.additionalProperties: object
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**url**||Overrides for the URL of the subgraph.<br/><br/>For convenience, a plain string in your configuration will be treated as a static URL.<br/><br/>### Static URL Example<br/>```yaml<br/>url: "https://api.example.com/graphql"<br/>```<br/><br/>### Dynamic Expression Example<br/><br/>The expression has access to the following variables:<br/>- `request`: The incoming HTTP request, including headers and other metadata.<br/>- `default`: The original URL of the subgraph (from supergraph sdl).<br/><br/>```yaml<br/>url:<br/>  expression: \|<br/>    if .request.headers."x-region" == "us-east" {<br/>      "https://products-us-east.example.com/graphql"<br/>    } else if .request.headers."x-region" == "eu-west" {<br/>      "https://products-eu-west.example.com/graphql"<br/>    } else {<br/>      .default<br/>    }<br/>|yes|
+|**url**||Overrides for the URL of the subgraph.<br/><br/>For convenience, a plain string in your configuration will be treated as a static URL.<br/><br/>### Static URL Example<br/>```yaml<br/>url: "https://api.example.com/graphql"<br/>```<br/><br/>### Dynamic Expression Example<br/><br/>The expression has access to the following variables:<br/>- `.request`: The incoming HTTP request, including headers, query<br/>  parameters, the parsed GraphQL operation, and `url_matches`<br/>  (path parameters captured from `http.graphql_endpoint`).<br/>- `.default`: The original URL of the subgraph (from supergraph SDL).<br/>- `.subgraph.name`: The name of the subgraph the URL is being<br/>  resolved for.<br/><br/>```yaml<br/>url:<br/>  expression: \|<br/>    if .request.headers."x-region" == "us-east" {<br/>      "https://products-us-east.example.com/graphql"<br/>    } else if .request.headers."x-region" == "eu-west" {<br/>      "https://products-eu-west.example.com/graphql"<br/>    } else {<br/>      .default<br/>    }<br/>|yes|
 
+**Additional Properties:** not allowed  
 <a name="persisted_documents"></a>
 ## persisted\_documents: object
 
