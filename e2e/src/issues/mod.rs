@@ -18,10 +18,8 @@ mod issues_e2e_tests {
                     allow_expose: true
                   override_subgraph_urls:
                     subgraphs:
-                      accounts:
-                        url: "http://{host}/accounts"
-                      products:
-                        url: "http://{host}/products"
+                      accounts: "http://{host}/accounts"
+                      products: "http://{host}/products"
                   "#
             ))
             .build()
@@ -215,10 +213,8 @@ mod issues_e2e_tests {
                     allow_expose: true
                   override_subgraph_urls:
                     subgraphs:
-                      labels:
-                        url: "http://{host}/labels"
-                      products:
-                        url: "http://{host}/products"
+                      labels: "http://{host}/labels"
+                      products: "http://{host}/products"
                   "#
             ))
             .build()
@@ -832,8 +828,7 @@ mod issues_e2e_tests {
                     path: src/issues/supergraph.escape-string-arguments.graphql
                   override_subgraph_urls:
                     subgraphs:
-                      entries:
-                        url: "http://{host}/entries"
+                      entries: "http://{host}/entries"
                   "#
             ))
             .build()

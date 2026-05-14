@@ -18,12 +18,9 @@ mod error_handling_e2e_tests {
                     path: supergraph.graphql
                   override_subgraph_urls:
                     subgraphs:
-                      accounts:
-                        url: "{subgraphs_url}/accounts"
-                      reviews:
-                        url: "{subgraphs_url}/reviews"
-                      products:
-                        url: "http://0.0.0.0:1000/products"
+                      accounts: "{subgraphs_url}/accounts"
+                      reviews: "{subgraphs_url}/reviews"
+                      products: "http://0.0.0.0:1000/products"
                 "#,
             ))
             .build()

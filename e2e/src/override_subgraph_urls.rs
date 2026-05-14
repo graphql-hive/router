@@ -23,8 +23,7 @@ mod override_subgraph_urls_e2e_tests {
                     path: supergraph.graphql
                 override_subgraph_urls:
                     subgraphs:
-                        accounts:
-                            url: "{subgraphs_url}/accounts"
+                        accounts: "{subgraphs_url}/accounts"
                 "#,
             ))
             .build()
@@ -67,13 +66,12 @@ mod override_subgraph_urls_e2e_tests {
                 override_subgraph_urls:
                     subgraphs:
                         accounts:
-                            url:
-                                expression: |
-                                    if .request.headers."x-accounts-port" == "4100" {{
-                                        "{subgraphs_url}/accounts"
-                                    }} else {{
-                                        .default
-                                    }}
+                            expression: |
+                                if .request.headers."x-accounts-port" == "4100" {{
+                                    "{subgraphs_url}/accounts"
+                                }} else {{
+                                    .default
+                                }}
                 "#,
             ))
             .build()
@@ -203,8 +201,7 @@ mod override_subgraph_urls_e2e_tests {
                     path: supergraph.graphql
                 override_subgraph_urls:
                     subgraphs:
-                        accounts:
-                            url: "{subgraphs_url}/accounts"
+                        accounts: "{subgraphs_url}/accounts"
                     all:
                         expression: |
                             "http://0.0.0.0:1/should-not-be-used"

@@ -5,8 +5,7 @@ supergraph:
 override_subgraph_urls:
   subgraphs:
     accounts:
-      url:
-        expression: env("ACCOUNTS_URL_OVERRIDE", string!(.default))
+      expression: env("ACCOUNTS_URL_OVERRIDE", string!(.default))
 headers:
   all:
     response:

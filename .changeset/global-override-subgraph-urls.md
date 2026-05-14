@@ -10,7 +10,7 @@ Closes [#985](https://github.com/graphql-hive/router/issues/985).
 
 ## Breaking: new shape for `override_subgraph_urls`
 
-`override_subgraph_urls` is no longer a flat map keyed by subgraph name. Per-subgraph overrides now live under a `subgraphs` key, alongside a new optional `all` override.
+`override_subgraph_urls` is no longer a flat map keyed by subgraph name. Per-subgraph overrides now live under a `subgraphs` key, alongside a new optional `all` override. The redundant `url` wrapper has also been removed: each entry under `subgraphs.<name>` is now either a static URL string or an object with an `expression` field directly.
 
 ```yaml
 # Before
@@ -29,16 +29,14 @@ override_subgraph_urls:
 # After
 override_subgraph_urls:
   subgraphs:
-    accounts:
-      url: "https://accounts.example.com/graphql"
+    accounts: "https://accounts.example.com/graphql"
     products:
-      url:
-        expression: |
-          if .request.headers."x-region" == "us-east" {
-            "https://products-us-east.example.com/graphql"
-          } else {
-            .default
-          }
+      expression: |
+        if .request.headers."x-region" == "us-east" {
+          "https://products-us-east.example.com/graphql"
+        } else {
+          .default
+        }
 ```
 
 ## New: `override_subgraph_urls.all`
