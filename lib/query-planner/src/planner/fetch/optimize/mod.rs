@@ -1,5 +1,6 @@
 mod apply_internal_aliases_patching;
 mod batch_multi_type;
+mod collapse_supertype_per_subgraph;
 mod deduplicate_and_prune_fetch_steps;
 mod merge_children_with_parents;
 mod merge_leafs;
@@ -38,10 +39,19 @@ impl FetchGraph<MultiTypeFetchStep> {
             self.deduplicate_and_prune_fetch_steps()?;
             self.batch_multi_type()?;
 
+            // Per-subgraph supertype collapse rewrites selection maps in place without
+            // touching node or edge counts, so we have to track its mutation signal
+            // explicitly to keep iterating the loop when it opens new merge opportunities
+            // for the structural passes above.
+            let selections_mutated = self.collapse_supertype_per_subgraph(supergraph_state)?;
+
             let node_count_after = self.graph.node_count();
             let edge_count_after = self.graph.edge_count();
 
-            if node_count_before == node_count_after && edge_count_before == edge_count_after {
+            if node_count_before == node_count_after
+                && edge_count_before == edge_count_after
+                && !selections_mutated
+            {
                 break;
             }
         }

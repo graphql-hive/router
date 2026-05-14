@@ -335,29 +335,18 @@ fn issue_939_test() -> Result<(), Box<dyn Error>> {
             ... on MyNode {
               content {
                 __typename
-                ... on TextContent {
+                ... on ITextContent {
                   fragments {
-                    ...a
+                    contentNode {
+                      content {
+                        __typename
+                        ... on ITextContent {
+                          id
+                        }
+                      }
+                    }
                   }
                 }
-                ... on TextGroupContent {
-                  fragments {
-                    ...a
-                  }
-                }
-              }
-            }
-          }
-        }
-        fragment a on TextContentFragment {
-          contentNode {
-            content {
-              __typename
-              ... on TextContent {
-                id
-              }
-              ... on TextGroupContent {
-                id
               }
             }
           }

@@ -523,43 +523,23 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
             products {
               id
               __typename
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
             }
           }
         },
         Flatten(path: "products.@") {
           Fetch(service: "reviews") {
             {
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
+              ... on Product {
                 __typename
                 id
               }
             } =>
             {
-              ... on Book {
+              ... on Product {
                 reviews {
-                  ...a
+                  id
                 }
               }
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              id
             }
           },
         },
@@ -613,26 +593,11 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
           fragment a on Product {
             id
             __typename
-            ... on Book {
-              __typename
-              sku
-              id
-              dimensions {
-                ...b
-              }
+            sku
+            dimensions {
+              weight
+              size
             }
-            ... on Magazine {
-              __typename
-              sku
-              id
-              dimensions {
-                ...b
-              }
-            }
-          }
-          fragment b on ProductDimension {
-            weight
-            size
           }
         },
         BatchFetch(service: "inventory") {
@@ -643,15 +608,7 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
                 "book.@"
               ]
               {
-                ... on Book {
-                  __typename
-                  dimensions {
-                    size
-                    weight
-                  }
-                  id
-                }
-                ... on Magazine {
+                ... on Product {
                   __typename
                   dimensions {
                     size
@@ -664,22 +621,12 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
           }
           {
             _e0: _entities(representations: $__batch_reps_0) {
-              ... on Book {
+              ... on Product {
                 delivery(zip: "1234") {
-                  ...a
+                  fastestDelivery
+                  estimatedDelivery
                 }
               }
-              ... on Magazine {
-                delivery(zip: "1234") {
-                  ...a
-                }
-              }
-            }
-          }
-          fragment a on DeliveryEstimates {
-            ... on DeliveryEstimates {
-              fastestDelivery
-              estimatedDelivery
             }
           }
         },
@@ -724,52 +671,24 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
             products {
               id
               __typename
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
             }
           }
         },
         Flatten(path: "products.@") {
           Fetch(service: "reviews") {
             {
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
+              ... on Product {
                 __typename
                 id
               }
             } =>
             {
-              ... on Book {
+              ... on Product {
                 reviews {
-                  ...a
-                }
-              }
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              product {
-                id
-                __typename
-                ... on Book {
-                  __typename
-                  id
-                }
-                ... on Magazine {
-                  __typename
-                  id
+                  product {
+                    id
+                    __typename
+                  }
                 }
               }
             }
@@ -853,52 +772,24 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
             products {
               id
               __typename
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
             }
           }
         },
         Flatten(path: "products.@") {
           Fetch(service: "reviews") {
             {
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
+              ... on Product {
                 __typename
                 id
               }
             } =>
             {
-              ... on Book {
+              ... on Product {
                 reviews {
-                  ...a
-                }
-              }
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              product {
-                id
-                __typename
-                ... on Book {
-                  __typename
-                  id
-                }
-                ... on Magazine {
-                  __typename
-                  id
+                  product {
+                    id
+                    __typename
+                  }
                 }
               }
             }
@@ -925,11 +816,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
           Flatten(path: "products.@.reviews.@.product") {
             Fetch(service: "products") {
               {
-                ... on Book {
-                  __typename
-                  id
-                }
-                ... on Magazine {
+                ... on Product {
                   __typename
                   id
                 }
@@ -991,6 +878,137 @@ fn interface_fragment_keeps_abstract_selection_when_single_subgraph_owns_impleme
             createdAt
           }
         }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// When a union field is selected with an inline fragment on an abstract supertype that all
+/// union members implement, and the interface plus every member is owned by a single
+/// subgraph, the abstract fragment must reach that subgraph as `... on Notification { ... }`
+/// rather than as one `... on EmailNotification` / `... on PushNotification` /
+/// `... on SmsNotification` per member.
+///
+/// Sending the per-member shape would leak a planner-internal fan-out into the wire request
+/// and force every union member subschema to validate fields that the client only asked for at
+/// the interface level. The per-subgraph supertype collapse pass folds the fan-out back into
+/// a single abstract fragment because the target subgraph natively defines the interface and
+/// its runtime objects there are exactly the union members the planner expanded into.
+#[test]
+fn union_field_keeps_interface_fragment_when_single_subgraph_owns_members(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          notificationFeed {
+            ... on Notification {
+              id
+              title
+              createdAt
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/single-subgraph-union-with-interface-fragment.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "main") {
+        {
+          notificationFeed {
+            __typename
+            ... on Notification {
+              id
+              title
+              createdAt
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// When an interface is split across two subgraphs (each subgraph natively defines the
+/// interface and a disjoint subset of its concrete implementors) and a third subgraph
+/// dispatches the runtime objects of every implementor through a root field that returns the
+/// interface, asking for an interface-level field forces a per-implementor fan-out: each leg
+/// of the fan-out hits the subgraph that owns the field for those implementors. The
+/// per-subgraph supertype collapse pass then folds each leg back into a single
+/// `... on Interface` fragment, because in each subgraph the implementor set the planner
+/// expanded into is exactly that subgraph's view of the interface's runtime objects. Without
+/// this collapse, every leg would carry its own per-implementor expansion to a subgraph that
+/// already understands the interface natively.
+#[test]
+fn split_interface_collapses_per_subgraph_to_abstract() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          allItems {
+            id
+            details
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/split-interface-multi-subgraph.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "directory") {
+          {
+            allItems {
+              id
+              __typename
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "allItems.@|[ItemD|ItemE|ItemF]") {
+            Fetch(service: "stream_b") {
+              {
+                ... on Item {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Item {
+                  details
+                }
+              }
+            },
+          },
+          Flatten(path: "allItems.@|[ItemA|ItemB|ItemC]") {
+            Fetch(service: "stream_a") {
+              {
+                ... on Item {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Item {
+                  details
+                }
+              }
+            },
+          },
+        },
       },
     },
     "#);

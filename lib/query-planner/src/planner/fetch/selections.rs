@@ -540,6 +540,14 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 
         Some(condition)
     }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut SelectionSet)> {
+        self.selections.iter_mut()
+    }
+
+    pub fn replace_with(&mut self, new_map: BTreeMap<String, SelectionSet>) {
+        self.selections = new_map;
+    }
 }
 
 impl FetchStepSelections<SingleTypeFetchStep> {
