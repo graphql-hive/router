@@ -1,0 +1,130 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+scalar join__FieldSet
+
+enum join__Graph {
+  DIRECTORY
+    @join__graph(name: "directory", url: "http://0.0.0.0:4200/directory")
+  STREAM_A
+    @join__graph(name: "stream_a", url: "http://0.0.0.0:4200/stream_a")
+  STREAM_B
+    @join__graph(name: "stream_b", url: "http://0.0.0.0:4200/stream_b")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
+
+interface Item
+  @join__type(graph: DIRECTORY, key: "id")
+  @join__type(graph: STREAM_A, key: "id")
+  @join__type(graph: STREAM_B, key: "id") {
+  id: ID!
+  details: String
+    @join__field(graph: STREAM_A)
+    @join__field(graph: STREAM_B)
+}
+
+type ItemA implements Item
+  @join__implements(graph: DIRECTORY, interface: "Item")
+  @join__implements(graph: STREAM_A, interface: "Item")
+  @join__type(graph: DIRECTORY, key: "id")
+  @join__type(graph: STREAM_A, key: "id") {
+  id: ID!
+  details: String @join__field(graph: STREAM_A)
+}
+
+type ItemB implements Item
+  @join__implements(graph: DIRECTORY, interface: "Item")
+  @join__implements(graph: STREAM_A, interface: "Item")
+  @join__type(graph: DIRECTORY, key: "id")
+  @join__type(graph: STREAM_A, key: "id") {
+  id: ID!
+  details: String @join__field(graph: STREAM_A)
+}
+
+type ItemC implements Item
+  @join__implements(graph: DIRECTORY, interface: "Item")
+  @join__implements(graph: STREAM_A, interface: "Item")
+  @join__type(graph: DIRECTORY, key: "id")
+  @join__type(graph: STREAM_A, key: "id") {
+  id: ID!
+  details: String @join__field(graph: STREAM_A)
+}
+
+type ItemD implements Item
+  @join__implements(graph: DIRECTORY, interface: "Item")
+  @join__implements(graph: STREAM_B, interface: "Item")
+  @join__type(graph: DIRECTORY, key: "id")
+  @join__type(graph: STREAM_B, key: "id") {
+  id: ID!
+  details: String @join__field(graph: STREAM_B)
+}
+
+type ItemE implements Item
+  @join__implements(graph: DIRECTORY, interface: "Item")
+  @join__implements(graph: STREAM_B, interface: "Item")
+  @join__type(graph: DIRECTORY, key: "id")
+  @join__type(graph: STREAM_B, key: "id") {
+  id: ID!
+  details: String @join__field(graph: STREAM_B)
+}
+
+type ItemF implements Item
+  @join__implements(graph: DIRECTORY, interface: "Item")
+  @join__implements(graph: STREAM_B, interface: "Item")
+  @join__type(graph: DIRECTORY, key: "id")
+  @join__type(graph: STREAM_B, key: "id") {
+  id: ID!
+  details: String @join__field(graph: STREAM_B)
+}
+
+type Query @join__type(graph: DIRECTORY) {
+  allItems: [Item!]!
+}

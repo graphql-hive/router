@@ -919,4 +919,173 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// End-to-end coverage of the per-subgraph supertype collapse pass on a split interface.
+    ///
+    /// `Item` is defined in three subgraphs: DIRECTORY dispatches the runtime objects of every
+    /// implementor, STREAM_A owns `details` for `{ItemA, ItemB, ItemC}`, and STREAM_B owns it
+    /// for `{ItemD, ItemE, ItemF}`. Asking for `details` through `allItems` fans out per
+    /// implementor and the collapse pass folds each leg back into a single `... on Item`
+    /// fragment in its target subgraph.
+    ///
+    /// The subgraph mocks reject any request that still carries a per-implementor expansion
+    /// (`... on ItemA` etc.), so a regression that keeps the fan-out on the wire would surface
+    /// as a failing mock assertion in addition to the expected response shape changing.
+    async fn split_interface_collapse_emits_abstract_fragment_to_each_subgraph() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.split-interface.graphql
+                  override_subgraph_urls:
+                    directory:
+                      url: "http://{host}/directory"
+                    stream_a:
+                      url: "http://{host}/stream_a"
+                    stream_b:
+                      url: "http://{host}/stream_b"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let directory_mock = server
+            .mock("POST", "/directory")
+            .match_request(|r| {
+                let body = r.body().unwrap();
+                let body_str = String::from_utf8(body.clone()).unwrap();
+                body_str.contains("allItems")
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "data": {
+                    "allItems": [
+                      { "__typename": "ItemA", "id": "a-1" },
+                      { "__typename": "ItemD", "id": "d-1" }
+                    ]
+                  }
+                }
+                "#,
+            )
+            .create();
+
+        let stream_a_mock = server
+            .mock("POST", "/stream_a")
+            .match_request(|r| {
+                let body = r.body().unwrap();
+                let body_str = String::from_utf8(body.clone()).unwrap();
+                if !body_str.contains("$representations") {
+                    return false;
+                }
+                if !body_str.contains("\"ItemA\"") {
+                    return false;
+                }
+
+                assert!(
+                    body_str.contains("...on Item{") || body_str.contains("...on Item "),
+                    "stream_a must receive a collapsed `...on Item` fragment, got: {body_str}"
+                );
+                for concrete in ["...on ItemA", "...on ItemB", "...on ItemC"] {
+                    assert!(
+                        !body_str.contains(concrete),
+                        "stream_a must not receive a per-implementor `{concrete}` fan-out, \
+                         got: {body_str}"
+                    );
+                }
+
+                true
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "data": {
+                    "_entities": [
+                      { "details": "from stream_a" }
+                    ]
+                  }
+                }
+                "#,
+            )
+            .create();
+
+        let stream_b_mock = server
+            .mock("POST", "/stream_b")
+            .match_request(|r| {
+                let body = r.body().unwrap();
+                let body_str = String::from_utf8(body.clone()).unwrap();
+                if !body_str.contains("$representations") {
+                    return false;
+                }
+                if !body_str.contains("\"ItemD\"") {
+                    return false;
+                }
+
+                assert!(
+                    body_str.contains("...on Item{") || body_str.contains("...on Item "),
+                    "stream_b must receive a collapsed `...on Item` fragment, got: {body_str}"
+                );
+                for concrete in ["...on ItemD", "...on ItemE", "...on ItemF"] {
+                    assert!(
+                        !body_str.contains(concrete),
+                        "stream_b must not receive a per-implementor `{concrete}` fan-out, \
+                         got: {body_str}"
+                    );
+                }
+
+                true
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "data": {
+                    "_entities": [
+                      { "details": "from stream_b" }
+                    ]
+                  }
+                }
+                "#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request("{ allItems { id details } }", None, None)
+            .await;
+
+        directory_mock.assert();
+        stream_a_mock.assert();
+        stream_b_mock.assert();
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "allItems": [
+              {
+                "id": "a-1",
+                "details": "from stream_a"
+              },
+              {
+                "id": "d-1",
+                "details": "from stream_b"
+              }
+            ]
+          }
+        }
+        "#);
+    }
 }
