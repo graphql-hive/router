@@ -439,7 +439,7 @@ fn find_matching_abstract_type<'a>(
             continue;
         }
 
-        if !shared_selections_compatible_with(type_def, shared_selections) {
+        if !shared_selections_compatible_with(type_def, graph_id, shared_selections) {
             continue;
         }
 
@@ -448,19 +448,40 @@ fn find_matching_abstract_type<'a>(
     None
 }
 
+/// Whether every selected non-`__typename` field in `shared_selections` is defined on
+/// `abstract_type` *as seen by the target subgraph `graph_id`*.
+///
+/// Looking at the supergraph-wide field map would accept a collapse for any field that some
+/// subgraph contributes to the abstract type, even when the subgraph the rewrite targets
+/// doesn't define that field on the abstract type itself (only on its concrete implementors).
+/// In that case the rewritten `... on Abstract { field }` fragment would not validate against
+/// the target subgraph's schema. We therefore filter the abstract type's fields through the
+/// per-subgraph `@join__field` lens before checking presence.
+///
+/// Union types never declare fields, so any non-`__typename` selection at this level cannot
+/// resolve against a union and the collapse is rejected.
 fn shared_selections_compatible_with(
     abstract_type: &SupergraphDefinition,
+    graph_id: &str,
     shared_selections: &SelectionSet,
 ) -> bool {
-    let abstract_fields = abstract_type.fields();
-
     for item in shared_selections.items.iter() {
         match item {
             SelectionItem::Field(field) => {
                 if field.name == "__typename" {
                     continue;
                 }
-                if !abstract_fields.contains_key(&field.name) {
+                let defined_on_abstract_in_subgraph = match abstract_type {
+                    SupergraphDefinition::Object(o) => {
+                        o.fields_of_subgraph(graph_id).contains_key(&field.name)
+                    }
+                    SupergraphDefinition::Interface(i) => {
+                        i.fields_of_subgraph(graph_id).contains_key(&field.name)
+                    }
+                    SupergraphDefinition::Union(_) => false,
+                    _ => false,
+                };
+                if !defined_on_abstract_in_subgraph {
                     return false;
                 }
             }
