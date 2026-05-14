@@ -3,6 +3,8 @@ hive-router: patch
 hive-router-plan-executor: patch
 hive-router-config: patch
 hive-console-sdk: patch
+hive-router-internal: patch
+hive-apollo-router-plugin: patch
 ---
 
 # Implement Circuit Breaker for Subgraph Requests
