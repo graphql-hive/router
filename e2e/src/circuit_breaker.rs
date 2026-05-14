@@ -254,8 +254,8 @@ mod circuit_breaker_e2e_tests {
                             volume_threshold: 3
                             reset_timeout: 30s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -343,8 +343,8 @@ mod circuit_breaker_e2e_tests {
                             volume_threshold: 3
                             reset_timeout: 2s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -451,10 +451,9 @@ mod circuit_breaker_e2e_tests {
                                 volume_threshold: 2
                                 reset_timeout: 30s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{accounts_host}/accounts"
-                    products:
-                        url: "http://{products_host}/products"
+                    subgraphs:
+                        accounts: "http://{accounts_host}/accounts"
+                        products: "http://{products_host}/products"
                 "#
             ))
             .build()
@@ -543,8 +542,8 @@ mod circuit_breaker_e2e_tests {
                             volume_threshold: 10
                             reset_timeout: 30s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -607,8 +606,8 @@ mod circuit_breaker_e2e_tests {
                         circuit_breaker:
                             enabled: false
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -677,8 +676,8 @@ mod circuit_breaker_e2e_tests {
                                 enabled: true
                                 volume_threshold: 5
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -741,8 +740,8 @@ mod circuit_breaker_e2e_tests {
                             volume_threshold: 3
                             reset_timeout: 30s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{non_existent_host}/accounts"
+                    subgraphs:
+                        accounts: "http://{non_existent_host}/accounts"
                 "#
             ))
             .build()
@@ -832,8 +831,8 @@ mod circuit_breaker_e2e_tests {
                             volume_threshold: 3
                             reset_timeout: 30s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{non_existent_host}/accounts"
+                    subgraphs:
+                        accounts: "http://{non_existent_host}/accounts"
                 "#
             ))
             .build()
@@ -954,8 +953,8 @@ mod circuit_breaker_e2e_tests {
                             volume_threshold: 3
                             reset_timeout: 30s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{non_existent_host}/accounts"
+                    subgraphs:
+                        accounts: "http://{non_existent_host}/accounts"
                 "#
             ))
             .build()
@@ -1035,8 +1034,8 @@ mod circuit_breaker_e2e_tests {
                             volume_threshold: 100
                             reset_timeout: 30s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -1233,8 +1232,8 @@ mod circuit_breaker_e2e_tests {
                             volume_threshold: 3
                             reset_timeout: 30s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{non_existent_host}/accounts"
+                    subgraphs:
+                        accounts: "http://{non_existent_host}/accounts"
                 "#
             ))
             .build()
@@ -1331,8 +1330,8 @@ mod circuit_breaker_e2e_tests {
                             circuit_breaker:
                                 volume_threshold: 2
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -1406,8 +1405,8 @@ mod circuit_breaker_e2e_tests {
                             circuit_breaker:
                                 enabled: false
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -1480,8 +1479,8 @@ mod circuit_breaker_e2e_tests {
                         circuit_breaker:
                             enabled: false
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -1559,8 +1558,8 @@ mod circuit_breaker_e2e_tests {
                             volume_threshold: 3
                             reset_timeout: 30s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -1664,8 +1663,8 @@ mod circuit_breaker_e2e_tests {
                             volume_threshold: 3
                             reset_timeout: 30s
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -1722,8 +1721,8 @@ mod circuit_breaker_e2e_tests {
                             reset_timeout: 30s
                             error_status_codes: [500, 502, 503, 504]
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -1795,8 +1794,8 @@ mod circuit_breaker_e2e_tests {
                             reset_timeout: 30s
                             error_status_codes: ["5xx"]
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -1853,8 +1852,8 @@ mod circuit_breaker_e2e_tests {
                             reset_timeout: 30s
                             error_status_codes: ["50x"]
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -1911,8 +1910,8 @@ mod circuit_breaker_e2e_tests {
                             reset_timeout: 30s
                             error_status_codes: ["50x"]
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -1966,8 +1965,8 @@ mod circuit_breaker_e2e_tests {
                             reset_timeout: 30s
                             error_status_codes: [501, "52x"]
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -2030,8 +2029,8 @@ mod circuit_breaker_e2e_tests {
                             circuit_breaker:
                                 error_status_codes: [502]
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -2471,8 +2470,8 @@ mod circuit_breaker_e2e_tests {
                             reset_timeout: 1s
                             half_open_attempts: 2
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
@@ -2552,8 +2551,8 @@ mod circuit_breaker_e2e_tests {
                             reset_timeout: 1s
                             half_open_attempts: 2
                 override_subgraph_urls:
-                    accounts:
-                        url: "http://{host}/accounts"
+                    subgraphs:
+                        accounts: "http://{host}/accounts"
                 "#
             ))
             .build()
