@@ -46,7 +46,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
         _plugin_req_state: Option<&'a crate::plugin_context::PluginRequestState<'a>>,
-    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();

@@ -1,10 +1,12 @@
-use std::{collections::HashMap, time::Duration};
+use std::{borrow::Cow, collections::HashMap, fmt, time::Duration};
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use http::StatusCode;
+use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
+use serde::{de, Deserialize, Serialize};
 
 use crate::primitives::{
-    file_path::FilePath, http_header::HttpHeaderName, single_or_multiple::SingleOrMultiple,
+    file_path::FilePath, http_header::HttpHeaderName, percentage::Percentage,
+    single_or_multiple::SingleOrMultiple,
 };
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -91,6 +93,11 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// ```
     pub request_timeout: Option<DurationOrExpression>,
 
+    /// Circuit Breaker configuration for the subgraph.
+    /// When the circuit breaker is open, requests to the subgraph will be short-circuited and an error will be returned to the client.
+    /// The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
+    pub circuit_breaker: Option<TrafficShapingSubgraphCircuitBreakerConfig>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<ClientTLSConfig>,
 
@@ -143,6 +150,12 @@ pub struct TrafficShapingExecutorGlobalConfig {
     #[serde(default = "default_request_timeout")]
     pub request_timeout: DurationOrExpression,
 
+    /// Circuit Breaker configuration for all subgraphs.
+    /// When the circuit breaker is open, requests to the subgraph will be
+    /// short-circuited and an error will be returned to the client.
+    /// The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
+    pub circuit_breaker: Option<TrafficShapingSubgraphCircuitBreakerConfig>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<ClientTLSConfig>,
 
@@ -184,6 +197,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             pool_idle_timeout: default_pool_idle_timeout(),
             dedupe_enabled: default_dedupe_enabled(),
             request_timeout: default_request_timeout(),
+            circuit_breaker: default_circuit_breaker_config(),
             tls: None,
             allow_only_http2: false,
         }
@@ -321,12 +335,238 @@ impl Default for TrafficShapingRouterConfig {
     }
 }
 
+fn default_circuit_breaker_config() -> Option<TrafficShapingSubgraphCircuitBreakerConfig> {
+    None
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ServerTLSConfig {
     pub cert_file: SingleOrMultiple<FilePath>,
     pub key_file: FilePath,
     pub client_auth: Option<ServerClientAuthConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingSubgraphCircuitBreakerConfig {
+    /// Enable or disable the circuit breaker for the subgraph.
+    /// Default: false (circuit breaker is disabled)
+    ///
+    /// When unset on a subgraph-level configuration, the value falls back
+    /// to the value defined in the global (`all`) circuit breaker
+    /// configuration.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Percentage after what the circuit breaker should kick in.
+    /// Default: 50%
+    #[serde(default)]
+    #[schemars(with = "String")]
+    pub error_threshold: Option<Percentage>,
+    /// Size of the rolling sample used to decide whether the breaker
+    /// should open while closed. The breaker fills this sample with the
+    /// outcomes of the last `volume_threshold` requests; the next request
+    /// after the sample is full is the one whose result is evaluated
+    /// against `error_threshold`. In practice the breaker can trip only
+    /// after at least `volume_threshold + 1` requests have been observed.
+    /// Default: 5
+    #[serde(default)]
+    pub volume_threshold: Option<usize>,
+    /// The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.
+    /// Default: 30s
+    #[serde(
+        default,
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub reset_timeout: Option<Duration>,
+    /// Size of the rolling sample of probe requests collected while the
+    /// breaker is in the half-open state after `reset_timeout` elapses.
+    /// The breaker fills this sample first; the next probe after the
+    /// sample is full is the one whose result is evaluated against
+    /// `error_threshold` to decide whether to transition back to `closed`
+    /// (resuming normal traffic) or to `open` (waiting for another
+    /// `reset_timeout` window). In practice at least
+    /// `half_open_attempts + 1` probes pass through before the breaker
+    /// can transition.
+    ///
+    /// Lower values make recovery faster but more aggressive; higher
+    /// values gather more samples before re-closing the circuit.
+    ///
+    /// Default: 10
+    #[serde(default)]
+    pub half_open_attempts: Option<usize>,
+    /// HTTP status codes returned by the subgraph that should be counted as
+    /// failures by the circuit breaker.
+    ///
+    /// Each entry can be either an exact status code (integer or string,
+    /// e.g. `503` or `"503"`) or a wildcard pattern in one of these forms:
+    ///
+    /// - `"5xx"` - matches every 500-599 status (`[1-5]xx` accepted),
+    /// - `"50x"` - matches every 500-509 status (`[1-5][0-9]x` accepted).
+    ///
+    /// Wildcards are case-insensitive (`"5XX"` works too). Patterns can be
+    /// freely mixed with exact codes in the same list, for example:
+    ///
+    /// ```yaml
+    /// error_status_codes: [501, "5xx", "52x"]
+    /// ```
+    ///
+    /// Only responses whose status code matches at least one entry in this
+    /// list are recorded as failures by the circuit breaker. Responses with
+    /// any other status code are treated as successes from the breaker's
+    /// point of view.
+    ///
+    /// Default: `[500, 502, 503, 504]`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_status_codes: Option<Vec<StatusCodeMatcher>>,
+}
+
+/// Matches an HTTP status code either exactly or via a wildcard pattern.
+///
+/// See [`TrafficShapingSubgraphCircuitBreakerConfig::error_status_codes`] for
+/// the accepted syntax.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StatusCodeMatcher {
+    /// A single exact HTTP status code, e.g. `503`.
+    Exact(StatusCode),
+    /// A `Nxx` wildcard matching every status in the `N00..=N99` range.
+    /// `N` is stored as `1..=5` (e.g. `5` for `"5xx"`).
+    Hundreds(u8),
+    /// A `NNx` wildcard matching every status in the `NN0..=NN9` range.
+    /// The prefix is stored as `10..=59` (e.g. `50` for `"50x"`).
+    Tens(u16),
+}
+
+impl StatusCodeMatcher {
+    /// Returns `true` if the given status code is covered by this matcher.
+    pub fn matches(&self, status: StatusCode) -> bool {
+        match self {
+            StatusCodeMatcher::Exact(code) => *code == status,
+            StatusCodeMatcher::Hundreds(n) => {
+                let lower = u16::from(*n) * 100;
+                let value = status.as_u16();
+                value >= lower && value <= lower + 99
+            }
+            StatusCodeMatcher::Tens(n) => {
+                let lower = *n * 10;
+                let value = status.as_u16();
+                value >= lower && value <= lower + 9
+            }
+        }
+    }
+
+    fn parse_str(input: &str) -> Result<Self, String> {
+        let lower = input.to_ascii_lowercase();
+        if lower.len() == 3 {
+            if lower.ends_with("xx") {
+                let n: u8 = lower[..1].parse().map_err(|_| {
+                    format!("invalid wildcard status code pattern '{input}': expected '[1-5]xx'")
+                })?;
+                if !(1..=5).contains(&n) {
+                    return Err(format!(
+                        "invalid wildcard status code pattern '{input}': hundreds digit must be in 1-5"
+                    ));
+                }
+                return Ok(StatusCodeMatcher::Hundreds(n));
+            }
+            if lower.ends_with('x') {
+                let n: u16 = lower[..2].parse().map_err(|_| {
+                    format!(
+                        "invalid wildcard status code pattern '{input}': expected '[1-5][0-9]x'"
+                    )
+                })?;
+                if !(10..=59).contains(&n) {
+                    return Err(format!(
+                        "invalid wildcard status code pattern '{input}': tens prefix must be in 10-59"
+                    ));
+                }
+                return Ok(StatusCodeMatcher::Tens(n));
+            }
+        }
+
+        let code: u16 = input
+            .parse()
+            .map_err(|_| format!("invalid HTTP status code or wildcard pattern '{input}'"))?;
+        StatusCode::from_u16(code)
+            .map(StatusCodeMatcher::Exact)
+            .map_err(|_| format!("invalid HTTP status code '{input}'"))
+    }
+}
+
+impl Serialize for StatusCodeMatcher {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            StatusCodeMatcher::Exact(code) => serializer.serialize_u16(code.as_u16()),
+            StatusCodeMatcher::Hundreds(n) => serializer.serialize_str(&format!("{n}xx")),
+            StatusCodeMatcher::Tens(n) => serializer.serialize_str(&format!("{n}x")),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for StatusCodeMatcher {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> de::Visitor<'de> for Visitor {
+            type Value = StatusCodeMatcher;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str(
+                    "an HTTP status code (integer 100-599) or a wildcard pattern like \"5xx\" or \"50x\"",
+                )
+            }
+
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                let code = u16::try_from(value)
+                    .map_err(|_| E::custom(format!("invalid HTTP status code: {value}")))?;
+                StatusCode::from_u16(code)
+                    .map(StatusCodeMatcher::Exact)
+                    .map_err(|_| E::custom(format!("invalid HTTP status code: {value}")))
+            }
+
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                let value: u64 = value
+                    .try_into()
+                    .map_err(|_| E::custom(format!("invalid HTTP status code: {value}")))?;
+                self.visit_u64(value)
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                StatusCodeMatcher::parse_str(value).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl JsonSchema for StatusCodeMatcher {
+    fn schema_name() -> Cow<'static, str> {
+        "StatusCodeMatcher".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "description": "Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) or a wildcard pattern: '[1-5]xx' (e.g. '5xx') or '[1-5][0-9]x' (e.g. '50x'). Case-insensitive.",
+            "oneOf": [
+                {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599
+                },
+                {
+                    "type": "string",
+                    "pattern": "^(?:[1-5][0-9][0-9]|[1-5][xX][xX]|[1-5][0-9][xX])$"
+                }
+            ]
+        })
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

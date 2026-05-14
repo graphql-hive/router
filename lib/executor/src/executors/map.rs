@@ -5,10 +5,13 @@ use std::{
 };
 
 use dashmap::DashMap;
-use futures::stream::BoxStream;
+use futures::{stream::BoxStream, FutureExt};
+use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerError};
 use hive_router_config::{
-    override_subgraph_urls::UrlOrExpression, subscriptions::SubscriptionProtocol,
-    traffic_shaping::DurationOrExpression, HiveRouterConfig,
+    override_subgraph_urls::UrlOrExpression,
+    subscriptions::SubscriptionProtocol,
+    traffic_shaping::{DurationOrExpression, StatusCodeMatcher},
+    HiveRouterConfig,
 };
 use hive_router_internal::expressions::{
     vrl::{core::Value as VrlValue, prelude::Function},
@@ -19,11 +22,12 @@ use hive_router_internal::{
     expressions::vrl::compiler::Program as VrlProgram, inflight::InFlightMap,
     telemetry::TelemetryContext,
 };
-use http::Uri;
+use http::{StatusCode, Uri};
 use hyper_util::{
     client::legacy::Client,
     rt::{TokioExecutor, TokioTimer},
 };
+use recloser::AsyncRecloser;
 use tokio::sync::Semaphore;
 
 use crate::{
@@ -53,6 +57,38 @@ type StaticEndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
 type ExpressionEndpointsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
 type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
 
+#[derive(Clone)]
+struct SubgraphCircuitBreaker {
+    recloser: AsyncRecloser,
+    /// HTTP status code matchers that should be counted as failures by the
+    /// circuit breaker. A response counts as a failure if its status code
+    /// matches any entry. Wrapped in `Arc` so the value is cheap to clone
+    /// out of the `DashMap`.
+    error_status_codes: Arc<Vec<StatusCodeMatcher>>,
+}
+type CircuitBreakersBySubgraph = DashMap<SubgraphName, SubgraphCircuitBreaker>;
+
+lazy_static::lazy_static! {
+    /// Default HTTP statuses tracked as failures by the circuit breaker when
+    /// the user does not configure `error_status_codes` explicitly. These
+    /// cover the most common "infrastructure" 5xx codes that indicate the
+    /// subgraph cannot serve the request right now (as opposed to a
+    /// resolver-level error returned with a 200/2xx response):
+    ///
+    /// - 500 Internal Server Error
+    /// - 502 Bad Gateway
+    /// - 503 Service Unavailable
+    /// - 504 Gateway Timeout
+    static ref DEFAULT_CIRCUIT_BREAKER_ERROR_STATUS_CODES: Arc<Vec<StatusCodeMatcher>> = Arc::new(
+        vec![
+            StatusCodeMatcher::Exact(StatusCode::INTERNAL_SERVER_ERROR),
+            StatusCodeMatcher::Exact(StatusCode::BAD_GATEWAY),
+            StatusCodeMatcher::Exact(StatusCode::SERVICE_UNAVAILABLE),
+            StatusCodeMatcher::Exact(StatusCode::GATEWAY_TIMEOUT),
+        ],
+    );
+}
+
 struct ResolvedSubgraphConfig<'a> {
     client: Arc<HttpClient>,
     timeout_config: &'a DurationOrExpression,
@@ -71,6 +107,7 @@ pub struct SubgraphExecutorMap {
     /// Only contains subgraphs with expression-based endpoint overrides
     expression_endpoints_by_subgraph: ExpressionEndpointsBySubgraphMap,
     timeouts_by_subgraph: TimeoutsBySubgraph,
+    circuit_breakers_by_subgraph: CircuitBreakersBySubgraph,
     global_timeout: DurationOrProgram,
     config: Arc<HiveRouterConfig>,
     client: Arc<HttpClient>,
@@ -112,6 +149,7 @@ impl SubgraphExecutorMap {
             max_connections_per_host,
             in_flight_requests: InFlightMap::default(),
             timeouts_by_subgraph: Default::default(),
+            circuit_breakers_by_subgraph: Default::default(),
             global_timeout,
             telemetry_context,
             callback_subscriptions: Arc::new(DashMap::new()),
@@ -154,6 +192,7 @@ impl SubgraphExecutorMap {
             subgraph_executor_map.register_static_endpoint(subgraph_name, &endpoint_str);
             subgraph_executor_map.register_executor(subgraph_name, &endpoint_str, false)?;
             subgraph_executor_map.register_subgraph_timeout(subgraph_name)?;
+            subgraph_executor_map.register_circuit_breaker(subgraph_name)?;
         }
 
         Ok(subgraph_executor_map)
@@ -213,9 +252,69 @@ impl SubgraphExecutorMap {
         let mut execution_result = match execution_result {
             Some(execution_result) => execution_result,
             None => {
-                executor
-                    .execute(execution_request, timeout, plugin_req_state)
-                    .await?
+                let exec_fut = executor.execute(execution_request, timeout, plugin_req_state);
+                // Clone the circuit breaker out of the DashMap before awaiting to avoid
+                // holding the shard read-lock across an await point (potential deadlock).
+                let circuit_breaker = self
+                    .circuit_breakers_by_subgraph
+                    .get(subgraph_name)
+                    .map(|r| r.value().clone());
+                match circuit_breaker {
+                    Some(circuit_breaker) => {
+                        let SubgraphCircuitBreaker {
+                            recloser,
+                            error_status_codes,
+                        } = circuit_breaker;
+                        // Treat configured status codes as errors so the
+                        // circuit breaker can track them. Default: 500, 502,
+                        // 503 and 504.
+                        let exec_fut = exec_fut.map(move |exec_res| match exec_res {
+                            Ok(succ_res) => {
+                                if succ_res.status.is_some_and(|status| {
+                                    error_status_codes.iter().any(|m| m.matches(status))
+                                }) {
+                                    // Save the original response in case the circuit breaker treats it as an error and returns it through the error variant
+                                    Err(SubgraphExecutorError::InternalServerError(succ_res.into()))
+                                } else {
+                                    Ok(succ_res)
+                                }
+                            }
+                            Err(err) => Err(err),
+                        });
+                        let circuit_breaker_metrics =
+                            &self.telemetry_context.metrics.circuit_breaker;
+                        recloser
+                            .call(exec_fut)
+                            .map(|exec_res| match exec_res {
+                                Err(recloser::Error::Inner(e)) => {
+                                    // The call was permitted by the breaker but the
+                                    // inner future returned an error. The breaker
+                                    // counts it as a failure regardless of whether
+                                    // we surface the original response or not.
+                                    circuit_breaker_metrics.record_failure(subgraph_name);
+                                    match e {
+                                        // If it's an error we wrapped above, unwrap it and return the original successful response instead of treating it as a failure for the caller
+                                        // This allows the circuit breaker to track 5xx responses without impacting the actual response returned to the client,
+                                        // which is important for use cases where clients want to handle 5xx responses differently but still want the circuit breaker to be aware of them.
+                                        SubgraphExecutorError::InternalServerError(succ_ress) => {
+                                            Ok(*succ_ress)
+                                        }
+                                        other_err => Err(other_err),
+                                    }
+                                }
+                                Err(recloser::Error::Rejected) => {
+                                    circuit_breaker_metrics.record_short_circuit(subgraph_name);
+                                    Err(SubgraphExecutorError::CircuitBreakerRejected)
+                                }
+                                Ok(res) => {
+                                    circuit_breaker_metrics.record_success(subgraph_name);
+                                    Ok(res)
+                                }
+                            })
+                            .await?
+                    }
+                    None => exec_fut.await?,
+                }
             }
         };
 
@@ -263,7 +362,42 @@ impl SubgraphExecutorMap {
 
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
 
-        executor.subscribe(execution_request, timeout).await
+        let subscribe_fut = executor.subscribe(execution_request, timeout);
+
+        // The circuit breaker only guards the establishment of the
+        // subscription (the first `Result` returned by `subscribe`). Errors
+        // emitted by the returned stream are intentionally ignored because
+        // once the subscription is established we already know the subgraph
+        // is reachable, and treating in-stream errors as failures would
+        // incorrectly trigger the breaker.
+        let circuit_breaker = self
+            .circuit_breakers_by_subgraph
+            .get(subgraph_name)
+            .map(|r| r.value().clone());
+
+        match circuit_breaker {
+            Some(SubgraphCircuitBreaker { recloser, .. }) => {
+                let circuit_breaker_metrics = &self.telemetry_context.metrics.circuit_breaker;
+                recloser
+                    .call(subscribe_fut)
+                    .map(|res| match res {
+                        Ok(stream) => {
+                            circuit_breaker_metrics.record_success(subgraph_name);
+                            Ok(stream)
+                        }
+                        Err(recloser::Error::Inner(e)) => {
+                            circuit_breaker_metrics.record_failure(subgraph_name);
+                            Err(e)
+                        }
+                        Err(recloser::Error::Rejected) => {
+                            circuit_breaker_metrics.record_short_circuit(subgraph_name);
+                            Err(SubgraphExecutorError::CircuitBreakerRejected)
+                        }
+                    })
+                    .await
+            }
+            None => subscribe_fut.await,
+        }
     }
 
     fn resolve_subgraph_timeout(
@@ -629,6 +763,94 @@ impl SubgraphExecutorMap {
         // Register the compiled timeout
         self.timeouts_by_subgraph
             .insert(subgraph_name.to_string(), timeout_prog);
+
+        Ok(())
+    }
+
+    /// Registers a circuit breaker for a specific subgraph.
+    /// If the subgraph already has a circuit breaker registered, it will do nothing.
+    fn register_circuit_breaker(&self, subgraph_name: &str) -> Result<(), SubgraphExecutorError> {
+        if self
+            .circuit_breakers_by_subgraph
+            .contains_key(subgraph_name)
+        {
+            return Ok(());
+        }
+
+        let global_circuit_breaker_cfg = self.config.traffic_shaping.all.circuit_breaker.as_ref();
+        let subgraph_circuit_breaker_cfg = self
+            .config
+            .traffic_shaping
+            .subgraphs
+            .get(subgraph_name)
+            .and_then(|s| s.circuit_breaker.as_ref());
+
+        let circuit_breaker_enabled = subgraph_circuit_breaker_cfg
+            .and_then(|c| c.enabled)
+            .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.enabled))
+            .unwrap_or(false);
+
+        if circuit_breaker_enabled {
+            let mut builder = CircuitBreakerBuilder::default();
+
+            if let Some(error_threshold) = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.error_threshold)
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.error_threshold))
+            {
+                let error_threshold = error_threshold.as_f64() as f32;
+                if !error_threshold.is_finite() {
+                    return Err(SubgraphExecutorError::CircuitBreakerCreationError(
+                        CircuitBreakerError::InvalidErrorThreshold(error_threshold),
+                        subgraph_name.to_string(),
+                    ));
+                }
+                builder = builder.error_threshold(error_threshold);
+            }
+
+            if let Some(volume_threshold) = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.volume_threshold)
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.volume_threshold))
+            {
+                builder = builder.volume_threshold(volume_threshold);
+            }
+
+            if let Some(reset_timeout) = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.reset_timeout)
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.reset_timeout))
+            {
+                builder = builder.reset_timeout(reset_timeout);
+            }
+
+            if let Some(half_open_attempts) = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.half_open_attempts)
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.half_open_attempts))
+            {
+                builder = builder.half_open_attempts(half_open_attempts);
+            }
+
+            let recloser = builder.build_async().map_err(|e| {
+                SubgraphExecutorError::CircuitBreakerCreationError(e, subgraph_name.to_string())
+            })?;
+
+            let error_status_codes = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.error_status_codes.as_ref())
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.error_status_codes.as_ref()))
+                .map(|codes| Arc::new(codes.clone()))
+                .unwrap_or_else(|| DEFAULT_CIRCUIT_BREAKER_ERROR_STATUS_CODES.clone());
+
+            self.circuit_breakers_by_subgraph.insert(
+                subgraph_name.to_string(),
+                SubgraphCircuitBreaker {
+                    recloser,
+                    error_status_codes,
+                },
+            );
+
+            self.telemetry_context
+                .metrics
+                .circuit_breaker
+                .register_subgraph(subgraph_name);
+        }
 
         Ok(())
     }

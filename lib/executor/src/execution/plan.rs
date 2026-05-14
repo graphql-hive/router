@@ -11,6 +11,7 @@ use futures::{
     stream::{BoxStream, FuturesUnordered},
     FutureExt, StreamExt,
 };
+use hive_router_internal::graphql::ObservedError;
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
@@ -260,7 +261,7 @@ pub async fn execute_query_plan<'exec>(
                     // internal to the execution of the query plan (subgraph executor errors).
                     // furthermore, we want to always act on those errors the same way (stream and stop,
                     // read below) and not allow the caller to decide and potentially decide wrong
-                    Err(err) => {
+                    Err(ref err) => {
                         // not a fatal error, but stream it and stop.
                         // it's not fatal because the subgraph might recover and send more
                         // events if the subgraph error is a network error. but we fail and stop
@@ -307,7 +308,7 @@ pub async fn execute_query_plan<'exec>(
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
-                    Err(err) => {
+                    Err(ref err) => {
                         // fatal error, stream it and stop
                         yield FailedExecutionResult {
                             errors: vec![err.into()],
@@ -826,15 +827,15 @@ impl<'exec> Executor<'exec> {
         job: Result<ExecutionJob<'exec>, PlanExecutionError>,
     ) {
         match job {
-            Err(err) => {
-                self.log_error(&err);
+            Err(ref err) => {
+                self.log_error(err);
                 ctx.errors.push(err.into());
             }
             Ok(job) => {
                 let subgraph_name = job.subgraph_name();
                 let affected_path = job.affected_path();
                 if let Some(ref subgraph_headers) = job.response_ref().headers {
-                    if let Err(err) = apply_subgraph_response_headers(
+                    if let Err(ref err) = apply_subgraph_response_headers(
                         self.headers_plan,
                         job.subgraph_name(),
                         subgraph_headers,
@@ -845,7 +846,7 @@ impl<'exec> Executor<'exec> {
                         subgraph_name: || Some(subgraph_name.to_string()),
                         affected_path: || affected_path.map(|p| p.to_string()),
                     }) {
-                        self.log_error(&err);
+                        self.log_error(err);
                         ctx.errors.push(err.into());
                     }
                 }
@@ -1366,6 +1367,11 @@ impl<'exec> Executor<'exec> {
                 output_rewrites: opts.output_rewrites,
             })
         }
+        .inspect_err(|err: &PlanExecutionError| {
+            subgraph_operation_span.record_error_count(1);
+            subgraph_operation_span
+                .record_errors(|| vec![ObservedError::from(&GraphQLError::from(err))]);
+        })
         .instrument(subgraph_operation_span.clone())
         .await
     }
