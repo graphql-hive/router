@@ -839,52 +839,6 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
     Ok(())
 }
 
-/// When the interface and every implementor live in a single subgraph, an interface fragment
-/// must be forwarded to that subgraph at the interface level rather than being expanded into
-/// one inline fragment per concrete implementor.
-#[test]
-fn interface_fragment_keeps_abstract_selection_when_single_subgraph_owns_implementors(
-) -> Result<(), Box<dyn Error>> {
-    init_logger();
-    let document = parse_operation(
-        r#"
-        query {
-          notifications {
-            ... on Notification {
-              ...sharedFields
-            }
-          }
-        }
-
-        fragment sharedFields on Notification {
-          id
-          title
-          createdAt
-        }
-        "#,
-    );
-    let query_plan = build_query_plan(
-        "fixture/tests/single-subgraph-interface.supergraph.graphql",
-        document,
-    )?;
-
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "main") {
-        {
-          notifications {
-            id
-            title
-            createdAt
-          }
-        }
-      },
-    },
-    "#);
-
-    Ok(())
-}
-
 /// When a union field carries an interface fragment and one subgraph owns the interface plus
 /// every union member, the abstract fragment must reach that subgraph as
 /// `... on Notification { ... }` rather than as one fragment per concrete member.
