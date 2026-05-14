@@ -295,6 +295,10 @@ impl CollectedMetrics {
         self.latest_number(name, SeriesKind::Counter, attrs)
     }
 
+    pub fn latest_gauge(&self, name: &str, attrs: &[(&str, &str)]) -> f64 {
+        self.latest_number(name, SeriesKind::Gauge, attrs)
+    }
+
     pub fn has_counter(&self, name: &str, attrs: &[(&str, &str)]) -> bool {
         self.has_series(name, SeriesKind::Counter, attrs)
     }

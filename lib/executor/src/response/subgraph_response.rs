@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
-use http::HeaderMap;
+use http::{HeaderMap, StatusCode};
 use serde::{
     de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor},
     Deserialize,
@@ -22,6 +22,7 @@ pub struct SubgraphResponse<'a> {
     pub extensions: Option<Value<'a>>,
     pub headers: Option<Arc<HeaderMap>>,
     pub bytes: Option<Bytes>,
+    pub status: Option<StatusCode>,
 }
 
 impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
@@ -119,6 +120,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
             extensions,
             headers: None,
             bytes: None,
+            status: None,
         })
     }
 }

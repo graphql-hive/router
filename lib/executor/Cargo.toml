@@ -19,6 +19,7 @@ hive-router-query-planner = { path = "../query-planner", version = "2.8.2" }
 hive-router-config = { path = "../router-config", version = "0.0.34" }
 hive-router-internal = { path = "../internal", version = "0.0.21" }
 graphql-tools =  { path = "../graphql-tools", version = "0.5.4" }
+hive-console-sdk = { path = "../hive-console-sdk", version = "0.3.8" }
 
 async-trait = { workspace = true }
 futures = { workspace = true }
@@ -36,6 +37,7 @@ xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 serde_json = { workspace = true }
+recloser = { workspace = true }
 
 regex-automata = { workspace = true }
 bytes = { workspace = true }
@@ -44,6 +46,7 @@ ahash = { workspace = true }
 ntex = { workspace = true }
 hyper-rustls = { workspace = true}
 rustls = { workspace = true }
+lazy_static = { workspace = true }
 
 hyper-util = { version = "0.1.16", features = [
   "client",
