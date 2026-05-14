@@ -17,30 +17,11 @@ use crate::{
 impl FetchGraph<MultiTypeFetchStep> {
     /// Per-subgraph supertype collapse pass.
     ///
-    /// For each fetch step, looks at its target subgraph and tries two complementary rewrites
-    /// on its `input` and `output` selection maps:
-    ///
-    /// - When the map keys are concrete object types whose set exactly matches the runtime
-    ///   objects of an abstract supertype defined in that subgraph, and every per-key
-    ///   selection set is identical, the map collapses to a single entry keyed by that
-    ///   abstract type. Subsequent passes (`merge_siblings`, `batch_multi_type`) then see the
-    ///   abstract-keyed shape and may unlock further plan simplifications.
-    /// - At every level inside each kept selection set, groups of inline fragments on
-    ///   different concrete object types that carry the same selections and together cover an
-    ///   abstract supertype's runtime objects in that subgraph fold into a single
-    ///   `... on Abstract { ... }` fragment, with equal `... on Same { ... }` wrappers
-    ///   removed at the surrounding parent level.
-    ///
-    /// The pass is gated on the same per-subgraph predicates the rendered subgraph fetch
-    /// document needs to remain valid: the abstract type must be defined in the target
-    /// subgraph, every selected non-`__typename` field on the abstract fragment must exist on
-    /// that abstract type, and the concrete set must cover exactly the abstract type's
-    /// implementors / union members in that subgraph (no more, no less).
-    ///
-    /// Returns `true` when at least one selection map was rewritten, so the optimize loop
-    /// knows to schedule another iteration of the surrounding passes (`merge_siblings`,
-    /// `batch_multi_type`, etc.) that may now find new merge candidates because of the
-    /// abstract-keyed shape.
+    /// For each fetch step, rewrites concrete-keyed fan-outs back to an abstract supertype
+    /// when the target subgraph defines that abstract type and the concrete set exactly
+    /// covers its runtime objects there. Applies to both selection map keys and inline
+    /// fragments at every nesting level. Returns `true` when anything was rewritten so the
+    /// optimize loop can re-run sibling passes that may now find new merge candidates.
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn collapse_supertype_per_subgraph(
         &mut self,
@@ -66,8 +47,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                         }
                     })
             else {
-                // Synthetic root steps (or any step whose service name is not a real subgraph)
-                // have no schema we can validate the collapse against, so leave them alone.
+                // Synthetic / non-subgraph steps have no schema to validate against.
                 continue;
             };
 
@@ -102,14 +82,10 @@ fn collapse_step_selections(
     mutated
 }
 
-/// Top-level map-key collapse: when every map key is a concrete object type, every per-key
-/// selection set is identical, and the key set exactly matches the runtime objects of some
-/// abstract supertype defined in `graph_id`, rewrite the map to a single `{ Abstract:
-/// shared_selections }` entry.
-///
-/// Root operation type entries (`Query` / `Mutation` / `Subscription`) are skipped because
-/// they are positional placeholders rather than concrete types reachable through an abstract
-/// supertype.
+/// Top-level map-key collapse: rewrites `{ ConcreteA: S, ConcreteB: S, ConcreteC: S }` to
+/// `{ Abstract: S }` when the concrete set exactly covers an abstract supertype's runtime
+/// objects in `graph_id`. Root operation types are skipped (they are positional, not reachable
+/// through an abstract).
 fn try_collapse_keys_to_supertype(
     step_selections: &mut FetchStepSelections<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
@@ -158,18 +134,11 @@ fn try_collapse_keys_to_supertype(
     true
 }
 
-/// Recursive walk used by [`collapse_step_selections`].
-///
-/// At every nested level the walk first strips equal `... on Same { ... }` fragments
-/// (where `Same` is the static parent type) and then attempts to fold any group of inline
-/// fragments on distinct concrete object types whose selections are identical and whose set
-/// covers exactly the runtime objects of an abstract supertype the target subgraph defines,
-/// rewriting them into a single `... on Abstract { ... }` fragment.
-///
-/// `parent_type_name` is the static parent type of `selection_set`. When `None`, the walk
-/// still descends through fields and inline fragments using their own type information, but
-/// the parent-driven self-flatten and the parent-equals-abstract equal check are skipped.
-/// Returns `true` if any rewrite occurred at this level or below.
+/// Recursive walk: at each level strips redundant `... on Same` fragments (where `Same` is
+/// the static parent type) and folds matching concrete-fragment groups into a single
+/// `... on Abstract` fragment. `parent_type_name` is the static parent type; when `None` the
+/// parent-driven steps are skipped. Returns `true` if anything was rewritten at this level or
+/// below.
 fn walk_and_collapse(
     selection_set: &mut SelectionSet,
     supergraph: &SupergraphState,
@@ -235,11 +204,8 @@ fn walk_and_collapse(
     mutated
 }
 
-/// Drops inline fragments at this level whose type condition equals `parent_type` and inlines
-/// their selections in place, deduplicating against items already present at this level.
-/// Fragments with `@skip` / `@include` directives are preserved as-is, since their conditional
-/// nature means the contents are not equivalent to an unconditional inlining. Returns `true`
-/// when at least one such equal fragment was inlined.
+/// Inlines `... on ParentType` fragments at this level (deduping against existing items) and
+/// returns `true` if any were inlined. Fragments with `@skip` / `@include` are kept as-is.
 fn flatten_self_fragments_at_level(items: &mut Vec<SelectionItem>, parent_type: &str) -> bool {
     if !items.iter().any(|item| match item {
         SelectionItem::InlineFragment(fragment) => {
@@ -305,8 +271,7 @@ fn try_collapse_concrete_fragments_at_level(
             .insert(fragment.type_condition.as_str(), &fragment.selections)
             .is_some()
         {
-            // Two fragments on the same concrete type would have to be merged before we can
-            // reason about a single selection per type. Skip this level rather than attempt it.
+            // Duplicate concrete keys at the same level: skip rather than try to merge them.
             return None;
         }
         collapsible_indices.push(idx);
@@ -379,12 +344,9 @@ fn is_already_present_later(
         .any(|(idx, item)| !collapsible_set.contains(&idx) && item == candidate)
 }
 
-/// Finds an abstract supertype defined in `graph_id` whose runtime objects (interface
-/// implementors or union members in that subgraph) exactly equal `concrete_set`, and on which
-/// every selected field in `shared_selections` is itself defined.
-///
-/// When multiple supertypes match (e.g. an interface and a covering union both fit), the
-/// lexicographically first name is returned for plan stability.
+/// Finds an abstract supertype in `graph_id` whose runtime objects exactly match
+/// `concrete_set` and that defines every selected field in `shared_selections`. When several
+/// supertypes match, returns the lexicographically first name for plan stability.
 fn find_matching_abstract_type<'a>(
     supergraph: &'a SupergraphState,
     graph_id: &str,
@@ -449,17 +411,10 @@ fn find_matching_abstract_type<'a>(
 }
 
 /// Whether every selected non-`__typename` field in `shared_selections` is defined on
-/// `abstract_type` *as seen by the target subgraph `graph_id`*.
-///
-/// Looking at the supergraph-wide field map would accept a collapse for any field that some
-/// subgraph contributes to the abstract type, even when the subgraph the rewrite targets
-/// doesn't define that field on the abstract type itself (only on its concrete implementors).
-/// In that case the rewritten `... on Abstract { field }` fragment would not validate against
-/// the target subgraph's schema. We therefore filter the abstract type's fields through the
-/// per-subgraph `@join__field` lens before checking presence.
-///
-/// Union types never declare fields, so any non-`__typename` selection at this level cannot
-/// resolve against a union and the collapse is rejected.
+/// `abstract_type` *as seen by `graph_id`* (filtered through `@join__field`). A
+/// supergraph-wide check would accept fields that the target subgraph only carries on
+/// concrete implementors, producing a `... on Abstract { field }` that the subgraph rejects.
+/// Unions are always rejected here since they don't declare fields.
 fn shared_selections_compatible_with(
     abstract_type: &SupergraphDefinition,
     graph_id: &str,
@@ -486,10 +441,7 @@ fn shared_selections_compatible_with(
                 }
             }
             SelectionItem::InlineFragment(_) | SelectionItem::FragmentSpread(_) => {
-                // Inline fragments narrow the type and validate against their own type
-                // condition, so they don't need to resolve against the parent abstract type.
-                // Fragment spreads similarly carry their own type condition in the operation
-                // document and aren't validated against the parent here.
+                // Carries its own type condition; not validated against the parent abstract.
             }
         }
     }

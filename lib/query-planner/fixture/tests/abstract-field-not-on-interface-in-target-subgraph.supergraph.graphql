@@ -1,0 +1,105 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+scalar join__FieldSet
+
+enum join__Graph {
+  HOME @join__graph(name: "home", url: "http://localhost:4200/home")
+  REMOTE @join__graph(name: "remote", url: "http://localhost:4200/remote")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
+
+# `Item.payload` exists on the interface supergraph-wide, but `@join__field(graph: REMOTE)`
+# binds it to REMOTE only. HOME has `payload` on each concrete implementor, not on the
+# interface. This is the shape the per-subgraph collapse guard must reject for HOME.
+interface Item
+  @join__type(graph: HOME, key: "id")
+  @join__type(graph: REMOTE, key: "id") {
+  id: ID!
+  payload: String @join__field(graph: REMOTE)
+}
+
+type ItemA implements Item
+  @join__implements(graph: HOME, interface: "Item")
+  @join__implements(graph: REMOTE, interface: "Item")
+  @join__type(graph: HOME, key: "id")
+  @join__type(graph: REMOTE, key: "id") {
+  id: ID!
+  payload: String
+    @join__field(graph: HOME)
+    @join__field(graph: REMOTE)
+}
+
+type ItemB implements Item
+  @join__implements(graph: HOME, interface: "Item")
+  @join__implements(graph: REMOTE, interface: "Item")
+  @join__type(graph: HOME, key: "id")
+  @join__type(graph: REMOTE, key: "id") {
+  id: ID!
+  payload: String
+    @join__field(graph: HOME)
+    @join__field(graph: REMOTE)
+}
+
+type ItemC implements Item
+  @join__implements(graph: HOME, interface: "Item")
+  @join__implements(graph: REMOTE, interface: "Item")
+  @join__type(graph: HOME, key: "id")
+  @join__type(graph: REMOTE, key: "id") {
+  id: ID!
+  payload: String
+    @join__field(graph: HOME)
+    @join__field(graph: REMOTE)
+}
+
+type Query @join__type(graph: HOME) {
+  allItems: [Item!]!
+}

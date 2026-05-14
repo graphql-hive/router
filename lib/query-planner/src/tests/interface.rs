@@ -885,17 +885,9 @@ fn interface_fragment_keeps_abstract_selection_when_single_subgraph_owns_impleme
     Ok(())
 }
 
-/// When a union field is selected with an inline fragment on an abstract supertype that all
-/// union members implement, and the interface plus every member is owned by a single
-/// subgraph, the abstract fragment must reach that subgraph as `... on Notification { ... }`
-/// rather than as one `... on EmailNotification` / `... on PushNotification` /
-/// `... on SmsNotification` per member.
-///
-/// Sending the per-member shape would leak a planner-internal fan-out into the wire request
-/// and force every union member subschema to validate fields that the client only asked for at
-/// the interface level. The per-subgraph supertype collapse pass folds the fan-out back into
-/// a single abstract fragment because the target subgraph natively defines the interface and
-/// its runtime objects there are exactly the union members the planner expanded into.
+/// When a union field carries an interface fragment and one subgraph owns the interface plus
+/// every union member, the abstract fragment must reach that subgraph as
+/// `... on Notification { ... }` rather than as one fragment per concrete member.
 #[test]
 fn union_field_keeps_interface_fragment_when_single_subgraph_owns_members(
 ) -> Result<(), Box<dyn Error>> {
@@ -938,16 +930,79 @@ fn union_field_keeps_interface_fragment_when_single_subgraph_owns_members(
     Ok(())
 }
 
-/// When an interface is split across two subgraphs (each subgraph natively defines the
-/// interface and a disjoint subset of its concrete implementors) and a third subgraph
-/// dispatches the runtime objects of every implementor through a root field that returns the
-/// interface, asking for an interface-level field forces a per-implementor fan-out: each leg
-/// of the fan-out hits the subgraph that owns the field for those implementors. The
-/// per-subgraph supertype collapse pass then folds each leg back into a single
-/// `... on Interface` fragment, because in each subgraph the implementor set the planner
-/// expanded into is exactly that subgraph's view of the interface's runtime objects. Without
-/// this collapse, every leg would carry its own per-implementor expansion to a subgraph that
-/// already understands the interface natively.
+/// Guards the per-subgraph compatibility check in the supertype collapse pass.
+///
+/// Here `Item.payload` appears on the interface supergraph-wide but is bound to REMOTE via
+/// `@join__field`; HOME only carries `payload` on each concrete implementor. A supergraph-wide
+/// check would wrongly collapse the per-implementor fan-out into `... on Item { payload }`
+/// for HOME, which HOME's interface does not declare. The subgraph-aware check must keep the
+/// fan-out intact.
+#[test]
+fn abstract_field_only_resolvable_on_concretes_keeps_per_implementor_fan_out(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          allItems {
+            id
+            ... on ItemA { payload }
+            ... on ItemB { payload }
+            ... on ItemC { payload }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/abstract-field-not-on-interface-in-target-subgraph.supergraph.graphql",
+        document,
+    )?;
+
+    let rendered = format!("{}", query_plan);
+
+    for concrete in ["... on ItemA", "... on ItemB", "... on ItemC"] {
+        assert!(
+            rendered.contains(concrete),
+            "expected `{}` in plan, got:\n{}",
+            concrete,
+            rendered
+        );
+    }
+    assert!(
+        !rendered.contains("... on Item {\n              payload"),
+        "must not collapse to `... on Item {{ payload }}` on HOME, got:\n{}",
+        rendered
+    );
+
+    insta::assert_snapshot!(rendered, @r#"
+    QueryPlan {
+      Fetch(service: "home") {
+        {
+          allItems {
+            id
+            __typename
+            ... on ItemA {
+              payload
+            }
+            ... on ItemB {
+              payload
+            }
+            ... on ItemC {
+              payload
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `Item` is split across two subgraphs (each owning a disjoint subset of implementors) and
+/// dispatched by a third. Asking for an interface-level field fans out per leg, and each leg
+/// must collapse back to a single `... on Item` fragment in its target subgraph, instead of
+/// keeping the per-implementor expansion the planner used to route the work.
 #[test]
 fn split_interface_collapses_per_subgraph_to_abstract() -> Result<(), Box<dyn Error>> {
     init_logger();
