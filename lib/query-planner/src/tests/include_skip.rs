@@ -1660,3 +1660,80 @@ fn qp_abstract_union_member_conditions_stay_scoped() -> Result<(), Box<dyn Error
 
     Ok(())
 }
+
+/// Regression: unconditional `username` must not disappear when an aliased `@skip` copy remains
+#[test]
+fn qp_nested_user_username_skip_and_unconditional_preserved() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($flag: Boolean!, $id: ID!) {
+          user(id: $id) {
+            reviews {
+              author {
+                ... on User @include(if: true) {
+                  reviews {
+                    ... on Review @include(if: true) @skip(if: false) {
+                      id
+                      author {
+                        ... on User {
+                          __typename
+                          masked: username @skip(if: $flag)
+                          username @include(if: true) @skip(if: false)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan("../../bench/supergraph.graphql", document)?;
+    let printed = format!("{}", query_plan);
+
+    insta::assert_snapshot!(printed, @r###"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "accounts") {
+          query ($id:ID!) {
+            user(id: $id) {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "reviews") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            ($flag:Boolean!) {
+              ... on User {
+                reviews {
+                  author {
+                    reviews {
+                      id
+                      author {
+                        __typename
+                        masked: username @skip(if: $flag)
+                        username
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "###);
+
+    Ok(())
+}

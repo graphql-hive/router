@@ -113,9 +113,13 @@ fn try_collapse_keys_to_supertype(
         }
     }
 
-    let mut iter = entries.iter().map(|(_, v)| *v);
-    let shared = iter.next().expect("len >= 2 checked above");
-    for other in iter {
+    // Compare through `unwrap_self_fragment` so redundant nested `... on Concrete` wrappers
+    // don't block same-payload detection.
+    let mut effective_iter = entries
+        .iter()
+        .map(|(k, v)| unwrap_self_fragment(v, k.as_str()));
+    let shared = effective_iter.next().expect("len >= 2 checked above");
+    for other in effective_iter {
         if other != shared {
             return false;
         }
@@ -134,11 +138,10 @@ fn try_collapse_keys_to_supertype(
     true
 }
 
-/// Recursive walk: at each level strips redundant `... on Same` fragments (where `Same` is
-/// the static parent type) and folds matching concrete-fragment groups into a single
-/// `... on Abstract` fragment. `parent_type_name` is the static parent type; when `None` the
-/// parent-driven steps are skipped. Returns `true` if anything was rewritten at this level or
-/// below.
+/// Recursive walk: at each level folds matching concrete-fragment groups into a single
+/// `... on Abstract` fragment, recursing through fields and inline fragments first.
+/// `parent_type_name` is the static parent type; when `None` the parent-driven steps are
+/// skipped. Returns `true` if anything was rewritten at this level or below.
 fn walk_and_collapse(
     selection_set: &mut SelectionSet,
     supergraph: &SupergraphState,
@@ -146,12 +149,6 @@ fn walk_and_collapse(
     parent_type_name: Option<&str>,
 ) -> bool {
     let mut mutated = false;
-
-    if let Some(parent) = parent_type_name {
-        if flatten_self_fragments_at_level(&mut selection_set.items, parent) {
-            mutated = true;
-        }
-    }
 
     let parent_type_def = parent_type_name.and_then(|name| supergraph.definitions.get(name));
 
@@ -204,48 +201,6 @@ fn walk_and_collapse(
     mutated
 }
 
-/// Inlines `... on ParentType` fragments at this level (deduping against existing items) and
-/// returns `true` if any were inlined. Fragments with `@skip` / `@include` are kept as-is.
-fn flatten_self_fragments_at_level(items: &mut Vec<SelectionItem>, parent_type: &str) -> bool {
-    if !items.iter().any(|item| match item {
-        SelectionItem::InlineFragment(fragment) => {
-            fragment.type_condition == parent_type
-                && fragment.include_if.is_none()
-                && fragment.skip_if.is_none()
-        }
-        _ => false,
-    }) {
-        return false;
-    }
-
-    let original = std::mem::take(items);
-    let mut new_items: Vec<SelectionItem> = Vec::with_capacity(original.len());
-
-    for item in original {
-        match item {
-            SelectionItem::InlineFragment(fragment)
-                if fragment.type_condition == parent_type
-                    && fragment.include_if.is_none()
-                    && fragment.skip_if.is_none() =>
-            {
-                for inner in fragment.selections.items {
-                    if !new_items.contains(&inner) {
-                        new_items.push(inner);
-                    }
-                }
-            }
-            other => {
-                if !new_items.contains(&other) {
-                    new_items.push(other);
-                }
-            }
-        }
-    }
-
-    *items = new_items;
-    true
-}
-
 fn try_collapse_concrete_fragments_at_level(
     items: &[SelectionItem],
     supergraph: &SupergraphState,
@@ -267,8 +222,9 @@ fn try_collapse_concrete_fragments_at_level(
         else {
             continue;
         };
+        let effective = unwrap_self_fragment(&fragment.selections, &fragment.type_condition);
         if concrete_to_selection
-            .insert(fragment.type_condition.as_str(), &fragment.selections)
+            .insert(fragment.type_condition.as_str(), effective)
             .is_some()
         {
             // Duplicate concrete keys at the same level: skip rather than try to merge them.
@@ -308,8 +264,13 @@ fn try_collapse_concrete_fragments_at_level(
                 placed_collapsed = true;
                 if abstract_matches_parent {
                     for inner in shared_selection_set.items.iter() {
-                        if !new_items.contains(inner)
-                            && !is_already_present_later(items, idx, inner, &collapsible_set)
+                        // `SelectionItem::PartialEq` ignores alias/args/@skip/@include, so
+                        // dedup with it would drop a distinct conditional/aliased copy
+                        // (e.g. `masked: username @skip(if: $flag)` vs `username`).
+                        if !new_items
+                            .iter()
+                            .any(|existing| selections_strict_eq(existing, inner))
+                            && !is_already_present_later_strict(items, idx, inner, &collapsible_set)
                         {
                             new_items.push(inner.clone());
                         }
@@ -331,7 +292,40 @@ fn try_collapse_concrete_fragments_at_level(
     Some(new_items)
 }
 
-fn is_already_present_later(
+/// Strict structural equality that, unlike `SelectionItem::PartialEq`, considers field
+/// alias/arguments/`@skip`/`@include` and inline-fragment `@skip`/`@include`. Used only when
+/// collapsing concrete fragments into a parent that already names the abstract type, so that
+/// truly identical items merge while distinct aliased/conditional copies stay apart.
+fn selections_strict_eq(a: &SelectionItem, b: &SelectionItem) -> bool {
+    match (a, b) {
+        (SelectionItem::Field(x), SelectionItem::Field(y)) => {
+            x.name == y.name
+                && x.alias == y.alias
+                && x.arguments() == y.arguments()
+                && x.skip_if == y.skip_if
+                && x.include_if == y.include_if
+                && selection_sets_strict_eq(&x.selections, &y.selections)
+        }
+        (SelectionItem::InlineFragment(x), SelectionItem::InlineFragment(y)) => {
+            x.type_condition == y.type_condition
+                && x.skip_if == y.skip_if
+                && x.include_if == y.include_if
+                && selection_sets_strict_eq(&x.selections, &y.selections)
+        }
+        (SelectionItem::FragmentSpread(x), SelectionItem::FragmentSpread(y)) => x == y,
+        _ => false,
+    }
+}
+
+fn selection_sets_strict_eq(a: &SelectionSet, b: &SelectionSet) -> bool {
+    a.items.len() == b.items.len()
+        && a.items
+            .iter()
+            .zip(b.items.iter())
+            .all(|(x, y)| selections_strict_eq(x, y))
+}
+
+fn is_already_present_later_strict(
     items: &[SelectionItem],
     from_idx: usize,
     candidate: &SelectionItem,
@@ -341,7 +335,24 @@ fn is_already_present_later(
         .iter()
         .enumerate()
         .skip(from_idx + 1)
-        .any(|(idx, item)| !collapsible_set.contains(&idx) && item == candidate)
+        .any(|(idx, item)| !collapsible_set.contains(&idx) && selections_strict_eq(item, candidate))
+}
+
+/// Strip nested `... on T { ... on T { ... } }` (same `T`, no directives) to the inner selections.
+fn unwrap_self_fragment<'a>(set: &'a SelectionSet, type_name: &str) -> &'a SelectionSet {
+    if set.items.len() != 1 {
+        return set;
+    }
+    let SelectionItem::InlineFragment(fragment) = &set.items[0] else {
+        return set;
+    };
+    if fragment.type_condition != type_name
+        || fragment.include_if.is_some()
+        || fragment.skip_if.is_some()
+    {
+        return set;
+    }
+    unwrap_self_fragment(&fragment.selections, type_name)
 }
 
 /// Finds an abstract supertype in `graph_id` whose runtime objects exactly match
@@ -447,4 +458,170 @@ fn shared_selections_compatible_with(
     }
 
     true
+}
+
+#[cfg(test)]
+mod unwrap_self_fragment_tests {
+    use super::{selections_strict_eq, unwrap_self_fragment};
+
+    use crate::ast::{
+        selection_item::SelectionItem,
+        selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
+    };
+
+    fn empty_field(name: impl Into<String>) -> FieldSelection {
+        FieldSelection {
+            name: name.into(),
+            selections: SelectionSet::default(),
+            alias: None,
+            arguments: None,
+            skip_if: None,
+            include_if: None,
+            omit_from_response: false,
+        }
+    }
+
+    fn inline_on(type_condition: impl Into<String>, selections: SelectionSet) -> SelectionItem {
+        SelectionItem::InlineFragment(InlineFragmentSelection {
+            type_condition: type_condition.into(),
+            selections,
+            skip_if: None,
+            include_if: None,
+        })
+    }
+
+    #[test]
+    fn unwrap_peels_redundant_nested_self_fragments() {
+        let inner = SelectionSet {
+            items: vec![SelectionItem::Field(empty_field("reviewsCount"))],
+        };
+        let nested = SelectionSet {
+            items: vec![inline_on(
+                "Book",
+                SelectionSet {
+                    items: vec![inline_on("Book", inner.clone())],
+                },
+            )],
+        };
+        assert_eq!(unwrap_self_fragment(&nested, "Book"), &inner);
+
+        let triple = SelectionSet {
+            items: vec![inline_on(
+                "Book",
+                SelectionSet {
+                    items: vec![inline_on("Book", nested)],
+                },
+            )],
+        };
+        assert_eq!(unwrap_self_fragment(&triple, "Book"), &inner);
+    }
+
+    #[test]
+    fn unwrap_stops_on_directived_fragment_even_if_same_type_condition() {
+        let leaf = SelectionSet {
+            items: vec![SelectionItem::Field(empty_field("id"))],
+        };
+        let with_skip = SelectionSet {
+            items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                type_condition: "Book".to_string(),
+                selections: leaf.clone(),
+                skip_if: Some("hide".into()),
+                include_if: None,
+            })],
+        };
+        let outer = SelectionSet {
+            items: vec![inline_on("Book", with_skip.clone())],
+        };
+
+        assert_eq!(unwrap_self_fragment(&outer, "Book"), &with_skip);
+        assert_eq!(unwrap_self_fragment(&with_skip, "Book"), &with_skip);
+    }
+
+    #[test]
+    fn unwrap_keeps_identity_when_multiple_items_or_mismatched_condition() {
+        let two_fields = SelectionSet {
+            items: vec![
+                SelectionItem::Field(empty_field("id")),
+                SelectionItem::Field(empty_field("__typename")),
+            ],
+        };
+
+        assert_eq!(unwrap_self_fragment(&two_fields, "Book"), &two_fields);
+
+        let wrong_type = SelectionSet {
+            items: vec![inline_on("Magazine", SelectionSet::default())],
+        };
+        assert_eq!(unwrap_self_fragment(&wrong_type, "Book"), &wrong_type);
+    }
+
+    fn field_with_alias(name: &str, alias: Option<&str>) -> SelectionItem {
+        SelectionItem::Field(FieldSelection {
+            name: name.to_string(),
+            alias: alias.map(|a| a.to_string()),
+            ..empty_field(name)
+        })
+    }
+
+    fn field_with_skip(name: &str, alias: Option<&str>, skip_if: Option<&str>) -> SelectionItem {
+        SelectionItem::Field(FieldSelection {
+            name: name.to_string(),
+            alias: alias.map(|a| a.to_string()),
+            skip_if: skip_if.map(|s| s.to_string()),
+            ..empty_field(name)
+        })
+    }
+
+    #[test]
+    fn strict_eq_matches_identical_unaliased_fields() {
+        let a = field_with_alias("id", None);
+        let b = field_with_alias("id", None);
+        assert!(selections_strict_eq(&a, &b));
+    }
+
+    #[test]
+    fn strict_eq_separates_aliased_from_unaliased_same_name() {
+        // The exact case Copilot warned about: shallow `SelectionItem::PartialEq` would treat
+        // these as equal because both have name="username" and empty selections.
+        let unaliased = field_with_alias("username", None);
+        let aliased = field_with_alias("username", Some("masked"));
+        assert!(!selections_strict_eq(&unaliased, &aliased));
+    }
+
+    #[test]
+    fn strict_eq_separates_unconditional_from_skip_guarded_copy() {
+        let unconditional = field_with_skip("username", None, None);
+        let guarded = field_with_skip("username", None, Some("flag"));
+        assert!(!selections_strict_eq(&unconditional, &guarded));
+    }
+
+    #[test]
+    fn strict_eq_separates_inline_fragments_with_different_directives() {
+        let plain = inline_on("Book", SelectionSet::default());
+        let with_skip = SelectionItem::InlineFragment(InlineFragmentSelection {
+            type_condition: "Book".to_string(),
+            selections: SelectionSet::default(),
+            skip_if: Some("hide".to_string()),
+            include_if: None,
+        });
+        assert!(!selections_strict_eq(&plain, &with_skip));
+    }
+
+    #[test]
+    fn strict_eq_recurses_into_nested_selections() {
+        let outer_a = SelectionItem::Field(FieldSelection {
+            name: "user".to_string(),
+            selections: SelectionSet {
+                items: vec![field_with_alias("username", None)],
+            },
+            ..empty_field("user")
+        });
+        let outer_b = SelectionItem::Field(FieldSelection {
+            name: "user".to_string(),
+            selections: SelectionSet {
+                items: vec![field_with_alias("username", Some("masked"))],
+            },
+            ..empty_field("user")
+        });
+        assert!(!selections_strict_eq(&outer_a, &outer_b));
+    }
 }
