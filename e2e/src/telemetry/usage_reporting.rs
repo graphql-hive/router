@@ -576,3 +576,276 @@ async fn usage_reporting_exclude_expression_object_excludes() {
 
     drop(router);
 }
+
+/// `sampler.type: fixed` with `rate: 0%` drops every report.
+#[ntex::test]
+async fn usage_reporting_sampler_fixed_zero_drops_all() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  buffer_size: 1
+                  flush_interval: 100ms
+                  sampler:
+                    type: fixed
+                    rate: 0%
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    for _ in 0..3 {
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert!(res.status().is_success());
+    }
+
+    mock.assert_no_reports(Duration::from_secs(2)).await;
+
+    drop(router);
+}
+
+/// `sampler.type: fixed` with `rate: 100%` keeps every report.
+#[ntex::test]
+async fn usage_reporting_sampler_fixed_full_keeps_all() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  buffer_size: 1
+                  flush_interval: 100ms
+                  sampler:
+                    type: fixed
+                    rate: 100%
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
+    assert!(res.status().is_success());
+
+    mock.wait_for_reports(1).await;
+
+    drop(router);
+}
+
+/// `sampler.type: at_least_once` with `key: operation_name` and `rate: 0%`
+/// reports the first occurrence per operation name and drops the rest.
+#[ntex::test]
+async fn usage_reporting_sampler_at_least_once_keeps_first_per_key() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  buffer_size: 1
+                  flush_interval: 100ms
+                  sampler:
+                    type: at_least_once
+                    key: operation_name
+                    rate: 0%
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    for _ in 0..3 {
+        let res = router
+            .send_graphql_request("query SameOp { users { id } }", None, None)
+            .await;
+        assert!(res.status().is_success());
+    }
+
+    mock.wait_for_reports(1).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let total_ops = mock.total_operations_count().await;
+    assert_eq!(
+        total_ops, 1,
+        "at_least_once with rate 0% should report exactly one occurrence per key"
+    );
+
+    drop(router);
+}
+
+/// When `rate` is omitted on `at_least_once` it defaults to 0%.
+#[ntex::test]
+async fn usage_reporting_sampler_at_least_once_default_rate_zero() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  buffer_size: 1
+                  flush_interval: 100ms
+                  sampler:
+                    type: at_least_once
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    for _ in 0..3 {
+        let res = router
+            .send_graphql_request("query SameOp { users { id } }", None, None)
+            .await;
+        assert!(res.status().is_success());
+    }
+
+    mock.wait_for_reports(1).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let total_ops = mock.total_operations_count().await;
+    assert_eq!(
+        total_ops, 1,
+        "default at_least_once rate should be 0% (only first per key)"
+    );
+
+    drop(router);
+}
+
+/// `at_least_once` with a VRL `key.expression` keys off a request header.
+#[ntex::test]
+async fn usage_reporting_sampler_at_least_once_with_key_expression() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  buffer_size: 1
+                  flush_interval: 100ms
+                  sampler:
+                    type: at_least_once
+                    key:
+                      expression: '.request.headers."x-tenant"'
+                    rate: 0%
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let mut headers_a = http::HeaderMap::new();
+    headers_a.insert("x-tenant", "tenant-a".parse().unwrap());
+
+    let mut headers_b = http::HeaderMap::new();
+    headers_b.insert("x-tenant", "tenant-b".parse().unwrap());
+
+    for headers in [headers_a.clone(), headers_a, headers_b] {
+        let res = router
+            .send_graphql_request("{ users { id } }", None, Some(headers))
+            .await;
+        assert!(res.status().is_success());
+    }
+
+    mock.wait_for_reports(1).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let total_ops = mock.total_operations_count().await;
+    assert_eq!(
+        total_ops, 2,
+        "two distinct keys should produce two reported operations"
+    );
+
+    drop(router);
+}

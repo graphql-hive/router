@@ -4,9 +4,9 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::primitives::file_path::FilePath;
-use crate::primitives::retry_policy::RetryPolicyConfig;
 use crate::primitives::single_or_multiple::SingleOrMultiple;
 use crate::primitives::toggle::ToggleWith;
+use hive_console_sdk::primitives::retry_policy::RetryPolicyConfig;
 
 #[derive(Debug, Serialize, JsonSchema, Clone, Default)]
 pub struct PersistedDocumentsConfig {

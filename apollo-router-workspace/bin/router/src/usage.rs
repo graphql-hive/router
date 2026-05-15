@@ -5,20 +5,20 @@ use apollo_router::plugin::Plugin;
 use apollo_router::plugin::PluginInit;
 use apollo_router::services::*;
 use core::ops::Drop;
-use std::collections::HashSet;
 use futures::StreamExt;
+use hive_console_sdk::agent::config::UsageReportingConfig;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_console_sdk::agent::usage_agent::UsageAgentExt;
 use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
 use hive_console_sdk::graphql_tools::parser::parse_schema;
 use hive_console_sdk::graphql_tools::parser::schema::Document;
+use hive_console_sdk::primitives::target_id::TargetId;
 use http::HeaderValue;
-use rand::RngExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 use tower::BoxError;
@@ -36,13 +36,10 @@ struct OperationContext {
     pub(crate) timestamp: u64,
     pub(crate) operation_body: String,
     pub(crate) operation_name: Option<String>,
-    pub(crate) dropped: bool,
 }
 
 #[derive(Clone, Debug)]
 struct OperationConfig {
-    sample_rate: f64,
-    exclude: Option<Vec<String>>,
     client_name_header: String,
     client_version_header: String,
 }
@@ -54,67 +51,28 @@ pub struct UsagePlugin {
     cancellation_token: Arc<CancellationToken>,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
-#[serde(untagged)]
-enum UsageReportingExclude {
-    Expression { expression: String },
-    OperationNames(Vec<String>),
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Default)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct Config {
-    /// Default: true
-    enabled: Option<bool>,
-    /// Hive token, can also be set using the HIVE_TOKEN environment variable.
-    /// The token can be a registry access token, or a organization access token.
-    registry_token: Option<String>,
-    /// Hive registry token. Set to your `/usage` endpoint if you are self-hosting.
-    /// Default: https://app.graphql-hive.com/usage
-    /// When `target` is set and organization access token is in use, the target ID is appended to the endpoint,
-    /// so usage endpoint becomes `https://app.graphql-hive.com/usage/<target_id>`
-    registry_usage_endpoint: Option<String>,
+    /// Hive token, can also be set using the `HIVE_TOKEN` environment variable.
+    /// The token can be a registry access token or an organization access token.
+    token: Option<String>,
     /// The target to which the usage data should be reported to.
     /// This can either be a slug following the format "$organizationSlug/$projectSlug/$targetSlug" (e.g "the-guild/graphql-hive/staging")
-    /// or an UUID (e.g. "a0f4c605-6541-4350-8cfe-b31f21a4bf80").
-    target: Option<String>,
-    /// Sample rate to determine sampling.
-    /// 0.0 = 0% chance of being sent
-    /// 1.0 = 100% chance of being sent.
-    /// Default: 1.0
-    sample_rate: Option<f64>,
-    /// An expression in VRL to exclude certain operations from being sent to Hive Console.
-    /// Returning `true` from this expression will exclude the operation, while `false` will include it.
-    /// This expression is a VRL expression that has access to the request and operation details;
-    ///
-    /// ```vrl
-    ///  if (.request.operation.name == "ExcludeMe") {
-    ///    true
-    ///  } else {
-    ///    false
-    ///  }
-    /// ```
-    /// Use `exclude: { expression: "..." }` for expressions.
-    /// A list of operation names is also supported for backward compatibility.
-    exclude: Option<UsageReportingExclude>,
+    /// or a UUID (e.g. "a0f4c605-6541-4350-8cfe-b31f21a4bf80").
+    /// Can also be set using the `HIVE_TARGET_ID` environment variable.
+    target: Option<TargetId>,
+    /// HTTP header used to identify the GraphQL client name.
+    /// Default: `graphql-client-name`.
     client_name_header: Option<String>,
+    /// HTTP header used to identify the GraphQL client version.
+    /// Default: `graphql-client-version`.
     client_version_header: Option<String>,
-    /// A maximum number of operations to hold in a buffer before sending to GraphQL Hive
-    /// Default: 1000
-    buffer_size: Option<usize>,
-    /// A timeout for only the connect phase of a request to GraphQL Hive
-    /// Unit: seconds
-    /// Default: 5 (s)
-    connect_timeout: Option<u64>,
-    /// A timeout for the entire request to GraphQL Hive
-    /// Unit: seconds
-    /// Default: 15 (s)
-    request_timeout: Option<u64>,
-    /// Accept invalid SSL certificates
-    /// Default: false
-    accept_invalid_certs: Option<bool>,
-    /// Frequency of flushing the buffer to the server
-    /// Default: 5 seconds
-    flush_interval: Option<u64>,
+    /// All Hive Console usage-reporting settings (endpoint, sampler,
+    /// exclude, buffer size, timeouts, ...). Re-exported from
+    /// [`hive_console_sdk::agent::config::UsageReportingConfig`] so the
+    /// same shape is shared with `hive-router`.
+    #[serde(flatten)]
+    reporting: UsageReportingConfig,
 }
 
 impl UsagePlugin {
@@ -144,29 +102,9 @@ impl UsagePlugin {
             .clone()
             .unwrap_or_default();
 
-        let excluded_operation_names: HashSet<String> = config
-            .exclude
-            .unwrap_or_default()
-            .clone()
-            .into_iter()
-            .collect();
-
-        let mut rng = rand::rng();
-        let sampled = rng.random::<f64>() < config.sample_rate;
-        let mut dropped = !sampled;
-
-        if !dropped {
-            if let Some(name) = &operation_name {
-                if excluded_operation_names.contains(name) {
-                    dropped = true;
-                }
-            }
-        }
-
         let _ = context.insert(
             OPERATION_CONTEXT,
             OperationContext {
-                dropped,
                 client_name,
                 client_version,
                 operation_name,
@@ -186,63 +124,48 @@ impl Plugin for UsagePlugin {
     type Config = Config;
 
     async fn new(init: PluginInit<Config>) -> Result<Self, BoxError> {
-        let user_config = init.config;
+        let mut user_config = init.config;
 
-        let enabled = user_config.enabled.unwrap_or(true);
+        let enabled = user_config.reporting.enabled;
 
         if enabled {
             tracing::info!("Starting GraphQL Hive Usage plugin");
         }
 
+        // Allow `HIVE_ENDPOINT` env var to override the default endpoint
+        // when the operator has not set `endpoint` in the YAML config.
+        if user_config.reporting.endpoint
+            == hive_console_sdk::agent::config::DEFAULT_HIVE_USAGE_ENDPOINT
+        {
+            if let Ok(env_endpoint) = env::var("HIVE_ENDPOINT") {
+                user_config.reporting.endpoint = env_endpoint;
+            }
+        }
+
+        let token = user_config.token.or_else(|| env::var("HIVE_TOKEN").ok());
+        let target: Option<TargetId> = match user_config.target {
+            Some(t) => Some(t),
+            None => match env::var("HIVE_TARGET_ID") {
+                Ok(raw) => Some(TargetId::parse(raw).map_err(Box::new)?),
+                Err(_) => None,
+            },
+        };
+
         let cancellation_token = Arc::new(CancellationToken::new());
 
         let agent = if enabled {
-            let mut agent =
-                UsageAgent::builder().user_agent(format!("hive-apollo-router/{}", PLUGIN_VERSION));
+            let mut builder = UsageAgent::builder()
+                .user_agent(format!("hive-apollo-router/{}", PLUGIN_VERSION))
+                .from_config(&user_config.reporting)?;
 
-            if let Some(endpoint) = user_config.registry_usage_endpoint {
-                agent = agent.endpoint(endpoint);
-            } else if let Ok(env_endpoint) = env::var("HIVE_ENDPOINT") {
-                agent = agent.endpoint(env_endpoint);
+            if let Some(token) = token {
+                builder = builder.token(token);
+            }
+            if let Some(target_id) = target {
+                builder = builder.target_id(target_id);
             }
 
-            if let Some(token) = user_config.registry_token {
-                agent = agent.token(token);
-            } else if let Ok(env_token) = env::var("HIVE_TOKEN") {
-                agent = agent.token(env_token);
-            }
-
-            if let Some(target_id) = user_config.target {
-                agent = agent.target_id(target_id);
-            } else if let Ok(env_target) = env::var("HIVE_TARGET_ID") {
-                agent = agent.target_id(env_target);
-            }
-
-            if let Some(buffer_size) = user_config.buffer_size {
-                agent = agent.buffer_size(buffer_size);
-            }
-
-            if let Some(connect_timeout) = user_config.connect_timeout {
-                agent = agent.connect_timeout(Duration::from_secs(connect_timeout));
-            }
-
-            if let Some(request_timeout) = user_config.request_timeout {
-                agent = agent.request_timeout(Duration::from_secs(request_timeout));
-            }
-
-            if let Some(accept_invalid_certs) = user_config.accept_invalid_certs {
-                agent = agent.accept_invalid_certs(accept_invalid_certs);
-            }
-
-            if let Some(flush_interval) = user_config.flush_interval {
-                agent = agent.flush_interval(Duration::from_secs(flush_interval));
-            }
-
-            if let Some(UsageReportingExclude::Expression { expression }) = &user_config.exclude {
-                agent = agent.exclude_expression(expression.clone());
-            }
-
-            let agent = agent.build().map_err(Box::new)?;
+            let agent = builder.build().map_err(Box::new)?;
 
             let cancellation_token_for_interval = cancellation_token.clone();
             let agent_for_interval = agent.clone();
@@ -260,16 +183,9 @@ impl Plugin for UsagePlugin {
             .expect("Failed to parse schema")
             .into_static();
 
-        let exclude = match user_config.exclude {
-            Some(UsageReportingExclude::OperationNames(names)) => Some(names),
-            _ => None,
-        };
-
         Ok(UsagePlugin {
             schema: Arc::new(schema),
             config: OperationConfig {
-                sample_rate: user_config.sample_rate.unwrap_or(1.0),
-                exclude,
                 client_name_header: user_config
                     .client_name_header
                     .unwrap_or("graphql-client-name".to_string()),
@@ -331,24 +247,12 @@ impl Plugin for UsagePlugin {
                                     .get::<_, String>(PERSISTED_DOCUMENT_HASH_KEY)
                                     .unwrap_or_default();
 
-                                if operation_context.dropped {
-                                    tracing::debug!(
-                                        "Dropping operation (phase: SAMPLING): {}",
-                                        operation_context
-                                            .operation_name
-                                            .clone()
-                                            .unwrap_or_else(|| "anonymous".to_string())
-                                    );
-                                    return result;
-                                }
-
                                 let OperationContext {
                                     client_name,
                                     client_version,
                                     operation_name,
                                     timestamp,
                                     operation_body,
-                                    ..
                                 } = operation_context;
 
                                 let duration = start.elapsed();
@@ -437,6 +341,7 @@ impl Drop for UsagePlugin {
     }
 }
 
+
 #[cfg(test)]
 mod hive_usage_tests {
     use apollo_router::{
@@ -449,7 +354,10 @@ mod hive_usage_tests {
     use serde_json::json;
     use tower::ServiceExt;
 
-    use crate::{consts::PLUGIN_VERSION, usage::UsageReportingExclude};
+    use crate::consts::PLUGIN_VERSION;
+    use hive_console_sdk::agent::config::{
+        AtLeastOnceKey, AtLeastOnceKeyConstant, SamplerConfig, UsageReportingExclude,
+    };
 
     use super::{Config, UsagePlugin};
 
@@ -460,9 +368,12 @@ mod hive_usage_tests {
         }))
         .expect("config with expression object should deserialize");
 
-        assert!(matches!(config.exclude, Some(UsageReportingExclude::Expression { .. })));
+        assert!(matches!(
+            config.reporting.exclude,
+            Some(UsageReportingExclude::Expression { .. })
+        ));
 
-        if let Some(UsageReportingExclude::Expression { expression }) = config.exclude {
+        if let Some(UsageReportingExclude::Expression { expression }) = config.reporting.exclude {
             assert_eq!(
                 expression,
                 ".request.operation.name == \"ExcludedOp\"",
@@ -480,9 +391,12 @@ mod hive_usage_tests {
         }))
         .expect("config with legacy operation list should deserialize");
 
-        assert!(matches!(config.exclude, Some(UsageReportingExclude::OperationNames(_))));
+        assert!(matches!(
+            config.reporting.exclude,
+            Some(UsageReportingExclude::OperationNames(_))
+        ));
 
-        if let Some(UsageReportingExclude::OperationNames(names)) = config.exclude {
+        if let Some(UsageReportingExclude::OperationNames(names)) = config.reporting.exclude {
             assert_eq!(
                 names,
                 vec!["ExcludedOp".to_string(), "IntrospectionQuery".to_string()],
@@ -490,6 +404,60 @@ mod hive_usage_tests {
             );
         } else {
             panic!("Expected an operation names exclude");
+        }
+    }
+
+    #[test]
+    fn config_sampler_fixed() {
+        let config: Config = serde_json::from_value(json!({
+            "sampler": { "type": "fixed", "rate": "25%" }
+        }))
+        .expect("fixed sampler config should deserialize");
+
+        match config.reporting.sampler {
+            SamplerConfig::Fixed { rate } => assert_eq!(rate.as_f64(), 0.25),
+            other => panic!("expected Fixed sampler, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn config_sampler_at_least_once_with_defaults() {
+        let config: Config = serde_json::from_value(json!({
+            "sampler": { "type": "at_least_once" }
+        }))
+        .expect("at_least_once with defaults should deserialize");
+
+        match config.reporting.sampler {
+            SamplerConfig::AtLeastOnce { key, rate, .. } => {
+                assert!(matches!(
+                    key,
+                    AtLeastOnceKey::Constant(AtLeastOnceKeyConstant::OperationName)
+                ));
+                assert_eq!(rate.as_f64(), 0.0);
+            }
+            other => panic!("expected AtLeastOnce sampler, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn config_sampler_at_least_once_with_key_expression() {
+        let config: Config = serde_json::from_value(json!({
+            "sampler": {
+                "type": "at_least_once",
+                "key": { "expression": ".request.headers.\"x-tenant\"" },
+                "rate": "50%"
+            }
+        }))
+        .expect("at_least_once with key expression should deserialize");
+
+        match config.reporting.sampler {
+            SamplerConfig::AtLeastOnce { key, rate, .. } => {
+                assert!(
+                    matches!(key, AtLeastOnceKey::Expression { ref expression } if expression == ".request.headers.\"x-tenant\"")
+                );
+                assert_eq!(rate.as_f64(), 0.5);
+            }
+            other => panic!("expected AtLeastOnce sampler, got: {:?}", other),
         }
     }
 
@@ -508,11 +476,11 @@ mod hive_usage_tests {
             let server: MockServer = MockServer::start();
             let usage_endpoint = server.url("/usage");
             let mut config = Config::default();
-            config.enabled = Some(true);
-            config.registry_usage_endpoint = Some(usage_endpoint.to_string());
-            config.registry_token = Some("123".into());
-            config.buffer_size = Some(1);
-            config.flush_interval = Some(1);
+            config.reporting.enabled = true;
+            config.reporting.endpoint = usage_endpoint.to_string();
+            config.token = Some("123".into());
+            config.reporting.buffer_size = 1;
+            config.reporting.flush_interval = std::time::Duration::from_secs(1);
 
             let plugin_service = UsagePlugin::new(
                 PluginInit::fake_builder()

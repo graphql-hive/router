@@ -541,13 +541,6 @@ async fn handle_text_frame(
                         normalize_payload.operation_for_plan.operation_kind.as_ref(),
                         &parser_payload.minified_document,
                         hive_usage_agent,
-                        shared_state
-                            .router_config
-                            .telemetry
-                            .hive
-                            .as_ref()
-                            .map(|c| &c.usage_reporting)
-                            .expect("Expected Usage Reporting options to be present when Hive Usage Agent is initialized"),
                         shared_response.error_count(),
                         Some(request_details),
                     )

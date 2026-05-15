@@ -2514,7 +2514,7 @@ Loads a supergraph from Hive Console CDN.
 |**key**|`string`, `null`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|no|
 |**poll\_interval**|`string`|Interval at which the Hive Console should be polled for changes.<br/><br/>Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.<br/>Default: `"10s"`<br/>|no|
 |**request\_timeout**|`string`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|no|
-|[**retry\_policy**](#option2retry_policy)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `{"max_retries":10}`<br/>|yes|
+|[**retry\_policy**](#option2retry_policy)|`object`|Retry policy used when polling the Hive Console CDN for changes.<br/>Default: `{"max_retries":10}`<br/>|no|
 |**source**|`string`|Constant Value: `"hive"`<br/>|yes|
 
 **Additional Properties:** not allowed  
@@ -2534,16 +2534,16 @@ retry_policy:
 <a name="option2retry_policy"></a>
 ## Option 2: retry\_policy: object
 
-Interval at which the Hive Console should be polled for changes.
+Retry policy used when polling the Hive Console CDN for changes.
 
-By default, an exponential backoff retry policy is used, with 10 attempts.
+Defaults to exponential backoff with up to 10 attempts.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**max\_retries**|`integer`|The maximum number of retries to attempt.<br/><br/>Retry mechanism is based on exponential backoff, see https://docs.rs/retry-policies/latest/retry_policies/policies/struct.ExponentialBackoff.html for additional details.<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
+|**max\_retries**|`integer`|The maximum number of retries to attempt.<br/>Default: `3`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
 
 **Example**
 
@@ -2671,7 +2671,7 @@ version_header: graphql-client-version
 |**target**||A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
 |**token**||Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
 |[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":false,"endpoint":"https://api.graphql-hive.com/otel/v1/traces"}`<br/>||
-|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":null,"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
+|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Top-level configuration for usage reporting.<br/>Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":null,"flush_interval":"5s","request_timeout":"15s","retry_policy":{"max_retries":3},"sampler":{"rate":"100%","type":"fixed"}}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2741,21 +2741,25 @@ scheduled_delay: 5s
 <a name="telemetryhiveusage_reporting"></a>
 #### telemetry\.hive\.usage\_reporting: object
 
+Top-level configuration for usage reporting.
+
+
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**accept\_invalid\_certs**|`boolean`|Accepts invalid SSL certificates<br/>Default: false<br/>Default: `false`<br/>||
-|**buffer\_size**|`integer`|A maximum number of operations to hold in a buffer before sending to Hive Console<br/>Default: 1000<br/>Default: `1000`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
-|**connect\_timeout**|`string`|A timeout for only the connect phase of a request to Hive Console<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
-|**enabled**|`boolean`|Default: `false`<br/>||
-|**endpoint**|`string`|For self-hosting, you can override `/usage` endpoint (defaults to `https://app.graphql-hive.com/usage`).<br/>Default: `"https://app.graphql-hive.com/usage"`<br/>||
-|**exclude**||An expression in VRL to exclude certain operations from being sent to Hive Console.<br/>Returning `true` from this expression will exclude the operation, while `false` will include it.<br/>This expression is a VRL expression that has access to the request and operation details;<br/><br/>```vrl<br/> if (.request.operation.name == "ExcludeMe") {<br/>   true<br/> } else {<br/>   false<br/> }<br/>```<br/>Backward compatible with both:<br/>- an expression object: `{ expression: "..." }`<br/>- a list of operation names<br/>||
-|**flush\_interval**|`string`|Frequency of flushing the buffer to the server<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
-|**request\_timeout**|`string`|A timeout for the entire request to Hive Console<br/>Default: 15 seconds<br/>Default: `"15s"`<br/>||
-|**sample\_rate**|`string`|Sample rate to determine sampling.<br/>0% = never being sent<br/>50% = half of the requests being sent<br/>100% = always being sent<br/>Default: 100%<br/>Default: `"100%"`<br/>||
+|**accept\_invalid\_certs**|`boolean`|Whether to accept invalid SSL certificates.<br/>Default: `false`<br/>||
+|**buffer\_size**|`integer`|Maximum number of operations to hold in a buffer before flushing to Hive Console.<br/>Default: `1000`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|[**circuit\_breaker**](#telemetryhiveusage_reportingcircuit_breaker)|`object`, `null`|Optional tuning of the circuit breaker applied to outbound calls to<br/>||
+|**connect\_timeout**|`string`|Timeout for only the connect phase of a request to Hive Console.<br/>Default: `"5s"`<br/>||
+|**enabled**|`boolean`|Whether usage reporting is enabled.<br/>Default: `false`<br/>||
+|**endpoint**|`string`|For self-hosting, you can override the `/usage` endpoint.<br/>Default: `"https://app.graphql-hive.com/usage"`<br/>||
+|**exclude**||How to drop operations before they ever reach the sampler.<br/><br/>Either a VRL expression that returns a boolean (`true` excludes the<br/>operation, `false` keeps it), or a legacy list of operation names to<br/>exclude. The expression has access to the request and operation<br/>details:<br/><br/>```vrl<br/>if (.request.operation.name == "ExcludeMe") {<br/>  true<br/>} else {<br/>  false<br/>}<br/>```<br/>||
+|**flush\_interval**|`string`|How often the buffer is flushed to Hive Console.<br/>Default: `"5s"`<br/>||
+|**request\_timeout**|`string`|Timeout for the entire request to Hive Console.<br/>Default: `"15s"`<br/>||
+|[**retry\_policy**](#telemetryhiveusage_reportingretry_policy)|`object`|Retry policy for sending reports to Hive Console.<br/>Default: `{"max_retries":3}`<br/>||
+|**sampler**||Strategy used to decide whether a usage report is sent to Hive Console.<br/><br/>Two strategies are supported today:<br/><br/>- `fixed`: samples every operation independently with the configured rate.<br/>- `at_least_once`: guarantees the first occurrence per key is reported,<br/>  then applies `rate` to subsequent occurrences with the same key.<br/>Default: `{"rate":"100%","type":"fixed"}`<br/>||
 
-**Additional Properties:** not allowed  
 **Example**
 
 ```yaml
@@ -2767,7 +2771,48 @@ endpoint: https://app.graphql-hive.com/usage
 exclude: null
 flush_interval: 5s
 request_timeout: 15s
-sample_rate: 100%
+retry_policy:
+  max_retries: 3
+sampler:
+  rate: 100%
+  type: fixed
+
+```
+
+<a name="telemetryhiveusage_reportingcircuit_breaker"></a>
+##### telemetry\.hive\.usage\_reporting\.circuit\_breaker: object,null
+
+Optional tuning of the circuit breaker applied to outbound calls to
+Hive Console. When omitted, the SDK uses its default settings (50%
+error threshold, rolling sample of 5, 30s reset timeout, 10 half-open
+probes).
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**error\_threshold**|`string`, `null`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
+|**half\_open\_attempts**|`integer`, `null`|Size of the rolling sample of probe requests collected while the<br/>breaker is in the half-open state after `reset_timeout` elapses.<br/>The breaker fills this sample first; the next probe after the<br/>sample is full is the one whose result is evaluated against<br/>`error_threshold` to decide whether to transition back to `closed`<br/>(resuming normal traffic) or to `open` (waiting for another<br/>`reset_timeout` window). In practice at least<br/>`half_open_attempts + 1` probes pass through before the breaker<br/>can transition.<br/><br/>Lower values make recovery faster but more aggressive; higher<br/>values gather more samples before re-closing the circuit.<br/><br/>Default: 10<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**reset\_timeout**|`string`, `null`|The duration after which the circuit breaker will attempt to retry sending requests.<br/>Default: 30s<br/>||
+|**volume\_threshold**|`integer`, `null`|Size of the rolling sample used to decide whether the breaker<br/>should open while closed. The breaker fills this sample with the<br/>outcomes of the last `volume_threshold` requests; the next request<br/>after the sample is full is the one whose result is evaluated<br/>against `error_threshold`. In practice the breaker can trip only<br/>after at least `volume_threshold + 1` requests have been observed.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+
+<a name="telemetryhiveusage_reportingretry_policy"></a>
+##### telemetry\.hive\.usage\_reporting\.retry\_policy: object
+
+Retry policy for sending reports to Hive Console.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_retries**|`integer`|The maximum number of retries to attempt.<br/>Default: `3`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+
+**Example**
+
+```yaml
+max_retries: 3
 
 ```
 
@@ -3517,9 +3562,9 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |----|----|-----------|--------|
 |**enabled**|`boolean`, `null`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/><br/>When unset on a subgraph-level configuration, the value falls back<br/>to the value defined in the global (`all`) circuit breaker<br/>configuration.<br/>||
 |[**error\_status\_codes**](#traffic_shapingallcircuit_breakererror_status_codes)|`array`|HTTP status codes returned by the subgraph that should be counted as<br/>||
-|**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
+|**error\_threshold**|`string`, `null`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
 |**half\_open\_attempts**|`integer`, `null`|Size of the rolling sample of probe requests collected while the<br/>breaker is in the half-open state after `reset_timeout` elapses.<br/>The breaker fills this sample first; the next probe after the<br/>sample is full is the one whose result is evaluated against<br/>`error_threshold` to decide whether to transition back to `closed`<br/>(resuming normal traffic) or to `open` (waiting for another<br/>`reset_timeout` window). In practice at least<br/>`half_open_attempts + 1` probes pass through before the breaker<br/>can transition.<br/><br/>Lower values make recovery faster but more aggressive; higher<br/>values gather more samples before re-closing the circuit.<br/><br/>Default: 10<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
-|**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
+|**reset\_timeout**|`string`, `null`|The duration after which the circuit breaker will attempt to retry sending requests.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Size of the rolling sample used to decide whether the breaker<br/>should open while closed. The breaker fills this sample with the<br/>outcomes of the last `volume_threshold` requests; the next request<br/>after the sample is full is the one whose result is evaluated<br/>against `error_threshold`. In practice the breaker can trip only<br/>after at least `volume_threshold + 1` requests have been observed.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Additional Properties:** not allowed  
@@ -3699,9 +3744,9 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |----|----|-----------|--------|
 |**enabled**|`boolean`, `null`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/><br/>When unset on a subgraph-level configuration, the value falls back<br/>to the value defined in the global (`all`) circuit breaker<br/>configuration.<br/>||
 |[**error\_status\_codes**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breakererror_status_codes)|`array`|HTTP status codes returned by the subgraph that should be counted as<br/>||
-|**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
+|**error\_threshold**|`string`, `null`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
 |**half\_open\_attempts**|`integer`, `null`|Size of the rolling sample of probe requests collected while the<br/>breaker is in the half-open state after `reset_timeout` elapses.<br/>The breaker fills this sample first; the next probe after the<br/>sample is full is the one whose result is evaluated against<br/>`error_threshold` to decide whether to transition back to `closed`<br/>(resuming normal traffic) or to `open` (waiting for another<br/>`reset_timeout` window). In practice at least<br/>`half_open_attempts + 1` probes pass through before the breaker<br/>can transition.<br/><br/>Lower values make recovery faster but more aggressive; higher<br/>values gather more samples before re-closing the circuit.<br/><br/>Default: 10<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
-|**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
+|**reset\_timeout**|`string`, `null`|The duration after which the circuit breaker will attempt to retry sending requests.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Size of the rolling sample used to decide whether the breaker<br/>should open while closed. The breaker fills this sample with the<br/>outcomes of the last `volume_threshold` requests; the next request<br/>after the sample is full is the one whose result is evaluated<br/>against `error_threshold`. In practice the breaker can trip only<br/>after at least `volume_threshold + 1` requests have been observed.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
 **Additional Properties:** not allowed  

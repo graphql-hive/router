@@ -8,14 +8,14 @@ use graphql_tools::parser::schema::Document;
 use hive_console_sdk::agent::usage_agent::{
     AgentError, ExecutionReport, OperationType, RequestDetails, UsageAgent, UsageAgentExt,
 };
-use hive_router_config::{
-    telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
-    usage_reporting::{UsageReportingConfig, UsageReportingExclude},
-};
+use hive_console_sdk::primitives::target_id::TargetId;
+use hive_router_config::primitives::value_or_expression::ValueOrExpression;
+use hive_router_config::telemetry::hive::HiveTelemetryConfig;
 use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
-use hive_router_internal::telemetry::utils::resolve_value_or_expression;
+use hive_router_internal::telemetry::utils::{
+    evaluate_expression_as_string, resolve_value_or_expression,
+};
 use hive_router_query_planner::state::supergraph_state::OperationKind;
-use rand::prelude::*;
 use tokio_util::sync::CancellationToken;
 
 use crate::consts::ROUTER_VERSION;
@@ -44,39 +44,26 @@ pub fn init_hive_usage_agent(
         None => return Err(UsageReportingError::MissingAccessToken),
     };
 
-    let target = match &hive_config.target {
-        Some(t) => Some(
-            resolve_value_or_expression(t, "Hive Telemetry target")
-                .map_err(|e| UsageReportingError::ConfigurationError(e.to_string()))?,
-        ),
+    let target: Option<TargetId> = match &hive_config.target {
+        Some(ValueOrExpression::Value(t)) => Some(t.clone()),
+        Some(ValueOrExpression::Expression { expression }) => {
+            let resolved = evaluate_expression_as_string(expression, "Hive Telemetry target")
+                .map_err(|e| UsageReportingError::ConfigurationError(e.to_string()))?;
+            Some(
+                TargetId::parse(resolved)
+                    .map_err(|e| UsageReportingError::ConfigurationError(e.to_string()))?,
+            )
+        }
         None => None,
     };
 
-    if let Some(target) = &target {
-        if !is_uuid_target_ref(target) && !is_slug_target_ref(target) {
-            return Err(UsageReportingError::ConfigurationError(format!(
-                "Invalid Hive Telemetry target format: '{}'. It must be either in slug format '$organizationSlug/$projectSlug/$targetSlug' or UUID format 'a0f4c605-6541-4350-8cfe-b31f21a4bf80'",
-                target
-            )));
-        }
-    }
-
     let mut agent_builder = UsageAgent::builder()
         .user_agent(user_agent)
-        .endpoint(usage_config.endpoint.clone())
         .token(access_token)
-        .buffer_size(usage_config.buffer_size)
-        .connect_timeout(usage_config.connect_timeout)
-        .request_timeout(usage_config.request_timeout)
-        .accept_invalid_certs(usage_config.accept_invalid_certs)
-        .flush_interval(usage_config.flush_interval);
+        .from_config(usage_config)?;
 
     if let Some(target_id) = target {
         agent_builder = agent_builder.target_id(target_id);
-    }
-
-    if let Some(UsageReportingExclude::Expression { expression }) = &usage_config.exclude {
-        agent_builder = agent_builder.exclude_expression(expression.clone());
     }
 
     let agent = agent_builder.build()?;
@@ -97,21 +84,9 @@ pub async fn collect_usage_report<'a>(
     operation_kind: Option<&'a OperationKind>,
     operation_body: &'a str,
     hive_usage_agent: &UsageAgent,
-    usage_config: &UsageReportingConfig,
     error_count: usize,
     request_details: Option<RequestDetails>,
 ) {
-    let sample_rate = usage_config.sample_rate.as_f64();
-    if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
-        return;
-    }
-    if let Some(operation_name) = operation_name {
-        if let Some(UsageReportingExclude::OperationNames(excluded_names)) = &usage_config.exclude {
-            if excluded_names.iter().any(|name| name == operation_name) {
-                return;
-            }
-        }
-    }
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
