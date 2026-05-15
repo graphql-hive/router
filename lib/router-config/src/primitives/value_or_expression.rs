@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
-pub enum ValueOrExpression<T: Default> {
+pub enum ValueOrExpression<T> {
     Value(T),
     Expression { expression: String },
 }

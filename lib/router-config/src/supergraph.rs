@@ -3,9 +3,8 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::{
-    file_path::FilePath, retry_policy::RetryPolicyConfig, single_or_multiple::SingleOrMultiple,
-};
+use crate::primitives::{file_path::FilePath, single_or_multiple::SingleOrMultiple};
+use hive_console_sdk::primitives::retry_policy::RetryPolicyConfig;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, tag = "source")]
@@ -68,9 +67,9 @@ pub enum SupergraphSource {
         /// Whether to accept invalid TLS certificates when connecting to the Hive Console CDN.
         #[serde(default = "default_accept_invalid_certs")]
         accept_invalid_certs: bool,
-        /// Interval at which the Hive Console should be polled for changes.
+        /// Retry policy used when polling the Hive Console CDN for changes.
         ///
-        /// By default, an exponential backoff retry policy is used, with 10 attempts.
+        /// Defaults to exponential backoff with up to 10 attempts.
         #[serde(default = "default_hive_retry_policy")]
         retry_policy: RetryPolicyConfig,
     },

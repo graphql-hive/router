@@ -41,6 +41,9 @@ sonic-rs = { workspace = true }
 humantime = { workspace = true }
 http-serde = "2.1.1"
 ntex = { workspace = true }
+rand = { workspace = true }
+schemars = { workspace = true }
+humantime-serde = { workspace = true }
 
 [dev-dependencies]
 mockito = { workspace = true }

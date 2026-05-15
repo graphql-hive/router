@@ -19,7 +19,6 @@ pub mod subscriptions;
 pub mod supergraph;
 pub mod telemetry;
 pub mod traffic_shaping;
-pub mod usage_reporting;
 pub mod websocket;
 
 use config::{Config, File, FileFormat, FileSourceFile};

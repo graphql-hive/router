@@ -6,7 +6,7 @@ use std::{
 
 use dashmap::DashMap;
 use futures::{stream::BoxStream, FutureExt};
-use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerError};
+use hive_console_sdk::circuit_breaker::CircuitBreakerBuilder;
 use hive_router_config::{
     override_subgraph_urls::UrlOrExpression,
     subscriptions::SubscriptionProtocol,
@@ -791,42 +791,13 @@ impl SubgraphExecutorMap {
             .unwrap_or(false);
 
         if circuit_breaker_enabled {
-            let mut builder = CircuitBreakerBuilder::default();
-
-            if let Some(error_threshold) = subgraph_circuit_breaker_cfg
-                .and_then(|c| c.error_threshold)
-                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.error_threshold))
-            {
-                let error_threshold = error_threshold.as_f64() as f32;
-                if !error_threshold.is_finite() {
-                    return Err(SubgraphExecutorError::CircuitBreakerCreationError(
-                        CircuitBreakerError::InvalidErrorThreshold(error_threshold),
-                        subgraph_name.to_string(),
-                    ));
-                }
-                builder = builder.error_threshold(error_threshold);
-            }
-
-            if let Some(volume_threshold) = subgraph_circuit_breaker_cfg
-                .and_then(|c| c.volume_threshold)
-                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.volume_threshold))
-            {
-                builder = builder.volume_threshold(volume_threshold);
-            }
-
-            if let Some(reset_timeout) = subgraph_circuit_breaker_cfg
-                .and_then(|c| c.reset_timeout)
-                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.reset_timeout))
-            {
-                builder = builder.reset_timeout(reset_timeout);
-            }
-
-            if let Some(half_open_attempts) = subgraph_circuit_breaker_cfg
-                .and_then(|c| c.half_open_attempts)
-                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.half_open_attempts))
-            {
-                builder = builder.half_open_attempts(half_open_attempts);
-            }
+            let merged_breaker = match (subgraph_circuit_breaker_cfg, global_circuit_breaker_cfg) {
+                (Some(s), Some(g)) => s.breaker.merged_with(&g.breaker),
+                (Some(s), None) => s.breaker.clone(),
+                (None, Some(g)) => g.breaker.clone(),
+                (None, None) => Default::default(),
+            };
+            let builder: CircuitBreakerBuilder = (&merged_breaker).into();
 
             let recloser = builder.build_async().map_err(|e| {
                 SubgraphExecutorError::CircuitBreakerCreationError(e, subgraph_name.to_string())

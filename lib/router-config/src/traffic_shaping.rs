@@ -5,9 +5,9 @@ use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de, Deserialize, Serialize};
 
 use crate::primitives::{
-    file_path::FilePath, http_header::HttpHeaderName, percentage::Percentage,
-    single_or_multiple::SingleOrMultiple,
+    file_path::FilePath, http_header::HttpHeaderName, single_or_multiple::SingleOrMultiple,
 };
+use hive_console_sdk::primitives::circuit_breaker::CircuitBreakerConfig;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
@@ -347,7 +347,7 @@ pub struct ServerTLSConfig {
     pub client_auth: Option<ServerClientAuthConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     /// Enable or disable the circuit breaker for the subgraph.
@@ -358,45 +358,13 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     /// configuration.
     #[serde(default)]
     pub enabled: Option<bool>,
-    /// Percentage after what the circuit breaker should kick in.
-    /// Default: 50%
-    #[serde(default)]
-    #[schemars(with = "String")]
-    pub error_threshold: Option<Percentage>,
-    /// Size of the rolling sample used to decide whether the breaker
-    /// should open while closed. The breaker fills this sample with the
-    /// outcomes of the last `volume_threshold` requests; the next request
-    /// after the sample is full is the one whose result is evaluated
-    /// against `error_threshold`. In practice the breaker can trip only
-    /// after at least `volume_threshold + 1` requests have been observed.
-    /// Default: 5
-    #[serde(default)]
-    pub volume_threshold: Option<usize>,
-    /// The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.
-    /// Default: 30s
-    #[serde(
-        default,
-        deserialize_with = "humantime_serde::deserialize",
-        serialize_with = "humantime_serde::serialize"
-    )]
-    #[schemars(with = "String")]
-    pub reset_timeout: Option<Duration>,
-    /// Size of the rolling sample of probe requests collected while the
-    /// breaker is in the half-open state after `reset_timeout` elapses.
-    /// The breaker fills this sample first; the next probe after the
-    /// sample is full is the one whose result is evaluated against
-    /// `error_threshold` to decide whether to transition back to `closed`
-    /// (resuming normal traffic) or to `open` (waiting for another
-    /// `reset_timeout` window). In practice at least
-    /// `half_open_attempts + 1` probes pass through before the breaker
-    /// can transition.
-    ///
-    /// Lower values make recovery faster but more aggressive; higher
-    /// values gather more samples before re-closing the circuit.
-    ///
-    /// Default: 10
-    #[serde(default)]
-    pub half_open_attempts: Option<usize>,
+
+    /// Tuning of the underlying circuit breaker (error threshold, rolling
+    /// volume, reset timeout, ...). Shared with every other component that
+    /// uses a circuit breaker.
+    #[serde(flatten)]
+    pub breaker: CircuitBreakerConfig,
+
     /// HTTP status codes returned by the subgraph that should be counted as
     /// failures by the circuit breaker.
     ///

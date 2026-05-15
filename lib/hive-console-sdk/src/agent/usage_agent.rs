@@ -10,16 +10,11 @@ use std::{
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::expressions::lib::FromVrlValue;
-use crate::{
-    agent::{buffer::AddStatus, utils::OperationProcessor},
-    expressions::ExecutableProgram,
-};
-use crate::{
-    agent::{buffer::Buffer, builder::UsageAgentBuilder},
-    expressions::values::boolean::BooleanConversionError,
-};
-use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue, value::KeyString};
+use crate::agent::exclude::{Exclude, ExcludeError};
+use crate::agent::sampler::{Sampler, SamplerError};
+use crate::agent::{buffer::AddStatus, utils::OperationProcessor};
+use crate::agent::{buffer::Buffer, builder::UsageAgentBuilder};
+use vrl::{core::Value as VrlValue, value::KeyString};
 
 #[derive(Debug, Clone, Default)]
 pub enum OperationType {
@@ -53,7 +48,8 @@ pub struct UsageAgentInner {
     pub(crate) client: ClientWithMiddleware,
     pub(crate) flush_interval: Duration,
     pub(crate) circuit_breaker: AsyncRecloser,
-    pub(crate) exclude_expression: Option<VrlProgram>,
+    pub(crate) exclude: Option<Exclude>,
+    pub(crate) sampler: Sampler,
 }
 
 pub fn non_empty_string(value: Option<String>) -> Option<String> {
@@ -78,10 +74,6 @@ pub enum AgentError {
     TargetIdWithLegacyToken,
     #[error("invalid token provided")]
     InvalidToken,
-    #[error(
-        "invalid target id provided: {0}, it should be either a slug like \"$organizationSlug/$projectSlug/$targetSlug\" or an UUID"
-    )]
-    InvalidTargetId(String),
     #[error("unable to instantiate the http client for reports sending: {0}")]
     HTTPClientCreationError(reqwest::Error),
     #[error("unable to create circuit breaker: {0}")]
@@ -90,12 +82,10 @@ pub enum AgentError {
     CircuitBreakerRejected,
     #[error("unable to send report: {0}")]
     Unknown(String),
-    #[error("failed to compile exclude expression: {0}")]
-    ExcludeExpressionCompileError(#[from] crate::expressions::ExpressionCompileError),
-    #[error("failed to execute exclude expression: {0}")]
-    ExcludeExpressionExecutionError(#[from] crate::expressions::ExpressionExecutionError),
-    #[error("failed to convert exclude expression result to boolean: {0}")]
-    ExcludeExpressionResultConversionError(#[from] BooleanConversionError),
+    #[error(transparent)]
+    ExcludeError(#[from] ExcludeError),
+    #[error(transparent)]
+    SamplerError(#[from] SamplerError),
 }
 
 pub type UsageAgent = Arc<AsyncDropper<UsageAgentInner>>;
@@ -285,22 +275,33 @@ impl UsageAgentExt for UsageAgent {
     ) -> Result<(), AgentError> {
         let inner = self.inner();
 
-        if let Some(exclude_program) = &inner.exclude_expression {
-            let result = exclude_program.execute(
-                get_vrl_value_from_execution_report_and_request(&execution_report, request),
-            )?;
-            let result_bool = bool::from_vrl_value(result)?;
-            if result_bool {
+        // Exclusion runs before sampling so that statically excluded operations
+        // never enter the at_least_once sampler's seen-set.
+        if let Some(exclude) = &inner.exclude {
+            if exclude.should_exclude(&execution_report, request.as_ref())? {
                 tracing::debug!(
-                    "Excluding report for operation \"{}\" based on exclude expression evaluation",
+                    "Excluding report for operation \"{}\" (phase: EXCLUDE)",
                     execution_report
                         .operation_name
-                        .clone()
-                        .or_else(|| Some("anonymous".to_string()))
-                        .unwrap()
+                        .as_deref()
+                        .unwrap_or("anonymous")
                 );
                 return Ok(());
             }
+        }
+
+        if !inner
+            .sampler
+            .should_sample(&execution_report, request.as_ref())?
+        {
+            tracing::debug!(
+                "Dropping operation \"{}\" (phase: SAMPLING)",
+                execution_report
+                    .operation_name
+                    .as_deref()
+                    .unwrap_or("anonymous")
+            );
+            return Ok(());
         }
 
         if let AddStatus::Full { drained } = inner.buffer.add(execution_report).await {
@@ -415,7 +416,7 @@ pub fn get_vrl_value_from_execution_report_and_request(
         VrlValue::Object(BTreeMap::from([
             (
                 "name".into(),
-                report.operation_name.clone().unwrap_or_default().into(),
+                report.operation_name.as_deref().unwrap_or_default().into(),
             ),
             (
                 "type".into(),
@@ -430,7 +431,7 @@ pub fn get_vrl_value_from_execution_report_and_request(
                     .unwrap_or_default()
                     .into(),
             ),
-            ("query".into(), report.operation_body.clone().into()),
+            ("query".into(), report.operation_body.as_str().into()),
         ])),
     );
 
@@ -466,10 +467,37 @@ mod tests {
     use vrl::core::Value as VrlValue;
     use vrl::value::KeyString;
 
+    use crate::agent::config::{UsageReportingConfig, UsageReportingExclude};
     use crate::agent::usage_agent::{
         get_vrl_value_from_execution_report_and_request, ExecutionReport, OperationType, Report,
         UsageAgent, UsageAgentExt,
     };
+
+    /// Build a `UsageReportingConfig` aimed at the local mockito server.
+    /// `buffer_size: 1` makes every report flush immediately, which is
+    /// what most tests need to assert on the captured request.
+    fn test_config(server_url: &str) -> UsageReportingConfig {
+        UsageReportingConfig {
+            endpoint: format!("{}/200", server_url),
+            buffer_size: 1,
+            ..Default::default()
+        }
+    }
+
+    /// Same as [`test_config`] but with an exclude expression. Used by all
+    /// the `exclude_expression_*` tests so they do not have to repeat
+    /// a full struct literal each.
+    fn test_config_with_exclude_expression(
+        server_url: &str,
+        expression: &str,
+    ) -> UsageReportingConfig {
+        UsageReportingConfig {
+            exclude: Some(UsageReportingExclude::Expression {
+                expression: expression.to_string(),
+            }),
+            ..test_config(server_url)
+        }
+    }
 
     /// Helper to extract a nested VRL value from an Object using string keys.
     fn vrl_get<'a>(value: &'a VrlValue, keys: &[&str]) -> &'a VrlValue {
@@ -651,8 +679,8 @@ mod tests {
         {
             let usage_agent = UsageAgent::builder()
                 .token(token.into())
-                .endpoint(format!("{}/200", server_url))
                 .user_agent(user_agent.into())
+                .from_config(&test_config(&server_url))?
                 .build()?;
 
             let request = http::Request::builder()
@@ -907,9 +935,10 @@ mod tests {
         {
             let usage_agent = UsageAgent::builder()
                 .token(token.into())
-                .endpoint(format!("{}/200", server_url))
-                .buffer_size(1) // flush on every report
-                .exclude_expression(r#".request.operation.name == "ExcludeMe""#.to_string())
+                .from_config(&test_config_with_exclude_expression(
+                    &server_url,
+                    r#".request.operation.name == "ExcludeMe""#,
+                ))?
                 .build()?;
 
             // This report should be excluded
@@ -942,8 +971,10 @@ mod tests {
         {
             let usage_agent = UsageAgent::builder()
                 .token(token.into())
-                .endpoint(format!("{}/200", server_url))
-                .exclude_expression(r#".request.operation.name == "ExcludeMe""#.to_string())
+                .from_config(&test_config_with_exclude_expression(
+                    &server_url,
+                    r#".request.operation.name == "ExcludeMe""#,
+                ))?
                 .build()?;
 
             let report = make_simple_report(Some("KeepMe"), OperationType::Query);
@@ -974,9 +1005,10 @@ mod tests {
         {
             let usage_agent = UsageAgent::builder()
                 .token(token.into())
-                .endpoint(format!("{}/200", server_url))
-                .buffer_size(1)
-                .exclude_expression(r#".request.operation.type == "subscription""#.to_string())
+                .from_config(&test_config_with_exclude_expression(
+                    &server_url,
+                    r#".request.operation.type == "subscription""#,
+                ))?
                 .build()?;
 
             let report = make_simple_report(Some("OnMessage"), OperationType::Subscription);
@@ -1006,9 +1038,10 @@ mod tests {
         {
             let usage_agent = UsageAgent::builder()
                 .token(token.into())
-                .endpoint(format!("{}/200", server_url))
-                .buffer_size(1)
-                .exclude_expression(r#".request.headers."x-internal" == "true""#.to_string())
+                .from_config(&test_config_with_exclude_expression(
+                    &server_url,
+                    r#".request.headers."x-internal" == "true""#,
+                ))?
                 .build()?;
 
             let request = http::Request::builder()
@@ -1055,9 +1088,10 @@ mod tests {
         {
             let usage_agent = UsageAgent::builder()
                 .token(token.into())
-                .endpoint(format!("{}/200", server_url))
-                .buffer_size(1)
-                .exclude_expression(exclude_expr.to_string())
+                .from_config(&test_config_with_exclude_expression(
+                    &server_url,
+                    exclude_expr,
+                ))?
                 .build()?;
 
             let request = make_simple_request();
@@ -1107,8 +1141,10 @@ mod tests {
         {
             let usage_agent = UsageAgent::builder()
                 .token(token.into())
-                .endpoint(format!("{}/200", server_url))
-                .exclude_expression(exclude_expr.to_string())
+                .from_config(&test_config_with_exclude_expression(
+                    &server_url,
+                    exclude_expr,
+                ))?
                 .build()?;
 
             let request = make_simple_request();
@@ -1139,9 +1175,10 @@ mod tests {
         {
             let usage_agent = UsageAgent::builder()
                 .token(token.into())
-                .endpoint(format!("{}/200", server_url))
-                .buffer_size(1)
-                .exclude_expression(r#".request.url.path == "/internal/graphql""#.to_string())
+                .from_config(&test_config_with_exclude_expression(
+                    &server_url,
+                    r#".request.url.path == "/internal/graphql""#,
+                ))?
                 .build()?;
 
             let request = http::Request::builder()
@@ -1176,7 +1213,7 @@ mod tests {
         {
             let usage_agent = UsageAgent::builder()
                 .token(token.into())
-                .endpoint(format!("{}/200", server_url))
+                .from_config(&test_config(&server_url))?
                 .build()?;
 
             let report = make_simple_report(Some("AnyOp"), OperationType::Query);
@@ -1192,21 +1229,19 @@ mod tests {
 
     #[test]
     fn builder_rejects_invalid_exclude_expression() {
-        let result = UsageAgent::builder()
-            .token("Token".into())
-            .exclude_expression("this is not valid VRL }{".to_string())
-            .build();
+        let result =
+            UsageAgent::builder()
+                .token("Token".into())
+                .from_config(&UsageReportingConfig {
+                    exclude: Some(UsageReportingExclude::Expression {
+                        expression: "this is not valid VRL }{".to_string(),
+                    }),
+                    ..Default::default()
+                });
 
-        assert!(result.is_err());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn builder_ignores_empty_exclude_expression() {
-        let result = UsageAgent::builder()
-            .token("Token".into())
-            .exclude_expression("".to_string())
-            .build();
-
-        assert!(result.is_ok());
+        assert!(
+            result.is_err(),
+            "from_config should fail when the exclude expression cannot compile"
+        );
     }
 }

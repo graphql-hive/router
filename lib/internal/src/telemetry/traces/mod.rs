@@ -13,8 +13,10 @@
 //!
 //! Public helpers like `TracerLayer` and tracing control functions are re-exported here
 //! for the rest of the codebase to use.
+use hive_console_sdk::primitives::target_id::TargetId;
+use hive_router_config::primitives::value_or_expression::ValueOrExpression;
 use hive_router_config::telemetry::{
-    hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
+    hive::HiveTelemetryConfig,
     tracing::{BatchProcessorConfig, OtlpProtocol, TracingExporterConfig},
     TelemetryConfig,
 };
@@ -38,7 +40,10 @@ use self::standard_pipeline_exporter::StandardPipelineExporter;
 use crate::telemetry::{
     error::TelemetryError,
     traces::hive_console_exporter::HiveConsoleExporter,
-    utils::{build_metadata, build_tls_config, resolve_string_map, resolve_value_or_expression},
+    utils::{
+        build_metadata, build_tls_config, evaluate_expression_as_string, resolve_string_map,
+        resolve_value_or_expression,
+    },
 };
 
 pub use control::{disabled_span, is_level_enabled, is_tracing_enabled, set_tracing_enabled};
@@ -237,8 +242,13 @@ fn setup_hive_exporter(
             ))
         }
     };
-    let target = match &config.target {
-        Some(t) => resolve_value_or_expression(t, "Hive Telemetry target")?,
+    let target: TargetId = match &config.target {
+        Some(ValueOrExpression::Value(t)) => t.clone(),
+        Some(ValueOrExpression::Expression { expression }) => {
+            let resolved = evaluate_expression_as_string(expression, "Hive Telemetry target")?;
+            TargetId::parse(resolved)
+                .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?
+        }
         None => {
             return Err(TelemetryError::TracesExporterSetup(
                 "Hive Tracing target is required but not provided".to_string(),
@@ -246,16 +256,9 @@ fn setup_hive_exporter(
         }
     };
 
-    if !is_uuid_target_ref(&target) && !is_slug_target_ref(&target) {
-        return Err(TelemetryError::TracesExporterSetup(format!(
-            "Invalid Hive Tracing target format: '{}'. It must be either in slug format '$organizationSlug/$projectSlug/$targetSlug' or UUID format 'a0f4c605-6541-4350-8cfe-b31f21a4bf80'",
-            target
-        )));
-    }
-
     let headers: HashMap<String, String> = HashMap::from_iter(vec![
         ("authorization".to_string(), format!("Bearer {}", token)),
-        ("x-hive-target-ref".to_string(), target.clone()),
+        ("x-hive-target-ref".to_string(), target.to_string()),
     ]);
 
     let exporter = SpanExporter::builder()

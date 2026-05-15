@@ -1,8 +1,13 @@
 use std::{fmt::Display, str::FromStr};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy)]
+/// A value in `[0.0, 1.0]` parsed from `"NN%"` strings (for example
+/// `"50%"` or `"100%"`). Used by `usage_reporting` and other config
+/// surfaces to express probabilities in a human-friendly way.
+#[derive(Debug, Clone, Copy, JsonSchema)]
+#[schemars(with = "String")]
 pub struct Percentage {
     value: f64,
 }
@@ -50,7 +55,6 @@ impl Display for Percentage {
     }
 }
 
-// Deserializer from `n%` string to `Percentage` struct
 impl<'de> Deserialize<'de> for Percentage {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -61,7 +65,6 @@ impl<'de> Deserialize<'de> for Percentage {
     }
 }
 
-// Serializer from `Percentage` struct to `n%` string
 impl Serialize for Percentage {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
