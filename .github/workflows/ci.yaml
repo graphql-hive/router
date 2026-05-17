@@ -59,6 +59,7 @@ jobs:
       - name: test plugin examples
         run: cargo test_plugin_examples
         timeout-minutes: 10
+        working-directory: plugin_examples
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug

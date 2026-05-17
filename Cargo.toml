@@ -11,27 +11,9 @@ members = [
   "bin/router",
   "bin/differential",
   "e2e",
+  "plugin_examples/plugin_template",
   "bench/coprocessor",
   "bench/subgraphs",
-  "plugin_examples/apollo_sandbox",
-  "plugin_examples/apq",
-  "plugin_examples/async_auth",
-  "plugin_examples/context_data",
-  "plugin_examples/forbid_anonymous_operations",
-  "plugin_examples/multipart",
-  "plugin_examples/one_of",
-  "plugin_examples/propagate_status_code",
-  "plugin_examples/response_cache",
-  "plugin_examples/root_field_limit",
-  "plugin_examples/subgraph_response_cache",
-  "plugin_examples/usage_reporting",
-  "plugin_examples/plugin_template",
-  "plugin_examples/jwt_cookie",
-  "plugin_examples/feature_flags",
-  "plugin_examples/progressive_override_launchdarkly",
-  "plugin_examples/non_standard_request",
-  "plugin_examples/incoming_request_deduplication",
-  "plugin_examples/error_mapping"
 ]
 resolver = "2"
 default-members = ["bin/router"]
