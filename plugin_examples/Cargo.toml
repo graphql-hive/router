@@ -13,7 +13,6 @@ members = [
   "root_field_limit",
   "subgraph_response_cache",
   "usage_reporting",
-  "plugin_template",
   "jwt_cookie",
   "feature_flags",
   "progressive_override_launchdarkly",

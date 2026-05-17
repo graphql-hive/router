@@ -11,6 +11,7 @@ members = [
   "bin/router",
   "bin/differential",
   "e2e",
+  "plugin_examples/plugin_template",
   "bench/coprocessor",
   "bench/subgraphs",
 ]
