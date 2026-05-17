@@ -1,0 +1,2 @@
+[alias]
+test_plugin_examples = "nextest run --package *-plugin-example --test-threads 5"

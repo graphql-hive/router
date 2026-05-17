@@ -8,3 +8,4 @@ profile.json.gz
 trace-*.json
 router-config.schema.json
 node_modules
+plugin_examples/target
