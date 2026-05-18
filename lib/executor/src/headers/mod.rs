@@ -141,6 +141,44 @@ mod tests {
         "#);
     }
 
+    #[test]
+    fn test_propagate_named_empty_value_uses_default() {
+        let yaml_str = r#"
+          headers:
+            all:
+              request:
+                - propagate:
+                    named: x-context
+                    default: fallback
+        "#;
+        let config = parse_yaml_config(String::from(yaml_str)).unwrap();
+        let plan = compile_headers_plan(&config.headers).unwrap();
+
+        let mut client_headers = NtexHeaderMap::new();
+        client_headers.insert(
+            header_name_owned("x-context"),
+            ntex::http::header::HeaderValue::from_bytes(b"")
+                .expect("empty ntex header value should be constructible"),
+        );
+        let client_details = ClientRequestDetails {
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: client_headers.into(),
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }",
+                kind: "query",
+            },
+            jwt: JwtRequestDetails::Unauthenticated.into(),
+        };
+        let mut out = HeaderMap::new();
+        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
+
+        insta::assert_snapshot!(out.to_string(), @r#"
+          x-context: fallback
+        "#);
+    }
+
     // Tests that `matching` and `exclude` rules are correctly applied for propagation.
     #[test]
     fn test_propagate_with_matching_and_exclude() {

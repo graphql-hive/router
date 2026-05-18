@@ -1,5 +1,6 @@
 use hive_router_internal::expressions::ExecutableProgram;
 use http::HeaderMap;
+use ntex::http::header::HeaderValue as NtexHeaderValue;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -51,6 +52,14 @@ trait ApplyRequestHeader {
     ) -> Result<(), HeaderRuleRuntimeError>;
 }
 
+fn to_http_header_value(header_value: &NtexHeaderValue) -> Option<http::HeaderValue> {
+    if header_value.as_bytes().is_empty() {
+        return None;
+    }
+
+    http::HeaderValue::from_bytes(header_value.as_bytes()).ok()
+}
+
 impl ApplyRequestHeader for RequestHeaderRule {
     fn apply_request_headers(
         &self,
@@ -82,8 +91,10 @@ impl ApplyRequestHeader for RequestPropagateNamed {
             }
             if let Some(header_value) = ctx.client_request.headers.get(header_name) {
                 let destination_name = self.rename.as_ref().unwrap_or(header_name);
-                output_headers.append(destination_name, header_value.into());
-                matched = true;
+                if let Some(header_value) = to_http_header_value(header_value) {
+                    output_headers.append(destination_name, header_value);
+                    matched = true;
+                }
             }
         }
 
@@ -133,7 +144,9 @@ impl ApplyRequestHeader for RequestPropagateRegex {
                 continue;
             }
 
-            output_headers.append(header_name, header_value.into());
+            if let Some(header_value) = to_http_header_value(header_value) {
+                output_headers.append(header_name, header_value);
+            }
         }
 
         Ok(())
