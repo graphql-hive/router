@@ -94,6 +94,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.13.4 (2026-05-17)
+
+### Fixes
+
+#### Implement Circuit Breaker for Subgraph Requests
+
+This change introduces a circuit breaker mechanism for subgraph requests in the Hive Router. The circuit breaker will monitor the success and failure rates of requests to each subgraph and will prevent future requests if the failure rate exceeds a certain threshold. When the circuit breaker is opened, subsequent requests to that subgraph will fail immediately without attempting to send the request.
+
+This implementation helps improve the resilience and stability of the Hive Router when dealing with unreliable subgraphs.
+
+#### Record subgraph execution errors on the `graphql.subgraph.operation` span
+
+Errors raised while preparing or executing a subgraph fetch
+(`PlanExecutionError`) are now attached to the corresponding
+`graphql.subgraph.operation` span instead of only surfacing on the
+top-level `graphql.operation` span via the response-error pipeline.
+
+For each failing fetch the span now carries:
+- `hive.graphql.error.count = 1`,
+- `hive.graphql.error.codes` set to the error code (e.g.
+  `SUBGRAPH_REQUEST_TIMEOUT`, `HEADER_PROPAGATION_FAILURE`,
+  `SUBGRAPH_CIRCUIT_BREAKER_REJECTED`, …), and
+- a `graphql.error` event with `error.type`, `error.message`, and
+  `hive.error.subgraph_name`.
+
+Previously these subgraph-level spans looked "ok" even when the fetch
+never produced a response, which was misleading in tracing UIs that
+highlight failing spans. The error is now visible at the subgraph hop
+where it actually originated.
+
 ## 6.13.3 (2026-05-13)
 
 ### Fixes
