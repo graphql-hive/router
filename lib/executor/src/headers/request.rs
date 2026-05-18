@@ -53,6 +53,8 @@ trait ApplyRequestHeader {
 }
 
 fn to_http_header_value(header_value: &NtexHeaderValue) -> Option<http::HeaderValue> {
+    // Empty values are skipped to avoid forwarding invalid/unsafe values that can panic in
+    // downstream header conversions (for example when converting into ntex headers).
     if header_value.as_bytes().is_empty() {
         return None;
     }
