@@ -175,7 +175,7 @@ jobs:
       - name: build docker images
         timeout-minutes: 60
         id: docker-bake
-        uses: docker/bake-action@5ca506d06f70338a4968df87fd8bfee5cbfb84c7 # v6.0.0
+        uses: docker/bake-action@a66e1c87e2eca0503c343edf1d208c716d54b8a8 # v7.1.0
         env:
           DOCKER_REGISTRY: ghcr.io/${{ github.repository_owner }}/
           COMMIT_SHA: ${{ needs.find-changes.outputs.release_version }}
