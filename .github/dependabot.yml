@@ -8,6 +8,34 @@ updates:
     open-pull-requests-limit: 10
     cooldown:
       default-days: 5
+    groups:
+      reqwest:
+        patterns:
+          - "reqwest"
+          - "reqwest-*"
+      tokio:
+        patterns:
+          - "tokio"
+          - "tokio-*"
+      http:
+        patterns:
+          - "http"
+          - "http-*"
+      ntex:
+        patterns:
+          - "ntex"
+          - "ntex-*"
+      opentelemetry:
+        patterns:
+          - "opentelemetry"
+          - "prometheus"
+          - "opentelemetry-*"
+          - "opentelemetry_sdk"
+          - "tracing-opentelemetry"
+      tracing:
+        patterns:
+          - "tracing"
+          - "tracing-subscriber"
     labels:
       - "dependencies"
       - "rust"
@@ -41,6 +69,11 @@ updates:
     schedule:
       interval: "daily"
     open-pull-requests-limit: 5
+    groups:
+      artifacts:
+        patterns:
+          - "actions/upload-artifact"
+          - "actions/download-artifact"
     labels:
       - "dependencies"
       - "github-actions"
