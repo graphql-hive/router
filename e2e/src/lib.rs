@@ -53,6 +53,8 @@ mod probes;
 #[cfg(test)]
 mod router_timeout;
 #[cfg(test)]
+mod storage;
+#[cfg(test)]
 mod subscriptions;
 #[cfg(test)]
 mod supergraph;

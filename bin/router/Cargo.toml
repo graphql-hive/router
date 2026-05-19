@@ -88,6 +88,7 @@ futures-timer = "3.0.3"
 const-str = "1.0.0"
 md5 = "0.8.0"
 bytes = { workspace = true }
+object_store = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

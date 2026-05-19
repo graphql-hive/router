@@ -1,5 +1,6 @@
 use crate::pipeline::active_subscriptions::ActiveSubscriptions;
 use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
+use crate::storage::StorageManager;
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -90,12 +91,14 @@ impl SchemaState {
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         cache_state: Arc<CacheState>,
         active_subscriptions: ActiveSubscriptions,
+        storage_manager: Arc<StorageManager>,
     ) -> Result<Self, SupergraphManagerError> {
         let (tx, mut rx) = mpsc::channel::<String>(1);
         let background_loader = SupergraphBackgroundLoader::new(
             &router_config.supergraph,
             tx,
             telemetry_context.metrics.clone(),
+            storage_manager.clone(),
         )?;
         bg_tasks_manager.register_task(SupergraphBackgroundLoaderTask(Arc::new(background_loader)));
 
@@ -287,8 +290,9 @@ impl SupergraphBackgroundLoader {
         config: &SupergraphSource,
         sender: mpsc::Sender<String>,
         metrics: Arc<Metrics>,
+        storage_manager: Arc<StorageManager>,
     ) -> Result<Self, LoadSupergraphError> {
-        let loader = resolve_from_config(config)?;
+        let loader = resolve_from_config(config, storage_manager)?;
 
         Ok(Self {
             loader,

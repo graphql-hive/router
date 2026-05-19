@@ -10,3 +10,4 @@ mod policy;
 mod shared;
 mod storage_file;
 mod storage_hive;
+mod storage_s3;

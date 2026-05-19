@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::primitives::{
     file_path::FilePath, retry_policy::RetryPolicyConfig, single_or_multiple::SingleOrMultiple,
+    value_or_expression::ValueOrExpression,
 };
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -74,6 +75,22 @@ pub enum SupergraphSource {
         #[serde(default = "default_hive_retry_policy")]
         retry_policy: RetryPolicyConfig,
     },
+    #[serde(rename = "storage")]
+    Storage {
+        /// The storage id as it was defined in the config file, under `storages:` field.
+        storage_id: String,
+        /// The path to the supergraph file in the storage/bucket.
+        location: ValueOrExpression<String>,
+        /// Optional interval at which the file should be polled for changes.
+        /// If not provided, the file will only be loaded once when the router starts.
+        #[serde(
+            default = "default_file_poll_interval",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        #[schemars(with = "String")]
+        poll_interval: Option<Duration>,
+    },
 }
 
 fn default_accept_invalid_certs() -> bool {
@@ -97,6 +114,7 @@ impl SupergraphSource {
         match self {
             SupergraphSource::File { .. } => "file",
             SupergraphSource::HiveConsole { .. } => "hive",
+            SupergraphSource::Storage { storage_id, .. } => storage_id.as_str(),
         }
     }
 }

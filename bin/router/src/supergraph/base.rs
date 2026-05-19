@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 
+use crate::storage::error::StorageError;
+
 #[derive(Debug, thiserror::Error)]
 #[allow(clippy::enum_variant_names)]
 pub enum LoadSupergraphError {
@@ -21,6 +23,10 @@ pub enum LoadSupergraphError {
     MissingHiveCDNEndpoint,
     #[error("Hive CDN key is missing. Please provide it via 'HIVE_CDN_KEY' environment variable or under 'supergraph.key' in the configuration.")]
     MissingHiveCDNKey,
+    #[error("Storage ID {0} is not defined in the Router configuration")]
+    StorageIdNotFound(String),
+    #[error("Storage error: {0}")]
+    StorageError(#[from] StorageError),
 }
 
 #[derive(Debug)]
