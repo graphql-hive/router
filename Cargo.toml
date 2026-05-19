@@ -83,7 +83,7 @@ ipnet = "2.12.0"
 
 # Telemetry
 opentelemetry = "0.31.0"
-opentelemetry_sdk = "0.31.0"
+opentelemetry_sdk = "0.32.0"
 opentelemetry-prometheus = "0.31.0"
 prometheus = "0.14.0"
 opentelemetry-http = { version = "0.31.0", default-features = false, features = ["internal-logs", "reqwest", "reqwest-rustls"]}
