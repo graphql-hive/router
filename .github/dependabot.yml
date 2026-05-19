@@ -74,6 +74,9 @@ updates:
         patterns:
           - "actions/upload-artifact"
           - "actions/download-artifact"
+      docker:
+        patterns:
+          - "docker/"
     labels:
       - "dependencies"
       - "github-actions"
