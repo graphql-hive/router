@@ -94,6 +94,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.13.5 (2026-05-19)
+
+### Fixes
+
+#### Fix: pin `ntex` version to `3.7.2` to avoid regressions
+
+This release pins `ntex` to `3.7.2` to avoid regressions, like the one reported in [#997](https://github.com/graphql-hive/router/issues/997). 
+
+Users who builds their own router are impacted by this regression, due to the way Cargo handles unpinned dependencies.
+
 ## 6.13.4 (2026-05-17)
 
 ### Fixes

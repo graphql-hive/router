@@ -2353,7 +2353,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "anyhow",
  "async-dropper-simple",
@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.58"
+version = "0.0.59"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-internal"
-version = "0.0.22"
+version = "0.0.23"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2527,7 +2527,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "6.13.4"
+version = "6.13.5"
 dependencies = [
  "ahash",
  "async-stream",
