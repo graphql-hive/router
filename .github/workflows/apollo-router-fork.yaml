@@ -219,6 +219,9 @@ jobs:
       - find-changes
     runs-on: ubuntu-22.04
     name: publish multiarch manifest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
