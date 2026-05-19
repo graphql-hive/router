@@ -91,7 +91,7 @@ opentelemetry-otlp = { version = "0.31.0", default-features = false, features = 
 opentelemetry-proto = "0.31.0"
 prost = "0.14.2"
 opentelemetry-stdout = "0.31.0"
-opentelemetry-appender-tracing = "0.31.1"
+opentelemetry-appender-tracing = "0.32.0"
 opentelemetry-jaeger-propagator = "0.31.0"
 opentelemetry-zipkin = { version = "0.31.0", default-features = false, features=["reqwest-rustls", "reqwest-client"] }
 tracing = "0.1.44"
