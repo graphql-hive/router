@@ -58,7 +58,7 @@ ntex-http = { version = "=1.1.0"}
 ntex-codec = { version = "=1.1.0"}
 ntex-io = { version = "=3.9.2"}
 ntex-net = { version = "=3.9.1"}
-tonic = { version = "0.14.2", features = ["tls-aws-lc"] }
+tonic = { version = "0.14.6", features = ["tls-aws-lc"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["http2", "rustls-tls"] }
 reqwest-retry = "0.8.0"
 reqwest-middleware = "0.4.2"
