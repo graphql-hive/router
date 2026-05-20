@@ -1177,6 +1177,7 @@ fn format_span_kind(kind: i32) -> Option<SpanKind> {
 fn format_attribute_value(value: &opentelemetry_proto::tonic::common::v1::AnyValue) -> String {
     match &value.value {
         Some(Value::StringValue(s)) => s.clone(),
+        Some(Value::StringValueStrindex(s)) => s.to_string(),
         Some(Value::IntValue(i)) => i.to_string(),
         Some(Value::DoubleValue(d)) => d.to_string(),
         Some(Value::BoolValue(b)) => b.to_string(),
