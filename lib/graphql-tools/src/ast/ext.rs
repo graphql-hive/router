@@ -11,6 +11,12 @@ use crate::static_graphql::schema::{
     TypeDefinition, TypeExtension, UnionType,
 };
 
+lazy_static! {
+    static ref QUERY_TYPE_DEFAULT_NAME: String = "Query".to_string();
+    static ref MUTATION_TYPE_DEFAULT_NAME: String = "Mutation".to_string();
+    static ref SUBSCRIPTION_TYPE_DEFAULT_NAME: String = "Subscription".to_string();
+}
+
 impl TypeDefinition {
     pub fn field_by_name(&self, name: &str) -> Option<&schema::Field> {
         match self {
@@ -107,28 +113,35 @@ impl schema::Document {
     }
 
     pub fn query_type(&self) -> &ObjectType {
-        lazy_static! {
-            static ref QUERY: String = "Query".to_string();
-        }
-
         let schema_definition = self.schema_definition();
-
-        self.object_type_by_name(schema_definition.query.as_ref().unwrap_or(&QUERY))
-            .unwrap()
+        self.object_type_by_name(
+            schema_definition
+                .query
+                .as_ref()
+                .unwrap_or(&QUERY_TYPE_DEFAULT_NAME),
+        )
+        .unwrap()
     }
 
     pub fn mutation_type(&self) -> Option<&ObjectType> {
-        self.schema_definition()
-            .mutation
-            .as_ref()
-            .and_then(|name| self.object_type_by_name(name))
+        let schema_definition = self.schema_definition();
+        self.object_type_by_name(
+            schema_definition
+                .mutation
+                .as_ref()
+                .unwrap_or(&MUTATION_TYPE_DEFAULT_NAME),
+        )
     }
 
     pub fn subscription_type(&self) -> Option<&ObjectType> {
-        self.schema_definition()
-            .subscription
-            .as_ref()
-            .and_then(|name| self.object_type_by_name(name))
+        let schema_definition = self.schema_definition();
+
+        self.object_type_by_name(
+            schema_definition
+                .subscription
+                .as_ref()
+                .unwrap_or(&SUBSCRIPTION_TYPE_DEFAULT_NAME),
+        )
     }
 
     fn object_type_by_name(&self, name: &str) -> Option<&ObjectType> {
@@ -310,10 +323,7 @@ impl Value {
         match self {
             Value::Variable(v) => vec![v],
             Value::List(list) => list.iter().flat_map(|v| v.variables_in_use()).collect(),
-            Value::Object(object) => object
-                .iter()
-                .flat_map(|(_, v)| v.variables_in_use())
-                .collect(),
+            Value::Object(object) => object.values().flat_map(|v| v.variables_in_use()).collect(),
             _ => vec![],
         }
     }
@@ -370,8 +380,8 @@ impl TypeDefinition {
             TypeDefinition::Scalar(_) => vec![],
             TypeDefinition::Interface(i) => schema
                 .type_map()
-                .iter()
-                .filter_map(|(_type_name, type_def)| {
+                .values()
+                .filter_map(|type_def| {
                     if i.is_implemented_by(type_def) {
                         return Some(*type_def);
                     }

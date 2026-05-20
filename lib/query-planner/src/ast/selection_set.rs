@@ -138,6 +138,14 @@ pub struct FieldSelection {
     pub skip_if: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_if: Option<String>,
+    /// Whether to skip this field in response projection.
+    /// Defaults to `false`.
+    /// The only case so far for it is when the selection set becomes empty,
+    /// due to a field being `@skip(if: true)` or `@include(if: false)`,
+    /// and used to avoid sending empty selection sets,
+    /// and to project an empty object.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub omit_from_response: bool,
 }
 
 impl Hash for FieldSelection {
@@ -173,6 +181,7 @@ impl FieldSelection {
             arguments: self.arguments.clone(),
             skip_if: self.skip_if.clone(),
             include_if: self.include_if.clone(),
+            omit_from_response: self.omit_from_response,
         }
     }
 
@@ -208,6 +217,20 @@ impl FieldSelection {
             arguments: None,
             skip_if: None,
             include_if: None,
+            omit_from_response: false,
+        }
+    }
+
+    // Returns a field selection that skips the `__typename` field in the response.
+    pub fn new_skipped_typename() -> Self {
+        FieldSelection {
+            name: "__typename".to_string(),
+            alias: None,
+            selections: SelectionSet::default(),
+            arguments: None,
+            skip_if: None,
+            include_if: None,
+            omit_from_response: true,
         }
     }
 
@@ -443,40 +466,38 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
         let mut found = false;
         for target_item in target.items.iter_mut() {
             match (source_item, target_item) {
-                (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
+                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
                     if source_field == target_field
                         && field_condition_equal(
                             &Option::<Condition>::from(source_field),
                             target_field,
-                        )
-                    {
-                        found = true;
-                        merge_selection_set(
-                            &mut target_field.selections,
-                            &source_field.selections,
-                            as_first,
-                        );
-                        break;
-                    }
+                        ) =>
+                {
+                    found = true;
+                    merge_field_omit_from_response(target_field, source_field);
+                    merge_selection_set(
+                        &mut target_field.selections,
+                        &source_field.selections,
+                        as_first,
+                    );
+                    break;
                 }
                 (
                     SelectionItem::InlineFragment(source_fragment),
                     SelectionItem::InlineFragment(target_fragment),
-                ) => {
-                    if source_fragment.type_condition == target_fragment.type_condition
-                        && fragment_condition_equal(
-                            &Option::<Condition>::from(source_fragment),
-                            target_fragment,
-                        )
-                    {
-                        found = true;
-                        merge_selection_set(
-                            &mut target_fragment.selections,
-                            &source_fragment.selections,
-                            as_first,
-                        );
-                        break;
-                    }
+                ) if source_fragment.type_condition == target_fragment.type_condition
+                    && fragment_condition_equal(
+                        &Option::<Condition>::from(source_fragment),
+                        target_fragment,
+                    ) =>
+                {
+                    found = true;
+                    merge_selection_set(
+                        &mut target_fragment.selections,
+                        &source_fragment.selections,
+                        as_first,
+                    );
+                    break;
                 }
                 _ => {}
             }
@@ -495,6 +516,15 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
         } else {
             target.items.extend(pending_items);
         }
+    }
+}
+
+#[inline]
+fn merge_field_omit_from_response(target: &mut FieldSelection, source: &FieldSelection) {
+    // A skipped `__typename` is only there for an empty object.
+    // If the client explicitly requested `__typename`, keep the visible field.
+    if target.name == "__typename" {
+        target.omit_from_response &= source.omit_from_response;
     }
 }
 
@@ -673,6 +703,7 @@ mod tests {
                     arguments: None,
                     skip_if: None,
                     include_if: None,
+                    omit_from_response: false,
                 }),
                 SelectionItem::Field(FieldSelection {
                     name: "field2".to_string(),
@@ -684,12 +715,14 @@ mod tests {
                             arguments: Some(("a".to_string(), Value::Int(1)).into()),
                             skip_if: None,
                             include_if: None,
+                            omit_from_response: false,
                         })],
                     },
                     alias: Some("f2".to_string()),
                     arguments: None,
                     skip_if: None,
                     include_if: None,
+                    omit_from_response: false,
                 }),
             ],
         };
@@ -710,6 +743,7 @@ mod tests {
                 arguments: None,
                 skip_if: None,
                 include_if: None,
+                omit_from_response: false,
             })],
         };
 
@@ -729,6 +763,7 @@ mod tests {
                 arguments: Some(vec![("id".to_string(), Value::Int(1))].into()),
                 skip_if: None,
                 include_if: None,
+                omit_from_response: false,
             })],
         };
 
@@ -766,6 +801,7 @@ mod tests {
                 ),
                 skip_if: None,
                 include_if: None,
+                omit_from_response: false,
             })],
         };
 
@@ -785,6 +821,7 @@ mod tests {
                 arguments: None,
                 skip_if: None,
                 include_if: Some("first".to_string()),
+                omit_from_response: false,
             })],
         };
         let source = SelectionSet {
@@ -795,6 +832,7 @@ mod tests {
                 arguments: None,
                 skip_if: None,
                 include_if: Some("second".to_string()),
+                omit_from_response: false,
             })],
         };
 
@@ -816,12 +854,14 @@ mod tests {
                         arguments: None,
                         skip_if: None,
                         include_if: None,
+                        omit_from_response: false,
                     })],
                 },
                 alias: None,
                 arguments: None,
                 skip_if: None,
                 include_if: Some("cond".to_string()),
+                omit_from_response: false,
             })],
         };
         let source = SelectionSet {
@@ -835,12 +875,14 @@ mod tests {
                         arguments: None,
                         skip_if: None,
                         include_if: None,
+                        omit_from_response: false,
                     })],
                 },
                 alias: None,
                 arguments: None,
                 skip_if: None,
                 include_if: Some("cond".to_string()),
+                omit_from_response: false,
             })],
         };
 
@@ -880,6 +922,25 @@ mod tests {
     }
 
     #[test]
+    fn merge_selection_set_prefers_visible_typename_over_skipped() {
+        let mut target = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection::new_skipped_typename())],
+        };
+        let source = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection::new_typename())],
+        };
+
+        merge_selection_set(&mut target, &source, false);
+
+        let [SelectionItem::Field(field)] = target.items.as_slice() else {
+            panic!("expected exactly one __typename field");
+        };
+
+        assert_eq!(field.name, "__typename");
+        assert!(!field.omit_from_response);
+    }
+
+    #[test]
     // Field Condition should only be equal to Condition::SkipAndInclude
     fn field_condition_skip_and_include() {
         let skip_cond = Some(Condition::Skip("skip".to_string()));
@@ -895,6 +956,7 @@ mod tests {
             arguments: None,
             skip_if: Some("skip".to_string()),
             include_if: Some("include".to_string()),
+            omit_from_response: false,
         };
         assert!(!field_condition_equal(&skip_cond, &field));
         assert!(!field_condition_equal(&include_cond, &field));

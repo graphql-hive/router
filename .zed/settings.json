@@ -1,3 +1,20 @@
 {
-  "tab_size": 2
+  "tab_size": 2,
+  "inlay_hints": {
+    "enabled": true,
+    "edit_debounce_ms": 200,
+    "scroll_debounce_ms": 0,
+  },
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "check": {
+          "workspace": false,
+        },
+        "rust": {
+          "analyzerTargetDir": true,
+        },
+      },
+    },
+  },
 }

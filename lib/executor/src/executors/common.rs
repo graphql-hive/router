@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 use http::{HeaderMap, Uri};
 use sonic_rs::Value;
 
@@ -19,7 +20,7 @@ pub trait SubgraphExecutor {
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
         plugin_req_state: Option<&'a PluginRequestState<'a>>,
-    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError>;
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError>;
 
     async fn subscribe<'a>(
         &self,
@@ -53,6 +54,7 @@ pub struct SubgraphExecutionRequest<'a> {
     pub headers: HeaderMap,
     pub raw_variable_values: Option<Vec<(&'a str, Vec<u8>)>>,
     pub extensions: Option<SubgraphRequestExtensions>,
+    pub custom_scalar_paths: Option<&'a CustomScalarPaths>,
 }
 
 impl SubgraphExecutionRequest<'_> {

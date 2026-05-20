@@ -4,7 +4,6 @@ mod tls_tests {
 
     use axum_server::tls_rustls::RustlsConfig;
     use hive_router::init_rustls_crypto_provider;
-    use rcgen::generate_simple_self_signed;
     use rustls::{
         pki_types::{pem::PemObject, PrivateKeyDer},
         server::WebPkiClientVerifier,
@@ -14,59 +13,10 @@ mod tls_tests {
     use tempfile::NamedTempFile;
     use tonic::transport::CertificateDer;
 
-    use crate::testkit::{some_header_map, ClientResponseExt, Started, TestRouter, TestSubgraphs};
-
-    struct GeneratedKeyPair {
-        cert_file: NamedTempFile,
-        cert_file_path: String,
-        cert_pem: String,
-        key_file: NamedTempFile,
-        key_file_path: String,
-        key_pem: String,
-    }
-
-    async fn generate_keypair() -> GeneratedKeyPair {
-        let cert_key = generate_simple_self_signed(vec![
-            "127.0.0.1".to_string(),
-            "localhost".to_string(),
-            "0.0.0.0".to_string(),
-        ])
-        .expect("Failed to generate self-signed certificate");
-
-        let mut cert_file =
-            NamedTempFile::new().expect("Failed to create temporary file for certificate");
-        let cert = cert_key.cert;
-        let cert_pem = cert.pem();
-        cert_file
-            .write(cert_pem.as_bytes())
-            .expect("Failed to write certificate to temporary file");
-
-        let mut key_file =
-            NamedTempFile::new().expect("Failed to create temporary file for private key");
-
-        let key = cert_key.signing_key;
-        let key_str = key.serialize_pem();
-        key_file
-            .write(key_str.as_bytes())
-            .expect("Failed to write private key to temporary file");
-
-        GeneratedKeyPair {
-            cert_file_path: cert_file
-                .path()
-                .to_str()
-                .expect("Failed to convert certificate file path to string")
-                .to_string(),
-            cert_file,
-            cert_pem,
-            key_file_path: key_file
-                .path()
-                .to_str()
-                .expect("Failed to convert private key file path to string")
-                .to_string(),
-            key_file,
-            key_pem: key_str,
-        }
-    }
+    use crate::testkit::{
+        generate_keypair, generate_tls_subgraph, some_header_map, ClientResponseExt,
+        GeneratedKeyPair, TestRouter, TestSubgraphs,
+    };
 
     // Setup TLS on router
     // And send a request from a client, that has the router's certificate configured as a trusted root, to the router
@@ -115,22 +65,6 @@ mod tls_tests {
         insta::assert_snapshot!(
             resp.text().await.expect("Failed to parse text response from router with TLS")
             , @r#"{"data":{"me":{"name":"Uri Goldshtein"}}}"#);
-    }
-
-    async fn generate_tls_subgraph() -> (TestSubgraphs<Started>, GeneratedKeyPair) {
-        let generated_key_pair = generate_keypair().await;
-        let rustls_config = RustlsConfig::from_pem_file(
-            &generated_key_pair.cert_file_path,
-            &generated_key_pair.key_file_path,
-        )
-        .await
-        .expect("Failed to create RustlsConfig from PEM files");
-        let subgraphs = TestSubgraphs::builder()
-            .with_rustls_config(rustls_config)
-            .build()
-            .start()
-            .await;
-        (subgraphs, generated_key_pair)
     }
 
     /// Setup TLS on a subgraph

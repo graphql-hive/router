@@ -10,6 +10,7 @@ use crate::hooks::on_subgraph_http_request::{
 };
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
+use crate::plugins::hooks;
 use crate::response::subgraph_response::SubgraphResponse;
 use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
@@ -17,6 +18,7 @@ use hive_router_internal::inflight::InFlightRole;
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
 use hive_router_internal::telemetry::TelemetryContext;
+use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 
 use async_trait::async_trait;
 
@@ -41,8 +43,6 @@ use crate::utils::consts::QUOTE;
 use crate::{executors::common::SubgraphExecutor, json_writer::write_and_escape_string};
 use hive_router_internal::telemetry::traces::spans::http_request::HttpClientRequestSpan;
 use hive_router_internal::telemetry::traces::spans::http_request::HttpInflightRequestSpan;
-use hive_router_internal::telemetry::Injector;
-use http::HeaderName;
 use tracing::Instrument;
 
 pub struct HTTPSubgraphExecutor {
@@ -217,7 +217,7 @@ async fn send_request<'a>(
     let response: Result<SubgraphHttpResponse, SubgraphExecutorError> = async {
         // TODO: let's decide at some point if the tracing headers
         //       should be part of the fingerprint or not.
-        telemetry_context.inject_context(&mut TraceHeaderInjector(req.headers_mut()));
+        telemetry_context.inject_context_into_http_headers(req.headers_mut());
 
         let res_fut = http_client.request(req);
 
@@ -298,7 +298,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
         plugin_req_state: Option<&'a PluginRequestState<'a>>,
-    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         let mut body = build_request_body(&execution_request)?;
 
         self.header_map.iter().for_each(|(key, value)| {
@@ -320,6 +320,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 execution_request,
                 deduplicate_request,
                 context: &plugin_req_state.context,
+                request_context: plugin_req_state
+                    .request_context
+                    .for_plugin::<hooks::OnSubgraphHttp>(),
             };
             for plugin in plugin_req_state.plugins.as_ref() {
                 let result = plugin.on_subgraph_http_request(start_payload).await;
@@ -441,8 +444,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         };
 
         if !on_end_callbacks.is_empty() {
+            let plugin_state_ref = plugin_req_state
+                .as_ref()
+                .expect("plugin state not available, but on_end_callbacks are present");
             let mut end_payload = OnSubgraphHttpResponseHookPayload {
-                context: &plugin_req_state.as_ref().unwrap().context,
+                context: &plugin_state_ref.context,
+                request_context: plugin_state_ref
+                    .request_context
+                    .for_plugin::<hooks::OnSubgraphHttp>(),
                 response,
                 deduplication_hint,
             };
@@ -462,7 +471,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             response = end_payload.response;
         }
 
-        let response_result = response.deserialize_http_response();
+        let response_result =
+            response.deserialize_http_response(execution_request.custom_scalar_paths);
         if let Some(mut http_request_capture) = http_request_capture {
             finish_capture_from_subgraph_result(
                 &mut http_request_capture.capture,
@@ -483,6 +493,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
+        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         let body = build_request_body(&execution_request)?;
 
         let mut req = hyper::Request::builder()
@@ -556,7 +567,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
             let boundary = multipart_subscribe::parse_boundary_from_header(content_type)
                 .map_err(|e| SubgraphExecutorError::MultipartBoundaryParseFailure(e.to_string()))?;
-            let stream = multipart_subscribe::parse_to_stream(boundary, body_stream);
+            let stream = multipart_subscribe::parse_to_stream(
+                boundary,
+                body_stream,
+                custom_scalar_paths.clone(),
+            );
 
             Ok(Box::pin(async_stream::stream! {
                 trace!("multipart subscription stream started");
@@ -580,7 +595,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 self.endpoint.to_string(),
             );
 
-            let stream = sse::parse_to_stream(body_stream);
+            let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone());
 
             Ok(Box::pin(async_stream::stream! {
                 trace!("SSE subscription stream started");
@@ -635,29 +650,16 @@ pub struct SubgraphHttpResponse {
 }
 
 impl SubgraphHttpResponse {
-    fn deserialize_http_response<'a>(self) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
-        SubgraphResponse::deserialize_from_bytes(self.body.clone()).map(
-            |mut resp: SubgraphResponse<'a>| {
-                // headers are under arc, zero cost clone
-                resp.headers = Some(self.headers.clone());
+    fn deserialize_http_response(
+        self,
+        custom_scalar_paths: Option<&CustomScalarPaths>,
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        SubgraphResponse::deserialize_from_bytes(self.body, custom_scalar_paths).map(
+            |mut resp: SubgraphResponse| {
+                resp.headers = Some(self.headers);
+                resp.status = Some(self.status);
                 resp
             },
         )
-    }
-}
-
-struct TraceHeaderInjector<'a>(pub &'a mut HeaderMap);
-
-impl<'a> Injector for TraceHeaderInjector<'a> {
-    fn set(&mut self, key: &str, value: String) {
-        let Ok(name) = HeaderName::from_bytes(key.as_bytes()) else {
-            return;
-        };
-
-        let Ok(val) = HeaderValue::from_str(&value) else {
-            return;
-        };
-
-        self.0.insert(name, val);
     }
 }

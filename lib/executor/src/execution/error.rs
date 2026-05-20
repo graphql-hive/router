@@ -84,18 +84,17 @@ impl PlanExecutionError {
 // and added to `errors` field in GraphQL response
 // So failing plan nodes do not fail the whole operation
 // See `error_handling_e2e_tests` for reproduction
-impl From<PlanExecutionError> for GraphQLError {
-    fn from(val: PlanExecutionError) -> Self {
+impl From<&PlanExecutionError> for GraphQLError {
+    fn from(val: &PlanExecutionError) -> Self {
         let mut error = GraphQLError::from_message_and_code(val.to_string(), val.error_code());
 
-        // We destructure the context to take ownership of the Option<String> values.
-        // Then we move owned Strings directly into builder methods.
-        // This way we avoid cloning through Into<String> in those methods.
+        // We borrow the context fields and pass them into the builder methods.
+        // The helpers accept Into<String>, so an implicit clone occurs when &String is passed.
 
-        if let Some(subgraph_name) = val.context.subgraph_name {
+        if let Some(subgraph_name) = &val.context.subgraph_name {
             error = error.add_subgraph_name(subgraph_name);
         }
-        if let Some(affected_path) = val.context.affected_path {
+        if let Some(affected_path) = &val.context.affected_path {
             error = error.add_affected_path(affected_path);
         }
         error

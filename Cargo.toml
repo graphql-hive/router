@@ -9,26 +9,11 @@ members = [
   "lib/hive-console-sdk",
   "bin/dev-cli",
   "bin/router",
+  "bin/differential",
   "e2e",
-  "bench/subgraphs",
-  "plugin_examples/apollo_sandbox",
-  "plugin_examples/apq",
-  "plugin_examples/async_auth",
-  "plugin_examples/context_data",
-  "plugin_examples/forbid_anonymous_operations",
-  "plugin_examples/multipart",
-  "plugin_examples/one_of",
-  "plugin_examples/propagate_status_code",
-  "plugin_examples/response_cache",
-  "plugin_examples/root_field_limit",
-  "plugin_examples/subgraph_response_cache",
-  "plugin_examples/usage_reporting",
   "plugin_examples/plugin_template",
-  "plugin_examples/jwt_cookie",
-  "plugin_examples/feature_flags",
-  "plugin_examples/non_standard_request",
-  "plugin_examples/incoming_request_deduplication",
-  "plugin_examples/error_mapping"
+  "bench/coprocessor",
+  "bench/subgraphs",
 ]
 resolver = "2"
 default-members = ["bin/router"]
@@ -58,6 +43,7 @@ async-trait = "0.1.88"
 futures = "0.3.31"
 humantime = "2.3.0"
 http = "1.3.1"
+http-serde = "2.1.1"
 http-body-util = "0.1.3"
 hyper = { version = "1.6.0" }
 thiserror = "2.0.14"
@@ -67,7 +53,11 @@ tokio-util = { version = "0.7.16" }
 tokio-stream = { version = "0.1.17" }
 rand = "0.10.1"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
-ntex = { version = "3.7.2", features = ["tokio", "rustls"] }
+ntex = { version = "=3.7.2", features = ["tokio", "rustls"] }
+ntex-http = { version = "=1.1.0"}
+ntex-codec = { version = "=1.1.0"}
+ntex-io = { version = "=3.9.2"}
+ntex-net = { version = "=3.9.1"}
 tonic = { version = "0.14.2", features = ["tls-aws-lc"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["http2", "rustls-tls"] }
 reqwest-retry = "0.8.0"
@@ -87,7 +77,9 @@ strum = { version = "0.28.0", features = ["derive"] }
 mockito = "1.7.0"
 futures-util = "0.3.31"
 axum = "0.8.4"
+recloser = "1.3.1"
 notify = "8.2.0"
+ipnet = "2.12.0"
 
 # Telemetry
 opentelemetry = "0.31.0"

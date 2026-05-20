@@ -4,7 +4,7 @@ use serde::{
     de::{self, Deserializer, MapAccess, SeqAccess, Visitor},
     ser::{SerializeMap, SerializeSeq},
 };
-use sonic_rs::{JsonNumberTrait, ValueRef};
+use sonic_rs::{JsonNumberTrait, Value as SonicValue, ValueRef};
 use std::{
     borrow::Cow,
     fmt::Display,
@@ -23,8 +23,15 @@ pub enum Value<'a> {
     U64(u64),
     Bool(bool),
     String(Cow<'a, str>),
+    RawJson(Cow<'a, str>),
     Array(Vec<Value<'a>>),
     Object(Vec<(&'a str, Value<'a>)>),
+}
+
+impl<'a> AsRef<Value<'a>> for Value<'a> {
+    fn as_ref(&self) -> &Value<'a> {
+        self
+    }
 }
 
 impl Hash for Value<'_> {
@@ -36,6 +43,7 @@ impl Hash for Value<'_> {
             Value::U64(u) => u.hash(state),
             Value::Bool(b) => b.hash(state),
             Value::String(s) => s.hash(state),
+            Value::RawJson(raw) => raw.hash(state),
             Value::Array(arr) => arr.hash(state),
             Value::Object(obj) => obj.hash(state),
         }
@@ -191,6 +199,13 @@ impl<'a> Value<'a> {
         }
     }
 
+    pub fn as_raw_json(&self) -> Option<&str> {
+        match self {
+            Value::RawJson(raw) => Some(raw),
+            _ => None,
+        }
+    }
+
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }
@@ -232,6 +247,7 @@ impl Display for Value<'_> {
             Value::Null => write!(f, "null"),
             Value::Bool(b) => write!(f, "{}", b),
             Value::String(s) => write!(f, "\"{}\"", s),
+            Value::RawJson(raw) => write!(f, "{}", raw),
             Value::F64(n) => write!(f, "{}", n),
             Value::U64(n) => write!(f, "{}", n),
             Value::I64(n) => write!(f, "{}", n),
@@ -363,6 +379,11 @@ impl serde::Serialize for Value<'_> {
             Value::U64(n) => serializer.serialize_u64(*n),
             Value::F64(n) => serializer.serialize_f64(*n),
             Value::String(s) => serializer.serialize_str(s),
+            Value::RawJson(raw) => {
+                let value: sonic_rs::LazyValue =
+                    sonic_rs::from_str(raw).map_err(serde::ser::Error::custom)?;
+                value.serialize(serializer)
+            }
             Value::Array(arr) => {
                 let mut seq = serializer.serialize_seq(Some(arr.len()))?;
                 for v in arr {
@@ -377,6 +398,43 @@ impl serde::Serialize for Value<'_> {
                 }
                 map.end()
             }
+        }
+    }
+}
+
+impl From<&Value<'_>> for SonicValue {
+    fn from(value: &Value) -> Self {
+        match value {
+            Value::Null => SonicValue::new_null(),
+            Value::Bool(b) => (*b).into(),
+            Value::F64(f) => match SonicValue::new_f64(*f) {
+                Some(num) => num,
+                None => SonicValue::new_null(),
+            },
+            Value::I64(n) => (*n).into(),
+            Value::U64(n) => (*n).into(),
+            Value::RawJson(raw) => {
+                sonic_rs::from_str(raw).unwrap_or_else(|_| SonicValue::new_null())
+            }
+            Value::Array(l) => {
+                let mut array_value = SonicValue::new_array_with(l.len());
+
+                for val in l.iter() {
+                    array_value.append_value(val.into());
+                }
+
+                array_value
+            }
+            Value::Object(o) => {
+                let mut object_value = SonicValue::new_object_with(o.len());
+
+                for (k, v) in o.iter() {
+                    object_value.insert(k, v.into());
+                }
+
+                object_value
+            }
+            Value::String(s) => SonicValue::from(s.as_ref()),
         }
     }
 }

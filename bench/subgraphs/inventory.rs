@@ -4,7 +4,7 @@ use async_graphql::{
 use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref INVENTORY: Vec<Product> = vec![
+    pub static ref INVENTORY: Vec<Product> = vec![
         Product {
             upc: "1".to_string(),
             in_stock: Some(true),
@@ -66,12 +66,12 @@ lazy_static! {
 #[graphql(extends, complex)]
 pub struct Product {
     #[graphql(external)]
-    upc: String,
+    pub(crate) upc: String,
     #[graphql(external)]
-    weight: Option<i64>,
+    pub(crate) weight: Option<i64>,
     #[graphql(external)]
-    price: Option<i64>,
-    in_stock: Option<bool>,
+    pub(crate) price: Option<i64>,
+    pub(crate) in_stock: Option<bool>,
 }
 
 #[ComplexObject]
@@ -99,19 +99,19 @@ impl Query {
     #[graphql(entity)]
     async fn find_product_by_id(
         &self,
-        upc: ID,
+        #[graphql(key)] upc: ID,
         price: Option<i64>,
         weight: Option<i64>,
-    ) -> Product {
+    ) -> Option<Product> {
         let product = INVENTORY
             .iter()
-            .find(|product| product.upc == upc.to_string())
-            .unwrap();
-        Product {
+            .find(|product| product.upc == upc.to_string())?;
+
+        Some(Product {
             price,
             weight,
             ..product.clone()
-        }
+        })
     }
 }
 

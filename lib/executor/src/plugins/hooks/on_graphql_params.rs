@@ -17,7 +17,10 @@ use crate::plugin_trait::EndHookPayload;
 use crate::plugin_trait::EndHookResult;
 use crate::plugin_trait::StartHookPayload;
 use crate::plugin_trait::StartHookResult;
+use crate::request_context::RequestContextPluginApi;
 use ntex::http::Response;
+
+type RequestContextApi = RequestContextPluginApi<super::OnGraphqlParams>;
 
 #[derive(Debug, Default, Serialize)]
 /// The GraphQL parameters parsed from the HTTP request body by the router.
@@ -115,6 +118,7 @@ pub struct OnGraphQLParamsStartHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
+    pub request_context: RequestContextApi,
     /// The raw body of the incoming HTTP request.
     /// This is useful for plugins that want to parse the body in a custom way,
     /// or want to access the raw body for logging or other purposes.
@@ -165,6 +169,7 @@ pub struct OnGraphQLParamsEndHookPayload<'exec> {
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
+    pub request_context: RequestContextApi,
 }
 
 impl<'exec> EndHookPayload<Response> for OnGraphQLParamsEndHookPayload<'exec> {}

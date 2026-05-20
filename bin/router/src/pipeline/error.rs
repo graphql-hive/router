@@ -2,12 +2,15 @@ use std::{sync::Arc, vec};
 
 use futures_util::stream;
 use graphql_tools::validation::utils::ValidationError;
+use hive_router_internal::http::ReadBodyStreamError;
 use hive_router_plan_executor::{
+    coprocessor::CoprocessorError,
     execution::{
         error::PlanExecutionError, jwt_forward::JwtForwardingError, plan::FailedExecutionResult,
     },
     headers::errors::HeaderRuleRuntimeError,
     hooks::on_graphql_error::handle_graphql_errors_with_plugins,
+    request_context::RequestContextError,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
@@ -25,7 +28,6 @@ use crate::{
     jwt::errors::JwtError,
     pipeline::{
         authorization::AuthorizationError,
-        body_read::ReadBodyStreamError,
         header::{ResponseMode, StreamContentType},
         multipart_subscribe::{
             self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
@@ -161,6 +163,12 @@ pub enum PipelineError {
     #[error("No supergraph available yet, unable to process request")]
     #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
     NoSupergraphAvailable,
+
+    #[error(transparent)]
+    CoprocessorError(#[from] CoprocessorError),
+
+    #[error("Request context error")]
+    RequestContextError(#[from] RequestContextError),
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -193,6 +201,7 @@ impl PipelineError {
             Self::JwtError(err) => err.error_code(),
             Self::PlanExecutionError(err) => err.error_code(),
             Self::ReadBodyStreamError(err) => err.error_code(),
+            Self::CoprocessorError(err) => err.error_code(),
             _ => self.into(),
         }
     }
@@ -200,6 +209,7 @@ impl PipelineError {
     pub fn graphql_error_message(&self) -> String {
         match self {
             Self::PlannerError(_) => "Unexpected error".to_string(),
+            Self::CoprocessorError(_) => "Internal server error".to_string(),
             _ => self.to_string(),
         }
     }
@@ -250,6 +260,8 @@ impl PipelineError {
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
+            (Self::CoprocessorError(err), _) => err.status_code(),
+            (Self::RequestContextError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

@@ -1,3 +1,65 @@
+## 0.3.12 (2026-05-19)
+
+### Fixes
+
+#### Fix: pin `ntex` version to `3.7.2` to avoid regressions
+
+This release pins `ntex` to `3.7.2` to avoid regressions, like the one reported in [#997](https://github.com/graphql-hive/router/issues/997). 
+
+Users who builds their own router are impacted by this regression, due to the way Cargo handles unpinned dependencies.
+
+## 0.3.11 (2026-05-17)
+
+### Fixes
+
+#### Implement Circuit Breaker for Subgraph Requests
+
+This change introduces a circuit breaker mechanism for subgraph requests in the Hive Router. The circuit breaker will monitor the success and failure rates of requests to each subgraph and will prevent future requests if the failure rate exceeds a certain threshold. When the circuit breaker is opened, subsequent requests to that subgraph will fail immediately without attempting to send the request.
+
+This implementation helps improve the resilience and stability of the Hive Router when dealing with unreliable subgraphs.
+
+## 0.3.10 (2026-05-05)
+
+### Features
+
+#### Dynamic Exclusions
+
+### Dynamic Exclusions in Hive Router
+
+Hive Router now supports dynamic exclusions, allowing you to exclude specific requests from usage reporting based on custom logic. This feature is useful for scenarios where you want to skip telemetry for certain requests, such as health checks or specific endpoints.
+
+The previous operation-name list format is still supported for backward compatibility.
+
+#### Usage
+```diff
+- exclude: ['ExcludedOp']
++ exclude:
++   expression: '.request.operation.name == "ExcludedOp"'
+```
+
+Both of the following are valid and supported:
+
+```yaml
+## legacy format
+exclude:
+  - ExcludedOp
+
+## dynamic expression format
+exclude:
+  expression: '.request.operation.name == "ExcludedOp"'
+```
+
+The details about expression context is documented in the [Hive Router documentation](https://the-guild.dev/graphql/hive/docs/router/configuration/expressions).
+
+### Dynamic Exclusions in Apollo Router
+
+As in Hive Router, Apollo Router used to support only operation name based exclusions. With the new dynamic exclusions feature, you can now specify custom logic to exclude requests from usage reporting.
+
+
+## New `add_report_with_request` method in Hive Console SDK
+
+In order to support exclusions based on request properties, a new method `add_report_with_request` has been added to the Hive Console SDK. This method allows you to include the request information in the report, which can then be used in the dynamic exclusion logic.
+
 ## 0.3.9 (2026-04-20)
 
 ### Features

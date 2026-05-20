@@ -116,6 +116,287 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.59 (2026-05-19)
+
+### Fixes
+
+#### Fix: pin `ntex` version to `3.7.2` to avoid regressions
+
+This release pins `ntex` to `3.7.2` to avoid regressions, like the one reported in [#997](https://github.com/graphql-hive/router/issues/997). 
+
+Users who builds their own router are impacted by this regression, due to the way Cargo handles unpinned dependencies.
+
+## 0.0.58 (2026-05-17)
+
+### Fixes
+
+#### Implement Circuit Breaker for Subgraph Requests
+
+This change introduces a circuit breaker mechanism for subgraph requests in the Hive Router. The circuit breaker will monitor the success and failure rates of requests to each subgraph and will prevent future requests if the failure rate exceeds a certain threshold. When the circuit breaker is opened, subsequent requests to that subgraph will fail immediately without attempting to send the request.
+
+This implementation helps improve the resilience and stability of the Hive Router when dealing with unreliable subgraphs.
+
+#### Record subgraph execution errors on the `graphql.subgraph.operation` span
+
+Errors raised while preparing or executing a subgraph fetch
+(`PlanExecutionError`) are now attached to the corresponding
+`graphql.subgraph.operation` span instead of only surfacing on the
+top-level `graphql.operation` span via the response-error pipeline.
+
+For each failing fetch the span now carries:
+- `hive.graphql.error.count = 1`,
+- `hive.graphql.error.codes` set to the error code (e.g.
+  `SUBGRAPH_REQUEST_TIMEOUT`, `HEADER_PROPAGATION_FAILURE`,
+  `SUBGRAPH_CIRCUIT_BREAKER_REJECTED`, …), and
+- a `graphql.error` event with `error.type`, `error.message`, and
+  `hive.error.subgraph_name`.
+
+Previously these subgraph-level spans looked "ok" even when the fetch
+never produced a response, which was misleading in tracing UIs that
+highlight failing spans. The error is now visible at the subgraph hop
+where it actually originated.
+
+## 0.0.57 (2026-05-13)
+
+### Features
+
+#### Allow overriding number of HTTP server workers
+
+Adds a new `http.workers` configuration option (and `ROUTER_HTTP_WORKERS` environment variable) to control the number of HTTP server worker threads.
+
+By default, the router spawns one worker per physical CPU core. In containerized environments such as Kubernetes the number of physical cores reported by the OS is often higher than the CPU limit assigned to the container, which leads to oversubscribed worker threads. Set `http.workers` (or `ROUTER_HTTP_WORKERS`) to match the container's CPU limit to avoid this.
+
+```yaml
+http:
+  workers: 4
+```
+
+#### Add `cors.preflight_response_headers` to attach headers to CORS preflight (OPTIONS) responses
+
+Adds a new optional `preflight_response_headers` map to the `cors` configuration block, and to each entry under `cors.policies`. The map allows attaching arbitrary headers (e.g. `Cache-Control`, `Server-Timing`, custom `X-*` headers) to CORS preflight (OPTIONS) responses.
+
+This is useful because the `headers` configuration block does not affect preflight responses (they are returned early by the CORS layer), so there was previously no way to control headers like `Cache-Control` for `OPTIONS` requests.
+
+Example:
+
+```yaml
+cors:
+  enabled: true
+  allow_any_origin: true
+  max_age: 86400
+  preflight_response_headers:
+    Cache-Control: "public, max-age=86400"
+```
+
+## 0.0.55 (2026-05-11)
+
+### Fixes
+
+#### Escape inline string arguments when emitting subgraph operations
+
+Fixes a bug where string values inlined as arguments in subgraph operations were not re-escaped per the GraphQL spec. When an incoming operation contained a string literal whose decoded value carried a quote or backslash (for example `payload: "\"quoted\""`), the router forwarded the argument to the subgraph as `payload: ""quoted""`, producing invalid GraphQL. The same went for newlines, tabs, and other control characters.
+
+Now the characters are escaped properly per the [GraphQL spec](https://spec.graphql.org/draft/#StringCharacter).
+
+## 0.0.54 (2026-05-11)
+
+### Fixes
+
+#### Fix subgraph response deserialization for custom scalar object
+
+Values whose JSON keys contain escaped characters such as `\t` are now deserialized correctly.
+
+#### Preserve custom scalars as raw JSON
+
+Custom scalar fields marked by the query planner are now preserved as raw JSON instead of being parsed and rebuilt as structured response values. This improves correctness for JSON passthrough custom scalars while avoiding performance regressions for normal response handling.
+
+## 0.0.53 (2026-05-08)
+
+### Fixes
+
+#### Fix conditional directive handling in response projection.
+
+This fixes several edge cases where `@skip` and `@include` could produce an incorrect final response after query planning and projection planning.
+
+## 0.0.52 (2026-05-05)
+
+### Features
+
+#### Improve HTTP server request OTel tracing with client and peer network attributes.
+
+The `http.server` span now includes:
+- `client.address` and `client.port` from a configurable request header
+- `network.peer.address` and `network.peer.port` from the address of the incoming connection
+
+```yaml
+telemetry:
+  client_identification:
+    # Default - use socket peer only
+    ip_header: null
+    
+    # Header name - use the left-most valid IP from the header
+    ip_header: x-forwarded-for
+    
+    # Trusted proxies - only trust the header when the socket peer is trusted
+    ip_header:
+      name: x-forwarded-for
+      trusted_proxies:
+        - 10.0.0.0/8
+        - 192.168.0.0/16
+```
+
+In trusted proxies scenario, the Router scans the configured header from right to left, skips trusted proxy IP ranges, and records the first non-trusted IP as `client.address`.
+If no valid client IP can be resolved, the Router falls back to the socket peer address.
+
+#### Coprocessors
+
+Introduces Coprocessors as language agnostic way to extend Hive Router.
+
+**Supports coprocessor stages:**
+- `router.request`
+- `router.response`
+- `graphql.request`
+- `graphql.analysis`
+- `graphql.response`
+
+**Stage capabilities:**
+- include selected request/response fields in stage payloads (headers, body, context, and optional SDL depending on stage config)
+- mutate request body/headers/context for downstream pipeline execution
+- short-circuit and return an immediate HTTP response from a stage
+
+**Transport and endpoint support:**
+- `http://` and `unix://` (unix socket domain) endpoints
+- http/1, http/2 and h2c protocols
+
+**Error handling:**
+- coprocessor failures map to server-side failures (500)
+- client-facing GraphQL errors are masked as Internal server error
+- structured error codes are preserved in GraphQL extensions.code
+- detailed coprocessor failure reasons remain in server logs/telemetry only
+
+**Adds coprocessor metrics:**
+- hive.router.coprocessor.requests_total
+- hive.router.coprocessor.duration
+- hive.router.coprocessor.errors_total
+
+#### Dynamic Exclusions
+
+### Dynamic Exclusions in Hive Router
+
+Hive Router now supports dynamic exclusions, allowing you to exclude specific requests from usage reporting based on custom logic. This feature is useful for scenarios where you want to skip telemetry for certain requests, such as health checks or specific endpoints.
+
+The previous operation-name list format is still supported for backward compatibility.
+
+#### Usage
+```diff
+- exclude: ['ExcludedOp']
++ exclude:
++   expression: '.request.operation.name == "ExcludedOp"'
+```
+
+Both of the following are valid and supported:
+
+```yaml
+## legacy format
+exclude:
+  - ExcludedOp
+
+## dynamic expression format
+exclude:
+  expression: '.request.operation.name == "ExcludedOp"'
+```
+
+The details about expression context is documented in the [Hive Router documentation](https://the-guild.dev/graphql/hive/docs/router/configuration/expressions).
+
+### Dynamic Exclusions in Apollo Router
+
+As in Hive Router, Apollo Router used to support only operation name based exclusions. With the new dynamic exclusions feature, you can now specify custom logic to exclude requests from usage reporting.
+
+
+## New `add_report_with_request` method in Hive Console SDK
+
+In order to support exclusions based on request properties, a new method `add_report_with_request` has been added to the Hive Console SDK. This method allows you to include the request information in the report, which can then be used in the dynamic exclusion logic.
+
+### Fixes
+
+- Upgrade Laboratory to v0.1.7
+- Adjustments in operation's kind being Enum and not &'static str
+
+#### Added missing `isRepeatable` on `type __Directive`
+
+The router's introspection schema was resolving `isRepeatable`, but it did not appear in the public (consumer) schema, leading to validation errors when introspection schema was executed through Laboratory. 
+
+This change adds the missing `isRepeatable: Boolean!` to `type __Directive`, according to the [GraphQL introspection spec](https://github.com/graphql/graphql-spec/blob/main/spec/Section%204%20--%20Introspection.md).
+
+#### Avoid propagating `@include`/`@skip` conditions to unconditional fetches
+
+Fixed query planner condition propagation logic to avoid wrapping unconditional fetches
+in conditional blocks when merging steps. This ensures that fields without directives are
+not incorrectly gated by conditions from other steps, allowing for correct execution of
+queries with mixed conditional and unconditional selections.
+
+#### enhancement: update lab to 0.1.6
+
+##934 by @mskorokhodov
+
+Update hive lab to 0.1.6 to support new query plan visualization + fetch settings
+
+#### Fix fragments being dropped when multiple inline fragments target the same concrete type within an abstract type fragment.
+
+Previously, when a query contained two or more inline fragments on the same concrete type nested inside an interface or union fragment, only the first fragment's fields were included in the query plan — all subsequent ones were silently dropped.
+
+**Example query that previously returned only `title`:**
+
+```graphql
+query {
+  films {
+    ... on Node {
+      ... on Film { title }
+      ... on Film { director }
+    }
+  }
+}
+```
+
+Both fields are now correctly returned.
+
+#### Fix fragment handling
+
+Fix fragment handling for some queries that use reusable fragments with conditional directives
+
+## 0.0.51 (2026-04-27)
+
+### Fixes
+
+#### HTTP/2 Cleartext (h2c) Support for Subgraph Connections
+
+Adds support for HTTP/2 cleartext (h2c) connections between the router and subgraphs via the new `allow_only_http2` configuration flag. When enabled, the router uses HTTP/2 prior knowledge to communicate with subgraphs over plain HTTP without TLS.
+
+This is useful in environments where subgraphs support HTTP/2 but TLS is not required, such as service meshes, internal networks, or sidecar proxies.
+
+### Configuration
+
+The flag can be set globally for all subgraphs or per-subgraph. Per-subgraph settings override the global default.
+
+#### Global (all subgraphs)
+
+```yaml
+traffic_shaping:
+  all:
+    allow_only_http2: true
+```
+
+#### Per-subgraph
+
+```yaml
+traffic_shaping:
+  subgraphs:
+    accounts:
+      allow_only_http2: true
+```
+
+The default value is `false`, preserving the existing behavior of using HTTP/1.1 for plain HTTP connections and negotiating HTTP/2 via ALPN for TLS connections.
+
 ## 0.0.50 (2026-04-20)
 
 ### Features

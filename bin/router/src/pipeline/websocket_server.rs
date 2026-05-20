@@ -1,3 +1,4 @@
+use hive_console_sdk::agent::usage_agent::RequestDetails;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
@@ -26,6 +27,7 @@ use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::plugin_context::{
     PluginContext, PluginRequestState, RouterHttpRequest,
 };
+use hive_router_plan_executor::request_context::{RequestContextExt, SharedRequestContext};
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 
@@ -57,6 +59,10 @@ pub async fn ws_index(
         .map(|_| WS_SUBPROTOCOL);
 
     let plugin_context = req.extensions().get::<Arc<PluginContext>>().cloned();
+    let request_context = match req.read_request_context() {
+        Ok(ctx) => ctx,
+        Err(_) => return Ok(HttpResponse::BadRequest().finish()),
+    };
 
     ws::start(
         req,
@@ -65,6 +71,7 @@ pub async fn ws_index(
             let schema_state = schema_state.clone();
             let shared_state = shared_state.clone();
             let plugin_context = plugin_context.clone();
+            let request_context = request_context.clone();
             async move {
                 ws_service(
                     accepted_subprotocol.is_some(),
@@ -72,6 +79,7 @@ pub async fn ws_index(
                     schema_state,
                     shared_state,
                     plugin_context,
+                    request_context,
                 )
                 .await
             }
@@ -86,6 +94,7 @@ async fn ws_service(
     schema_state: Arc<SchemaState>,
     shared_state: Arc<RouterSharedState>,
     plugin_context: Option<Arc<PluginContext>>,
+    request_context: SharedRequestContext,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
     if !has_accepted_subprotocol {
@@ -128,6 +137,7 @@ async fn ws_service(
         let schema_state = schema_state.clone();
         let shared_state = shared_state.clone();
         let plugin_context = plugin_context.clone();
+        let request_context = request_context.clone();
         let ws_uri = ws_uri.clone();
         let ws_path = ws_path.clone();
         async move {
@@ -139,6 +149,7 @@ async fn ws_service(
                     &schema_state,
                     &shared_state,
                     plugin_context,
+                    &request_context,
                     &ws_uri,
                     &ws_path,
                 )
@@ -193,6 +204,7 @@ async fn handle_text_frame(
     schema_state: &Arc<SchemaState>,
     shared_state: &Arc<RouterSharedState>,
     plugin_context: Option<Arc<PluginContext>>,
+    request_context: &SharedRequestContext,
     ws_uri: &http::Uri,
     ws_path: &Path<http::Uri>,
 ) -> Option<ws::Message> {
@@ -281,6 +293,8 @@ async fn handle_text_frame(
                     headers.insert(key.clone(), value.clone());
                 }
 
+                let headers = Arc::new(headers);
+
                 // store the merged headers back to init_payload if configured to do so
                 if config.headers.persist {
                     if let Some(ref mut init_payload) = state.borrow_mut().init_payload {
@@ -314,12 +328,13 @@ async fn handle_text_frame(
                             uri: ws_uri,
                             method: &Method::POST,
                             version: http::Version::HTTP_11,
-                            headers: &headers,
+                            headers: headers.as_ref(),
                             path: ws_uri.path(),
                             query_string: ws_uri.query().unwrap_or(""),
                             match_info: ws_path,
                         },
                         context: plugin_context.clone(),
+                        request_context: request_context.clone(),
                     })
                 } else {
                     None
@@ -327,20 +342,20 @@ async fn handle_text_frame(
 
                 let client_name = headers
                     .get(
-                        &shared_state
+                        shared_state
                             .router_config
                             .telemetry
                             .client_identification
-                            .name_header,
+                            .name_header.get_header_ref(),
                     )
                     .and_then(|v| v.to_str().ok());
                 let client_version = headers
                     .get(
-                        &shared_state
+                        shared_state
                             .router_config
                             .telemetry
                             .client_identification
-                            .version_header,
+                            .version_header.get_header_ref(),
                     )
                     .and_then(|v| v.to_str().ok());
 
@@ -431,7 +446,7 @@ async fn handle_text_frame(
                     Some(inbound_request_fingerprint(
                         &Method::POST,
                         ws_uri.path(),
-                        &headers,
+                        headers.as_ref(),
                         &shared_state.in_flight_requests_header_policy,
                         supergraph.schema_checksum(),
                         normalize_payload.normalized_operation_hash,
@@ -447,10 +462,11 @@ async fn handle_text_frame(
                     SingleContentType::default(),
                     StreamContentType::default(),
                 );
+                let method = Method::POST;
                 let exec = |guard| execute_planned_request(
-                    &Method::POST,
+                    &method,
                     ws_uri,
-                    &headers,
+                    headers.as_ref().clone(),
                     payload,
                     &normalize_payload,
                     supergraph,
@@ -458,6 +474,7 @@ async fn handle_text_frame(
                     schema_state,
                     operation_span,
                     plugin_req_state,
+                    request_context,
                     &response_mode,
                     guard,
                 );
@@ -501,12 +518,27 @@ async fn handle_text_frame(
                 };
 
                 if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                    let headers = headers
+                        .iter()
+                        .filter_map(|(name, value)| {
+                            value
+                                .to_str()
+                                .ok()
+                                .map(|val_str| (name.to_string(), val_str.to_string()))
+                        })
+                        .collect();
+                    let request_details = RequestDetails {
+                        method: Method::POST,
+                        url: (*ws_uri).clone(),
+                        headers,
+                    };
                     usage_reporting::collect_usage_report(
                         supergraph.supergraph_schema.clone(),
                         started_at.elapsed(),
                         client_name,
                         client_version,
                         normalize_payload.operation_for_plan.name.as_deref(),
+                        normalize_payload.operation_for_plan.operation_kind.as_ref(),
                         &parser_payload.minified_document,
                         hive_usage_agent,
                         shared_state
@@ -517,6 +549,7 @@ async fn handle_text_frame(
                             .map(|c| &c.usage_reporting)
                             .expect("Expected Usage Reporting options to be present when Hive Usage Agent is initialized"),
                         shared_response.error_count(),
+                        Some(request_details),
                     )
                     .await;
                 }

@@ -258,3 +258,291 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn issue_939_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let named_fragment_document = parse_operation(
+        r#"
+        query SingleNode($id: ID!) {
+          node(id: $id) {
+            ... on MyNode {
+              content {
+                ... on ITextContent {
+                  fragments {
+                    contentNode {
+                      content {
+                        ...ITextContentPreview
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        fragment ITextContentPreview on ITextContent {
+          id
+        }
+        "#,
+    );
+    let named_fragment_plan = build_query_plan(
+        "fixture/issues/939.supergraph.graphql",
+        named_fragment_document,
+    )?;
+
+    let inline_fragment_document = parse_operation(
+        r#"
+        query SingleNode($id: ID!) {
+          node(id: $id) {
+            ... on MyNode {
+              content {
+                ... on ITextContent {
+                  fragments {
+                    contentNode {
+                      content {
+                        ... on ITextContent {
+                          id
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let inline_fragment_plan = build_query_plan(
+        "fixture/issues/939.supergraph.graphql",
+        inline_fragment_document,
+    )?;
+
+    assert_eq!(
+        format!("{}", named_fragment_plan),
+        format!("{}", inline_fragment_plan)
+    );
+
+    insta::assert_snapshot!(format!("{}", inline_fragment_plan), @r#"
+    QueryPlan {
+      Fetch(service: "content") {
+        query ($id:ID!) {
+          node(id: $id) {
+            __typename
+            ... on MyNode {
+              content {
+                __typename
+                ... on TextContent {
+                  fragments {
+                    ...a
+                  }
+                }
+                ... on TextGroupContent {
+                  fragments {
+                    ...a
+                  }
+                }
+              }
+            }
+          }
+        }
+        fragment a on TextContentFragment {
+          contentNode {
+            content {
+              __typename
+              ... on TextContent {
+                id
+              }
+              ... on TextGroupContent {
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn issue_965_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let abstract_named_fragment_document = parse_operation(
+        r#"
+        query {
+          account(id: "a1") {
+            ...Test
+          }
+        }
+
+        fragment Test on Node {
+          ... on Node {
+            id
+          }
+          ... on Account {
+            username
+          }
+        }
+        "#,
+    );
+    let abstract_named_fragment_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        abstract_named_fragment_document,
+    )?;
+
+    let concrete_named_fragment_document = parse_operation(
+        r#"
+        query {
+          account(id: "a1") {
+            ...Test
+          }
+        }
+
+        fragment Test on Account {
+          ... on Node {
+            id
+          }
+          username
+        }
+        "#,
+    );
+    let concrete_named_fragment_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        concrete_named_fragment_document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", concrete_named_fragment_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          account(id: "a1") {
+            id
+            username
+          }
+        }
+      },
+    },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", abstract_named_fragment_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          account(id: "a1") {
+            id
+            username
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn issue_965_mixed_nested_fragments_with_directives_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let abstract_named_fragment_document = parse_operation(
+        r#"
+        query($outer: Boolean!, $inner: Boolean!, $skip: Boolean!) {
+          account(id: "a1") {
+            ...Test
+          }
+        }
+
+        fragment Test on Node {
+          ... on Node @include(if: $outer) {
+            ...Inner @include(if: $inner)
+          }
+          ... on Account @skip(if: $skip) {
+            username
+          }
+        }
+
+        fragment Inner on Node {
+          ... {
+            id
+          }
+        }
+        "#,
+    );
+    let abstract_named_fragment_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        abstract_named_fragment_document,
+    )?;
+
+    let concrete_named_fragment_document = parse_operation(
+        r#"
+        query($outer: Boolean!, $inner: Boolean!, $skip: Boolean!) {
+          account(id: "a1") {
+            ...Test
+          }
+        }
+
+        fragment Test on Account {
+          ... on Account @include(if: $outer) {
+            ...Inner @include(if: $inner)
+          }
+          ... on Account @skip(if: $skip) {
+            username
+          }
+        }
+
+        fragment Inner on Account {
+          id
+        }
+        "#,
+    );
+    let concrete_named_fragment_plan = build_query_plan(
+        "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        concrete_named_fragment_document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", concrete_named_fragment_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($inner:Boolean!,$outer:Boolean!,$skip:Boolean!) {
+          account(id: "a1") {
+            ... on Account @include(if: $outer) {
+              ... on Account @include(if: $inner) {
+                id
+              }
+            }
+            ... on Account @skip(if: $skip) {
+              username
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", abstract_named_fragment_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($inner:Boolean!,$outer:Boolean!,$skip:Boolean!) {
+          account(id: "a1") {
+            ... on Account @include(if: $outer) {
+              ... on Account @include(if: $inner) {
+                id
+              }
+            }
+            ... on Account @skip(if: $skip) {
+              username
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}

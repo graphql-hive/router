@@ -295,6 +295,10 @@ impl CollectedMetrics {
         self.latest_number(name, SeriesKind::Counter, attrs)
     }
 
+    pub fn latest_gauge(&self, name: &str, attrs: &[(&str, &str)]) -> f64 {
+        self.latest_number(name, SeriesKind::Gauge, attrs)
+    }
+
     pub fn has_counter(&self, name: &str, attrs: &[(&str, &str)]) -> bool {
         self.has_series(name, SeriesKind::Counter, attrs)
     }
@@ -784,6 +788,10 @@ impl OtlpCollector {
         // addresses and ports
         settings.add_filter(r"(server\.address:\s+)[\d.]+", "$1[address]");
         settings.add_filter(r"(server\.port:\s+)\d+", "$1[port]");
+        settings.add_filter(r"(client\.address:\s+)[\d.]+", "$1[address]");
+        settings.add_filter(r"(client\.port:\s+)\d+", "$1[port]");
+        settings.add_filter(r"(network\.peer\.address:\s+)[\d.]+", "$1[address]");
+        settings.add_filter(r"(network\.peer\.port:\s+)\d+", "$1[port]");
         settings.add_filter(
             r"(url\.full:\s+http:\/\/)[\d.]+:\d+(.*)",
             "$1[address]:[port]$2",

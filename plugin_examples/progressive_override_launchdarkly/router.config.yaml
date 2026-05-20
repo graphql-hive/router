@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+plugins:
+  progressive_override_launchdarkly:
+    enabled: true
+    config:
+      context_key_header: "x-user-id"

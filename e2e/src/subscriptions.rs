@@ -1601,7 +1601,7 @@ mod subscriptions_e2e_tests {
             query: query.into(),
             ..Default::default()
         };
-        let mut ws_stream = ws_client.subscribe(ws_payload).await;
+        let mut ws_stream = ws_client.subscribe(ws_payload, None).await;
 
         let (sub_sse, sub_multipart) = tokio::join!(
             router.send_graphql_request(query, None, sse_headers),
@@ -1691,7 +1691,7 @@ mod subscriptions_e2e_tests {
             query: query.into(),
             ..Default::default()
         };
-        let mut ws_stream = ws_client.subscribe(ws_payload).await;
+        let mut ws_stream = ws_client.subscribe(ws_payload, None).await;
 
         // consume 3 events from sub1 to let the source stream advance
         let response = ws_stream.next().await.unwrap();

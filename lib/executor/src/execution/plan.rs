@@ -11,11 +11,13 @@ use futures::{
     stream::{BoxStream, FuturesUnordered},
     FutureExt, StreamExt,
 };
+use hive_router_internal::graphql::ObservedError;
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
 use hive_router_query_planner::ast::operation::SubgraphFetchOperation;
+use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
@@ -32,18 +34,18 @@ use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
 use crate::{
-    context::ExecutionContext,
     execution::{
         client_request_details::ClientRequestDetails,
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
+    execution_context::ExecutionContext,
     executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     headers::{
-        plan::{HeaderRulesPlan, ResponseHeaderAggregator},
+        plan::HeaderRulesPlan,
         request::modify_subgraph_request_headers,
-        response::apply_subgraph_response_headers,
+        response::{apply_subgraph_response_headers, ResponseHeaderAggregator},
     },
     hooks::{
         on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
@@ -55,6 +57,7 @@ use crate::{
     },
     plugin_context::PluginRequestState,
     plugin_trait::{EndControlFlow, StartControlFlow},
+    plugins::hooks,
     projection::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
@@ -197,6 +200,7 @@ pub async fn execute_query_plan<'exec>(
             headers: headers_map,
             raw_variable_values: None,
             extensions: None,
+            custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
         };
 
         // TODO: otel instrumentation and stuff
@@ -257,7 +261,7 @@ pub async fn execute_query_plan<'exec>(
                     // internal to the execution of the query plan (subgraph executor errors).
                     // furthermore, we want to always act on those errors the same way (stream and stop,
                     // read below) and not allow the caller to decide and potentially decide wrong
-                    Err(err) => {
+                    Err(ref err) => {
                         // not a fatal error, but stream it and stop.
                         // it's not fatal because the subgraph might recover and send more
                         // events if the subgraph error is a network error. but we fail and stop
@@ -284,7 +288,7 @@ pub async fn execute_query_plan<'exec>(
                     client_request: ClientRequestDetails {
                         method: &client_method,
                         url: &client_url,
-                        headers: &client_headers,
+                        headers: client_headers.clone(),
                         operation: OperationDetails {
                             query: &client_operation_query,
                             name: client_operation_name.as_deref(),
@@ -304,7 +308,7 @@ pub async fn execute_query_plan<'exec>(
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
-                    Err(err) => {
+                    Err(ref err) => {
                         // fatal error, stream it and stop
                         yield FailedExecutionResult {
                             errors: vec![err.into()],
@@ -350,10 +354,14 @@ async fn execute_query_plan_with_data<'exec>(
 
     let mut on_end_callbacks = vec![];
 
+    // TODO: coprocessor.on_execution_request
     if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
+            request_context: plugin_req_state
+                .request_context
+                .for_plugin::<hooks::OnExecute>(),
             query_plan: opts.query_plan,
             operation_for_plan: &opts.operation_for_plan,
             data,
@@ -422,12 +430,18 @@ async fn execute_query_plan_with_data<'exec>(
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
+    // TODO: coprocessor.on_execution_response
     if !on_end_callbacks.is_empty() {
         let mut end_payload = OnExecuteEndHookPayload {
             data,
             errors,
             extensions,
             response_size_estimate,
+            request_context: opts
+                .plugin_req_state
+                .as_ref()
+                .map(|state| state.request_context.for_plugin::<hooks::OnExecute>())
+                .expect("plugin state not available, but on_end_callbacks are present"),
         };
 
         for callback in on_end_callbacks {
@@ -584,6 +598,8 @@ struct PrepareExecutionJobOpts<'exec> {
     operation: &'exec SubgraphFetchOperation,
     // Output rewrites
     output_rewrites: Option<&'exec [FetchRewrite]>,
+    // Response paths whose values should stay raw JSON in `data`
+    custom_scalar_paths: Option<&'exec CustomScalarPaths>,
     // If the fetch job is for a flatten node, we pass the filtered representations,
     raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
     // and the path to the representations in the original response for error handling and normalization
@@ -655,6 +671,7 @@ impl<'exec> Executor<'exec> {
                     operation_kind: fetch_node.operation_kind.as_ref(),
                     operation: &fetch_node.operation,
                     output_rewrites: fetch_node.output_rewrites.as_deref(),
+                    custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                     raw_variable_values: None,
                     affected_path: None,
                 })
@@ -685,6 +702,7 @@ impl<'exec> Executor<'exec> {
                         operation_kind: batch_fetch_node.operation_kind.as_ref(),
                         operation: &batch_fetch_node.operation,
                         output_rewrites: None,
+                        custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
                         raw_variable_values: Some(raw_variable_values),
                         affected_path: None,
                     })
@@ -772,6 +790,7 @@ impl<'exec> Executor<'exec> {
                         operation_kind: fetch_node.operation_kind.as_ref(),
                         operation: &fetch_node.operation,
                         output_rewrites: fetch_node.output_rewrites.as_deref(),
+                        custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                         raw_variable_values: Some(vec![(
                             "representations",
                             filtered_representations,
@@ -808,15 +827,15 @@ impl<'exec> Executor<'exec> {
         job: Result<ExecutionJob<'exec>, PlanExecutionError>,
     ) {
         match job {
-            Err(err) => {
-                self.log_error(&err);
+            Err(ref err) => {
+                self.log_error(err);
                 ctx.errors.push(err.into());
             }
             Ok(job) => {
                 let subgraph_name = job.subgraph_name();
                 let affected_path = job.affected_path();
                 if let Some(ref subgraph_headers) = job.response_ref().headers {
-                    if let Err(err) = apply_subgraph_response_headers(
+                    if let Err(ref err) = apply_subgraph_response_headers(
                         self.headers_plan,
                         job.subgraph_name(),
                         subgraph_headers,
@@ -827,7 +846,7 @@ impl<'exec> Executor<'exec> {
                         subgraph_name: || Some(subgraph_name.to_string()),
                         affected_path: || affected_path.map(|p| p.to_string()),
                     }) {
-                        self.log_error(&err);
+                        self.log_error(err);
                         ctx.errors.push(err.into());
                     }
                 }
@@ -1299,6 +1318,7 @@ impl<'exec> Executor<'exec> {
                 raw_variable_values: opts.raw_variable_values,
                 headers: headers_map,
                 extensions: None,
+                custom_scalar_paths: opts.custom_scalar_paths,
             };
 
             let client_document_hash_str = opts.operation.hash.to_string();
@@ -1347,6 +1367,11 @@ impl<'exec> Executor<'exec> {
                 output_rewrites: opts.output_rewrites,
             })
         }
+        .inspect_err(|err: &PlanExecutionError| {
+            subgraph_operation_span.record_error_count(1);
+            subgraph_operation_span
+                .record_errors(|| vec![ObservedError::from(&GraphQLError::from(err))]);
+        })
         .instrument(subgraph_operation_span.clone())
         .await
     }
@@ -1388,11 +1413,11 @@ fn select_fetch_variables<'a>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        context::ExecutionContext,
         execution::{
             client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
             plan::Executor,
         },
+        execution_context::ExecutionContext,
         headers::plan::HeaderRulesPlan,
         introspection::schema::SchemaMetadata,
         response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
@@ -1565,7 +1590,7 @@ mod tests {
             client_request: &ClientRequestDetails {
                 method: &http::Method::POST,
                 url: &"http://example.com".parse().unwrap(),
-                headers: &HeaderMap::new(),
+                headers: HeaderMap::new().into(),
                 operation: OperationDetails {
                     name: None,
                     query: "{ products { upc } }",
@@ -1677,7 +1702,7 @@ mod tests {
             client_request: &ClientRequestDetails {
                 method: &http::Method::POST,
                 url: &"http://example.com".parse().unwrap(),
-                headers: &HeaderMap::new(),
+                headers: HeaderMap::new().into(),
                 operation: OperationDetails {
                     name: None,
                     query: "{ from_a from_b }",
@@ -1754,6 +1779,7 @@ mod tests {
                                 document: dummy_doc.clone(),
                                 hash: 0,
                             },
+                            custom_scalar_paths: None,
                             operation_name: None,
                             requires: None,
                             input_rewrites: None,
@@ -1769,6 +1795,7 @@ mod tests {
                                 document: dummy_doc.clone(),
                                 hash: 0,
                             },
+                            custom_scalar_paths: None,
                             operation_name: None,
                             requires: None,
                             input_rewrites: None,

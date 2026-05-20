@@ -1,0 +1,16 @@
+# Minimum recommended version
+nextest-version = "0.9.133"
+
+[profile.default]
+# Show output (stdout/stderr) of failed tests
+failure-output = "immediate"
+# Show output of successful tests only when --no-capture is passed
+success-output = "never"
+# Don't stop on the first failure
+fail-fast = false
+# Mark as slow test after 10s and terminate after 3 retries
+slow-timeout = { period = "10s", terminate-after = 3 }
+
+[[profile.default.overrides]]
+filter = 'package(=e2e) and test(=body_limit_e2e_tests::should_return_payload_too_large_if_content_length_header_exceeds_the_limit)'
+retries = { backoff = "fixed", count = 2, delay = "1s" }

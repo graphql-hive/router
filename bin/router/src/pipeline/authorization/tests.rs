@@ -11,8 +11,10 @@ use hive_router_plan_executor::{
     projection::plan::FieldProjectionPlan,
 };
 use hive_router_query_planner::{
-    ast::normalization::normalize_operation, consumer_schema::ConsumerSchema,
-    state::supergraph_state::SupergraphState, utils::parsing::parse_schema,
+    ast::normalization::normalize_operation,
+    consumer_schema::ConsumerSchema,
+    state::supergraph_state::{OperationKind, SupergraphState},
+    utils::parsing::parse_schema,
 };
 
 use crate::pipeline::{
@@ -84,7 +86,7 @@ impl SupergraphTestData {
             normalized_operation_hash: hashes.combined_operation_hash,
             operation_indentity: OperationIdentity {
                 name: doc.operation_name.clone(),
-                operation_type: "query",
+                operation_type: OperationKind::Query,
                 client_document_hash: "".to_string(),
             },
         };

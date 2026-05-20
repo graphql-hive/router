@@ -61,6 +61,40 @@ pub mod values {
             self.into()
         }
     }
+
+    /// Circuit breaker state exposed via metrics.
+    ///
+    /// The internal recloser state has three values (Closed, HalfOpen, Open),
+    /// but for the externally-visible metric we collapse `Closed` and
+    /// `HalfOpen` into the same logical "closed" bucket
+    /// both mean "requests are being attempted".
+    #[derive(Clone, Copy, Debug, strum::IntoStaticStr)]
+    pub enum CircuitBreakerState {
+        #[strum(serialize = "closed")]
+        Closed,
+        #[strum(serialize = "open")]
+        Open,
+    }
+
+    impl CircuitBreakerState {
+        pub fn as_str(self) -> &'static str {
+            self.into()
+        }
+
+        pub fn as_u8(self) -> u8 {
+            match self {
+                CircuitBreakerState::Closed => 0,
+                CircuitBreakerState::Open => 1,
+            }
+        }
+
+        pub fn from_u8(value: u8) -> Self {
+            match value {
+                0 => CircuitBreakerState::Closed,
+                _ => CircuitBreakerState::Open,
+            }
+        }
+    }
 }
 
 pub mod labels {
@@ -80,6 +114,9 @@ pub mod labels {
     pub const GRAPHQL_OPERATION_TYPE: &str = "graphql.operation.type";
     pub const GRAPHQL_OPERATION_NAME: &str = "graphql.operation.name";
     pub const GRAPHQL_RESPONSE_STATUS: &str = "graphql.response.status";
+    pub const COPROCESSOR_STAGE: &str = "coprocessor.stage";
+    pub const CIRCUIT_BREAKER_FROM_STATE: &str = "circuit_breaker.from_state";
+    pub const CIRCUIT_BREAKER_TO_STATE: &str = "circuit_breaker.to_state";
 }
 
 pub mod names {
@@ -107,10 +144,19 @@ pub mod names {
     pub const PLAN_CACHE_REQUESTS_TOTAL: &str = "hive.router.plan_cache.requests_total";
     pub const PLAN_CACHE_DURATION: &str = "hive.router.plan_cache.duration";
     pub const PLAN_CACHE_SIZE: &str = "hive.router.plan_cache.size";
+    pub const CIRCUIT_BREAKER_SHORT_CIRCUITS_TOTAL: &str =
+        "hive.router.circuit_breaker.short_circuits_total";
+    pub const CIRCUIT_BREAKER_STATE: &str = "hive.router.circuit_breaker.state";
+    pub const CIRCUIT_BREAKER_STATE_TRANSITIONS_TOTAL: &str =
+        "hive.router.circuit_breaker.state_transitions_total";
+    pub const CIRCUIT_BREAKER_FAILURES_TOTAL: &str = "hive.router.circuit_breaker.failures_total";
     pub const PERSISTED_DOCUMENTS_STORAGE_FAILURES_TOTAL: &str =
         "hive.router.persisted_documents.storage.failures_total";
     pub const PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL: &str =
         "hive.router.persisted_documents.extract.missing_id_total";
+    pub const COPROCESSOR_REQUESTS_TOTAL: &str = "hive.router.coprocessor.requests_total";
+    pub const COPROCESSOR_DURATION: &str = "hive.router.coprocessor.duration";
+    pub const COPROCESSOR_ERRORS_TOTAL: &str = "hive.router.coprocessor.errors_total";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
@@ -238,8 +284,34 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (names::PLAN_CACHE_REQUESTS_TOTAL, &[labels::RESULT]),
     (names::PLAN_CACHE_DURATION, &[labels::RESULT]),
     (names::PLAN_CACHE_SIZE, &[]),
+    (
+        names::CIRCUIT_BREAKER_SHORT_CIRCUITS_TOTAL,
+        &[labels::SUBGRAPH_NAME],
+    ),
+    (names::CIRCUIT_BREAKER_STATE, &[labels::SUBGRAPH_NAME]),
+    (
+        names::CIRCUIT_BREAKER_STATE_TRANSITIONS_TOTAL,
+        &[
+            labels::SUBGRAPH_NAME,
+            labels::CIRCUIT_BREAKER_FROM_STATE,
+            labels::CIRCUIT_BREAKER_TO_STATE,
+        ],
+    ),
+    (
+        names::CIRCUIT_BREAKER_FAILURES_TOTAL,
+        &[labels::SUBGRAPH_NAME],
+    ),
     (names::PERSISTED_DOCUMENTS_STORAGE_FAILURES_TOTAL, &[]),
     (names::PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL, &[]),
+    (
+        names::COPROCESSOR_REQUESTS_TOTAL,
+        &[labels::COPROCESSOR_STAGE],
+    ),
+    (names::COPROCESSOR_DURATION, &[labels::COPROCESSOR_STAGE]),
+    (
+        names::COPROCESSOR_ERRORS_TOTAL,
+        &[labels::COPROCESSOR_STAGE],
+    ),
 ];
 
 pub fn labels_for(metric_name: &str) -> Option<&'static [&'static str]> {

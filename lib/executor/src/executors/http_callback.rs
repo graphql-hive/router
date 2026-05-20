@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::stream::BoxStream;
+use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 use http::{HeaderMap, HeaderValue};
 use http_body_util::BodyExt;
 use http_body_util::Full;
@@ -144,7 +145,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         _execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
         _plugin_req_state: Option<&'a PluginRequestState<'a>>,
-    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         Err(SubgraphExecutorError::HttpCallbackNoSingle)
     }
 
@@ -157,6 +158,8 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
+        let custom_scalar_paths: Option<CustomScalarPaths> =
+            execution_request.custom_scalar_paths.cloned();
         let subscription_id = Ulid::new().to_string();
         let verifier = Ulid::new().to_string();
 
@@ -249,7 +252,10 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 match msg {
                     CallbackMessage::Next { payload } => {
                         trace!(subscription_id = %subscription_id, "received next payload");
-                        match SubgraphResponse::deserialize_from_bytes(payload) {
+                        match SubgraphResponse::deserialize_from_bytes(
+                            payload,
+                            custom_scalar_paths.as_ref(),
+                        ) {
                             Ok(response) => yield Ok(response),
                             Err(e) => {
                                 error!(

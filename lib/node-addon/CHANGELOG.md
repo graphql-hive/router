@@ -1,4 +1,72 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.27 (2026-05-11)
+
+### Fixes
+
+#### Escape inline string arguments when emitting subgraph operations
+
+Fixes a bug where string values inlined as arguments in subgraph operations were not re-escaped per the GraphQL spec. When an incoming operation contained a string literal whose decoded value carried a quote or backslash (for example `payload: "\"quoted\""`), the router forwarded the argument to the subgraph as `payload: ""quoted""`, producing invalid GraphQL. The same went for newlines, tabs, and other control characters.
+
+Now the characters are escaped properly per the [GraphQL spec](https://spec.graphql.org/draft/#StringCharacter).
+
+## 0.0.26 (2026-05-11)
+
+### Fixes
+
+#### Preserve custom scalars as raw JSON
+
+Custom scalar fields marked by the query planner are now preserved as raw JSON instead of being parsed and rebuilt as structured response values. This improves correctness for JSON passthrough custom scalars while avoiding performance regressions for normal response handling.
+
+## 0.0.25 (2026-05-08)
+
+### Features
+
+#### Fix conditional directive handling in response projection.
+
+This fixes several edge cases where `@skip` and `@include` could produce an incorrect final response after query planning and projection planning.
+
+## 0.0.24 (2026-05-05)
+
+### Fixes
+
+- Adjustments in operation's kind being Enum and not &'static str
+
+#### Added missing `isRepeatable` on `type __Directive`
+
+The router's introspection schema was resolving `isRepeatable`, but it did not appear in the public (consumer) schema, leading to validation errors when introspection schema was executed through Laboratory. 
+
+This change adds the missing `isRepeatable: Boolean!` to `type __Directive`, according to the [GraphQL introspection spec](https://github.com/graphql/graphql-spec/blob/main/spec/Section%204%20--%20Introspection.md).
+
+#### Avoid propagating `@include`/`@skip` conditions to unconditional fetches
+
+Fixed query planner condition propagation logic to avoid wrapping unconditional fetches
+in conditional blocks when merging steps. This ensures that fields without directives are
+not incorrectly gated by conditions from other steps, allowing for correct execution of
+queries with mixed conditional and unconditional selections.
+
+#### Fix fragments being dropped when multiple inline fragments target the same concrete type within an abstract type fragment.
+
+Previously, when a query contained two or more inline fragments on the same concrete type nested inside an interface or union fragment, only the first fragment's fields were included in the query plan — all subsequent ones were silently dropped.
+
+**Example query that previously returned only `title`:**
+
+```graphql
+query {
+  films {
+    ... on Node {
+      ... on Film { title }
+      ... on Film { director }
+    }
+  }
+}
+```
+
+Both fields are now correctly returned.
+
+#### Fix fragment handling
+
+Fix fragment handling for some queries that use reusable fragments with conditional directives
+
 ## 0.0.23 (2026-04-20)
 
 ### Fixes

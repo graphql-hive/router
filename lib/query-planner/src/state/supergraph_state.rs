@@ -19,7 +19,7 @@ use crate::{
 
 use super::subgraph_state::SubgraphState;
 
-static BUILDIB_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
+static BUILTIN_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 
 pub type SchemaDocument = input::Document<'static, String>;
 
@@ -217,11 +217,15 @@ impl SupergraphState {
     }
 
     pub fn is_scalar_type(&self, type_name: &str) -> bool {
-        if BUILDIB_SCALARS.contains(&type_name) {
+        if BUILTIN_SCALARS.contains(&type_name) {
             return true;
         }
 
         self.known_scalars.contains(type_name)
+    }
+
+    pub fn is_custom_scalar_type(&self, type_name: &str) -> bool {
+        !BUILTIN_SCALARS.contains(&type_name) && self.known_scalars.contains(type_name)
     }
 
     pub fn is_interface_object_in_subgraph(&self, type_name: &str, graph_id: &str) -> bool {
@@ -289,7 +293,7 @@ impl SupergraphState {
             }
         }
 
-        for builtin in BUILDIB_SCALARS {
+        for builtin in BUILTIN_SCALARS {
             set.insert(builtin.to_string());
         }
 
@@ -610,7 +614,7 @@ impl SupergraphState {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum OperationKind {
     #[serde(rename = "query")]
@@ -621,12 +625,35 @@ pub enum OperationKind {
     Subscription,
 }
 
+impl OperationKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OperationKind::Query => "query",
+            OperationKind::Mutation => "mutation",
+            OperationKind::Subscription => "subscription",
+        }
+    }
+}
+
 impl Display for OperationKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OperationKind::Query => write!(f, "query"),
             OperationKind::Mutation => write!(f, "mutation"),
             OperationKind::Subscription => write!(f, "subscription"),
+        }
+    }
+}
+
+impl TryFrom<&str> for OperationKind {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "query" => Ok(OperationKind::Query),
+            "mutation" => Ok(OperationKind::Mutation),
+            "subscription" => Ok(OperationKind::Subscription),
+            _ => Err("invalid operation kind".to_string()),
         }
     }
 }

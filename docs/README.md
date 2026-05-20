@@ -5,6 +5,7 @@
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**authorization**](#authorization)|`object`|Default: `{"directives":{"enabled":true,"unauthorized":{"mode":"filter"}}}`<br/>|yes|
+|[**coprocessor**](#coprocessor)|`object`, `null`|Configuration for coprocessor.<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
@@ -21,8 +22,8 @@
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"ip_header":null,"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
 |[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -47,6 +48,8 @@ cors:
     - origins:
         - https://example.com
         - https://another.com
+  preflight_response_headers:
+    cache-control: public, max-age=86400
 csrf:
   enabled: true
   required_headers:
@@ -134,6 +137,7 @@ subscriptions:
 supergraph: {}
 telemetry:
   client_identification:
+    ip_header: null
     name_header: graphql-client-name
     version_header: graphql-client-version
   hive: null
@@ -202,6 +206,8 @@ telemetry:
       trace_context: true
 traffic_shaping:
   all:
+    allow_only_http2: false
+    circuit_breaker: null
     dedupe_enabled: true
     pool_idle_timeout: 50s
     request_timeout: 30s
@@ -278,6 +284,285 @@ mode: filter
 
 ```
 
+<a name="coprocessor"></a>
+## coprocessor: object,null
+
+Configuration for coprocessor.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**protocol**||Transport protocol used to call the coprocessor service.<br/>|yes|
+|[**stages**](#coprocessorstages)|`object`|Stage-specific configuration.<br/>Default: `{"graphql":{},"router":{}}`<br/>|no|
+|**timeout**|`string`|Per-stage timeout for a coprocessor call.<br/><br/>Defaults to `1s`.<br/>Default: `"1s"`<br/>|no|
+|**url**|`string`|Endpoint for the external coprocessor service.<br/><br/>Supported formats:<br/>- `http://host[:port][/path]`<br/>- `unix:///absolute/path/to/socket.sock`<br/>- `unix:///absolute/path/to/socket.sock?path=/request/path`<br/>|yes|
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstages"></a>
+### coprocessor\.stages: object
+
+Stage-specific configuration.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**graphql**](#coprocessorstagesgraphql)|`object`|Hooks around GraphQL processing<br/>Default: `{}`<br/>||
+|[**router**](#coprocessorstagesrouter)|`object`|Hooks around the router HTTP boundary<br/>Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+graphql: {}
+router: {}
+
+```
+
+<a name="coprocessorstagesgraphql"></a>
+#### coprocessor\.stages\.graphql: object
+
+Hooks around GraphQL processing
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**analysis**](#coprocessorstagesgraphqlanalysis)|`object`, `null`|Configuration for `graphql.analysis` hook.<br/>||
+|[**request**](#coprocessorstagesgraphqlrequest)|`object`, `null`|Configuration for `graphql.request` hook.<br/>||
+|[**response**](#coprocessorstagesgraphqlresponse)|`object`, `null`|Configuration for `graphql.response` hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlanalysis"></a>
+##### coprocessor\.stages\.graphql\.analysis: object,null
+
+Configuration for `graphql.analysis` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesgraphqlanalysisinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlanalysisinclude"></a>
+###### coprocessor\.stages\.graphql\.analysis\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**||Include GraphQL request body fields.<br/><br/>Accepts `true`, `false`, or a list of fields.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include request headers.<br/>Default: `false`<br/>||
+|**method**|`boolean`|Include request method.<br/>Default: `false`<br/>||
+|**path**|`boolean`|Include request path.<br/>Default: `false`<br/>||
+|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+sdl: false
+
+```
+
+<a name="coprocessorstagesgraphqlrequest"></a>
+##### coprocessor\.stages\.graphql\.request: object,null
+
+Configuration for `graphql.request` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesgraphqlrequestinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlrequestinclude"></a>
+###### coprocessor\.stages\.graphql\.request\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**||Include GraphQL request body fields.<br/><br/>Accepts `true`, `false`, or a list of fields.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include request headers.<br/>Default: `false`<br/>||
+|**method**|`boolean`|Include request method.<br/>Default: `false`<br/>||
+|**path**|`boolean`|Include request path.<br/>Default: `false`<br/>||
+|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+sdl: false
+
+```
+
+<a name="coprocessorstagesgraphqlresponse"></a>
+##### coprocessor\.stages\.graphql\.response: object,null
+
+Configuration for `graphql.response` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesgraphqlresponseinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesgraphqlresponseinclude"></a>
+###### coprocessor\.stages\.graphql\.response\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Include GraphQL response body.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include response headers.<br/>Default: `false`<br/>||
+|**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
+|**status\_code**|`boolean`|Include response status code.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+sdl: false
+status_code: false
+
+```
+
+<a name="coprocessorstagesrouter"></a>
+#### coprocessor\.stages\.router: object
+
+Hooks around the router HTTP boundary
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**request**](#coprocessorstagesrouterrequest)|`object`, `null`|Configuration for `router.request` hook.<br/>||
+|[**response**](#coprocessorstagesrouterresponse)|`object`, `null`|Configuration for `router.response` hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterrequest"></a>
+##### coprocessor\.stages\.router\.request: object,null
+
+Configuration for `router.request` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesrouterrequestinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterrequestinclude"></a>
+###### coprocessor\.stages\.router\.request\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Include the inbound HTTP request body.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include inbound HTTP request headers.<br/>Default: `false`<br/>||
+|**method**|`boolean`|Include inbound HTTP request method.<br/>Default: `false`<br/>||
+|**path**|`boolean`|Include inbound HTTP request path.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+method: false
+path: false
+
+```
+
+<a name="coprocessorstagesrouterresponse"></a>
+##### coprocessor\.stages\.router\.response: object,null
+
+Configuration for `router.response` hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
+|[**include**](#coprocessorstagesrouterresponseinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
+
+**Additional Properties:** not allowed  
+<a name="coprocessorstagesrouterresponseinclude"></a>
+###### coprocessor\.stages\.router\.response\.include: object
+
+Selects which fields are included in the coprocessor payload for this hook.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**body**|`boolean`|Include outbound HTTP response body.<br/>Default: `false`<br/>||
+|**context**||Include request context.<br/><br/>Values:<br/>- `false`: no context<br/>- `true`: full context<br/>- list: selected context keys<br/>Default: `false`<br/>||
+|**headers**|`boolean`|Include outbound HTTP response headers.<br/>Default: `false`<br/>||
+|**status\_code**|`boolean`|Include outbound HTTP response status code.<br/>Default: `false`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+body: false
+context: false
+headers: false
+status_code: false
+
+```
+
 <a name="cors"></a>
 ## cors: object
 
@@ -296,6 +581,7 @@ Configuration for CORS (Cross-Origin Resource Sharing).
 |**max\_age**|`integer`, `null`|The maximum time (in seconds) that the results of a preflight request can be cached by the client.<br/>This will set the `Access-Control-Max-Age` header.<br/>If not set, the browser will not cache the preflight response.<br/>Example: 86400 (24 hours)<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
 |[**methods**](#corsmethods)|`string[]`|List of methods that the server allows for cross-origin requests.<br/>|no|
 |[**policies**](#corspolicies)|`object[]`|List of CORS policies. The first policy that matches the request origin will be applied.<br/>|yes|
+|[**preflight\_response\_headers**](#corspreflight_response_headers)|`object`|Additional headers to set on CORS preflight (OPTIONS) responses.<br/>|no|
 
 **Example**
 
@@ -312,6 +598,8 @@ policies:
   - origins:
       - https://example.com
       - https://another.com
+preflight_response_headers:
+  cache-control: public, max-age=86400
 
 ```
 
@@ -396,10 +684,12 @@ Here's a breakdown of how inheritance works for each field:
 - `allow_headers` and `expose_headers`: A policy's behavior for these header lists depends on the value provided:
   - If a list with specific headers is provided (e.g., `["Content-Type"]`), it completely overrides the global list.
   - If an empty list (`[]`) is provided, the policy will inherit the headers from the global configuration.
-- `methods`: This setting has three distinct states for inheritance:
-  - If `methods` is not specified at all (`null`), the policy inherits the global methods.
-  - If an empty list (`[]`) is provided, no methods are allowed for that policy.
+- `methods`: A policy's behavior for this header list depends on the value provided:
+  - If `methods` is not specified at all (`null`) or set to an empty list (`[]`),
+    the policy inherits the methods from the global configuration.
   - If the list contains specific methods (e.g., `["GET", "POST"]`), only those methods are used, overriding the global list.
+- `preflight_response_headers`: Per-policy entries are merged on top of the global map.
+  Keys defined in the policy override the global ones, while keys defined only globally are still applied.
 
 
 **Items**
@@ -415,11 +705,12 @@ Here's a breakdown of how inheritance works for each field:
 |**max\_age**|`integer`, `null`|The maximum time (in seconds) that the results of a preflight request can be cached by the client.<br/>This will set the `Access-Control-Max-Age` header.<br/>If not set, the browser will not cache the preflight response.<br/>Example: 86400 (24 hours)<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>||
 |[**methods**](#corspoliciesmethods)|`string[]`|List of methods that the server allows for cross-origin requests.<br/>||
 |[**origins**](#corspoliciesorigins)|`string[]`|List of allowed origins. If `allow_any_origin` is true, this field is ignored.<br/>||
+|[**preflight\_response\_headers**](#corspoliciespreflight_response_headers)|`object`|Additional headers to set on CORS preflight (OPTIONS) responses for this policy.<br/>||
 
 **Example**
 
 ```yaml
-- {}
+- preflight_response_headers: {}
 
 ```
 
@@ -483,6 +774,53 @@ Example: "https://example.com", "http://localhost:3000"
 **Items**
 
 **Item Type:** `string`  
+<a name="corspoliciespreflight_response_headers"></a>
+#### cors\.policies\[\]\.preflight\_response\_headers: object
+
+Additional headers to set on CORS preflight (OPTIONS) responses for this policy.
+
+Entries are merged on top of the global `cors.preflight_response_headers` map.
+Keys defined here override the global value for the same key, while keys defined only
+globally still apply.
+
+See `cors.preflight_response_headers` for details and caveats.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**|`string`|||
+
+<a name="corspreflight_response_headers"></a>
+### cors\.preflight\_response\_headers: object
+
+Additional headers to set on CORS preflight (OPTIONS) responses.
+
+The `headers` configuration block does not affect preflight responses
+because they are returned early by the CORS layer. This map provides a
+first-class way to attach arbitrary headers (e.g. `Cache-Control`,
+`Server-Timing`, `X-*` custom headers) to those preflight responses.
+
+Keys must be valid HTTP header names (RFC 7230) and values must be
+valid HTTP header values.
+
+The headers provided here are applied after the CORS engine's managed headers
+(`Access-Control-*`, `Vary`) and therefore override them when keys collide.
+
+Example:
+```yaml
+preflight_response_headers:
+  Cache-Control: "public, max-age=86400"
+```
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**|`string`|||
+
 <a name="csrf"></a>
 ## csrf: object
 
@@ -768,7 +1106,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -990,7 +1328,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1243,7 +1581,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1465,7 +1803,7 @@ A dynamic value computed by a VRL expression.
 This allows you to generate header values based on the incoming request,
 subgraph name, and (for response rules) subgraph response headers.
 The expression has access to a context object with `.request`, `.subgraph`,
-and `.response` fields.
+and `.response.headers` fields.
 
 For more information on the available functions and syntax, see the
 [VRL documentation](https://vrl.dev/).
@@ -1499,6 +1837,7 @@ Configuration for the HTTP server/listener.
 |**graphql\_endpoint**|`string`|The endpoint to serve GraphQL requests. By default, `/graphql` is used.<br/>Default: `"/graphql"`<br/>||
 |**host**|`string`|The host address to bind the HTTP server to.<br/><br/>Can also be set via the `HOST` environment variable.<br/>Default: `"0.0.0.0"`<br/>||
 |**port**|`integer`|The port to bind the HTTP server to.<br/><br/>Can also be set via the `PORT` environment variable.<br/><br/>If you are running the router inside a Docker container, please ensure that the port is exposed correctly using `-p <host_port>:<container_port>` flag.<br/>Default: `4000`<br/>Format: `"uint16"`<br/>Minimum: `0`<br/>Maximum: `65535`<br/>||
+|**workers**|`integer`, `null`|The number of worker threads to use for the HTTP server. Must be at least `1`.<br/><br/>Defaults to the number of physical CPU cores available to the process.<br/><br/>Useful in containerized environments (e.g., Kubernetes) where the number of<br/>physical cores reported by the OS is higher than the actual CPU limit<br/>assigned to the container. In such cases, you should set this to match the<br/>container's CPU limit to avoid oversubscribing worker threads.<br/><br/>Can also be set via the `ROUTER_HTTP_WORKERS` environment variable.<br/>Format: `"uint"`<br/>Minimum: `1`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2220,7 +2559,7 @@ max_retries: 10
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
+|[**client\_identification**](#telemetryclient_identification)|`object`|Default: `{"ip_header":null,"name_header":"graphql-client-name","version_header":"graphql-client-version"}`<br/>||
 |[**hive**](#telemetryhive)|`object`, `null`|||
 |[**metrics**](#telemetrymetrics)|`object`|Configures metrics collection, processing, and export.<br/>Default: `{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}}`<br/>||
 |[**resource**](#telemetryresource)|`object`|Default: `{"attributes":{}}`<br/>||
@@ -2231,6 +2570,7 @@ max_retries: 10
 
 ```yaml
 client_identification:
+  ip_header: null
   name_header: graphql-client-name
   version_header: graphql-client-version
 hive: null
@@ -2307,13 +2647,15 @@ tracing:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**name\_header**|`string`|Default: `"graphql-client-name"`<br/>||
-|**version\_header**|`string`|Default: `"graphql-client-version"`<br/>||
+|**ip\_header**||Defines how the client IP address is determined.<br/><br/>Important: HTTP headers like `x-forwarded-for` can be spoofed by clients.<br/>Use it only with trusted proxies.<br/><br/>It's null by default and uses the socket peer address.<br/><br/>Use the left-most value from the specified header:<br/>```ignore<br/>ip_header: "x-forwarded-for"<br/>```<br/><br/>If peer socket address is trusted, meaning it's part of `trusted_proxies` list,<br/>Router evaluates values from right to left and picks the first non-trusted value.<br/>If all values are trusted, uses the left-most value.<br/>```ignore<br/>ip_header:<br/>  name: "x-forwarded-for"<br/>  trusted_proxies:<br/>    - 10.0.0.0/8<br/>    - 127.0.0.1/32<br/>```<br/>||
+|**name\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"graphql-client-name"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
+|**version\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"graphql-client-version"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
+ip_header: null
 name_header: graphql-client-name
 version_header: graphql-client-version
 
@@ -2329,7 +2671,7 @@ version_header: graphql-client-version
 |**target**||A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
 |**token**||Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
 |[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":false,"endpoint":"https://api.graphql-hive.com/otel/v1/traces"}`<br/>||
-|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
+|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":null,"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2408,7 +2750,7 @@ scheduled_delay: 5s
 |**connect\_timeout**|`string`|A timeout for only the connect phase of a request to Hive Console<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
 |**enabled**|`boolean`|Default: `false`<br/>||
 |**endpoint**|`string`|For self-hosting, you can override `/usage` endpoint (defaults to `https://app.graphql-hive.com/usage`).<br/>Default: `"https://app.graphql-hive.com/usage"`<br/>||
-|[**exclude**](#telemetryhiveusage_reportingexclude)|`string[]`|A list of operations (by name) to be ignored by Hive.<br/>Default: <br/>||
+|**exclude**||An expression in VRL to exclude certain operations from being sent to Hive Console.<br/>Returning `true` from this expression will exclude the operation, while `false` will include it.<br/>This expression is a VRL expression that has access to the request and operation details;<br/><br/>```vrl<br/> if (.request.operation.name == "ExcludeMe") {<br/>   true<br/> } else {<br/>   false<br/> }<br/>```<br/>Backward compatible with both:<br/>- an expression object: `{ expression: "..." }`<br/>- a list of operation names<br/>||
 |**flush\_interval**|`string`|Frequency of flushing the buffer to the server<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
 |**request\_timeout**|`string`|A timeout for the entire request to Hive Console<br/>Default: 15 seconds<br/>Default: `"15s"`<br/>||
 |**sample\_rate**|`string`|Sample rate to determine sampling.<br/>0% = never being sent<br/>50% = half of the requests being sent<br/>100% = always being sent<br/>Default: 100%<br/>Default: `"100%"`<br/>||
@@ -2422,23 +2764,13 @@ buffer_size: 1000
 connect_timeout: 5s
 enabled: false
 endpoint: https://app.graphql-hive.com/usage
-exclude: []
+exclude: null
 flush_interval: 5s
 request_timeout: 15s
 sample_rate: 100%
 
 ```
 
-<a name="telemetryhiveusage_reportingexclude"></a>
-##### telemetry\.hive\.usage\_reporting\.exclude\[\]: array
-
-A list of operations (by name) to be ignored by Hive.
-Example: ["IntrospectionQuery", "MeQuery"]
-
-
-**Items**
-
-**Item Type:** `string`  
 <a name="telemetrymetrics"></a>
 ### telemetry\.metrics: object
 
@@ -3116,7 +3448,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
+|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}`<br/>||
 |[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
@@ -3126,6 +3458,8 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 
 ```yaml
 all:
+  allow_only_http2: false
+  circuit_breaker: null
   dedupe_enabled: true
   pool_idle_timeout: 50s
   request_timeout: 30s
@@ -3149,6 +3483,8 @@ The default configuration that will be applied to all subgraphs, unless overridd
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**allow\_only\_http2**|`boolean`|Forces HTTP/2 for requests to subgraphs.<br/><br/>For plain HTTP, it will use HTTP/2 cleartext (h2c).<br/>For HTTPS, it also requires HTTP/2.<br/>This will make the subgraph requests never fall back to HTTP/1.1,<br/>and will fail if the subgraph doesn't support HTTP/2.<br/>Default: `false`<br/>||
+|[**circuit\_breaker**](#traffic_shapingallcircuit_breaker)|`object`, `null`|Circuit Breaker configuration for all subgraphs.<br/>||
 |**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
 |**pool\_idle\_timeout**|`string`|Timeout for idle sockets being kept-alive.<br/>Default: `"50s"`<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>Default: `"30s"`<br/>||
@@ -3158,11 +3494,77 @@ The default configuration that will be applied to all subgraphs, unless overridd
 **Example**
 
 ```yaml
+allow_only_http2: false
+circuit_breaker: null
 dedupe_enabled: true
 pool_idle_timeout: 50s
 request_timeout: 30s
 
 ```
+
+<a name="traffic_shapingallcircuit_breaker"></a>
+#### traffic\_shaping\.all\.circuit\_breaker: object,null
+
+Circuit Breaker configuration for all subgraphs.
+When the circuit breaker is open, requests to the subgraph will be
+short-circuited and an error will be returned to the client.
+The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`, `null`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/><br/>When unset on a subgraph-level configuration, the value falls back<br/>to the value defined in the global (`all`) circuit breaker<br/>configuration.<br/>||
+|[**error\_status\_codes**](#traffic_shapingallcircuit_breakererror_status_codes)|`array`|HTTP status codes returned by the subgraph that should be counted as<br/>||
+|**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
+|**half\_open\_attempts**|`integer`, `null`|Size of the rolling sample of probe requests collected while the<br/>breaker is in the half-open state after `reset_timeout` elapses.<br/>The breaker fills this sample first; the next probe after the<br/>sample is full is the one whose result is evaluated against<br/>`error_threshold` to decide whether to transition back to `closed`<br/>(resuming normal traffic) or to `open` (waiting for another<br/>`reset_timeout` window). In practice at least<br/>`half_open_attempts + 1` probes pass through before the breaker<br/>can transition.<br/><br/>Lower values make recovery faster but more aggressive; higher<br/>values gather more samples before re-closing the circuit.<br/><br/>Default: 10<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
+|**volume\_threshold**|`integer`, `null`|Size of the rolling sample used to decide whether the breaker<br/>should open while closed. The breaker fills this sample with the<br/>outcomes of the last `volume_threshold` requests; the next request<br/>after the sample is full is the one whose result is evaluated<br/>against `error_threshold`. In practice the breaker can trip only<br/>after at least `volume_threshold + 1` requests have been observed.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+
+**Additional Properties:** not allowed  
+<a name="traffic_shapingallcircuit_breakererror_status_codes"></a>
+##### traffic\_shaping\.all\.circuit\_breaker\.error\_status\_codes\[\]: array,null
+
+HTTP status codes returned by the subgraph that should be counted as
+failures by the circuit breaker.
+
+Each entry can be either an exact status code (integer or string,
+e.g. `503` or `"503"`) or a wildcard pattern in one of these forms:
+
+- `"5xx"` - matches every 500-599 status (`[1-5]xx` accepted),
+- `"50x"` - matches every 500-509 status (`[1-5][0-9]x` accepted).
+
+Wildcards are case-insensitive (`"5XX"` works too). Patterns can be
+freely mixed with exact codes in the same list, for example:
+
+```yaml
+error_status_codes: [501, "5xx", "52x"]
+```
+
+Only responses whose status code matches at least one entry in this
+list are recorded as failures by the circuit breaker. Responses with
+any other status code are treated as successes from the breaker's
+point of view.
+
+Default: `[500, 502, 503, 504]`
+
+
+**Items**
+
+
+Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) or a wildcard pattern: '[1-5]xx' (e.g. '5xx') or '[1-5][0-9]x' (e.g. '50x'). Case-insensitive.
+
+   
+**Option 1 (alternative):** 
+**Type:** `integer`  
+**Minimum:** `100`  
+**Maximum:** `599`  
+
+   
+**Option 2 (alternative):** 
+**Type:** `string`  
+**Pattern:** `^(?:[1-5][0-9][0-9]\|[1-5][xX][xX]\|[1-5][0-9][xX])$`  
 
 <a name="traffic_shapingalltls"></a>
 #### traffic\_shaping\.all\.tls: object,null
@@ -3275,12 +3677,77 @@ Optional per-subgraph configurations that will override the default configuratio
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**allow\_only\_http2**|`boolean`, `null`|Forces HTTP/2 for requests to subgraphs.<br/><br/>For plain HTTP, it will use HTTP/2 cleartext (h2c).<br/>For HTTPS, it also requires HTTP/2.<br/>This will make the subgraph requests never fall back to HTTP/1.1,<br/>and will fail if the subgraph doesn't support HTTP/2.<br/>||
+|[**circuit\_breaker**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breaker)|`object`, `null`|Circuit Breaker configuration for the subgraph.<br/>||
 |**dedupe\_enabled**|`boolean`, `null`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>||
 |**pool\_idle\_timeout**|`string`, `null`|Timeout for idle sockets being kept-alive.<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
 |[**tls**](#traffic_shapingsubgraphsadditionalpropertiestls)|`object`, `null`|||
 
 **Additional Properties:** not allowed  
+<a name="traffic_shapingsubgraphsadditionalpropertiescircuit_breaker"></a>
+##### traffic\_shaping\.subgraphs\.additionalProperties\.circuit\_breaker: object,null
+
+Circuit Breaker configuration for the subgraph.
+When the circuit breaker is open, requests to the subgraph will be short-circuited and an error will be returned to the client.
+The circuit breaker will be triggered based on the error rate of requests to the subgraph, and will attempt to reset after a certain timeout.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`, `null`|Enable or disable the circuit breaker for the subgraph.<br/>Default: false (circuit breaker is disabled)<br/><br/>When unset on a subgraph-level configuration, the value falls back<br/>to the value defined in the global (`all`) circuit breaker<br/>configuration.<br/>||
+|[**error\_status\_codes**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breakererror_status_codes)|`array`|HTTP status codes returned by the subgraph that should be counted as<br/>||
+|**error\_threshold**|`string`|Percentage after what the circuit breaker should kick in.<br/>Default: 50%<br/>||
+|**half\_open\_attempts**|`integer`, `null`|Size of the rolling sample of probe requests collected while the<br/>breaker is in the half-open state after `reset_timeout` elapses.<br/>The breaker fills this sample first; the next probe after the<br/>sample is full is the one whose result is evaluated against<br/>`error_threshold` to decide whether to transition back to `closed`<br/>(resuming normal traffic) or to `open` (waiting for another<br/>`reset_timeout` window). In practice at least<br/>`half_open_attempts + 1` probes pass through before the breaker<br/>can transition.<br/><br/>Lower values make recovery faster but more aggressive; higher<br/>values gather more samples before re-closing the circuit.<br/><br/>Default: 10<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
+|**volume\_threshold**|`integer`, `null`|Size of the rolling sample used to decide whether the breaker<br/>should open while closed. The breaker fills this sample with the<br/>outcomes of the last `volume_threshold` requests; the next request<br/>after the sample is full is the one whose result is evaluated<br/>against `error_threshold`. In practice the breaker can trip only<br/>after at least `volume_threshold + 1` requests have been observed.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+
+**Additional Properties:** not allowed  
+<a name="traffic_shapingsubgraphsadditionalpropertiescircuit_breakererror_status_codes"></a>
+###### traffic\_shaping\.subgraphs\.additionalProperties\.circuit\_breaker\.error\_status\_codes\[\]: array,null
+
+HTTP status codes returned by the subgraph that should be counted as
+failures by the circuit breaker.
+
+Each entry can be either an exact status code (integer or string,
+e.g. `503` or `"503"`) or a wildcard pattern in one of these forms:
+
+- `"5xx"` - matches every 500-599 status (`[1-5]xx` accepted),
+- `"50x"` - matches every 500-509 status (`[1-5][0-9]x` accepted).
+
+Wildcards are case-insensitive (`"5XX"` works too). Patterns can be
+freely mixed with exact codes in the same list, for example:
+
+```yaml
+error_status_codes: [501, "5xx", "52x"]
+```
+
+Only responses whose status code matches at least one entry in this
+list are recorded as failures by the circuit breaker. Responses with
+any other status code are treated as successes from the breaker's
+point of view.
+
+Default: `[500, 502, 503, 504]`
+
+
+**Items**
+
+
+Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) or a wildcard pattern: '[1-5]xx' (e.g. '5xx') or '[1-5][0-9]x' (e.g. '50x'). Case-insensitive.
+
+   
+**Option 1 (alternative):** 
+**Type:** `integer`  
+**Minimum:** `100`  
+**Maximum:** `599`  
+
+   
+**Option 2 (alternative):** 
+**Type:** `string`  
+**Pattern:** `^(?:[1-5][0-9][0-9]\|[1-5][xX][xX]\|[1-5][0-9][xX])$`  
+
 <a name="traffic_shapingsubgraphsadditionalpropertiestls"></a>
 ##### traffic\_shaping\.subgraphs\.additionalProperties\.tls: object,null
 

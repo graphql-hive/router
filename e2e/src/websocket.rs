@@ -47,7 +47,7 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream = client.subscribe(execution_request).await;
+        let mut stream = client.subscribe(execution_request, None).await;
 
         let response = stream.next().await.expect("Expected a response");
 
@@ -97,7 +97,7 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream = client.subscribe(subscribe_payload).await;
+        let mut stream = client.subscribe(subscribe_payload, None).await;
 
         let mut received_count = 0;
         while let Some(response) = stream.next().await {
@@ -150,7 +150,7 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream1 = client.subscribe(subscribe_payload1).await;
+        let mut stream1 = client.subscribe(subscribe_payload1, None).await;
 
         let subscribe_payload = SubscribePayload {
             query: r#"
@@ -164,7 +164,7 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream2 = client.subscribe(subscribe_payload).await;
+        let mut stream2 = client.subscribe(subscribe_payload, None).await;
 
         let mut count1 = 0;
         let mut count2 = 0;
@@ -265,7 +265,7 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream = client.subscribe(subscribe_payload).await;
+        let mut stream = client.subscribe(subscribe_payload, None).await;
 
         stream.next().await.expect("Expected a response");
 
@@ -332,7 +332,7 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream = client.subscribe(subscribe_payload).await;
+        let mut stream = client.subscribe(subscribe_payload, None).await;
 
         stream.next().await.expect("Expected a response");
 
@@ -408,7 +408,7 @@ mod websocket_e2e_tests {
         };
 
         // merging headers
-        let mut stream = client.subscribe(subscribe_payload).await;
+        let mut stream = client.subscribe(subscribe_payload, None).await;
         stream.next().await.expect("Expected a response");
 
         let subscribe_payload = SubscribePayload {
@@ -425,7 +425,7 @@ mod websocket_e2e_tests {
         };
 
         // missing headers in extensions, should've been merged
-        let mut stream = client.subscribe(subscribe_payload).await;
+        let mut stream = client.subscribe(subscribe_payload, None).await;
         stream.next().await.expect("Expected a response");
 
         let products_requests = subgraphs

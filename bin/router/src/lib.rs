@@ -11,6 +11,7 @@ mod supergraph;
 pub mod telemetry;
 mod utils;
 
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use crate::{
@@ -31,7 +32,7 @@ use crate::{
         persisted_documents::PersistedDocumentsRuntime,
         request_extensions::{
             read_graphql_operation_metric_identity, read_graphql_response_metric_status,
-            read_request_body_size, write_graphql_response_metric_status,
+            write_graphql_response_metric_status,
         },
         timeout::handle_timeout,
         usage_reporting::init_hive_usage_agent,
@@ -57,12 +58,14 @@ pub use hive_router_config::humantime_serde;
 use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
 use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
-use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::{
     otel::tracing_opentelemetry::OpenTelemetrySpanExt,
     traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
 };
 pub use hive_router_internal::BoxError;
+use hive_router_internal::{
+    http::read_request_body_size, telemetry::metrics::catalog::values::GraphQLResponseStatus,
+};
 pub use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 pub use hive_router_plan_executor::executors::http::SubgraphHttpResponse;
 pub use hive_router_plan_executor::response::graphql_error::GraphQLError;
@@ -109,7 +112,7 @@ impl BackgroundTask for CallbackServer {
 }
 
 async fn graphql_endpoint_handler(
-    request: HttpRequest,
+    mut request: HttpRequest,
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
@@ -121,7 +124,7 @@ async fn graphql_endpoint_handler(
         .capture_request(&request);
 
     let response =
-        graphql_endpoint_dispatch(&request, body_stream, schema_state, app_state.clone()).await;
+        graphql_endpoint_dispatch(&mut request, body_stream, schema_state, app_state.clone()).await;
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -145,7 +148,7 @@ async fn graphql_endpoint_handler(
 }
 
 async fn graphql_endpoint_dispatch(
-    request: &HttpRequest,
+    request: &mut HttpRequest,
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
@@ -153,7 +156,14 @@ async fn graphql_endpoint_dispatch(
     let parent_ctx = app_state
         .telemetry_context
         .extract_context(&HeaderExtractor(request.headers()));
-    let root_http_request_span = HttpServerRequestSpan::from_request(request);
+    let root_http_request_span = HttpServerRequestSpan::from_request(
+        request,
+        &app_state
+            .router_config
+            .telemetry
+            .client_identification
+            .ip_header,
+    );
     let _ = root_http_request_span.set_parent(parent_ctx);
 
     async {
@@ -188,6 +198,28 @@ async fn graphql_endpoint_dispatch(
             cors.set_headers(request, response.headers_mut());
         }
 
+        if let Some(coprocessor_runtime) = app_state.coprocessor.as_ref() {
+            response = match coprocessor_runtime
+                .on_graphql_response(response, request, || {
+                    schema_state
+                        .current_supergraph()
+                        .as_ref()
+                        .as_ref()
+                        .map(|supergraph| supergraph.public_schema.sdl.clone())
+                })
+                .await
+            {
+                Ok(
+                    ControlFlow::Break(updated_response) | ControlFlow::Continue(updated_response),
+                ) => updated_response,
+                Err(error) => {
+                    warn!(%error, "coprocessor graphql.response stage failed");
+                    write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
+                    handle_pipeline_error(error.into(), &app_state, &response_mode)
+                }
+            };
+        }
+
         root_http_request_span.record_response(&response);
 
         response
@@ -209,6 +241,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let graphql_path = router_config.graphql_path().to_string();
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
     let callback_conf = router_config.callback_conf().cloned();
+    let workers = router_config.workers();
     let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
@@ -232,16 +265,24 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
             let cb_path = path.to_string();
             let cb_addr = listen.to_string();
             let cb_subs = callback_subscriptions_for_handler.clone();
-            let cb_server = web::HttpServer::new(async move || {
+            let mut cb_server_builder = web::HttpServer::new(async move || {
                 let cb_subs = cb_subs.clone();
                 let cb_path = cb_path.clone();
                 web::App::new()
                     .state(cb_subs)
                     .configure(move |m| add_callback_handler(m, &cb_path))
-            })
-            .bind(&cb_addr)
-            .map_err(|err| RouterInitError::HttpCallbackServerBindError(cb_addr, err))?
-            .run();
+            });
+            if let Some(workers) = workers {
+                info!(
+                    "configuring HTTP callback server with {} worker(s)",
+                    workers
+                );
+                cb_server_builder = cb_server_builder.workers(workers.get());
+            }
+            let cb_server = cb_server_builder
+                .bind(&cb_addr)
+                .map_err(|err| RouterInitError::HttpCallbackServerBindError(cb_addr, err))?
+                .run();
 
             bg_tasks_manager.register_task(CallbackServer::from(cb_server));
 
@@ -259,13 +300,17 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let long_lived_client_limit_service =
         LongLivedClientLimitService::new(&shared_state.router_config);
 
-    let server = web::HttpServer::new(async move || {
+    let mut server = web::HttpServer::new(async move || {
         let landing_page_path = graphql_path.clone();
         let prometheus = prometheus.clone();
         let long_lived_client_limit_service = long_lived_client_limit_service.clone();
+        let paths_for_plugin = paths.clone();
         web::App::new()
             .middleware(long_lived_client_limit_service)
-            .middleware(PluginService)
+            .middleware(PluginService::new(
+                paths_for_plugin,
+                prometheus.as_ref().map(|p| p.endpoint.clone()),
+            ))
             .state(shared_state.clone())
             .state(schema_state.clone())
             .configure(|m| configure_ntex_app(m, &paths, prometheus))
@@ -280,6 +325,10 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
                 landing_page_handler(landing_page_path.clone())
             }))
     });
+    if let Some(workers) = workers {
+        info!("configuring HTTP server with {} worker(s)", workers);
+        server = server.workers(workers.get());
+    }
 
     let tls_config = shared_state_clone
         .router_config
@@ -408,11 +457,11 @@ pub async fn configure_app_from_config(
 
 #[derive(Clone)]
 pub struct RouterPaths {
-    graphql: String,
+    pub graphql: String,
     websocket: Option<String>,
     callback: Option<String>,
-    health: String,
-    readiness: String,
+    pub health: String,
+    pub readiness: String,
 }
 
 impl RouterPaths {

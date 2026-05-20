@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt::Display,
+    fmt::{Display, Write},
     hash::Hash,
     mem,
 };
@@ -197,13 +197,56 @@ impl From<&mut Value> for SonicValue {
     }
 }
 
+/// Writes a string as a GraphQL string literal, escaping special characters
+/// per the GraphQL spec (https://spec.graphql.org/draft/#StringCharacter).
+///
+/// The string contents are decoded values (e.g. parsed from `"\"quoted\""` into
+/// `"quoted"`), so we must re-escape `"`, `\`, and control characters when
+/// re-emitting them as a GraphQL literal.
+///
+/// Strings without any escapable characters are written in a single
+/// `write_str` call; otherwise we flush the run of safe bytes preceding each
+/// escape sequence in one go, which is significantly cheaper than emitting
+/// every character individually through the formatter.
+fn write_graphql_string_literal(f: &mut std::fmt::Formatter<'_>, s: &str) -> std::fmt::Result {
+    f.write_char('"')?;
+    let mut last = 0;
+    for (i, c) in s.char_indices() {
+        let esc = match c {
+            '"' => "\\\"",
+            '\\' => "\\\\",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '\t' => "\\t",
+            '\u{0008}' => "\\b",
+            '\u{000C}' => "\\f",
+            // ASCII C0 control characters (< 0x20) and DEL (0x7F) are escaped
+            // defensively. DEL is technically a valid SourceCharacter per the
+            // GraphQL spec, but emitting it bare can trip strict downstream
+            // parsers.
+            c if (c as u32) < 0x20 || (c as u32) == 0x7F => {
+                f.write_str(&s[last..i])?;
+                write!(f, "\\u{:04x}", c as u32)?;
+                last = i + c.len_utf8();
+                continue;
+            }
+            _ => continue,
+        };
+        f.write_str(&s[last..i])?;
+        f.write_str(esc)?;
+        last = i + c.len_utf8();
+    }
+    f.write_str(&s[last..])?;
+    f.write_char('"')
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Variable(name) => write!(f, "${}", name),
             Value::Int(i) => write!(f, "{}", i),
             Value::Float(fl) => write!(f, "{}", fl),
-            Value::String(s) => write!(f, "\"{}\"", s),
+            Value::String(s) => write_graphql_string_literal(f, s),
             Value::Boolean(b) => write!(f, "{}", b),
             Value::Null => write!(f, "null"),
             Value::Enum(e) => write!(f, "{}", e),
@@ -252,6 +295,36 @@ mod tests {
         insta::assert_snapshot!(
           Value::String("test".to_string()),
           @r#""test""#);
+
+        // String containing a quote: must be escaped as \"
+        insta::assert_snapshot!(
+          Value::String("\"quoted\"".to_string()),
+          @r#""\"quoted\"""#);
+
+        // String containing a backslash: must be escaped as \\
+        insta::assert_snapshot!(
+          Value::String("a\\b".to_string()),
+          @r#""a\\b""#);
+
+        // String containing common control characters: must be escaped
+        insta::assert_snapshot!(
+          Value::String("line1\nline2\t\r".to_string()),
+          @r#""line1\nline2\t\r""#);
+
+        // String containing a less common control character: must be \u escaped
+        insta::assert_snapshot!(
+          Value::String("\x01".to_string()),
+          @r#""\u0001""#);
+
+        // String containing the DEL control character (U+007F): escaped \u007f
+        insta::assert_snapshot!(
+          Value::String("\u{007F}".to_string()),
+          @r#""\u007f""#);
+
+        // String with mixed safe/escapable runs: safe runs are emitted in bulk
+        insta::assert_snapshot!(
+          Value::String("hello \"world\"\nbye".to_string()),
+          @r#""hello \"world\"\nbye""#);
 
         insta::assert_snapshot!(
           Value::Boolean(false),

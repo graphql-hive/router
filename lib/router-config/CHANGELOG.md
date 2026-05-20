@@ -66,6 +66,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.35 (2026-05-17)
+
+### Fixes
+
+#### Implement Circuit Breaker for Subgraph Requests
+
+This change introduces a circuit breaker mechanism for subgraph requests in the Hive Router. The circuit breaker will monitor the success and failure rates of requests to each subgraph and will prevent future requests if the failure rate exceeds a certain threshold. When the circuit breaker is opened, subsequent requests to that subgraph will fail immediately without attempting to send the request.
+
+This implementation helps improve the resilience and stability of the Hive Router when dealing with unreliable subgraphs.
+
+## 0.0.34 (2026-05-13)
+
+### Features
+
+#### Allow overriding number of HTTP server workers
+
+Adds a new `http.workers` configuration option (and `ROUTER_HTTP_WORKERS` environment variable) to control the number of HTTP server worker threads.
+
+By default, the router spawns one worker per physical CPU core. In containerized environments such as Kubernetes the number of physical cores reported by the OS is often higher than the CPU limit assigned to the container, which leads to oversubscribed worker threads. Set `http.workers` (or `ROUTER_HTTP_WORKERS`) to match the container's CPU limit to avoid this.
+
+```yaml
+http:
+  workers: 4
+```
+
+#### Add `cors.preflight_response_headers` to attach headers to CORS preflight (OPTIONS) responses
+
+Adds a new optional `preflight_response_headers` map to the `cors` configuration block, and to each entry under `cors.policies`. The map allows attaching arbitrary headers (e.g. `Cache-Control`, `Server-Timing`, custom `X-*` headers) to CORS preflight (OPTIONS) responses.
+
+This is useful because the `headers` configuration block does not affect preflight responses (they are returned early by the CORS layer), so there was previously no way to control headers like `Cache-Control` for `OPTIONS` requests.
+
+Example:
+
+```yaml
+cors:
+  enabled: true
+  allow_any_origin: true
+  max_age: 86400
+  preflight_response_headers:
+    Cache-Control: "public, max-age=86400"
+```
+
+## 0.0.33 (2026-05-05)
+
+### Features
+
+#### Coprocessors
+
+Introduces Coprocessors as language agnostic way to extend Hive Router.
+
+**Supports coprocessor stages:**
+- `router.request`
+- `router.response`
+- `graphql.request`
+- `graphql.analysis`
+- `graphql.response`
+
+**Stage capabilities:**
+- include selected request/response fields in stage payloads (headers, body, context, and optional SDL depending on stage config)
+- mutate request body/headers/context for downstream pipeline execution
+- short-circuit and return an immediate HTTP response from a stage
+
+**Transport and endpoint support:**
+- `http://` and `unix://` (unix socket domain) endpoints
+- http/1, http/2 and h2c protocols
+
+**Error handling:**
+- coprocessor failures map to server-side failures (500)
+- client-facing GraphQL errors are masked as Internal server error
+- structured error codes are preserved in GraphQL extensions.code
+- detailed coprocessor failure reasons remain in server logs/telemetry only
+
+**Adds coprocessor metrics:**
+- hive.router.coprocessor.requests_total
+- hive.router.coprocessor.duration
+- hive.router.coprocessor.errors_total
+
+## 0.0.32 (2026-04-27)
+
+### Fixes
+
+#### HTTP/2 Cleartext (h2c) Support for Subgraph Connections
+
+Adds support for HTTP/2 cleartext (h2c) connections between the router and subgraphs via the new `allow_only_http2` configuration flag. When enabled, the router uses HTTP/2 prior knowledge to communicate with subgraphs over plain HTTP without TLS.
+
+This is useful in environments where subgraphs support HTTP/2 but TLS is not required, such as service meshes, internal networks, or sidecar proxies.
+
+### Configuration
+
+The flag can be set globally for all subgraphs or per-subgraph. Per-subgraph settings override the global default.
+
+#### Global (all subgraphs)
+
+```yaml
+traffic_shaping:
+  all:
+    allow_only_http2: true
+```
+
+#### Per-subgraph
+
+```yaml
+traffic_shaping:
+  subgraphs:
+    accounts:
+      allow_only_http2: true
+```
+
+The default value is `false`, preserving the existing behavior of using HTTP/1.1 for plain HTTP connections and negotiating HTTP/2 via ALPN for TLS connections.
+
 ## 0.0.31 (2026-04-20)
 
 ### Features

@@ -34,7 +34,7 @@ fn main() {
     );
     println!(
         "cargo:rerun-if-changed={}",
-        manifest_dir.join("node_modules").display()
+        out_dir.join("node_modules").display()
     );
     println!(
         "cargo:rerun-if-changed={}",

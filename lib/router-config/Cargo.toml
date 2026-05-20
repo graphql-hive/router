@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-config"
-version = "0.0.31"
+version = "0.0.35"
 edition = "2021"
 publish = true
 license = "MIT"
@@ -20,11 +20,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 http = { workspace = true }
+http-serde = { workspace = true }
 tonic = { workspace = true }
 jsonwebtoken = { workspace = true }
 retry-policies = { workspace = true}
 tracing = { workspace = true }
 regex-automata = { workspace = true }
+ipnet = { workspace = true }
 once_cell = "1.21.3"
 
 schemars = { version = "1.0.4", features = ["url2"] }
