@@ -2,8 +2,10 @@
 hive-router: patch
 ---
 
-# Enhancement/lab 0.1.8
+# Upgrade Laboratory to latest
 
 #1044 by @mskorokhodov
 
 Hive laboratory now supports introspection headers configuration using settings
+
+https://the-guild.dev/graphql/hive/docs/new-laboratory/schema-support#introspection-headers
