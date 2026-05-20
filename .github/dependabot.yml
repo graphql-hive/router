@@ -36,6 +36,10 @@ updates:
         patterns:
           - "tracing"
           - "tracing-subscriber"
+      napi:
+        patterns:
+          - "napi"
+          - "napi-*"
     labels:
       - "dependencies"
       - "rust"
