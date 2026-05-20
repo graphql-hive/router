@@ -52,7 +52,7 @@ tokio = { version = "1.52.3", features = ["full"] }
 tokio-util = { version = "0.7.16" }
 tokio-stream = { version = "0.1.17" }
 rand = "0.10.1"
-jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
+jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
 ntex = { version = "=3.7.2", features = ["tokio", "rustls"] }
 ntex-http = { version = "=1.1.0"}
 ntex-codec = { version = "=1.1.0"}
