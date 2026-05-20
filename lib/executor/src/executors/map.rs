@@ -118,6 +118,7 @@ pub struct SubgraphExecutorMap {
     /// Shared map of active HTTP callback subscriptions
     callback_subscriptions: CallbackSubscriptionsMap,
 }
+
 impl SubgraphExecutorMap {
     pub fn new(
         config: Arc<HiveRouterConfig>,
@@ -217,6 +218,7 @@ impl SubgraphExecutorMap {
         let mut on_end_callbacks = vec![];
 
         let mut execution_result: Option<SubgraphResponse<'exec>> = None;
+
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
             let mut start_payload = OnSubgraphExecuteStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
@@ -248,6 +250,13 @@ impl SubgraphExecutorMap {
             execution_request = start_payload.execution_request;
             executor = start_payload.executor;
         }
+
+        self.telemetry_context.logging.subgraph_request_start(
+            subgraph_name,
+            execution_request.query,
+            execution_request.operation_name,
+            execution_request.variables.as_ref(),
+        );
 
         let mut execution_result = match execution_result {
             Some(execution_result) => execution_result,
@@ -345,6 +354,15 @@ impl SubgraphExecutorMap {
                 execution_result = end_payload.execution_result;
             }
         }
+
+        self.telemetry_context.logging.subgraph_request_end(
+            subgraph_name,
+            execution_result
+                .errors
+                .as_ref()
+                .map(|v| v.len())
+                .unwrap_or(0),
+        );
 
         Ok(execution_result)
     }

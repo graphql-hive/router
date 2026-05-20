@@ -1004,13 +1004,9 @@ impl<'exec> Executor<'exec> {
 
     fn log_error(&self, error: &PlanExecutionError) {
         if let Some(subgraph_name) = error.subgraph_name() {
-            tracing::error!(
-                "Error executing plan with subgraph '{}': {}",
-                subgraph_name,
-                error
-            );
+            tracing::error!(subgraph_name, error = %error, "Error executing plan with subgraph");
         } else {
-            tracing::error!("Error executing plan: {}", error);
+            tracing::error!(error = %error, "Error executing plan");
         }
     }
 
@@ -1576,9 +1572,7 @@ mod tests {
         let executors = SubgraphExecutorMap::from_http_endpoint_map(
             &subgraph_endpoint_map,
             HiveRouterConfig::default().into(),
-            Arc::new(TelemetryContext::from_propagation_config(
-                &Default::default(),
-            )),
+            Arc::new(TelemetryContext::from_config(&Default::default())),
             Arc::new(DashMap::new()),
         )
         .unwrap();
@@ -1693,9 +1687,7 @@ mod tests {
             executors: &SubgraphExecutorMap::from_http_endpoint_map(
                 &subgraph_endpoint_map,
                 HiveRouterConfig::default().into(),
-                Arc::new(TelemetryContext::from_propagation_config(
-                    &Default::default(),
-                )),
+                Arc::new(TelemetryContext::from_config(&Default::default())),
                 Arc::new(DashMap::new()),
             )
             .unwrap(),

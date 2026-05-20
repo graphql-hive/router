@@ -2,6 +2,7 @@ use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_router_internal::{
     http::read_body_stream,
+    logging::context::LoggerContext,
     telemetry::traces::spans::{
         graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
     },
@@ -37,7 +38,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tracing::{error, Instrument};
+use tracing::{debug, error, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
@@ -105,6 +106,7 @@ pub async fn graphql_request_handler(
     schema_state: &Arc<SchemaState>,
     http_server_request_span: &HttpServerRequestSpan,
     response_mode: &mut ResponseMode,
+    logger_context: Arc<LoggerContext>,
 ) -> Result<web::HttpResponse, PipelineError> {
     // If an early CORS response is needed, return it immediately.
     if let Some(early_response) = shared_state
@@ -117,6 +119,7 @@ pub async fn graphql_request_handler(
 
     // agree on the response content type
     *response_mode = req.negotiate()?;
+    debug!(target: "pipeline", %response_mode, "response mode negotiated");
 
     if *response_mode == ResponseMode::Laboratory {
         if shared_state.router_config.laboratory.enabled {
@@ -124,6 +127,7 @@ pub async fn graphql_request_handler(
                 .header(CONTENT_TYPE, TEXT_HTML_MIME)
                 .body(LABORATORY_HTML));
         } else {
+            debug!(target: "pipeline", "responding with not found, graphiql disabled");
             return Ok(web::HttpResponse::NotFound().into());
         }
     }
@@ -146,7 +150,8 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
-        http_server_request_span.record_body_size(body_bytes.len());
+        let req_body_size = body_bytes.len();
+        http_server_request_span.record_body_size(req_body_size);
 
         let mut request_headers = req.headers().clone();
         let request_context = req.read_request_context()?;
@@ -187,6 +192,18 @@ pub async fn graphql_request_handler(
         };
 
         let mut graphql_params = prepared_operation.graphql_params;
+
+        logger_context.graphql_request_start(
+            req_body_size,
+            client_name,
+            client_version,
+            // TODO: In the future, once we merge crates, we can pass `graphql_params` as-is.
+            // At the moment, we can't since it's defined in router, and moving it will cause a major refactoring due to other dependencies.
+            graphql_params.query.as_deref(),
+            graphql_params.operation_name.as_deref(),
+            &graphql_params.variables,
+            graphql_params.extensions.as_ref(),
+          );
 
         write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
 
@@ -300,7 +317,7 @@ pub async fn graphql_request_handler(
             if let Some(OperationKind::Mutation) =
                 normalize_payload.operation_for_plan.operation_kind
             {
-                error!("Mutation is not allowed over GET, stopping");
+                error!(target: "pipeline", "Mutation is not allowed over GET, stopping");
                 return Err(PipelineError::MutationNotAllowedOverHttpGet);
             }
         }
@@ -420,6 +437,8 @@ pub async fn graphql_request_handler(
                 GraphQLResponseStatus::Ok
             },
         );
+
+        logger_context.graphql_request_end(shared_response.error_count());
 
         shared_response.into_response(response_mode)
     }

@@ -162,7 +162,6 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             execution_request.custom_scalar_paths.cloned();
         let subscription_id = Ulid::new().to_string();
         let verifier = Ulid::new().to_string();
-
         let body = self.build_request_body(&mut execution_request, &subscription_id, &verifier)?;
 
         // all subscriptions emit events into the shared active subscriptions broadcaster
@@ -201,10 +200,11 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         *req.headers_mut() = headers;
 
         debug!(
+            target: "executor.http_callback",
             subscription_id = %subscription_id,
-            "sending HTTP callback subscription request to subgraph {} at {}",
-            self.subgraph_name,
-            self.endpoint.to_string()
+            subgraph_name = self.subgraph_name,
+            endpoint = self.endpoint.to_string(),
+            "sending HTTP callback subscription request to subgraph",
         );
 
         let req_fut = self.http_client.request(req);
@@ -219,10 +219,12 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         };
 
         debug!(
+            target: "executor.http_callback",
             subscription_id = %subscription_id,
-            "HTTP callback subscription request to {} completed, status: {}",
-            self.endpoint.to_string(),
-            res.status()
+            subgraph_name = self.subgraph_name,
+            endpoint = self.endpoint.to_string(),
+            status = res.status().as_str(),
+            "HTTP callback subscription request completed",
         );
 
         if !res.status().is_success() {
@@ -234,6 +236,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 .and_then(|b| std::str::from_utf8(b).ok())
                 .unwrap_or("(no body)");
             error!(
+                target: "executor.http_callback",
                 subscription_id = %subscription_id,
                 status = %status,
                 body = body_str,
@@ -246,7 +249,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             // `guard` is held here; dropping the stream drops `guard`, removing the map entry.
             let _guard = guard;
 
-            trace!(subscription_id = %subscription_id, "HTTP callback subscription stream started");
+            trace!(target: "executor.http_callback", subscription_id = %subscription_id, "HTTP callback subscription stream started");
 
             while let Some(msg) = rx.recv().await {
                 match msg {
@@ -258,9 +261,9 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                         ) {
                             Ok(response) => yield Ok(response),
                             Err(e) => {
-                                error!(
+                                error!(target: "executor.http_callback",
                                     subscription_id = %subscription_id,
-                                    error = %e,
+                                    erro = %e,
                                     "failed to deserialize callback payload"
                                 );
                                 yield Err(e);
@@ -283,7 +286,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 }
             }
 
-            trace!(subscription_id = %subscription_id, "HTTP callback subscription stream ended");
+            trace!(target: "executor.http_callback", subscription_id = %subscription_id, "HTTP callback subscription stream ended");
         }))
     }
 }

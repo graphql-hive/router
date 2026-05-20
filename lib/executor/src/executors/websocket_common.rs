@@ -5,7 +5,7 @@ use ntex::{
     util::Bytes,
     ws::{self, WsSink},
 };
-use tracing::{debug, error, warn};
+use tracing::{error, warn};
 
 use super::graphql_transport_ws::{CloseCode, ConnectionInitPayload};
 
@@ -87,7 +87,7 @@ pub async fn heartbeat<T>(
             _ = tokio::time::sleep(HEARTBEAT_INTERVAL) => {
                 if Instant::now().duration_since(state.borrow().last_heartbeat) > HEARTBEAT_TIMEOUT
                 {
-                    debug!("WebSocket heartbeat timeout, closing connection");
+                    warn!(target: "websocket.common", "WebSocket heartbeat timeout, closing connection");
                     let _ = sink
                         .send(ws::Message::Close(Some(
                             // client is violating the WebSocket protocol by not responding
@@ -103,7 +103,7 @@ pub async fn heartbeat<T>(
                     .await
                     .is_err()
                 {
-                    warn!("Failed to send WebSocket heartbeat ping, stopping heartbeat task");
+                    warn!(target: "websocket.common", "Failed to send WebSocket heartbeat ping, stopping heartbeat task");
                     return;
                 }
             }
@@ -125,7 +125,7 @@ pub async fn handshake_timeout<T>(
             // handshake_received should always be here false, but double check
             // just to avoid any potential race conditions
             if !state.borrow().handshake_received {
-                debug!("WebSocket handshake timeout, closing connection");
+                warn!(target: "websocket.common", "WebSocket handshake timeout, closing connection");
                 let _ = sink.send(timeout_close_code.into()).await;
             }
         }
@@ -156,7 +156,7 @@ pub fn parse_frame_to_text<T>(
             match String::from_utf8(text.to_vec()) {
                 Ok(s) => Ok(s),
                 Err(e) => {
-                    error!("Invalid UTF-8 in WebSocket message: {}", e);
+                    error!(target: "websocket.common", "Invalid UTF-8 in WebSocket message: {}", e);
                     Err(FrameNotParsedToText::Message(ws::Message::Close(Some(
                         // this one is not in the CloseCode enum because it's an internal WebSocket
                         // transport error that has nothing to do with GraphQL over WebSockets
@@ -187,7 +187,8 @@ pub fn parse_frame_to_text<T>(
         )))),
         ws::Frame::Close(reason) => {
             if let Some(close_reason) = reason {
-                debug!(
+                warn!(
+                    target: "websocket.common",
                     code = ?close_reason.code,
                     description = ?close_reason.description,
                     "WebSocket connection closed",

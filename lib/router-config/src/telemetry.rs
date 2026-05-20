@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::log::LoggingConfig;
 use crate::primitives::http_header::HttpHeaderName;
 use crate::primitives::ip_network::IpNetwork;
 use crate::primitives::value_or_expression::ValueOrExpression;
@@ -22,6 +23,8 @@ pub struct TelemetryConfig {
     pub tracing: TracingConfig,
     #[serde(default)]
     pub metrics: MetricsConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
     #[serde(default)]
     pub resource: ResourceConfig,
     #[serde(default)]

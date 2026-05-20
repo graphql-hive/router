@@ -138,7 +138,7 @@ pub async fn collect_usage_report<'a>(
         .add_report_with_request(execution_report, request_details)
         .await
     {
-        tracing::error!("Failed to send usage report: {}", err);
+        tracing::error!(error = %err, "Failed to send usage report");
     }
 }
 

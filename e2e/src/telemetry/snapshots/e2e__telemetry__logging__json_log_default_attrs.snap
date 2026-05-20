@@ -1,0 +1,19 @@
+---
+source: e2e/src/telemetry/logging.rs
+expression: http_start
+---
+{
+  "headers": {
+    "accept": "application/graphql-response+json",
+    "user-agent": null
+  },
+  "level": "INFO",
+  "message": "http request started",
+  "method": "POST",
+  "path": "/graphql",
+  "span": {
+    "name": "request",
+    "req_id": "[req_id]"
+  },
+  "timestamp": "[timestamp]"
+}

@@ -1,4 +1,4 @@
-use std::{fmt, str::FromStr};
+use std::{borrow::Borrow, fmt, str::FromStr};
 
 use http::HeaderName;
 use schemars::{json_schema, JsonSchema};
@@ -10,6 +10,12 @@ pub struct HttpHeaderName(HeaderName);
 impl From<HeaderName> for HttpHeaderName {
     fn from(header_name: HeaderName) -> Self {
         HttpHeaderName(header_name)
+    }
+}
+
+impl Borrow<HeaderName> for HttpHeaderName {
+    fn borrow(&self) -> &HeaderName {
+        &self.0
     }
 }
 

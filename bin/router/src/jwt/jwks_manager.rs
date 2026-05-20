@@ -29,7 +29,7 @@ impl JwksManager {
             .filter_map(|v| match v.get_jwk_set() {
                 Ok(set) => Some(set),
                 Err(err) => {
-                    error!("Failed to use JWK set: {}, ignoring", err);
+                    error!(error = %err, "Failed to use JWK set, ignoring");
 
                     None
                 }
@@ -79,21 +79,23 @@ impl BackgroundTask for JwksSourceTask {
             ..
         } = &self.0.config
         {
-            debug!(
-                "Starting remote jwks polling for source: {:?}",
-                self.0.config
+            info!(
+              source = ?self.0.config,
+                "Starting polling for remote jwks",
             );
             let mut tokio_interval = tokio::time::interval(*interval);
 
             loop {
                 tokio::select! {
                     _ = tokio_interval.tick() => { match self.0.load_and_store_jwks().await {
-                        Ok(_) => {}
+                        Ok(_) => {
+                          debug!("jwks loaded and stored successfully");
+                        }
                         Err(err) => {
-                            error!("Failed to load remote jwks: {}", err);
+                          error!(error = %err, "Failed to load remote jwks");
                         }
                     } }
-                    _ = token.cancelled() => { info!("Jwks source shutting down."); return; }
+                    _ = token.cancelled() => { debug!("JWKS source shutting down"); return; }
                 }
             }
         }
@@ -117,7 +119,7 @@ impl JwksSource {
         let jwks_str = match &self.config {
             JwksProviderSourceConfig::Remote { url, .. } => {
                 let client = reqwest::Client::new();
-                debug!("loading jwks from a remote source: {}", url);
+                debug!(url, "loading jwks from a remote source");
 
                 let response_text = client
                     .get(url)
@@ -131,7 +133,7 @@ impl JwksSource {
                 response_text
             }
             JwksProviderSourceConfig::File { file, .. } => {
-                debug!("loading jwks from a file source: {}", file.absolute);
+                debug!(path = file.absolute, "loading jwks from a file source");
 
                 let file_contents = read_to_string(&file.absolute)
                     .await
