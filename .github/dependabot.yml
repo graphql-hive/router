@@ -40,6 +40,12 @@ updates:
         patterns:
           - "napi"
           - "napi-*"
+      serde:
+        patterns:
+          - "serde"
+          - "serde-*"
+          - "serde_json"
+          - "serde_with"
     labels:
       - "dependencies"
       - "rust"
