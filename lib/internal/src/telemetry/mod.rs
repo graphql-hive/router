@@ -56,8 +56,10 @@ impl TelemetryContext {
         config: &hive_router_config::telemetry::tracing::TracingPropagationConfig,
         meter: Option<Meter>,
     ) -> Self {
+        #[allow(deprecated)]
         use otel::opentelemetry_jaeger_propagator::Propagator as JaegerPropagator;
         use otel::opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
+        #[allow(deprecated)]
         use otel::opentelemetry_zipkin::Propagator as B3Propagator;
 
         let mut propagators: Vec<Box<dyn TextMapPropagator + Send + Sync>> = Vec::new();
@@ -71,10 +73,12 @@ impl TelemetryContext {
         }
 
         if config.b3 {
+            #[allow(deprecated)]
             propagators.push(Box::new(B3Propagator::new()));
         }
 
         if config.jaeger {
+            #[allow(deprecated)]
             propagators.push(Box::new(JaegerPropagator::new()));
         }
 

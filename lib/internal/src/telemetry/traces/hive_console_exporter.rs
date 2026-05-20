@@ -449,7 +449,7 @@ impl<E: SpanExporter> SpanExporter for HiveConsoleExporter<E> {
         self.inner.export(batch).await
     }
 
-    fn shutdown(&mut self) -> OTelSdkResult {
+    fn shutdown(&self) -> OTelSdkResult {
         tracing::info!(
             component = "telemetry",
             layer = "hive_console_exporter",
@@ -464,7 +464,7 @@ impl<E: SpanExporter> SpanExporter for HiveConsoleExporter<E> {
         result
     }
 
-    fn force_flush(&mut self) -> OTelSdkResult {
+    fn force_flush(&self) -> OTelSdkResult {
         self.inner.force_flush()
     }
 
