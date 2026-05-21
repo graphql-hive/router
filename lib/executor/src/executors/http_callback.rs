@@ -71,16 +71,19 @@ pub struct HttpCallbackSubgraphExecutor {
     pub header_map: HeaderMap,
     pub callback_base_url: String,
     pub heartbeat_interval_ms: u64,
+    pub strip_operation_name: bool,
     pub active_subscriptions: CallbackSubscriptionsMap,
 }
 
 impl HttpCallbackSubgraphExecutor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         subgraph_name: String,
         endpoint: http::Uri,
         http_client: Arc<HttpClient>,
         callback_base_url: String,
         heartbeat_interval_ms: u64,
+        strip_operation_name: bool,
         active_subscriptions: CallbackSubscriptionsMap,
     ) -> Self {
         let mut header_map = HeaderMap::new();
@@ -104,6 +107,7 @@ impl HttpCallbackSubgraphExecutor {
             header_map,
             callback_base_url,
             heartbeat_interval_ms,
+            strip_operation_name,
             active_subscriptions,
         }
     }
@@ -114,6 +118,10 @@ impl HttpCallbackSubgraphExecutor {
         subscription_id: &str,
         verifier: &str,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
+        if self.strip_operation_name {
+            execution_request.operation_name = None;
+        }
+
         let callback_url = format!(
             "{}/{}",
             self.callback_base_url.trim_end_matches('/'),
@@ -285,5 +293,76 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
 
             trace!(subscription_id = %subscription_id, "HTTP callback subscription stream ended");
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executors::tls::build_https_connector;
+    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+
+    fn make_request<'a>(
+        query: &'a str,
+        operation_name: Option<&'a str>,
+    ) -> SubgraphExecutionRequest<'a> {
+        SubgraphExecutionRequest {
+            query,
+            dedupe: false,
+            operation_name,
+            variables: None,
+            headers: HeaderMap::new(),
+            raw_variable_values: None,
+            extensions: None,
+            custom_scalar_paths: None,
+        }
+    }
+
+    fn make_executor(strip_operation_name: bool) -> HttpCallbackSubgraphExecutor {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let http_client = Arc::new(
+            Client::builder(TokioExecutor::new()).build(build_https_connector(None).unwrap()),
+        );
+
+        HttpCallbackSubgraphExecutor::new(
+            "products".to_string(),
+            "http://products.example/graphql".parse().unwrap(),
+            http_client,
+            "https://router.example/callbacks/".to_string(),
+            5000,
+            strip_operation_name,
+            Arc::new(DashMap::new()),
+        )
+    }
+
+    #[test]
+    fn callback_body_includes_operation_name_and_subscription_extensions() {
+        let executor = make_executor(false);
+        let mut request = make_request("subscription OnPing { ping }", Some("OnPing"));
+
+        let body = executor
+            .build_request_body(&mut request, "sub-1", "secret")
+            .unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert!(body_str.contains(r#""operationName":"OnPing""#));
+        assert!(body_str.contains(r#""callbackUrl":"https://router.example/callbacks/sub-1""#));
+        assert!(body_str.contains(r#""subscriptionId":"sub-1""#));
+        assert!(body_str.contains(r#""verifier":"secret""#));
+        assert!(body_str.contains(r#""heartbeatIntervalMs":5000"#));
+    }
+
+    #[test]
+    fn callback_body_omits_operation_name_when_strip_enabled() {
+        let executor = make_executor(true);
+        let mut request = make_request("subscription OnPing { ping }", Some("OnPing"));
+
+        let body = executor
+            .build_request_body(&mut request, "sub-1", "secret")
+            .unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert!(!body_str.contains("operationName"));
+        assert!(body_str.contains(r#""subscriptionId":"sub-1""#));
     }
 }

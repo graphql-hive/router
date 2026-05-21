@@ -52,6 +52,7 @@ pub struct HTTPSubgraphExecutor {
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
     pub dedupe_enabled: bool,
+    pub strip_operation_name: bool,
     pub in_flight_requests: InflightRequestsMap,
     pub telemetry_context: Arc<TelemetryContext>,
     pub config: Arc<HiveRouterConfig>,
@@ -59,6 +60,7 @@ pub struct HTTPSubgraphExecutor {
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
 const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
+const OPERATION_NAME_PREFIX: &[u8] = b",\"operationName\":";
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 
@@ -80,6 +82,10 @@ pub fn build_request_body(
     let mut body = Vec::with_capacity(4096);
     body.put(FIRST_QUOTE_STR);
     write_and_escape_string(&mut body, execution_request.query);
+    if let Some(operation_name) = execution_request.operation_name {
+        body.put(OPERATION_NAME_PREFIX);
+        write_and_escape_string(&mut body, operation_name);
+    }
     let mut first_variable = true;
     if let Some(variables) = &execution_request.variables {
         for (variable_name, variable_value) in variables {
@@ -142,6 +148,7 @@ impl HTTPSubgraphExecutor {
         http_client: Arc<HttpClient>,
         semaphore: Arc<Semaphore>,
         dedupe_enabled: bool,
+        strip_operation_name: bool,
         in_flight_requests: InflightRequestsMap,
         telemetry_context: Arc<TelemetryContext>,
         config: Arc<HiveRouterConfig>,
@@ -163,6 +170,7 @@ impl HTTPSubgraphExecutor {
             header_map,
             semaphore,
             dedupe_enabled,
+            strip_operation_name,
             in_flight_requests,
             telemetry_context,
             config,
@@ -299,6 +307,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         timeout: Option<Duration>,
         plugin_req_state: Option<&'a PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        if self.strip_operation_name {
+            execution_request.operation_name = None;
+        }
         let mut body = build_request_body(&execution_request)?;
 
         self.header_map.iter().for_each(|(key, value)| {
@@ -487,12 +498,15 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
     async fn subscribe<'a>(
         &self,
-        execution_request: SubgraphExecutionRequest<'a>,
+        mut execution_request: SubgraphExecutionRequest<'a>,
         connection_timeout: Option<Duration>,
     ) -> Result<
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
+        if self.strip_operation_name {
+            execution_request.operation_name = None;
+        }
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         let body = build_request_body(&execution_request)?;
 
@@ -661,5 +675,71 @@ impl SubgraphHttpResponse {
                 resp
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_request<'a>(
+        query: &'a str,
+        operation_name: Option<&'a str>,
+    ) -> SubgraphExecutionRequest<'a> {
+        SubgraphExecutionRequest {
+            query,
+            dedupe: false,
+            operation_name,
+            variables: None,
+            headers: HeaderMap::new(),
+            raw_variable_values: None,
+            extensions: None,
+            custom_scalar_paths: None,
+        }
+    }
+
+    #[test]
+    fn body_includes_operation_name_when_present() {
+        let request = make_request("query Foo { __typename }", Some("Foo"));
+        let body = build_request_body(&request).unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            body_str,
+            r#"{"query":"query Foo { __typename }","operationName":"Foo"}"#
+        );
+    }
+
+    #[test]
+    fn body_omits_operation_name_when_absent() {
+        let request = make_request("query { __typename }", None);
+        let body = build_request_body(&request).unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert_eq!(body_str, r#"{"query":"query { __typename }"}"#);
+    }
+
+    #[test]
+    fn operation_name_is_json_escaped() {
+        let request = make_request("query { __typename }", Some("With\"Quote"));
+        let body = build_request_body(&request).unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert!(body_str.contains(r#""operationName":"With\"Quote""#));
+    }
+
+    #[test]
+    fn body_keeps_operation_name_with_variables_and_extensions() {
+        let mut request = make_request("query Foo($id: ID!) { node(id: $id) { id } }", Some("Foo"));
+        request.raw_variable_values = Some(vec![("id", b"1".to_vec())]);
+        request.extensions = Some(std::collections::HashMap::from([(
+            "trace".to_string(),
+            sonic_rs::json!({ "enabled": true }),
+        )]));
+
+        let body = build_request_body(&request).unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_eq!(
+            body_str,
+            r#"{"query":"query Foo($id: ID!) { node(id: $id) { id } }","operationName":"Foo","variables":{"id":1},"extensions":{"trace":{"enabled":true}}}"#
+        );
     }
 }

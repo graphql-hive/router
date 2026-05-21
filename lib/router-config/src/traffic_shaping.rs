@@ -108,6 +108,12 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// This will make the subgraph requests never fall back to HTTP/1.1,
     /// and will fail if the subgraph doesn't support HTTP/2.
     pub allow_only_http2: Option<bool>,
+
+    /// When set to `true`, the router omits the `operationName` field from the JSON
+    /// body sent to this subgraph. When `false` (the default), the planner-assigned
+    /// operation name is forwarded, which makes upstream subgraph logs, traces and
+    /// APM tools much easier to correlate with the original client operation.
+    pub strip_operation_name: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -167,6 +173,13 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// and will fail if the subgraph doesn't support HTTP/2.
     #[serde(default)]
     pub allow_only_http2: bool,
+
+    /// When set to `true`, the router omits the `operationName` field from the JSON
+    /// body sent to subgraphs. When `false` (the default), the planner-assigned
+    /// operation name is forwarded, which makes upstream subgraph logs, traces and
+    /// APM tools much easier to correlate with the original client operation.
+    #[serde(default)]
+    pub strip_operation_name: bool,
 }
 
 fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
@@ -200,7 +213,48 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             circuit_breaker: default_circuit_breaker_config(),
             tls: None,
             allow_only_http2: false,
+            strip_operation_name: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse_yaml_config;
+
+    #[test]
+    fn strip_operation_name_defaults_to_false() {
+        let config = TrafficShapingExecutorGlobalConfig::default();
+
+        assert!(!config.strip_operation_name);
+    }
+
+    #[test]
+    fn strip_operation_name_deserializes_global_and_subgraph_values() {
+        let config = parse_yaml_config(
+            r#"
+traffic_shaping:
+  all:
+    strip_operation_name: true
+  subgraphs:
+    products:
+      strip_operation_name: false
+"#
+            .to_string(),
+        )
+        .unwrap();
+
+        assert!(config.traffic_shaping.all.strip_operation_name);
+        assert_eq!(
+            config
+                .traffic_shaping
+                .subgraphs
+                .get("products")
+                .unwrap()
+                .strip_operation_name,
+            Some(false)
+        );
     }
 }
 

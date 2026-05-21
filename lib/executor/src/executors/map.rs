@@ -93,6 +93,7 @@ struct ResolvedSubgraphConfig<'a> {
     client: Arc<HttpClient>,
     timeout_config: &'a DurationOrExpression,
     dedupe_enabled: bool,
+    strip_operation_name: bool,
 }
 
 pub type InflightRequestsMap = InFlightMap<u64, (SubgraphHttpResponse, u64)>;
@@ -563,6 +564,7 @@ impl SubgraphExecutorMap {
                     subgraph_config.client,
                     semaphore,
                     subgraph_config.dedupe_enabled,
+                    subgraph_config.strip_operation_name,
                     self.in_flight_requests.clone(),
                     self.telemetry_context.clone(),
                     self.config.clone(),
@@ -665,6 +667,7 @@ impl SubgraphExecutorMap {
                     subgraph_config.client,
                     callback_config.public_url.to_string(),
                     heartbeat_interval_ms,
+                    subgraph_config.strip_operation_name,
                     self.callback_subscriptions.clone(),
                 )
                 .to_boxed_arc();
@@ -689,6 +692,7 @@ impl SubgraphExecutorMap {
             client: self.client.clone(),
             timeout_config: &self.config.traffic_shaping.all.request_timeout,
             dedupe_enabled: self.config.traffic_shaping.all.dedupe_enabled,
+            strip_operation_name: self.config.traffic_shaping.all.strip_operation_name,
         };
 
         let Some(subgraph_config) = self.config.traffic_shaping.subgraphs.get(subgraph_name) else {
@@ -729,6 +733,10 @@ impl SubgraphExecutorMap {
 
         if let Some(custom_timeout) = &subgraph_config.request_timeout {
             config.timeout_config = custom_timeout;
+        }
+
+        if let Some(strip_operation_name) = subgraph_config.strip_operation_name {
+            config.strip_operation_name = strip_operation_name;
         }
 
         Ok(config)
@@ -891,5 +899,84 @@ pub fn compile_duration_or_expression(
             let hints = ProgramHints::from_program(&program);
             Ok(ValueOrProgram::Program(Box::new(program), hints))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hive_router_config::{
+        telemetry::tracing::TracingPropagationConfig,
+        traffic_shaping::TrafficShapingExecutorSubgraphConfig,
+    };
+
+    fn make_subgraph_config(
+        strip_operation_name: Option<bool>,
+    ) -> TrafficShapingExecutorSubgraphConfig {
+        TrafficShapingExecutorSubgraphConfig {
+            pool_idle_timeout: None,
+            dedupe_enabled: None,
+            request_timeout: None,
+            circuit_breaker: None,
+            tls: None,
+            allow_only_http2: None,
+            strip_operation_name,
+        }
+    }
+
+    fn make_map(config: HiveRouterConfig) -> SubgraphExecutorMap {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let global_timeout =
+            compile_duration_or_expression(&config.traffic_shaping.all.request_timeout, None)
+                .unwrap();
+
+        SubgraphExecutorMap::new(
+            Arc::new(config),
+            global_timeout,
+            Arc::new(TelemetryContext::from_propagation_config(
+                &TracingPropagationConfig::default(),
+            )),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn resolve_subgraph_config_uses_global_strip_operation_name() {
+        let mut config = HiveRouterConfig::default();
+        config.traffic_shaping.all.strip_operation_name = true;
+        let map = make_map(config);
+
+        let resolved = map.resolve_subgraph_config("products").unwrap();
+
+        assert!(resolved.strip_operation_name);
+    }
+
+    #[test]
+    fn resolve_subgraph_config_allows_subgraph_to_disable_global_strip_operation_name() {
+        let mut config = HiveRouterConfig::default();
+        config.traffic_shaping.all.strip_operation_name = true;
+        config
+            .traffic_shaping
+            .subgraphs
+            .insert("products".to_string(), make_subgraph_config(Some(false)));
+        let map = make_map(config);
+
+        let resolved = map.resolve_subgraph_config("products").unwrap();
+
+        assert!(!resolved.strip_operation_name);
+    }
+
+    #[test]
+    fn resolve_subgraph_config_allows_subgraph_to_enable_strip_operation_name() {
+        let mut config = HiveRouterConfig::default();
+        config
+            .traffic_shaping
+            .subgraphs
+            .insert("products".to_string(), make_subgraph_config(Some(true)));
+        let map = make_map(config);
+
+        let resolved = map.resolve_subgraph_config("products").unwrap();
+
+        assert!(resolved.strip_operation_name);
     }
 }
