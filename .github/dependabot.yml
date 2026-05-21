@@ -61,17 +61,6 @@ updates:
       - "dependencies"
       - "javascript"
 
-  - package-ecosystem: "npm"
-    directory: "/lib/node-addon"
-    schedule:
-      interval: "daily"
-    open-pull-requests-limit: 5
-    cooldown:
-      default-days: 5
-    labels:
-      - "dependencies"
-      - "javascript"
-
   - package-ecosystem: "github-actions"
     directory: "/"
     cooldown:
