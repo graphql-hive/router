@@ -7,7 +7,8 @@ use crate::{
     },
     plugin_context::PluginContext,
     plugin_trait::{
-        from_graphql_error_to_bytes, EndHookPayload, FromGraphQLErrorToResponse, StartHookPayload,
+        from_graphql_errors_to_bytes, EndHookPayload, FromGraphQLErrorToResponse,
+        FromGraphQLErrorsToResponse, StartHookPayload,
     },
     request_context::RequestContextPluginApi,
     response::graphql_error::GraphQLError,
@@ -80,7 +81,16 @@ pub type OnSubgraphHttpResponseHookResult<'exec> = crate::plugin_trait::EndHookR
 
 impl FromGraphQLErrorToResponse for SubgraphHttpResponse {
     fn from_graphql_error_to_response(error: GraphQLError, status: http::StatusCode) -> Self {
-        let body_bytes = from_graphql_error_to_bytes(error);
+        Self::from_graphql_errors_to_response(vec![error], status)
+    }
+}
+
+impl FromGraphQLErrorsToResponse for SubgraphHttpResponse {
+    fn from_graphql_errors_to_response(
+        errors: Vec<GraphQLError>,
+        status: http::StatusCode,
+    ) -> Self {
+        let body_bytes = from_graphql_errors_to_bytes(errors);
         SubgraphHttpResponse {
             body: Bytes::from(body_bytes),
             status,
