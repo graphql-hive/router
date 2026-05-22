@@ -8,8 +8,8 @@ use sonic_rs::json;
 use crate::execution::plan::PlanExecutionOutput;
 use crate::plugin_context::{PluginContext, RouterHttpRequest};
 use crate::plugin_trait::{
-    EndHookPayload, EndHookResult, FromGraphQLErrorToResponse, FromGraphQLErrorsToResponse,
-    StartHookPayload, StartHookResult,
+    from_graphql_errors_to_bytes, EndHookPayload, EndHookResult, FromGraphQLErrorToResponse,
+    FromGraphQLErrorsToResponse, StartHookPayload, StartHookResult,
 };
 use crate::request_context::RequestContextPluginApi;
 use crate::response::graphql_error::GraphQLError;
@@ -187,12 +187,11 @@ impl FromGraphQLErrorsToResponse for PlanExecutionOutput {
         status_code: http::StatusCode,
     ) -> Self {
         let error_count = errors.len();
-        let body_json = json!({
-            "errors": errors,
-        });
         PlanExecutionOutput {
-            body: sonic_rs::to_vec(&body_json).unwrap_or_default(),
+            body: from_graphql_errors_to_bytes(errors),
             error_count,
+            // CORS is applied later to the final HTTP response; this only skips
+            // subgraph/early-response header aggregation for plugin-generated errors.
             response_headers_aggregator: None,
             status_code,
         }
