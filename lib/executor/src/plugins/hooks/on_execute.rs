@@ -190,8 +190,6 @@ impl FromGraphQLErrorsToResponse for PlanExecutionOutput {
         PlanExecutionOutput {
             body: from_graphql_errors_to_bytes(errors),
             error_count,
-            // CORS is applied later to the final HTTP response; this only skips
-            // subgraph/early-response header aggregation for plugin-generated errors.
             response_headers_aggregator: None,
             status_code,
         }
