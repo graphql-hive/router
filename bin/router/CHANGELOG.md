@@ -116,6 +116,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.60 (2026-05-21)
+
+### Fixes
+
+#### Upgrade Laboratory to latest
+
+##1044 by @mskorokhodov
+
+Hive laboratory now supports introspection headers configuration using settings
+
+https://the-guild.dev/graphql/hive/docs/new-laboratory/schema-support#introspection-headers
+
 ## 0.0.59 (2026-05-19)
 
 ### Fixes

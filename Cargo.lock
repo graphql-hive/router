@@ -2408,7 +2408,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.59"
+version = "0.0.60"
 dependencies = [
  "ahash",
  "anyhow",
