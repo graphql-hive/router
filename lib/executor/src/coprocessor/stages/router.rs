@@ -14,13 +14,16 @@ use ntex::http::{
 use ntex::util::Bytes as NtexBytes;
 use ntex::web::{self, DefaultError};
 
-use crate::coprocessor::protocol::COPROCESSOR_VERSION;
 use crate::coprocessor::stage::{
     compile_condition, evaluate_condition, CoprocessorRequest, CoprocessorRequestBody,
     CoprocessorResponseBody, HeaderMapJsonRef, Stage, StageResponsePayload,
 };
 use crate::request_context::SelectedRequestContext;
 use crate::{coprocessor::error::CoprocessorError, request_context::SharedRequestContext};
+use crate::{
+    coprocessor::protocol::COPROCESSOR_VERSION,
+    execution::client_request_details::ntex_header_map_to_vrl_value,
+};
 
 pub struct RouterRequestStage {
     condition: Option<BooleanOrProgram>,
@@ -108,7 +111,9 @@ impl Stage for RouterRequestStage {
             hints.context_builder(|root| {
                 root.insert_object("request", |req| {
                     req.insert_lazy("method", || input.request.method().as_str().into())
-                        .insert_lazy("headers", || input.request.headers().to_vrl_value())
+                        .insert_lazy("headers", || {
+                            ntex_header_map_to_vrl_value(input.request.headers())
+                        })
                         .insert_lazy("url", || input.request.uri().to_vrl_value());
                 });
             })
@@ -200,13 +205,15 @@ impl Stage for RouterResponseStage {
                         input.response.request().method().as_str().into()
                     })
                     .insert_lazy("headers", || {
-                        input.response.request().headers().to_vrl_value()
+                        ntex_header_map_to_vrl_value(input.response.request().headers())
                     })
                     .insert_lazy("url", || input.response.request().uri().to_vrl_value());
                 })
                 .insert_object("response", |res| {
-                    res.insert_lazy("headers", || input.response.headers().to_vrl_value())
-                        .insert_lazy("status_code", || input.response.status().as_u16().into());
+                    res.insert_lazy("headers", || {
+                        ntex_header_map_to_vrl_value(input.response.headers())
+                    })
+                    .insert_lazy("status_code", || input.response.status().as_u16().into());
                 });
             })
         })

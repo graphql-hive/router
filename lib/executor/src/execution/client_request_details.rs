@@ -141,9 +141,24 @@ impl From<&ClientRequestDetails<'_>> for Value {
     }
 }
 
+pub fn ntex_header_map_to_vrl_value(headers: &NtexHeaderMap) -> Value {
+    let mut obj = BTreeMap::new();
+
+    for (header_name, header_value) in headers.iter() {
+        if let Ok(value) = header_value.to_str() {
+            obj.insert(
+                header_name.as_str().into(),
+                Value::Bytes(Bytes::from(value.to_owned())),
+            );
+        }
+    }
+
+    Value::Object(obj)
+}
+
 fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Sized)) -> Value {
     // .request.headers
-    let headers_value = details.headers().to_vrl_value();
+    let headers_value = ntex_header_map_to_vrl_value(details.headers());
 
     // .request.url
     let url_value = details.url().to_vrl_value();

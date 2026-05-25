@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use crate::expressions::{lib::ToVrlValue, FromVrlValue};
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Uri};
-use ntex::http::HeaderMap as NtexHeaderMap;
 use vrl::core::Value as VrlValue;
 
 /// Error type for HeaderValue conversion failures
@@ -63,21 +62,6 @@ impl FromVrlValue for HeaderValue {
             VrlValue::Object(_) => Err(HeaderValueConversionError::UnsupportedObject),
             VrlValue::Null => Err(HeaderValueConversionError::UnsupportedNull),
         }
-    }
-}
-
-impl ToVrlValue for NtexHeaderMap {
-    fn to_vrl_value(&self) -> VrlValue {
-        let mut obj = BTreeMap::new();
-        for (header_name, header_value) in self.iter() {
-            if let Ok(value) = header_value.to_str() {
-                obj.insert(
-                    header_name.as_str().into(),
-                    VrlValue::Bytes(Bytes::from(value.to_owned())),
-                );
-            }
-        }
-        VrlValue::Object(obj)
     }
 }
 

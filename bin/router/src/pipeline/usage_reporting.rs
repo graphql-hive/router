@@ -154,3 +154,22 @@ impl BackgroundTask for UsageAgentTask {
         self.0.start_flush_interval(&token).await
     }
 }
+
+pub fn request_details_from_ntex_request(req: &ntex::web::HttpRequest) -> RequestDetails {
+    let headers = req
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|val_str| (name.to_string(), val_str.to_string()))
+        })
+        .collect();
+
+    RequestDetails {
+        method: req.method().clone(),
+        url: req.uri().clone(),
+        headers,
+    }
+}

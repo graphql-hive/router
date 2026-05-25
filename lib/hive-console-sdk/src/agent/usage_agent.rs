@@ -335,27 +335,6 @@ impl<'req, TBody> From<&'req http::Request<TBody>> for RequestDetails {
     }
 }
 
-impl<'req> From<&'req ntex::web::HttpRequest> for RequestDetails {
-    fn from(req: &'req ntex::web::HttpRequest) -> Self {
-        let headers = req
-            .headers()
-            .iter()
-            .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|val_str| (name.to_string(), val_str.to_string()))
-            })
-            .collect();
-
-        RequestDetails {
-            method: req.method().clone(),
-            url: req.uri().clone(),
-            headers,
-        }
-    }
-}
-
 impl From<RequestDetails> for VrlValue {
     fn from(details: RequestDetails) -> Self {
         let mut merged_headers: BTreeMap<String, String> = BTreeMap::new();
