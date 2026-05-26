@@ -406,7 +406,7 @@ pub async fn graphql_request_handler(
                         "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
                     ),
                 shared_response.error_count(),
-                Some(usage_reporting::request_details_from_ntex_request(&*req)),
+                Some(usage_reporting::request_details_from_ntex_request(req)),
             )
             .await;
         }
