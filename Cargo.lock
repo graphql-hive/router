@@ -2492,7 +2492,7 @@ dependencies = [
  "reqwest",
  "reqwest-middleware",
  "reqwest-retry 0.8.0",
- "retry-policies 0.5.1",
+ "retry-policies 0.5.2",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2558,7 +2558,7 @@ dependencies = [
  "reqwest",
  "reqwest-middleware",
  "reqwest-retry 0.8.0",
- "retry-policies 0.5.1",
+ "retry-policies 0.5.2",
  "rustls",
  "serde",
  "serde_json",
@@ -2590,7 +2590,7 @@ dependencies = [
  "jsonwebtoken",
  "once_cell",
  "regex-automata",
- "retry-policies 0.5.1",
+ "retry-policies 0.5.2",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -5624,7 +5624,7 @@ dependencies = [
  "hyper",
  "reqwest",
  "reqwest-middleware",
- "retry-policies 0.5.1",
+ "retry-policies 0.5.2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -5642,11 +5642,11 @@ dependencies = [
 
 [[package]]
 name = "retry-policies"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46a4bd6027df676bcb752d3724db0ea3c0c5fc1dd0376fec51ac7dcaf9cc69be"
+checksum = "dc05fbf560421a0357a750cbe78c7ca19d4923918490daabba313d5dbc871e47"
 dependencies = [
- "rand 0.9.4",
+ "rand 0.10.1",
 ]
 
 [[package]]
