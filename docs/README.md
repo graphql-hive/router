@@ -20,6 +20,7 @@
 |[**persisted\_documents**](#persisted_documents)|`object`|Configuration for persisted documents extraction and resolution.<br/>Default: `{"enabled":false,"log_missing_id":false,"require_id":false,"selectors":null,"storage":null}`<br/>||
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
+|[**storages**](#storages)|`object`|Configuration for storage sources.<br/>||
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"ip_header":null,"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
@@ -131,6 +132,7 @@ plugins: {}
 query_planner:
   allow_expose: false
   timeout: 10s
+storages: {}
 subscriptions:
   broadcast_capacity: 0
   enabled: false
@@ -2356,6 +2358,29 @@ timeout: 10s
 
 ```
 
+<a name="storages"></a>
+## storages: object
+
+Configuration for storage sources.
+
+Each key is a unique identifier for the storage source, that can later be references in other parts of the config file.
+
+Example:
+```yaml
+storages:
+  my-s3:
+    type: s3
+    bucket: my-bucket
+    region: eu-west-1
+```
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
 <a name="subscriptions"></a>
 ## subscriptions: object
 
@@ -2527,6 +2552,26 @@ poll_interval: 10s
 request_timeout: 1m
 retry_policy:
   max_retries: 10
+
+```
+
+
+   
+**Option 3 (alternative):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**location**||The path to the supergraph file in the storage/bucket.<br/>|yes|
+|**poll\_interval**|`string`|Optional interval at which the file should be polled for changes.<br/>If not provided, the file will only be loaded once when the router starts.<br/>|no|
+|**source**|`string`|Constant Value: `"storage"`<br/>|yes|
+|**storage\_id**|`string`|The storage id as it was defined in the config file, under `storages:` field.<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+poll_interval: null
 
 ```
 

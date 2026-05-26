@@ -7,6 +7,7 @@ pub mod pipeline;
 pub mod plugins;
 mod schema_state;
 mod shared_state;
+mod storage;
 mod supergraph;
 pub mod telemetry;
 mod utils;
@@ -43,6 +44,7 @@ use crate::{
         websocket_server::ws_index,
     },
     plugins::plugins_service::PluginService,
+    storage::StorageManager,
     telemetry::{HeaderExtractor, PrometheusAttached},
 };
 
@@ -395,6 +397,7 @@ pub async fn configure_app_from_config(
 
     let active_subscriptions =
         ActiveSubscriptions::new(router_config.subscriptions.broadcast_capacity);
+    let storage_manager = Arc::new(StorageManager::new(&router_config.storages)?);
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
     let cache_state = Arc::new(CacheState::new());
@@ -410,6 +413,7 @@ pub async fn configure_app_from_config(
         plugins_arc.clone(),
         cache_state.clone(),
         active_subscriptions.clone(),
+        storage_manager.clone(),
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
@@ -433,6 +437,7 @@ pub async fn configure_app_from_config(
         &router_config_arc.persisted_documents,
         &router_config_arc.http.graphql_endpoint,
         bg_tasks_manager,
+        &storage_manager,
     )
     .await
     .map_err(|err| crate::shared_state::SharedStateError::PersistedDocuments(Box::new(err)))?;
@@ -458,6 +463,7 @@ pub async fn configure_app_from_config(
         plugins_arc,
         cache_state,
         active_subscriptions.clone(),
+        storage_manager,
     )?);
 
     Ok((shared_state, schema_state_arc))
