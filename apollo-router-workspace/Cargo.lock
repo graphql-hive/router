@@ -159,9 +159,9 @@ dependencies = [
 
 [[package]]
 name = "apollo-federation"
-version = "2.14.1"
+version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a828841a93581c34e24a0d02c7ef7e605923798d534fdf6ec156057eedbf911"
+checksum = "2d5e91835cd0bea90c7558dc56e7f1a0ef37410390231ba981f22930f5aeb491"
 dependencies = [
  "apollo-compiler",
  "derive_more",
@@ -209,9 +209,9 @@ dependencies = [
 
 [[package]]
 name = "apollo-router"
-version = "2.14.1"
+version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "229adedc313f45d6729651e02595a81c9f890953fb17c2fc56923e01030153b9"
+checksum = "488b8ebe7887eb6433d7cc01ab1ab1bf833c0f462673bb844e606a7ec34a9198"
 dependencies = [
  "addr2line",
  "ahash",

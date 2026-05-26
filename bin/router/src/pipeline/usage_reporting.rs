@@ -156,9 +156,7 @@ impl BackgroundTask for UsageAgentTask {
 }
 
 #[inline]
-pub fn request_details_from_ntex_request(
-    req: &ntex::web::HttpRequest,
-) -> RequestDetails {
+pub fn request_details_from_ntex_request(req: &ntex::web::HttpRequest) -> RequestDetails {
     let mut headers = Vec::with_capacity(req.headers().len());
     for (name, value) in req.headers().iter() {
         if let Ok(val_str) = value.to_str() {
