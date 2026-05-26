@@ -137,3 +137,30 @@ fn forwarded_operation_names_include_fetch_step_id_when_enabled() -> Result<(), 
 
     Ok(())
 }
+
+#[test]
+fn forwarded_operation_names_include_fetch_step_id_for_subscriptions() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        subscription OnPing {
+          ping
+        }"#,
+    );
+    let operation_name_config =
+        SubgraphOperationNameConfig::new(false, BTreeMap::from([("pings".to_string(), true)]));
+    let query_plan = build_query_plan_with_context_and_operation_names(
+        "fixture/tests/subscription.supergraph.graphql",
+        document,
+        PlannerOverrideContext::default(),
+        &operation_name_config,
+    )?;
+    let json = sonic_rs::to_string_pretty(&query_plan).unwrap_or_default();
+
+    assert!(json.contains(r#""kind": "Subscription""#));
+    assert!(json.contains(r#""operationName": "OnPing_"#));
+    assert!(json.contains(r#""operation": "subscription OnPing_"#));
+
+    Ok(())
+}

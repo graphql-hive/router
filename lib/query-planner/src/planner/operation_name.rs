@@ -28,9 +28,23 @@ impl SubgraphOperationNameConfig {
         fetch_step_id: i64,
     ) -> Option<String> {
         if self.should_forward(subgraph_name) {
-            client_operation_name.map(|name| format!("{}_{}", name, fetch_step_id))
+            client_operation_name
+                .filter(|name| !name.is_empty())
+                .map(|name| format!("{}_{}", name, fetch_step_id))
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operation_name_is_not_generated_for_empty_client_operation_name() {
+        let config = SubgraphOperationNameConfig::new(true, BTreeMap::new());
+
+        assert_eq!(config.operation_name("products", Some(""), 7), None);
     }
 }
