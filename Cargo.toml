@@ -38,7 +38,7 @@ sonic-rs = "0.5.3"
 insta = { version = "1.42.1", features= ["filters"] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 lazy_static = "1.5.0"
-dashmap = { version = "6.0.0" }
+dashmap = { version = "6.2.1" }
 async-trait = "0.1.88"
 futures = "0.3.31"
 humantime = "2.3.0"
