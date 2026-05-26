@@ -159,11 +159,12 @@ impl BackgroundTask for UsageAgentTask {
 pub fn request_details_from_ntex_request<'req>(
     req: &'req ntex::web::HttpRequest,
 ) -> RequestDetails<'req> {
-    let headers = req
-        .headers()
-        .iter()
-        .filter_map(|(name, value)| value.to_str().ok().map(|val_str| (name.as_str(), val_str)))
-        .collect();
+    let mut headers = Vec::with_capacity(req.headers().len());
+    for (name, value) in req.headers().iter() {
+        if let Ok(val_str) = value.to_str() {
+            headers.push((name.as_str(), val_str));
+        }
+    }
 
     RequestDetails {
         method: req.method(),
