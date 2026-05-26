@@ -18,6 +18,7 @@ use crate::coprocessor::stage::{
     compile_condition, evaluate_condition, CoprocessorRequest, CoprocessorRequestBody,
     CoprocessorResponseBody, HeaderMapJsonRef, Stage, StageResponsePayload,
 };
+use crate::execution::client_request_details::ntex_header_map_to_vrl_value;
 use crate::plugins::hooks::on_graphql_params::GraphQLParams;
 use crate::request_context::{SelectedRequestContext, SharedRequestContext};
 
@@ -154,7 +155,9 @@ impl Stage for GraphqlRequestStage {
             hints.context_builder(|root| {
                 root.insert_object("request", |req| {
                     req.insert_lazy("method", || input.request.method().as_str().into())
-                        .insert_lazy("headers", || input.request.headers().to_vrl_value())
+                        .insert_lazy("headers", || {
+                            ntex_header_map_to_vrl_value(input.request.headers())
+                        })
                         .insert_lazy("url", || input.request.uri().to_vrl_value())
                         .insert_object("operation", |op| {
                             op.insert_lazy("name", || {
@@ -235,7 +238,9 @@ impl Stage for GraphqlAnalysisStage {
             hints.context_builder(|root| {
                 root.insert_object("request", |req| {
                     req.insert_lazy("method", || input.request.method.as_str().into())
-                        .insert_lazy("headers", || input.request.headers.to_vrl_value())
+                        .insert_lazy("headers", || {
+                            ntex_header_map_to_vrl_value(input.request.headers)
+                        })
                         .insert_lazy("url", || input.request.uri.to_vrl_value())
                         .insert_object("operation", |op| {
                             op.insert_lazy("name", || {
@@ -315,12 +320,16 @@ impl Stage for GraphqlResponseStage {
             hints.context_builder(|root| {
                 root.insert_object("request", |req| {
                     req.insert_lazy("method", || input.request.method().as_str().into())
-                        .insert_lazy("headers", || input.request.headers().to_vrl_value())
+                        .insert_lazy("headers", || {
+                            ntex_header_map_to_vrl_value(input.request.headers())
+                        })
                         .insert_lazy("url", || input.request.uri().to_vrl_value());
                 });
                 root.insert_object("response", |res| {
-                    res.insert_lazy("headers", || input.response.headers().to_vrl_value())
-                        .insert_lazy("status_code", || input.response.status().as_u16().into());
+                    res.insert_lazy("headers", || {
+                        ntex_header_map_to_vrl_value(input.response.headers())
+                    })
+                    .insert_lazy("status_code", || input.response.status().as_u16().into());
                 });
             })
         })

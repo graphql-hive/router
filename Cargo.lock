@@ -2486,7 +2486,6 @@ dependencies = [
  "md5",
  "mockito",
  "moka",
- "ntex",
  "recloser",
  "regex-automata",
  "regress 0.11.1",
