@@ -518,15 +518,16 @@ async fn handle_text_frame(
                 };
 
                 if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-                    let mut headers_vec: Vec<(&str, &str)> = Vec::with_capacity(headers.len());
+                    let mut headers_vec = Vec::with_capacity(headers.len());
                     for (name, value) in headers.iter() {
                         if let Ok(val_str) = value.to_str() {
-                            headers_vec.push((name.as_str(), val_str));
+                            headers_vec.push((name.to_string(), val_str.to_string()));
                         }
                     }
+
                     let request_details = RequestDetails {
-                        method: &Method::POST,
-                        url: ws_uri,
+                        method: Method::POST,
+                        url: (*ws_uri).clone(),
                         headers: headers_vec,
                     };
                     usage_reporting::collect_usage_report(

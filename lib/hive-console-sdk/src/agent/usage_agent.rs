@@ -112,10 +112,10 @@ pub trait UsageAgentExt {
     #[deprecated(note = "use `add_report_with_request` instead")]
     async fn add_report(&self, execution_report: ExecutionReport) -> Result<(), AgentError>;
 
-    async fn add_report_with_request<'req>(
+    async fn add_report_with_request(
         &self,
         execution_report: ExecutionReport,
-        request: Option<RequestDetails<'req>>,
+        request: Option<RequestDetails>,
     ) -> Result<(), AgentError>;
 }
 
@@ -253,10 +253,10 @@ impl UsageAgentInner {
 }
 
 #[derive(Debug, Clone)]
-pub struct RequestDetails<'req> {
-    pub method: &'req http::Method,
-    pub url: &'req http::Uri,
-    pub headers: Vec<(&'req str, &'req str)>,
+pub struct RequestDetails {
+    pub method: http::Method,
+    pub url: http::Uri,
+    pub headers: Vec<(String, String)>,
 }
 
 #[async_trait::async_trait]
@@ -278,10 +278,10 @@ impl UsageAgentExt for UsageAgent {
         }
     }
 
-    async fn add_report_with_request<'req>(
+    async fn add_report_with_request(
         &self,
         execution_report: ExecutionReport,
-        request: Option<RequestDetails<'req>>,
+        request: Option<RequestDetails>,
     ) -> Result<(), AgentError> {
         let inner = self.inner();
 
@@ -314,32 +314,32 @@ impl UsageAgentExt for UsageAgent {
     }
 }
 
-impl<'req, TBody> From<&'req http::Request<TBody>> for RequestDetails<'req> {
+impl<'req, TBody> From<&'req http::Request<TBody>> for RequestDetails {
     fn from(req: &'req http::Request<TBody>) -> Self {
         let mut headers = Vec::with_capacity(req.headers().len());
         for (name, value) in req.headers().iter() {
             if let Ok(val_str) = value.to_str() {
-                headers.push((name.as_str(), val_str));
+                headers.push((name.to_string(), val_str.to_string()));
             }
         }
 
         RequestDetails {
-            method: req.method(),
-            url: req.uri(),
+            method: req.method().clone(),
+            url: req.uri().clone(),
             headers,
         }
     }
 }
 
-impl<'req> From<RequestDetails<'req>> for VrlValue {
-    fn from(details: RequestDetails<'req>) -> Self {
+impl From<RequestDetails> for VrlValue {
+    fn from(details: RequestDetails) -> Self {
         let mut merged_headers: BTreeMap<String, String> = BTreeMap::new();
         for (header_name, header_value) in details.headers {
-            if let Some(existing_value) = merged_headers.get_mut(header_name) {
+            if let Some(existing_value) = merged_headers.get_mut(&header_name) {
                 existing_value.push_str(", ");
-                existing_value.push_str(header_value);
+                existing_value.push_str(&header_value);
             } else {
-                merged_headers.insert(header_name.into(), header_value.into());
+                merged_headers.insert(header_name, header_value);
             }
         }
 
