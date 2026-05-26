@@ -229,6 +229,14 @@ async fn graphql_endpoint_dispatch(
 }
 
 pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), RouterInitError> {
+    if cfg!(debug_assertions) && std::env::var("CARGO").is_err() {
+        eprintln!("WARNING: You are running Hive Router using a debug binary, which is not recommended for production use.");
+        eprintln!("  Please consider to use the official binary / Docker image instead:");
+        eprintln!("    https://the-guild.dev/graphql/hive/docs/router/getting-started");
+        eprintln!("  Or, if you are building with custom plugins, refer to the documentation for building from source:");
+        eprintln!("    https://the-guild.dev/graphql/hive/docs/router/customizations/plugin-system/usage#build-your-router");
+    }
+
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     let telemetry = telemetry::Telemetry::init_global(&router_config)?;
