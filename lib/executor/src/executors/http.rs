@@ -709,11 +709,14 @@ mod tests {
     }
 
     #[test]
-    fn operation_name_is_json_escaped() {
-        let request = make_request("query { __typename }", Some("With\"Quote"));
+    fn query_document_is_json_escaped() {
+        let request = make_request(r#"query Foo { echo(input: "quoted") }"#, Some("Foo"));
         let body = build_request_body(&request).unwrap();
         let body_str = std::str::from_utf8(&body).unwrap();
-        assert!(body_str.contains(r#""operationName":"With\"Quote""#));
+        assert_eq!(
+            body_str,
+            r#"{"query":"query Foo { echo(input: \"quoted\") }","operationName":"Foo"}"#
+        );
     }
 
     #[test]
