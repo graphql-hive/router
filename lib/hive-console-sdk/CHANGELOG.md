@@ -1,3 +1,11 @@
+## 0.3.13 (2026-05-26)
+
+### Fixes
+
+#### Remove dependency ntex from console-sdk
+
+Other pkgs are released due to minor refactor and code relocation.
+
 ## 0.3.12 (2026-05-19)
 
 ### Fixes
