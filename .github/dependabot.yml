@@ -49,6 +49,7 @@ updates:
     labels:
       - "dependencies"
       - "rust"
+      - "chore"
 
   - package-ecosystem: "npm"
     directory: "/"
@@ -60,6 +61,7 @@ updates:
     labels:
       - "dependencies"
       - "javascript"
+      - "chore"
 
   - package-ecosystem: "github-actions"
     directory: "/"
