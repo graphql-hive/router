@@ -5,6 +5,7 @@ use petgraph::{graph::NodeIndex, visit::EdgeRef};
 use crate::{
     planner::{
         fetch::state::MultiTypeFetchStep,
+        operation_name::SubgraphOperationNameConfig,
         plan_nodes::PlanNode,
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
     },
@@ -85,6 +86,8 @@ pub static QUERY_PLAN_KIND: &str = "QueryPlan";
 pub fn build_query_plan_from_fetch_graph(
     fetch_graph: FetchGraph<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
+    operation_name_config: &SubgraphOperationNameConfig,
+    client_operation_name: Option<&str>,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryPlan, QueryPlanError> {
     let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
@@ -121,7 +124,12 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph));
+            current_wave_nodes.push(PlanNode::from_fetch_step(
+                step_data,
+                supergraph,
+                operation_name_config,
+                client_operation_name,
+            ));
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 

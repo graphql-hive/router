@@ -23,6 +23,7 @@ use crate::{
 pub mod best;
 mod error;
 pub mod fetch;
+pub mod operation_name;
 pub mod plan_nodes;
 pub mod query_plan;
 pub mod tree;
@@ -79,6 +80,22 @@ impl Planner {
         override_context: PlannerOverrideContext,
         cancellation_token: &CancellationToken,
     ) -> Result<QueryPlan, PlannerError> {
+        self.plan_from_normalized_operation_with_operation_names(
+            normalized_operation,
+            override_context,
+            &operation_name::SubgraphOperationNameConfig::default(),
+            cancellation_token,
+        )
+    }
+
+    #[inline]
+    pub fn plan_from_normalized_operation_with_operation_names(
+        &self,
+        normalized_operation: &OperationDefinition,
+        override_context: PlannerOverrideContext,
+        operation_name_config: &operation_name::SubgraphOperationNameConfig,
+        cancellation_token: &CancellationToken,
+    ) -> Result<QueryPlan, PlannerError> {
         let best_paths_per_leaf = walk_operation(
             &self.graph,
             &self.supergraph,
@@ -96,8 +113,13 @@ impl Planner {
             cancellation_token,
         )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
-        let query_plan =
-            build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph, cancellation_token)?;
+        let query_plan = build_query_plan_from_fetch_graph(
+            fetch_graph,
+            &self.supergraph,
+            operation_name_config,
+            normalized_operation.name.as_deref(),
+            cancellation_token,
+        )?;
 
         Ok(query_plan)
     }

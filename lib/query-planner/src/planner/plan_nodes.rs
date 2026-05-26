@@ -10,6 +10,7 @@ use crate::{
     planner::fetch::{
         fetch_step_data::FetchStepData, selections::FetchStepSelections, state::MultiTypeFetchStep,
     },
+    planner::operation_name::SubgraphOperationNameConfig,
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
@@ -650,6 +651,7 @@ fn create_input_selection_set(
 fn create_output_operation(
     step: &FetchStepData<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
+    operation_name: Option<&str>,
 ) -> SubgraphFetchOperation {
     let mut variables = vec![VariableDefinition {
         name: "representations".to_string(),
@@ -664,7 +666,7 @@ fn create_output_operation(
     }
 
     let operation_def = OperationDefinition {
-        name: None,
+        name: operation_name.map(ToString::to_string),
         operation_kind: Some(OperationKind::Query),
         variable_definitions: Some(variables),
         selection_set: SelectionSet {
@@ -713,15 +715,23 @@ impl FetchNode {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
+        operation_name_config: &SubgraphOperationNameConfig,
+        client_operation_name: Option<&str>,
     ) -> Self {
+        let operation_name = operation_name_config.operation_name(
+            &step.service_name.0,
+            client_operation_name,
+            step.id,
+        );
+
         match step.is_entity_call() {
             true => FetchNode {
                 id: step.id,
                 service_name: step.service_name.0.clone(),
                 variable_usages: step.variable_usages.clone(),
                 operation_kind: Some(OperationKind::Query),
-                operation_name: None,
-                operation: create_output_operation(step, supergraph),
+                operation_name: operation_name.clone(),
+                operation: create_output_operation(step, supergraph, operation_name.as_deref()),
                 custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                     &step.output,
                     supergraph,
@@ -733,7 +743,7 @@ impl FetchNode {
             },
             false => {
                 let operation_def = OperationDefinition {
-                    name: None,
+                    name: operation_name.clone(),
                     operation_kind: Some(step.into()),
                     selection_set: (&step.output).into(),
                     variable_definitions: step.variable_definitions.clone(),
@@ -748,7 +758,7 @@ impl FetchNode {
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.into()),
-                    operation_name: None,
+                    operation_name,
                     operation: SubgraphFetchOperation {
                         document,
                         document_str,
@@ -772,8 +782,15 @@ impl PlanNode {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
+        operation_name_config: &SubgraphOperationNameConfig,
+        client_operation_name: Option<&str>,
     ) -> Self {
-        let fetch = FetchNode::from_fetch_step(step, supergraph);
+        let fetch = FetchNode::from_fetch_step(
+            step,
+            supergraph,
+            operation_name_config,
+            client_operation_name,
+        );
 
         let node = if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {

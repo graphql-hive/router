@@ -1,7 +1,12 @@
+use crate::graph::edge::PlannerOverrideContext;
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    planner::operation_name::SubgraphOperationNameConfig,
+    tests::testkit::{
+        build_query_plan, build_query_plan_with_context_and_operation_names, init_logger,
+    },
     utils::parsing::parse_operation,
 };
+use std::collections::BTreeMap;
 use std::error::Error;
 
 #[test]
@@ -98,5 +103,37 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
       }
     }
     "#);
+    Ok(())
+}
+
+#[test]
+fn forwarded_operation_names_include_fetch_step_id_when_enabled() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query GetProduct {
+          product {
+            id
+            price {
+              id
+              amount
+            }
+          }
+        }"#,
+    );
+    let operation_name_config =
+        SubgraphOperationNameConfig::new(false, BTreeMap::from([("price".to_string(), true)]));
+    let query_plan = build_query_plan_with_context_and_operation_names(
+        "fixture/tests/shared-root.supergraph.graphql",
+        document,
+        PlannerOverrideContext::default(),
+        &operation_name_config,
+    )?;
+    let json = sonic_rs::to_string_pretty(&query_plan).unwrap_or_default();
+
+    assert!(json.contains(r#""operationName": "GetProduct_"#));
+    assert!(json.contains(r#""operation": "query GetProduct_"#));
+    assert!(!json.contains(r#""operationName": "GetProduct_1""#));
+
     Ok(())
 }

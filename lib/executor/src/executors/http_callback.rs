@@ -71,7 +71,6 @@ pub struct HttpCallbackSubgraphExecutor {
     pub header_map: HeaderMap,
     pub callback_base_url: String,
     pub heartbeat_interval_ms: u64,
-    pub strip_operation_name: bool,
     pub active_subscriptions: CallbackSubscriptionsMap,
 }
 
@@ -83,7 +82,6 @@ impl HttpCallbackSubgraphExecutor {
         http_client: Arc<HttpClient>,
         callback_base_url: String,
         heartbeat_interval_ms: u64,
-        strip_operation_name: bool,
         active_subscriptions: CallbackSubscriptionsMap,
     ) -> Self {
         let mut header_map = HeaderMap::new();
@@ -107,7 +105,6 @@ impl HttpCallbackSubgraphExecutor {
             header_map,
             callback_base_url,
             heartbeat_interval_ms,
-            strip_operation_name,
             active_subscriptions,
         }
     }
@@ -118,10 +115,6 @@ impl HttpCallbackSubgraphExecutor {
         subscription_id: &str,
         verifier: &str,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
-        if self.strip_operation_name {
-            execution_request.operation_name = None;
-        }
-
         let callback_url = format!(
             "{}/{}",
             self.callback_base_url.trim_end_matches('/'),
@@ -318,7 +311,7 @@ mod tests {
         }
     }
 
-    fn make_executor(strip_operation_name: bool) -> HttpCallbackSubgraphExecutor {
+    fn make_executor() -> HttpCallbackSubgraphExecutor {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let http_client = Arc::new(
             Client::builder(TokioExecutor::new()).build(build_https_connector(None).unwrap()),
@@ -330,14 +323,13 @@ mod tests {
             http_client,
             "https://router.example/callbacks/".to_string(),
             5000,
-            strip_operation_name,
             Arc::new(DashMap::new()),
         )
     }
 
     #[test]
     fn callback_body_includes_operation_name_and_subscription_extensions() {
-        let executor = make_executor(false);
+        let executor = make_executor();
         let mut request = make_request("subscription OnPing { ping }", Some("OnPing"));
 
         let body = executor
@@ -350,19 +342,5 @@ mod tests {
         assert!(body_str.contains(r#""subscriptionId":"sub-1""#));
         assert!(body_str.contains(r#""verifier":"secret""#));
         assert!(body_str.contains(r#""heartbeatIntervalMs":5000"#));
-    }
-
-    #[test]
-    fn callback_body_omits_operation_name_when_strip_enabled() {
-        let executor = make_executor(true);
-        let mut request = make_request("subscription OnPing { ping }", Some("OnPing"));
-
-        let body = executor
-            .build_request_body(&mut request, "sub-1", "secret")
-            .unwrap();
-        let body_str = std::str::from_utf8(&body).unwrap();
-
-        assert!(!body_str.contains("operationName"));
-        assert!(body_str.contains(r#""subscriptionId":"sub-1""#));
     }
 }

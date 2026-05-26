@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use graphql_tools::static_graphql::schema::Document;
 use hive_router_internal::authorization::metadata::AuthorizationMetadata;
-use hive_router_query_planner::planner::Planner;
+use hive_router_query_planner::planner::{operation_name::SubgraphOperationNameConfig, Planner};
 
 use crate::{
     introspection::schema::SchemaMetadata,
@@ -24,6 +24,8 @@ pub struct SupergraphData {
     pub metadata: Arc<SchemaMetadata>,
     /// The query planner instance that will be used to generate the query plan for the incoming GraphQL requests based on the supergraph schema.
     pub planner: Planner,
+    /// Configuration for generating subgraph operation names during query planning.
+    pub operation_name_config: SubgraphOperationNameConfig,
     /// The authorization metadata that will be used to authorize the incoming GraphQL requests based on the supergraph schema and the authorization rules defined in the router.
     pub authorization: AuthorizationMetadata,
     /// The map of subgraph executors that will be used to execute the query plan for the incoming GraphQL requests based on the supergraph schema.

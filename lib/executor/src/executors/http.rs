@@ -52,7 +52,6 @@ pub struct HTTPSubgraphExecutor {
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
     pub dedupe_enabled: bool,
-    pub strip_operation_name: bool,
     pub in_flight_requests: InflightRequestsMap,
     pub telemetry_context: Arc<TelemetryContext>,
     pub config: Arc<HiveRouterConfig>,
@@ -148,7 +147,6 @@ impl HTTPSubgraphExecutor {
         http_client: Arc<HttpClient>,
         semaphore: Arc<Semaphore>,
         dedupe_enabled: bool,
-        strip_operation_name: bool,
         in_flight_requests: InflightRequestsMap,
         telemetry_context: Arc<TelemetryContext>,
         config: Arc<HiveRouterConfig>,
@@ -170,7 +168,6 @@ impl HTTPSubgraphExecutor {
             header_map,
             semaphore,
             dedupe_enabled,
-            strip_operation_name,
             in_flight_requests,
             telemetry_context,
             config,
@@ -307,9 +304,6 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         timeout: Option<Duration>,
         plugin_req_state: Option<&'a PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
-        if self.strip_operation_name {
-            execution_request.operation_name = None;
-        }
         let mut body = build_request_body(&execution_request)?;
 
         self.header_map.iter().for_each(|(key, value)| {
@@ -498,15 +492,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
     async fn subscribe<'a>(
         &self,
-        mut execution_request: SubgraphExecutionRequest<'a>,
+        execution_request: SubgraphExecutionRequest<'a>,
         connection_timeout: Option<Duration>,
     ) -> Result<
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        if self.strip_operation_name {
-            execution_request.operation_name = None;
-        }
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         let body = build_request_body(&execution_request)?;
 

@@ -261,7 +261,7 @@ impl<'a> BatchFetchBuilder<'a> {
             .extend(self.merged_non_representation_variables.iter().cloned());
 
         let operation_definition = OperationDefinition {
-            name: None,
+            name: first_candidate.operation_name.clone(),
             operation_kind: Some(OperationKind::Query),
             selection_set: SelectionSet {
                 items: self.operation_selection_items,
@@ -287,7 +287,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 Some(self.variable_usages)
             },
             operation_kind: Some(OperationKind::Query),
-            operation_name: None,
+            operation_name: first_candidate.operation_name.clone(),
             operation: SubgraphFetchOperation {
                 document,
                 document_str,
@@ -319,6 +319,7 @@ struct EntityFetch {
     index: usize,
     fetch_node_id: i64,
     service_name: String,
+    operation_name: Option<String>,
     flatten_path: FlattenNodePath,
     variable_usages: Option<BTreeSet<String>>,
     type_name: String,
@@ -413,6 +414,7 @@ impl EntityFetch {
             index,
             fetch_node_id: fetch_node.id,
             service_name: fetch_node.service_name.clone(),
+            operation_name: fetch_node.operation_name.clone(),
             flatten_path: flatten_node.path.clone(),
             variable_usages: fetch_node.variable_usages.clone(),
             type_name: entities_selection

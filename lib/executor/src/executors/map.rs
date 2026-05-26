@@ -93,7 +93,6 @@ struct ResolvedSubgraphConfig<'a> {
     client: Arc<HttpClient>,
     timeout_config: &'a DurationOrExpression,
     dedupe_enabled: bool,
-    strip_operation_name: bool,
 }
 
 pub type InflightRequestsMap = InFlightMap<u64, (SubgraphHttpResponse, u64)>;
@@ -202,6 +201,19 @@ impl SubgraphExecutorMap {
     /// Returns the shared active callback subscriptions map for use by callback handlers.
     pub fn callback_subscriptions(&self) -> CallbackSubscriptionsMap {
         self.callback_subscriptions.clone()
+    }
+
+    /// Applies `forward_operation_name` before a request reaches any concrete subgraph executor.
+    pub(crate) fn operation_name_for_subgraph_request<'a>(
+        &self,
+        subgraph_name: &str,
+        operation_name: Option<&'a str>,
+    ) -> Option<&'a str> {
+        if self.should_forward_operation_name(subgraph_name) {
+            operation_name
+        } else {
+            None
+        }
     }
 
     pub async fn execute<'exec>(
@@ -564,7 +576,6 @@ impl SubgraphExecutorMap {
                     subgraph_config.client,
                     semaphore,
                     subgraph_config.dedupe_enabled,
-                    subgraph_config.strip_operation_name,
                     self.in_flight_requests.clone(),
                     self.telemetry_context.clone(),
                     self.config.clone(),
@@ -667,7 +678,6 @@ impl SubgraphExecutorMap {
                     subgraph_config.client,
                     callback_config.public_url.to_string(),
                     heartbeat_interval_ms,
-                    subgraph_config.strip_operation_name,
                     self.callback_subscriptions.clone(),
                 )
                 .to_boxed_arc();
@@ -692,7 +702,6 @@ impl SubgraphExecutorMap {
             client: self.client.clone(),
             timeout_config: &self.config.traffic_shaping.all.request_timeout,
             dedupe_enabled: self.config.traffic_shaping.all.dedupe_enabled,
-            strip_operation_name: self.config.traffic_shaping.all.strip_operation_name,
         };
 
         let Some(subgraph_config) = self.config.traffic_shaping.subgraphs.get(subgraph_name) else {
@@ -735,11 +744,16 @@ impl SubgraphExecutorMap {
             config.timeout_config = custom_timeout;
         }
 
-        if let Some(strip_operation_name) = subgraph_config.strip_operation_name {
-            config.strip_operation_name = strip_operation_name;
-        }
-
         Ok(config)
+    }
+
+    fn should_forward_operation_name(&self, subgraph_name: &str) -> bool {
+        self.config
+            .traffic_shaping
+            .subgraphs
+            .get(subgraph_name)
+            .and_then(|subgraph_config| subgraph_config.forward_operation_name)
+            .unwrap_or(self.config.traffic_shaping.all.forward_operation_name)
     }
 
     /// Compiles and registers a timeout for a specific subgraph.
@@ -911,7 +925,7 @@ mod tests {
     };
 
     fn make_subgraph_config(
-        strip_operation_name: Option<bool>,
+        forward_operation_name: Option<bool>,
     ) -> TrafficShapingExecutorSubgraphConfig {
         TrafficShapingExecutorSubgraphConfig {
             pool_idle_timeout: None,
@@ -920,7 +934,7 @@ mod tests {
             circuit_breaker: None,
             tls: None,
             allow_only_http2: None,
-            strip_operation_name,
+            forward_operation_name,
         }
     }
 
@@ -941,33 +955,46 @@ mod tests {
     }
 
     #[test]
-    fn resolve_subgraph_config_uses_global_strip_operation_name() {
-        let mut config = HiveRouterConfig::default();
-        config.traffic_shaping.all.strip_operation_name = true;
-        let map = make_map(config);
+    fn operation_name_for_subgraph_request_omits_operation_name_by_default() {
+        let map = make_map(HiveRouterConfig::default());
 
-        let resolved = map.resolve_subgraph_config("products").unwrap();
+        let operation_name =
+            map.operation_name_for_subgraph_request("products", Some("ProductsQuery"));
 
-        assert!(resolved.strip_operation_name);
+        assert_eq!(operation_name, None);
     }
 
     #[test]
-    fn resolve_subgraph_config_allows_subgraph_to_disable_global_strip_operation_name() {
+    fn operation_name_for_subgraph_request_uses_global_forward_operation_name() {
         let mut config = HiveRouterConfig::default();
-        config.traffic_shaping.all.strip_operation_name = true;
+        config.traffic_shaping.all.forward_operation_name = true;
+        let map = make_map(config);
+
+        let operation_name =
+            map.operation_name_for_subgraph_request("products", Some("ProductsQuery"));
+
+        assert_eq!(operation_name, Some("ProductsQuery"));
+    }
+
+    #[test]
+    fn operation_name_for_subgraph_request_allows_subgraph_to_disable_global_forward_operation_name(
+    ) {
+        let mut config = HiveRouterConfig::default();
+        config.traffic_shaping.all.forward_operation_name = true;
         config
             .traffic_shaping
             .subgraphs
             .insert("products".to_string(), make_subgraph_config(Some(false)));
         let map = make_map(config);
 
-        let resolved = map.resolve_subgraph_config("products").unwrap();
+        let operation_name =
+            map.operation_name_for_subgraph_request("products", Some("ProductsQuery"));
 
-        assert!(!resolved.strip_operation_name);
+        assert_eq!(operation_name, None);
     }
 
     #[test]
-    fn resolve_subgraph_config_allows_subgraph_to_enable_strip_operation_name() {
+    fn operation_name_for_subgraph_request_allows_subgraph_to_enable_forward_operation_name() {
         let mut config = HiveRouterConfig::default();
         config
             .traffic_shaping
@@ -975,8 +1002,9 @@ mod tests {
             .insert("products".to_string(), make_subgraph_config(Some(true)));
         let map = make_map(config);
 
-        let resolved = map.resolve_subgraph_config("products").unwrap();
+        let operation_name =
+            map.operation_name_for_subgraph_request("products", Some("ProductsQuery"));
 
-        assert!(resolved.strip_operation_name);
+        assert_eq!(operation_name, Some("ProductsQuery"));
     }
 }

@@ -6,21 +6,21 @@ hive-router-plan-executor: patch
 
 # Forward operationName to subgraphs
 
-Subgraph HTTP and HTTP callback requests now include the planner-assigned `operationName` in the JSON request body by default. Added `traffic_shaping.all.strip_operation_name` and per-subgraph `traffic_shaping.subgraphs.<name>.strip_operation_name` options for deployments that need to preserve the previous omission.
+Subgraph HTTP and HTTP callback requests can now include a planner-assigned `operationName` in the JSON request body. Added the `traffic_shaping.all.forward_operation_name` and per-subgraph `traffic_shaping.subgraphs.<name>.forward_operation_name` options. The option defaults to `false`, so the previous omission remains the default behavior.
 
-Global opt-out:
+Global opt-in:
 
 ```yaml
 traffic_shaping:
   all:
-    strip_operation_name: true
+    forward_operation_name: true
 ```
 
-Per-subgraph opt-out:
+Per-subgraph opt-in:
 
 ```yaml
 traffic_shaping:
   subgraphs:
     products:
-      strip_operation_name: true
+      forward_operation_name: true
 ```

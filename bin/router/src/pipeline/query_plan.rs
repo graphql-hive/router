@@ -124,9 +124,10 @@ pub async fn plan_operation_with_cache(
 
                 supergraph
                     .planner
-                    .plan_from_normalized_operation(
+                    .plan_from_normalized_operation_with_operation_names(
                         filtered_operation_for_plan,
                         (&request_override_context.clone()).into(),
+                        &supergraph.operation_name_config,
                         cancellation_token,
                     )
                     .map(Arc::new)

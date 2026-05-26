@@ -14,6 +14,7 @@ use crate::graph::Graph;
 use crate::planner::add_variables_to_fetch_steps;
 use crate::planner::best::find_best_combination;
 use crate::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
+use crate::planner::operation_name::SubgraphOperationNameConfig;
 use crate::planner::plan_nodes::QueryPlan;
 use crate::planner::query_plan::build_query_plan_from_fetch_graph;
 use crate::planner::walker::walk_operation;
@@ -59,6 +60,20 @@ pub fn build_query_plan_with_context(
     query: query_ast::Document<'static, String>,
     override_context: PlannerOverrideContext,
 ) -> Result<QueryPlan, Box<dyn Error>> {
+    build_query_plan_with_context_and_operation_names(
+        fixture_path,
+        query,
+        override_context,
+        &SubgraphOperationNameConfig::default(),
+    )
+}
+
+pub fn build_query_plan_with_context_and_operation_names(
+    fixture_path: &str,
+    query: query_ast::Document<'static, String>,
+    override_context: PlannerOverrideContext,
+    operation_name_config: &SubgraphOperationNameConfig,
+) -> Result<QueryPlan, Box<dyn Error>> {
     let cancellation_token = CancellationToken::new();
     let schema = parse_schema(&read_supergraph(fixture_path));
     let supergraph_state = SupergraphState::new(&schema);
@@ -82,8 +97,13 @@ pub fn build_query_plan_with_context(
     )?;
     add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)?;
 
-    let plan =
-        build_query_plan_from_fetch_graph(fetch_graph, &supergraph_state, &cancellation_token)?;
+    let plan = build_query_plan_from_fetch_graph(
+        fetch_graph,
+        &supergraph_state,
+        operation_name_config,
+        operation.name.as_deref(),
+        &cancellation_token,
+    )?;
 
     Ok(plan)
 }

@@ -7,6 +7,7 @@ use hive_router_query_planner::graph::Graph;
 use hive_router_query_planner::graph::PlannerOverrideContext;
 use hive_router_query_planner::planner::best::find_best_combination;
 use hive_router_query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
+use hive_router_query_planner::planner::operation_name::SubgraphOperationNameConfig;
 use hive_router_query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
 use hive_router_query_planner::planner::walker::walk_operation;
 use hive_router_query_planner::state::supergraph_state::SupergraphState;
@@ -40,6 +41,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
     let parsed_document = get_operation("../../bench/operation.graphql");
     let operation =
         get_executable_operation(&parsed_document, &supergraph_state, Some("TestQuery"));
+    let operation_name_config = SubgraphOperationNameConfig::default();
     let override_context = PlannerOverrideContext::default();
     let cancellation_token = CancellationToken::new();
 
@@ -47,6 +49,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
         b.iter(|| {
             let bb_graph = black_box(&graph);
             let bb_operation = black_box(&operation);
+            let bb_operation_name_config = black_box(&operation_name_config);
             let bb_supergraph_state = black_box(&supergraph_state);
             let bb_override_context = black_box(&override_context);
 
@@ -71,6 +74,8 @@ fn query_plan_pipeline(c: &mut Criterion) {
             let query_plan = build_query_plan_from_fetch_graph(
                 fetch_graph,
                 bb_supergraph_state,
+                bb_operation_name_config,
+                bb_operation.name.as_deref(),
                 &cancellation_token,
             )
             .unwrap();
@@ -95,6 +100,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
         b.iter(|| {
             let bb_graph = black_box(&graph);
             let bb_operation = black_box(&operation);
+            let bb_operation_name_config = black_box(&operation_name_config);
             let bb_supergraph_state = black_box(&supergraph_state);
             let bb_override_context = black_box(&override_context);
 
@@ -119,6 +125,8 @@ fn query_plan_pipeline(c: &mut Criterion) {
             let query_plan = build_query_plan_from_fetch_graph(
                 fetch_graph,
                 bb_supergraph_state,
+                bb_operation_name_config,
+                bb_operation.name.as_deref(),
                 &cancellation_token,
             )
             .unwrap();

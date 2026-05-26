@@ -28,10 +28,11 @@ use hive_router_plan_executor::{
 };
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::{
-    planner::{Planner, PlannerError},
+    planner::{operation_name::SubgraphOperationNameConfig, Planner, PlannerError},
     utils::parsing::parse_schema,
 };
 use moka::future::Cache;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -255,6 +256,8 @@ impl SchemaState {
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
         let metadata = Arc::new(planner.consumer_schema.schema_metadata());
         let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata)?;
+        let operation_name_config =
+            operation_name_config_from_router_config(router_config.as_ref());
         let subgraph_executor_map = Arc::new(SubgraphExecutorMap::from_http_endpoint_map(
             &planner.supergraph.subgraph_endpoint_map,
             router_config,
@@ -270,10 +273,29 @@ impl SchemaState {
             },
             metadata,
             planner,
+            operation_name_config,
             authorization,
             subgraph_executor_map,
         })
     }
+}
+
+fn operation_name_config_from_router_config(
+    router_config: &HiveRouterConfig,
+) -> SubgraphOperationNameConfig {
+    SubgraphOperationNameConfig::new(
+        router_config.traffic_shaping.all.forward_operation_name,
+        router_config
+            .traffic_shaping
+            .subgraphs
+            .iter()
+            .filter_map(|(name, config)| {
+                config
+                    .forward_operation_name
+                    .map(|forward| (name.clone(), forward))
+            })
+            .collect::<BTreeMap<_, _>>(),
+    )
 }
 
 pub struct SupergraphBackgroundLoader {

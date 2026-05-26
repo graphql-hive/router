@@ -195,7 +195,10 @@ pub async fn execute_query_plan<'exec>(
         let mut subgraph_request = SubgraphExecutionRequest {
             query: fetch_node.operation.document_str.as_str(),
             dedupe: false,
-            operation_name: fetch_node.operation_name.as_deref(),
+            operation_name: opts.executors.operation_name_for_subgraph_request(
+                &fetch_node.service_name,
+                fetch_node.operation_name.as_deref(),
+            ),
             variables: variable_refs,
             headers: headers_map,
             raw_variable_values: None,
@@ -1309,11 +1312,14 @@ impl<'exec> Executor<'exec> {
                 affected_path: affected_path_factory,
             })?;
             let variable_refs = select_fetch_variables(self.variable_values, opts.variable_usages);
+            let operation_name = self
+                .executors
+                .operation_name_for_subgraph_request(opts.subgraph_name, opts.operation_name);
 
             let mut subgraph_request = SubgraphExecutionRequest {
                 query: &opts.operation.document_str,
                 dedupe: self.dedupe_subgraph_requests,
-                operation_name: opts.operation_name,
+                operation_name,
                 variables: variable_refs,
                 raw_variable_values: opts.raw_variable_values,
                 headers: headers_map,
