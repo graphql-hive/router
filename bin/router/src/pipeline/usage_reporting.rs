@@ -99,7 +99,7 @@ pub async fn collect_usage_report<'a>(
     hive_usage_agent: &UsageAgent,
     usage_config: &UsageReportingConfig,
     error_count: usize,
-    request_details: Option<RequestDetails>,
+    request_details: Option<RequestDetails<'a>>,
 ) {
     let sample_rate = usage_config.sample_rate.as_f64();
     if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
@@ -155,21 +155,19 @@ impl BackgroundTask for UsageAgentTask {
     }
 }
 
-pub fn request_details_from_ntex_request(req: &ntex::web::HttpRequest) -> RequestDetails {
+#[inline]
+pub fn request_details_from_ntex_request<'req>(
+    req: &'req ntex::web::HttpRequest,
+) -> RequestDetails<'req> {
     let headers = req
         .headers()
         .iter()
-        .filter_map(|(name, value)| {
-            value
-                .to_str()
-                .ok()
-                .map(|val_str| (name.to_string(), val_str.to_string()))
-        })
+        .filter_map(|(name, value)| value.to_str().ok().map(|val_str| (name.as_str(), val_str)))
         .collect();
 
     RequestDetails {
-        method: req.method().clone(),
-        url: req.uri().clone(),
+        method: req.method(),
+        url: req.uri(),
         headers,
     }
 }

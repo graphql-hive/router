@@ -524,12 +524,12 @@ async fn handle_text_frame(
                             value
                                 .to_str()
                                 .ok()
-                                .map(|val_str| (name.to_string(), val_str.to_string()))
+                                .map(|val_str| (name.as_str(), val_str))
                         })
                         .collect();
                     let request_details = RequestDetails {
-                        method: Method::POST,
-                        url: (*ws_uri).clone(),
+                        method: &Method::POST,
+                        url: ws_uri,
                         headers,
                     };
                     usage_reporting::collect_usage_report(
