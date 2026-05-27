@@ -200,7 +200,7 @@ jobs:
             *.cache-to=type=gha,mode=max,ignore-error=true,scope=${{ steps.docker_cache_key.outputs.replaced }}
 
       - name: docker details pr comment
-        uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v2
         if: ${{ github.event_name == 'pull_request' }}
         with:
           header: ${{ github.workflow }}
