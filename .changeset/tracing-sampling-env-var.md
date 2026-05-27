@@ -8,7 +8,7 @@ hive-router-config: patch
 The tracing sampling rate can now be overridden without editing the router config file:
 
 ```shell
-TRACING_SAMPLING_RATE=0.1
+TELEMETRY_TRACING_SAMPLING_RATE=0.1
 ```
 
 This sets the same value as the following YAML configuration:

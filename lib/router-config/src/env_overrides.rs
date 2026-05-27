@@ -53,7 +53,7 @@ pub struct EnvVarOverrides {
     pub hive_usage_reporting_enabled: Option<bool>,
 
     // Tracing overrides
-    #[envconfig(from = "TRACING_SAMPLING_RATE")]
+    #[envconfig(from = "TELEMETRY_TRACING_SAMPLING_RATE")]
     pub tracing_sampling_rate: Option<f64>,
 }
 
