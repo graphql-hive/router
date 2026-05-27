@@ -48,14 +48,15 @@ impl<'a> VariablesInAllowedPosition<'a> {
         if let Some(usages) = self.variable_usages.get(from) {
             for (var_name, var_type) in usages {
                 if let Some(var_def) = var_defs.iter().find(|var_def| var_def.name == *var_name) {
+                    // Per https://spec.graphql.org/draft/#sec-All-Variable-Usages-are-Allowed,
+                    // a non-null default value makes the variable usable in a non-null position
+                    // because the default fills in when the variable is omitted. Model this by
+                    // promoting the variable's effective type to NonNull(var_type) for the
+                    // subtype check. An explicit `null` default does not get this promotion.
                     let expected_type = match (&var_def.default_value, &var_def.var_type) {
-                        (Some(_), Type::ListType(inner)) => Type::NonNullType(inner.clone()),
-                        (Some(default_value), Type::NamedType(_)) => {
-                            if let Value::Null = default_value {
-                                var_def.var_type.clone()
-                            } else {
-                                Type::NonNullType(Box::new(var_def.var_type.clone()))
-                            }
+                        (_, t @ Type::NonNullType(_)) => t.clone(),
+                        (Some(default_value), t) if !matches!(default_value, Value::Null) => {
+                            Type::NonNullType(Box::new(t.clone()))
                         }
                         (_, t) => t.clone(),
                     };
@@ -660,6 +661,58 @@ fn int_to_int_non_null_where_argument_with_default_value() {
 
     let messages = get_messages(&errors);
     assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn list_of_non_null_enum_with_single_enum_default_value() {
+    use crate::validation::test_utils::*;
+
+    // A single-value default on a list-typed variable is valid per
+    // GraphQL spec (single values coerce to a one-item list). The router used to
+    // reject this with the malformed type "T!!" because the expected-type
+    // computation dropped the list wrapper and double-wrapped NonNull.
+    let mut plan = create_plan_from_rule(Box::new(VariablesInAllowedPosition::new()));
+    let errors = test_operation_with_schema(
+        "query Query($enumListVar: [FurColor!] = BROWN) {
+          complicatedArgs {
+            enumListArgField(enumListArg: $enumListVar)
+          }
+        }",
+        // Augment the schema with a list-of-non-null-enum argument.
+        &(TEST_SCHEMA.replace(
+            "enumArgField(enumArg: FurColor): String",
+            "enumArgField(enumArg: FurColor): String\n  enumListArgField(enumListArg: [FurColor!]): String",
+        )),
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages, Vec::<&String>::new());
+}
+
+#[test]
+fn list_of_non_null_with_default_value_used_in_non_null_list_position() {
+    use crate::validation::test_utils::*;
+
+    // A list variable with a non-null default value should be usable in a
+    // non-null list position. Before the fix, the expected type for the
+    // subtype check was "T!!" (invalid) instead of "[T!]!".
+    let mut plan = create_plan_from_rule(Box::new(VariablesInAllowedPosition::new()));
+    let errors = test_operation_with_schema(
+        "query Query($enumListVar: [FurColor!] = BROWN) {
+          complicatedArgs {
+            requiredEnumListArgField(enumListArg: $enumListVar)
+          }
+        }",
+        &(TEST_SCHEMA.replace(
+            "enumArgField(enumArg: FurColor): String",
+            "enumArgField(enumArg: FurColor): String\n  requiredEnumListArgField(enumListArg: [FurColor!]!): String",
+        )),
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages, Vec::<&String>::new());
 }
 
 #[test]
