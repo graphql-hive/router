@@ -2865,7 +2865,7 @@ dependencies = [
 
 [[package]]
 name = "graphql-tools"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "combine",
  "itoa",
@@ -3167,7 +3167,7 @@ dependencies = [
  "reqwest",
  "reqwest-middleware",
  "reqwest-retry 0.8.0",
- "retry-policies 0.5.1",
+ "retry-policies 0.5.2",
  "serde",
  "serde_json",
  "sha2",
@@ -6068,7 +6068,7 @@ dependencies = [
  "hyper 1.7.0",
  "reqwest",
  "reqwest-middleware",
- "retry-policies 0.5.1",
+ "retry-policies 0.5.2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6092,11 +6092,11 @@ dependencies = [
 
 [[package]]
 name = "retry-policies"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46a4bd6027df676bcb752d3724db0ea3c0c5fc1dd0376fec51ac7dcaf9cc69be"
+checksum = "dc05fbf560421a0357a750cbe78c7ca19d4923918490daabba313d5dbc871e47"
 dependencies = [
- "rand 0.9.3",
+ "rand 0.10.1",
 ]
 
 [[package]]
@@ -6155,12 +6155,12 @@ dependencies = [
 
 [[package]]
 name = "rkyv"
-version = "0.8.15"
+version = "0.8.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a30e631b7f4a03dee9056b8ef6982e8ba371dd5bedb74d3ec86df4499132c70"
+checksum = "73389e0c99e664f919275ab5b5b0471391fe9a8de61e1dff9b1eaf56a90f16e3"
 dependencies = [
  "bytes",
- "hashbrown 0.16.0",
+ "hashbrown 0.17.1",
  "indexmap 2.12.0",
  "munge",
  "ptr_meta",
@@ -6173,9 +6173,9 @@ dependencies = [
 
 [[package]]
 name = "rkyv_derive"
-version = "0.8.15"
+version = "0.8.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8100bb34c0a1d0f907143db3149e6b4eea3c33b9ee8b189720168e818303986f"
+checksum = "5d2ed0b54125315fb36bd021e82d314d1c126548f871634b483f46b31d13cac6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6600,9 +6600,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.149"
+version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
+checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
  "indexmap 2.12.0",
  "itoa",
