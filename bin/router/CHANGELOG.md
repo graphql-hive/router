@@ -116,6 +116,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.63 (2026-05-27)
+
+### Fixes
+
+#### Add tracing sampling rate environment override
+
+The tracing sampling rate can now be overridden without editing the router config file:
+
+```shell
+TELEMETRY_TRACING_SAMPLING_RATE=0.1
+```
+
+This sets the same value as the following YAML configuration:
+
+```yaml
+telemetry:
+  tracing:
+    collect:
+      sampling: 0.1
+```
+
 ## 0.0.62 (2026-05-27)
 
 ### Fixes

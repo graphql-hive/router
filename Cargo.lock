@@ -2507,7 +2507,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.62"
+version = "0.0.63"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2577,7 +2577,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-config"
-version = "0.0.36"
+version = "0.0.37"
 dependencies = [
  "config",
  "envconfig",
@@ -2602,7 +2602,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-internal"
-version = "0.0.24"
+version = "0.0.25"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2645,7 +2645,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "6.13.7"
+version = "6.13.8"
 dependencies = [
  "ahash",
  "async-stream",
