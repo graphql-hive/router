@@ -1,6 +1,8 @@
 ---
 hive-router: patch
 hive-router-config: patch
+hive-router-internal: patch
+hive-router-plan-executor: patch
 ---
 
 # Add tracing sampling rate environment override
