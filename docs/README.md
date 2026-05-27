@@ -3222,7 +3222,7 @@ propagation:
 |**max\_attributes\_per\_span**|`integer`|Default: `128`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
 |**max\_events\_per\_span**|`integer`|Default: `128`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
 |**parent\_based\_sampler**|`boolean`|Default: `false`<br/>||
-|**sampling**|`number`|Default: `1`<br/>Format: `"double"`<br/>||
+|**sampling**|`number`|Can also be set via the `TELEMETRY_TRACING_SAMPLING_RATE` environment variable.<br/>Default: `1`<br/>Format: `"double"`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
