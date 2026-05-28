@@ -105,6 +105,9 @@ pub enum SubgraphExecutorError {
     #[error("Subgraph internal server error")]
     #[strum(serialize = "SUBGRAPH_INTERNAL_SERVER_ERROR")]
     InternalServerError(Box<SubgraphResponse<'static>>),
+    #[error("Skipped subgraph execution because the estimated cost ({estimated_cost}) exceeds the maximum allowed cost ({max_cost}).")]
+    #[strum(serialize = "SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE")]
+    CostEstimatedTooExpensive { estimated_cost: u64, max_cost: u64 },
 }
 
 impl SubgraphExecutorError {

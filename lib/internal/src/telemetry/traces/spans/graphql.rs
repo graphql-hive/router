@@ -343,11 +343,16 @@ impl GraphQLOperationSpan {
             "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
             "graphql.document" = Empty,
+            "cost.estimated" = Empty,
+            "cost.actual" = Empty,
+            "cost.delta" = Empty,
+            "cost.result" = Empty,
             "hive.graphql.error.count" = Empty,
             "hive.graphql.error.codes" = Empty,
             "hive.graphql.operation.hash" = Empty,
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
+            "cost.formula_cache_hit" = Empty,
         );
         GraphQLOperationSpan { span }
     }
@@ -389,6 +394,32 @@ impl GraphQLOperationSpan {
             "hive.client.name" = client_name,
             "hive.client.version" = client_version,
         );
+    }
+
+    pub fn record_demand_control(
+        &self,
+        estimated: u64,
+        actual: Option<u64>,
+        delta: Option<i64>,
+        result: &str,
+        formula_cache_hit: Option<bool>,
+    ) {
+        if self.span.is_disabled() {
+            return;
+        }
+
+        self.span.record(attributes::COST_ESTIMATED, estimated);
+        if let Some(actual) = actual {
+            self.span.record(attributes::COST_ACTUAL, actual);
+        }
+        if let Some(delta) = delta {
+            self.span.record(attributes::COST_DELTA, delta);
+        }
+        self.span.record(attributes::COST_RESULT, result);
+        if let Some(formula_cache_hit) = formula_cache_hit {
+            self.span
+                .record(attributes::COST_FORMULA_CACHE_HIT, formula_cache_hit);
+        }
     }
 }
 

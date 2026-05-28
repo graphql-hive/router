@@ -1,8 +1,9 @@
 use futures::StreamExt;
 use hive_router_internal::{
     http::read_body_stream,
-    telemetry::traces::spans::{
-        graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+    telemetry::{
+        metrics::demand_control_metrics::DemandControlResultCode,
+        traces::spans::{graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan},
     },
 };
 use hive_router_plan_executor::{
@@ -11,7 +12,7 @@ use hive_router_plan_executor::{
         client_request_details::{
             JwtRequestDetails, MutableClientRequestDetails, OperationDetails, PathParams,
         },
-        plan::{PlanExecutionOutput, QueryPlanExecutionResult},
+        plan::{CoerceVariablesPayload, PlanExecutionOutput, QueryPlanExecutionResult},
     },
     headers::response::ResponseHeaderAggregator,
     hooks::{on_graphql_params::GraphQLParams, on_supergraph_load::SupergraphData},
@@ -46,8 +47,9 @@ use crate::{
         active_subscriptions::SubscriptionEvent,
         authorization::enforce_operation_authorization,
         client_identification::identify_client,
-        coerce_variables::{coerce_request_variables, CoerceVariablesPayload},
+        coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
+        demand_control::evaluate_demand_control,
         error::PipelineError,
         execution::{execute_plan, PlannedRequest},
         execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult},
@@ -78,6 +80,7 @@ mod client_identification;
 pub mod coerce_variables;
 pub mod cors;
 pub mod csrf_prevention;
+pub mod demand_control;
 pub mod error;
 pub mod execution;
 pub mod execution_request;
@@ -279,21 +282,20 @@ pub async fn graphql_request_handler(
 
         write_graphql_operation_metric_identity(
             req,
-            normalize_payload.operation_indentity.name.clone(),
-            Some(normalize_payload.operation_indentity.operation_type.as_str()),
+            normalize_payload.operation_identity.name.clone(),
+            Some(normalize_payload.operation_identity.operation_type.as_str()),
         );
 
-        // Update the request context if the operation name or type has changed
-        if
-          parser_payload.operation_name.as_ref() != normalize_payload.operation_indentity.name.as_ref() ||
-          parser_payload.operation_type != normalize_payload.operation_indentity.operation_type
-        {
-          request_context.update(|ctx| {
-            ctx.operation.update(
-              normalize_payload.operation_indentity.name.clone(),
-              Some(normalize_payload.operation_indentity.operation_type.clone())
-            );
-          })?;
+                // Update the request context if the operation name or type has changed
+                if parser_payload.operation_name.as_ref() != normalize_payload.operation_identity.name.as_ref()
+                        || parser_payload.operation_type != normalize_payload.operation_identity.operation_type
+                {
+                        request_context.update(|ctx| {
+                                ctx.operation.update(
+                                        normalize_payload.operation_identity.name.clone(),
+                                        Some(normalize_payload.operation_identity.operation_type.clone()),
+                                );
+                        })?;
         }
 
         if req.method() == Method::GET {
@@ -661,13 +663,49 @@ pub async fn execute_pipeline<'exec>(
         }
     };
 
+    let variable_payload = Arc::new(variable_payload);
+
+    let demand_control_execution_context = match evaluate_demand_control(
+        shared_state,
+        schema_state,
+        supergraph,
+        &variable_payload,
+        &query_plan_payload,
+        normalize_payload.operation_for_plan.as_ref(),
+        normalize_payload.root_type_name,
+        normalize_payload.normalized_operation_hash,
+        (&normalize_payload.operation_identity).into(),
+    )
+    .await
+    {
+        Ok(context) => context,
+        Err(err @ PipelineError::CostEstimatedTooExpensive { estimated_cost, .. }) => {
+            let result: &'static str = (&DemandControlResultCode::CostEstimatedTooExpensive).into();
+            operation_span.record_demand_control(estimated_cost, None, None, result, None);
+            return Err(err);
+        }
+        Err(err) => return Err(err),
+    };
+
+    if let Some(demand_control) = demand_control_execution_context.as_ref() {
+        let result: &'static str = (&demand_control.result_code).into();
+        operation_span.record_demand_control(
+            demand_control.evaluation.estimated_cost,
+            None,
+            None,
+            result,
+            Some(demand_control.formula_cache_hit),
+        );
+    }
+
     let client_request_details = client_request_details.freeze();
     let planned_request = PlannedRequest {
         normalized_payload: normalize_payload,
         query_plan_payload: &query_plan_payload,
-        variable_payload,
+        variable_payload: variable_payload.clone(),
         client_request_details: client_request_details.into(),
         authorization_errors,
+        demand_control_execution_context,
         plugin_req_state,
     };
 

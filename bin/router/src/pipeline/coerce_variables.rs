@@ -1,28 +1,14 @@
 use std::collections::HashMap;
 
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLVariableCoercionSpan;
+use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::variables::collect_variables;
-use sonic_rs::{JsonValueTrait, Value};
+use sonic_rs::Value;
 use tracing::{trace, warn};
 
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-
-#[derive(Clone, Debug, Default)]
-pub struct CoerceVariablesPayload {
-    pub variables_map: Option<HashMap<String, Value>>,
-}
-
-impl CoerceVariablesPayload {
-    pub fn variable_equals_true(&self, name: &str) -> bool {
-        self.variables_map
-            .as_ref()
-            .and_then(|vars| vars.get(name))
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false)
-    }
-}
 
 #[inline]
 pub fn coerce_request_variables(

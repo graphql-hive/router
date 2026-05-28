@@ -8,6 +8,7 @@
 |[**coprocessor**](#coprocessor)|`object`, `null`|Configuration for coprocessor.<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
+|[**demand\_control**](#demand_control)|`object`, `null`||yes|
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
@@ -862,6 +863,19 @@ A valid HTTP header name, according to RFC 7230.
 
 **Item Type:** `string`  
 **Item Pattern:** `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`  
+<a name="demand_control"></a>
+## demand\_control: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Enable demand control processing. Must be `true` for any cost estimation,<br/>enforcement or telemetry to take effect.<br/>|yes|
+|**include\_extension\_metadata**|`boolean`, `null`|When `true`, a `cost` object is appended to `extensions` on every<br/>response. It includes `estimated`, `result`, `bySubgraph`,<br/>`formulaCacheHit`, `estimatedFormulaBySubgraph`, `maxCost`, and<br/>(when `actual_cost_mode` is configured) `actual`, `delta`,<br/>`actualBySubgraph`.<br/>|no|
+|**mode**|`string`|Controls what happens when a cost limit is exceeded.<br/><br/>- `enforce`: reject the request (or skip the specific subgraph)<br/>  when a limit is breached. Requires `strategy.static_estimated.max`<br/>  and/or per-subgraph `max` to have any enforcement effect.<br/>- `measure`: never reject. Cost is still computed, result codes are<br/>  recorded in telemetry and in `extensions.cost`, but no request is<br/>  blocked. Useful for shadowing a limit in production before switching<br/>  to `enforce`.<br/>Enum: `"enforce"`, `"measure"`<br/>|yes|
+|**strategy**||The cost estimation strategy. Currently only `static_estimated` is<br/>supported, which estimates cost before execution using `@cost` and<br/>`@listSize` directives.<br/>|yes|
+
+**Additional Properties:** not allowed  
 <a name="headers"></a>
 ## headers: object
 

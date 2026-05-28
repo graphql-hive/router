@@ -4,7 +4,7 @@ use graphql_tools::validation::utils::ValidationError;
 use hive_router_internal::graphql::{ObservedError, PathSegment};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use sonic_rs::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -103,7 +103,7 @@ impl GraphQLError {
     ///     code: Some("SOME_ERROR_CODE".to_string()),
     ///     service_name: None,
     ///     affected_path: None,
-    ///     extensions: std::collections::HashMap::new(),
+    ///     extensions: std::collections::BTreeMap::new(),
     /// };
     ///
     /// let error = GraphQLError::from_message_and_extensions("An error occurred", extensions);
@@ -282,6 +282,13 @@ impl GraphQLErrorPath {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphQLErrorCostExtension {
+    pub estimated: u64,
+    pub max: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphQLErrorExtensions {
@@ -292,8 +299,12 @@ pub struct GraphQLErrorExtensions {
     /// Corresponds to a path of a Flatten(Fetch) node that caused the error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub affected_path: Option<String>,
+    /// Demand-control cost numbers attached to estimated/actual cost
+    /// rejections (both supergraph-wide and per-subgraph).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost: Option<GraphQLErrorCostExtension>,
     #[serde(flatten)]
-    pub extensions: HashMap<String, Value>,
+    pub extensions: BTreeMap<String, Value>,
 }
 
 // Workaround for https://github.com/cloudwego/sonic-rs/issues/114
@@ -319,7 +330,8 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                 let mut code = None;
                 let mut service_name = None;
                 let mut affected_path = None;
-                let mut extensions = HashMap::new();
+                let mut cost = None;
+                let mut extensions = BTreeMap::new();
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
@@ -341,6 +353,12 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                             }
                             affected_path = map.next_value()?;
                         }
+                        "cost" => {
+                            if cost.is_some() {
+                                return Err(de::Error::duplicate_field("cost"));
+                            }
+                            cost = map.next_value()?;
+                        }
                         other_key => {
                             let value: Value = map.next_value()?;
                             extensions.insert(other_key.to_string(), value);
@@ -352,6 +370,7 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                     code,
                     service_name,
                     affected_path,
+                    cost,
                     extensions,
                 })
             }
@@ -367,7 +386,8 @@ impl GraphQLErrorExtensions {
             code: Some(code.into()),
             service_name: None,
             affected_path: None,
-            extensions: HashMap::new(),
+            cost: None,
+            extensions: BTreeMap::new(),
         }
     }
 
@@ -379,7 +399,8 @@ impl GraphQLErrorExtensions {
             code: Some(code.into()),
             service_name: Some(service_name.into()),
             affected_path: None,
-            extensions: HashMap::new(),
+            cost: None,
+            extensions: BTreeMap::new(),
         }
     }
 
@@ -395,6 +416,7 @@ impl GraphQLErrorExtensions {
         self.code.is_none()
             && self.service_name.is_none()
             && self.affected_path.is_none()
+            && self.cost.is_none()
             && self.extensions.is_empty()
     }
 }

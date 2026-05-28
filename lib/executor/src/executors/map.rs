@@ -8,6 +8,7 @@ use dashmap::DashMap;
 use futures::{stream::BoxStream, FutureExt};
 use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerError};
 use hive_router_config::{
+    demand_control::DemandControlMode,
     override_subgraph_urls::UrlOrExpression,
     subscriptions::SubscriptionProtocol,
     traffic_shaping::{DurationOrExpression, StatusCodeMatcher},
@@ -31,7 +32,9 @@ use recloser::AsyncRecloser;
 use tokio::sync::Semaphore;
 
 use crate::{
-    execution::client_request_details::ClientRequestDetails,
+    execution::{
+        client_request_details::ClientRequestDetails, demand_control::DemandControlExecutionContext,
+    },
     executors::{
         common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         error::SubgraphExecutorError,
@@ -258,7 +261,24 @@ impl SubgraphExecutorMap {
         mut execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec>,
         plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
+        demand_control_ctx: Option<&DemandControlExecutionContext>,
     ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
+        if let Some(demand_control_opts) = demand_control_ctx {
+            if demand_control_opts.mode == DemandControlMode::Enforce {
+                if let Some(max_cost) = demand_control_opts.subgraphs_over_limit.get(subgraph_name)
+                {
+                    return Err(SubgraphExecutorError::CostEstimatedTooExpensive {
+                        estimated_cost: demand_control_opts
+                            .evaluation
+                            .per_subgraph
+                            .get(subgraph_name)
+                            .copied()
+                            .unwrap_or_default(),
+                        max_cost: *max_cost,
+                    });
+                }
+            }
+        }
         let mut executor = self.get_or_create_http_executor(subgraph_name, client_request)?;
 
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;

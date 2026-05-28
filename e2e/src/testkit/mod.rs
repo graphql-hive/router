@@ -1,4 +1,5 @@
 pub mod coprocessor;
+pub mod mock_subgraphs;
 pub mod otel;
 pub mod s3_mock;
 
@@ -360,11 +361,16 @@ async fn handle_on_request(
 ) -> impl axum::response::IntoResponse {
     let path = request.uri().path().to_string();
     let (parts, body) = request.into_parts();
+    let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
 
     let req = RequestLike {
         path: path.clone(),
         headers: parts.headers.clone(),
-        body: None, // TODO: do we really care about the body?
+        body: if body_bytes.is_empty() {
+            None
+        } else {
+            Some(body_bytes.clone())
+        },
         http_version: parts.version,
     };
 
@@ -382,7 +388,8 @@ async fn handle_on_request(
         return response;
     }
 
-    let request = axum::extract::Request::from_parts(parts, body);
+    let rebuilt_body = axum::body::Body::from(body_bytes);
+    let request = axum::extract::Request::from_parts(parts, rebuilt_body);
     next.run(request).await
 }
 

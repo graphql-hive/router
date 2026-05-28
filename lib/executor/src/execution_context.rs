@@ -16,6 +16,7 @@ pub struct ExecutionContext<'a> {
     pub data: Value<'a>,
     pub errors: Vec<GraphQLError>,
     pub response_headers_aggregator: ResponseHeaderAggregator,
+    pub actual_cost_by_subgraph: Option<ahash::HashMap<&'a str, u64>>,
 }
 
 impl<'a> Default for ExecutionContext<'a> {
@@ -25,6 +26,7 @@ impl<'a> Default for ExecutionContext<'a> {
             errors: Vec::new(),
             data: Value::Null,
             response_headers_aggregator: Default::default(),
+            actual_cost_by_subgraph: None,
         }
     }
 }
