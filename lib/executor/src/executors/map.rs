@@ -351,16 +351,71 @@ impl SubgraphExecutorMap {
 
     pub async fn subscribe<'exec>(
         &self,
-        subgraph_name: &str,
-        execution_request: SubgraphExecutionRequest<'exec>,
+        subgraph_name: &'exec str,
+        mut execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec>,
+        plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
     ) -> Result<
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        let executor = self.get_or_create_subscription_executor(subgraph_name, client_request)?;
+        let mut executor =
+            self.get_or_create_subscription_executor(subgraph_name, client_request)?;
 
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
+
+        // Invoke the `on_subgraph_execute` plugin hook for the subscribe path so
+        // plugins can observe and modify the registration request (e.g. inject
+        // auth headers) the same way they can for queries and mutations.
+        //
+        // `EndWithResponse` and `OnEnd` control flows don't yet have a clean
+        // mapping to a streamed subscription:
+        //   * `EndWithResponse` would require materialising a `SubgraphResponse<'exec>`
+        //     into the `'static` stream that subscribe returns. We surface a
+        //     dedicated error to make the limitation visible to plugin authors
+        //     rather than silently dropping the response.
+        //   * `OnEnd` callbacks are bound to `'exec` and have no well-defined
+        //     end-of-stream invocation point yet. We log a warning and drop the
+        //     callback, leaving the rest of the plugin's request mutations in place.
+        //
+        // Tracked upstream in https://github.com/graphql-hive/router/issues/922.
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut start_payload = OnSubgraphExecuteStartHookPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                request_context: plugin_req_state
+                    .request_context
+                    .for_plugin::<hooks::OnSubgraphExecute>(),
+                subgraph_name,
+                executor,
+                execution_request,
+            };
+            for plugin in plugin_req_state.plugins.as_ref() {
+                let result = plugin.on_subgraph_execute(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    StartControlFlow::Proceed => {
+                        // continue to next plugin
+                    }
+                    StartControlFlow::EndWithResponse(_) => {
+                        return Err(
+                            SubgraphExecutorError::SubscribePluginEndWithResponseUnsupported,
+                        );
+                    }
+                    StartControlFlow::OnEnd(_) => {
+                        tracing::warn!(
+                            subgraph_name,
+                            "`on_subgraph_execute` `on_end` callback dropped on subscribe path; \
+                             end-of-stream callbacks for subscriptions are not yet implemented \
+                             (see https://github.com/graphql-hive/router/issues/922)"
+                        );
+                    }
+                }
+            }
+            // Give the ownership back to variables
+            execution_request = start_payload.execution_request;
+            executor = start_payload.executor;
+        }
 
         let subscribe_fut = executor.subscribe(execution_request, timeout);
 

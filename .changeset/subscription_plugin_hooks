@@ -1,0 +1,10 @@
+---
+hive-router-plan-executor: minor
+hive-router: patch
+---
+
+## Invoke `on_subgraph_execute` plugin hook on the subscribe path.
+
+Previously, the `on_subgraph_execute` hook was only invoked for queries and mutations; subscription registration bypassed all plugin hooks. Plugins that mutate `execution_request.headers` (for example to inject auth context) had no way of affecting the subscription registration request, so subgraphs saw an unmodified registration payload.
+
+The hook is now invoked on the subscribe path with the same loop semantics as the execute path. Only `proceed` is fully supported for now; `end_with_response` surfaces a dedicated `SUBGRAPH_SUBSCRIBE_PLUGIN_END_WITH_RESPONSE_UNSUPPORTED` error (mapping a single response into a `'static` stream still needs to be worked out), and `on_end` callbacks are dropped with a warning. Tracked upstream in [#922](https://github.com/graphql-hive/router/issues/922).

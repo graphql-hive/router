@@ -55,6 +55,8 @@ mod router_timeout;
 #[cfg(test)]
 mod storage;
 #[cfg(test)]
+mod subscription_plugin_hooks;
+#[cfg(test)]
 mod subscriptions;
 #[cfg(test)]
 mod supergraph;
