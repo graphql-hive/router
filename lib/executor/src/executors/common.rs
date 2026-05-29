@@ -46,9 +46,10 @@ pub type SubgraphExecutorBoxedArc = Arc<Box<SubgraphExecutorType>>;
 pub type SubgraphRequestExtensions = HashMap<String, Value>;
 
 pub struct SubgraphExecutionRequest<'a> {
-    pub query: &'a str,
+    pub anonymous_document_str: &'a str,
+    pub document_name_write_pos: usize,
     pub dedupe: bool,
-    pub operation_name: Option<&'a str>,
+    pub operation_name: Option<String>,
     // TODO: variables could be stringified before even executing the request
     pub variables: Option<HashMap<&'a str, &'a sonic_rs::Value>>,
     pub headers: HeaderMap,

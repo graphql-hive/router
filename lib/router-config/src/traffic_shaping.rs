@@ -108,6 +108,14 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// This will make the subgraph requests never fall back to HTTP/1.1,
     /// and will fail if the subgraph doesn't support HTTP/2.
     pub allow_only_http2: Option<bool>,
+
+    /// When enabled, forwards client operation name to the selected subgraph.
+    /// The operation name will include subgraph name, fetch node id and operation name from the client request.
+    /// Format: <Client Operation Name>_<Subgraph Name>_<Fetch Node ID>
+    ///
+    /// This setting takes precedence over the value set in `all` section.
+    #[serde(default)]
+    pub forward_operation_name: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -167,6 +175,12 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// and will fail if the subgraph doesn't support HTTP/2.
     #[serde(default)]
     pub allow_only_http2: bool,
+
+    /// When enabled, forwards client operation name to subgraphs.
+    /// The operation name will include subgraph name, fetch node id and operation name from the client request.
+    /// Format: <Client Operation Name>_<Subgraph Name>_<Fetch Node ID>
+    #[serde(default)]
+    pub forward_operation_name: bool,
 }
 
 fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
@@ -200,6 +214,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             circuit_breaker: default_circuit_breaker_config(),
             tls: None,
             allow_only_http2: false,
+            forward_operation_name: false,
         }
     }
 }

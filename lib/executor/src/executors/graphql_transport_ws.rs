@@ -100,8 +100,28 @@ pub fn build_subscribe_payload(
         }
         None => None,
     };
+    let query = match &execution_request.operation_name {
+        Some(operation_name) => {
+            let pos = execution_request.document_name_write_pos;
+            let input = execution_request.anonymous_document_str;
+            let mut result = String::with_capacity(input.len() + operation_name.len() + 6);
+            if pos == 0 && input.starts_with('{') {
+                result.push_str("query ");
+                result.push_str(operation_name);
+                result.push(' ');
+                result.push_str(input);
+            } else {
+                result.push_str(&input[..pos]);
+                result.push(' ');
+                result.push_str(operation_name);
+                result.push_str(&input[pos..]);
+            }
+            result
+        }
+        None => execution_request.anonymous_document_str.to_string(),
+    };
     let subscribe_payload = SubscribePayload {
-        query: execution_request.query.to_string(),
+        query,
         operation_name: execution_request.operation_name.map(|s| s.to_string()),
         variables,
         extensions: execution_request.extensions,
@@ -429,5 +449,66 @@ impl From<ServerMessage> for ws::Message {
                 CloseCode::InternalServerError(None).into()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::HeaderMap;
+
+    fn make_request(
+        anonymous_document_str: &'static str,
+        document_name_write_pos: usize,
+        operation_name: Option<String>,
+    ) -> SubgraphExecutionRequest<'static> {
+        SubgraphExecutionRequest {
+            anonymous_document_str,
+            document_name_write_pos,
+            dedupe: false,
+            operation_name,
+            variables: None,
+            headers: HeaderMap::new(),
+            raw_variable_values: None,
+            extensions: None,
+            custom_scalar_paths: None,
+        }
+    }
+
+    #[test]
+    fn build_subscribe_payload_inlines_operation_name_in_query() {
+        let request = make_request(
+            "query { me { id } }",
+            5,
+            Some("GetMe_accounts_0".to_string()),
+        );
+
+        let (payload, _) = build_subscribe_payload(request);
+
+        assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
+        assert_eq!(payload.operation_name.as_deref(), Some("GetMe_accounts_0"));
+    }
+
+    #[test]
+    fn build_subscribe_payload_without_operation_name_keeps_original_query() {
+        let request = make_request("query { me { id } }", 5, None);
+
+        let (payload, _) = build_subscribe_payload(request);
+
+        assert_eq!(payload.query, "query { me { id } }");
+        assert_eq!(payload.operation_name, None);
+    }
+
+    #[test]
+    fn build_subscribe_payload_inlines_name_for_shorthand_query() {
+        let request = make_request(
+            "{ me { id } }",
+            0,
+            Some("GetMe_accounts_0".to_string()),
+        );
+
+        let (payload, _) = build_subscribe_payload(request);
+
+        assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
     }
 }

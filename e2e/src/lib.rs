@@ -47,6 +47,8 @@ mod max_tokens;
 #[cfg(test)]
 mod override_subgraph_urls;
 #[cfg(test)]
+mod operation_name;
+#[cfg(test)]
 mod persisted_documents;
 #[cfg(test)]
 mod probes;

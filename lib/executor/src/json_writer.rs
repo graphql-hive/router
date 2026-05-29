@@ -9,6 +9,44 @@ pub fn write_and_escape_string(writer: &mut Vec<u8>, input: &str) {
     format_string(input, writer, true);
 }
 
+pub fn write_named_operation(
+    writer: &mut Vec<u8>,
+    name: &[u8],
+    name_write_pos: usize,
+    input: &str,
+) {
+    let pos = name_write_pos;
+    debug_assert!(pos <= input.len());
+    debug_assert!(
+        pos != 0 || input.starts_with('{'),
+        "name_write_pos 0 requires input to start with '{{', got: {:?}",
+        &input[..input.len().min(20)]
+    );
+
+    let name = std::str::from_utf8(name).expect("GraphQL operation names must be valid UTF-8");
+
+    writer.put(&b"\""[..]);
+
+    if pos == 0 && input.starts_with('{') {
+        format_string("query ", writer, false);
+        format_string(name, writer, false);
+        format_string(" ", writer, false);
+        format_string(input, writer, false);
+        writer.put(&b"\""[..]);
+        return;
+    }
+
+    format_string(&input[..pos], writer, false);
+
+    if pos > 0 {
+        format_string(" ", writer, false);
+    }
+
+    format_string(name, writer, false);
+    format_string(&input[pos..], writer, false);
+    writer.put(&b"\""[..]);
+}
+
 pub fn write_f64(writer: &mut Vec<u8>, value: f64) {
     if !value.is_finite() {
         // JSON does not allow infinite or nan values. In browsers JSON.stringify(Number.NaN) = "null"
@@ -544,5 +582,40 @@ mod test {
                         times to test the performance and correctness of the function.";
         format_string(long_str, &mut dst, true);
         assert_eq!(dst.as_slice(), b"\"\"\"\\u0000\"\"test\"\"test\\\"test\"\"\\\\testtest\\\"\"\"this is a long string that should be \\\\\\\"quoted and escaped multiple times to test the performance and correctness of the function.\"");
+    }
+
+    #[test]
+    fn writes_named_operation_after_keyword() {
+        let mut dst = Vec::new();
+
+        write_named_operation(&mut dst, b"Foo", 5, "query($id: ID!){node(id:$id){id}}");
+
+        assert_eq!(dst.as_slice(), b"\"query Foo($id: ID!){node(id:$id){id}}\"");
+    }
+
+    #[test]
+    fn writes_named_operation_for_shorthand_query() {
+        let mut dst = Vec::new();
+
+        write_named_operation(&mut dst, b"Foo", 0, "{node{id}}");
+
+        assert_eq!(dst.as_slice(), b"\"query Foo {node{id}}\"");
+    }
+
+    #[test]
+    fn writes_named_operation_with_json_escaping() {
+        let mut dst = Vec::new();
+
+        write_named_operation(
+            &mut dst,
+            b"Foo",
+            5,
+            "query($id: ID!) { node(id: \"quoted\\value\") { field } }",
+        );
+
+        assert_eq!(
+            dst.as_slice(),
+            b"\"query Foo($id: ID!) { node(id: \\\"quoted\\\\value\\\") { field } }\""
+        );
     }
 }

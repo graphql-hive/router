@@ -12,6 +12,7 @@ use hive_router_internal::{
     authorization::metadata::AuthorizationMetadata,
     background_tasks::{BackgroundTask, BackgroundTasksManager},
 };
+use hive_router_plan_executor::execution::operation_name::OperationNameForwardConfig;
 use hive_router_plan_executor::executors::http_callback::{
     CallbackMessage, CallbackSubscriptionsMap,
 };
@@ -258,6 +259,10 @@ impl SchemaState {
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
         let metadata = Arc::new(planner.consumer_schema.schema_metadata());
         let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata)?;
+        let operation_name_forward_config = Arc::new(OperationNameForwardConfig::new(
+            &router_config.traffic_shaping,
+            planner.supergraph.known_subgraphs.values(),
+        ));
         let subgraph_executor_map = Arc::new(SubgraphExecutorMap::from_http_endpoint_map(
             &planner.supergraph.subgraph_endpoint_map,
             router_config,
@@ -275,6 +280,7 @@ impl SchemaState {
             planner,
             authorization,
             subgraph_executor_map,
+            operation_name_forward_config,
         })
     }
 }

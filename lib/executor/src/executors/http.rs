@@ -8,6 +8,7 @@ use crate::executors::sse;
 use crate::hooks::on_subgraph_http_request::{
     OnSubgraphHttpRequestHookPayload, OnSubgraphHttpResponseHookPayload,
 };
+use crate::json_writer::write_named_operation;
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::plugins::hooks;
@@ -59,6 +60,7 @@ pub struct HTTPSubgraphExecutor {
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
 const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
+const OPERATION_NAME_STR: &[u8] = b",\"operationName\":";
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 
@@ -79,7 +81,18 @@ pub fn build_request_body(
 ) -> Result<Vec<u8>, SubgraphExecutorError> {
     let mut body = Vec::with_capacity(4096);
     body.put(FIRST_QUOTE_STR);
-    write_and_escape_string(&mut body, execution_request.query);
+
+    if let Some(operation_name) = &execution_request.operation_name {
+        write_named_operation(
+            &mut body,
+            operation_name.as_bytes(),
+            execution_request.document_name_write_pos,
+            execution_request.anonymous_document_str,
+        );
+    } else {
+        write_and_escape_string(&mut body, execution_request.anonymous_document_str);
+    }
+
     let mut first_variable = true;
     if let Some(variables) = &execution_request.variables {
         for (variable_name, variable_value) in variables {
@@ -117,6 +130,13 @@ pub fn build_request_body(
     // "first_variable" should be still true if there are no variables
     if !first_variable {
         body.put(CLOSE_BRACE);
+    }
+
+    if let Some(operation_name) = &execution_request.operation_name {
+        body.put(OPERATION_NAME_STR);
+        body.put(QUOTE);
+        body.put(operation_name.as_bytes());
+        body.put(QUOTE);
     }
 
     if let Some(extensions) = &execution_request.extensions {
@@ -661,5 +681,41 @@ impl SubgraphHttpResponse {
                 resp
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use http::HeaderMap;
+    use serde_json::json;
+
+    use super::build_request_body;
+    use crate::executors::common::SubgraphExecutionRequest;
+
+    #[test]
+    fn build_request_body_with_forwarded_operation_name_and_no_variables_is_valid_json() {
+        let execution_request = SubgraphExecutionRequest {
+            anonymous_document_str: "query { me { id } }",
+            document_name_write_pos: 5,
+            dedupe: false,
+            operation_name: Some("GetMe_accounts_0".to_string()),
+            variables: None,
+            headers: HeaderMap::new(),
+            raw_variable_values: None,
+            extensions: None,
+            custom_scalar_paths: None,
+        };
+
+        let body = build_request_body(&execution_request).expect("request body should serialize");
+        let json_body: serde_json::Value =
+            serde_json::from_slice(&body).expect("request body should be valid JSON");
+
+        assert_eq!(
+            json_body,
+            json!({
+                "query": "query GetMe_accounts_0 { me { id } }",
+                "operationName": "GetMe_accounts_0",
+            })
+        );
     }
 }
