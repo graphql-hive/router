@@ -66,9 +66,10 @@ pub struct S3StorageConfig {
     /// - On EC2, the client finally falls through to
     ///   [Instance Metadata Service (IMDSv2)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html).
     ///
-    /// Set this field only to provide credentials explicitly or to override what
-    /// the environment supplies — values configured here take precedence over
-    /// the environment.
+    /// When this field **is** set, credentials are taken solely from the config:
+    /// the `AWS_*` credential environment variables are ignored entirely, so they
+    /// cannot mix into or shadow the mode you configured (only non-credential
+    /// settings such as region and endpoint still fall back to the environment).
     ///
     /// See [`S3Credentials`] for all supported authentication modes.
     pub credentials: Option<S3Credentials>,

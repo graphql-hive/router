@@ -100,10 +100,11 @@ mod storage_s3_e2e_tests {
         );
     }
 
-    /// Explicit credentials in the config take precedence over the environment:
-    /// bogus `AWS_*` values must be ignored when the config provides real
-    /// credentials. If precedence regressed, signing would use the bogus env
-    /// credentials, the mock would reject them, and supergraph load would fail.
+    /// Explicit credentials in the config are used verbatim and the `AWS_*`
+    /// credential environment variables are ignored entirely. This guards against
+    /// env credentials mixing into the configured ones — in particular a stray
+    /// `AWS_SESSION_TOKEN` must not attach to configured static keys (which would
+    /// break signing), and bogus env access keys must not be used at all.
     #[ntex::test]
     async fn should_prefer_config_credentials_over_env() {
         let storage = S3Mock::start("test-bucket").await;
@@ -111,10 +112,12 @@ mod storage_s3_e2e_tests {
         let location = "my-dir/supergraph.graphql";
         storage.set(location, supergraph.as_bytes()).await;
 
-        // Wrong credentials in the environment, correct ones in the config.
+        // Wrong credentials in the environment, including a session token that
+        // must not leak onto the configured token-less static credentials.
         let _env = EnvGuard::set(&[
             ("AWS_ACCESS_KEY_ID", "AKIAWRONGWRONGWRONG0"),
             ("AWS_SECRET_ACCESS_KEY", "wrong-secret-should-be-ignored"),
+            ("AWS_SESSION_TOKEN", "bogus-session-token-should-be-ignored"),
         ]);
 
         let config = format!(
