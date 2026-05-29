@@ -21,7 +21,17 @@ impl S3StorageRuntime {
     }
 
     fn build_client(config: &S3StorageConfig) -> Result<AmazonS3, StorageError> {
-        let mut builder = AmazonS3Builder::new()
+        // Seed the builder from the standard `AWS_*` environment variables so
+        // that credentials supplied by the runtime work without any explicit
+        // configuration. Most importantly this makes EKS IRSA work out of the
+        // box — the pod identity webhook injects `AWS_WEB_IDENTITY_TOKEN_FILE`
+        // and `AWS_ROLE_ARN`, which `from_env` picks up — and it also honours
+        // plain `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+        // `AWS_REGION`, `AWS_ENDPOINT`, and the ECS container-credential vars.
+        //
+        // The explicit config below is applied afterwards, so any value set in
+        // the router config takes precedence over the environment.
+        let mut builder = AmazonS3Builder::from_env()
             .with_bucket_name(&resolve_value_or_expression(&config.bucket, "bucket")?);
 
         if let Some(region) = &config.region {

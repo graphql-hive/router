@@ -51,9 +51,24 @@ pub struct S3StorageConfig {
 
     /// Credential provider to authenticate with S3.
     ///
-    /// When omitted, the client falls through to EC2
-    /// [Instance Metadata Service (IMDSv2)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html),
-    /// which works automatically on EC2 instances with an attached IAM role.
+    /// When omitted, credentials are resolved from the standard `AWS_*`
+    /// environment variables and the ambient runtime, matching the behaviour of
+    /// the AWS SDKs. In particular:
+    ///
+    /// - On **EKS**, [IAM Roles for Service Accounts (IRSA)](https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html)
+    ///   works out of the box: the pod identity webhook injects
+    ///   `AWS_WEB_IDENTITY_TOKEN_FILE` and `AWS_ROLE_ARN`, which are picked up
+    ///   automatically — no `credentials` block required.
+    /// - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and optional
+    ///   `AWS_SESSION_TOKEN`) provide static credentials.
+    /// - ECS task roles and EKS Pod Identity are resolved from their respective
+    ///   `AWS_CONTAINER_CREDENTIALS_*` variables.
+    /// - On EC2, the client finally falls through to
+    ///   [Instance Metadata Service (IMDSv2)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html).
+    ///
+    /// Set this field only to provide credentials explicitly or to override what
+    /// the environment supplies — values configured here take precedence over
+    /// the environment.
     ///
     /// See [`S3Credentials`] for all supported authentication modes.
     pub credentials: Option<S3Credentials>,
@@ -107,8 +122,11 @@ pub struct S3StorageConfig {
 /// 2. [`WebIdentity`](Self::WebIdentity) — EKS IRSA via STS `AssumeRoleWithWebIdentity`
 /// 3. [`EcsTask`](Self::EcsTask) — ECS task IAM role
 /// 4. [`EksPodIdentity`](Self::EksPodIdentity) — EKS Pod Identity
-/// 5. [`InstanceMetadata`](Self::InstanceMetadata) — EC2 IMDSv2 (also the implicit
-///    default when `credentials` is omitted entirely)
+/// 5. [`InstanceMetadata`](Self::InstanceMetadata) — EC2 IMDSv2
+///
+/// When `credentials` is omitted entirely, credentials are instead resolved
+/// from the `AWS_*` environment variables and the ambient runtime — see
+/// [`S3StorageConfig::credentials`].
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum S3Credentials {
