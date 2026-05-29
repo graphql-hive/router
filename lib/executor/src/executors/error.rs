@@ -105,6 +105,13 @@ pub enum SubgraphExecutorError {
     #[error("Subgraph internal server error")]
     #[strum(serialize = "SUBGRAPH_INTERNAL_SERVER_ERROR")]
     InternalServerError(Box<SubgraphResponse<'static>>),
+    #[error(
+        "Plugin returned `end_with_response` from `on_subgraph_execute` on the subscribe path; \
+         not supported (see `OnSubgraphExecuteStartHookPayload` docs). Short-circuit from an \
+         earlier hook (e.g. `on_http_request`, `on_graphql_params`) instead."
+    )]
+    #[strum(serialize = "SUBGRAPH_SUBSCRIBE_PLUGIN_HOOK_UNSUPPORTED")]
+    SubscribePluginHookUnsupported,
 }
 
 impl SubgraphExecutorError {

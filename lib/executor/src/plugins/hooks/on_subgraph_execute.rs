@@ -11,6 +11,31 @@ use crate::{
 
 type RequestContextApi = RequestContextPluginApi<super::OnSubgraphExecute>;
 
+/// # Subscribe-path control-flow contract
+///
+/// `on_subgraph_execute` fires for queries, mutations **and** the subscribe
+/// registration request (since [#1072]). The subscribe path imposes two
+/// restrictions on the returned [`StartHookResult`]:
+///
+/// * [`StartControlFlow::EndWithResponse`] short-circuits the subgraph call
+///   with a `SubgraphResponse<'exec>` that does not yet have a defined
+///   materialisation into the `'static` stream returned by `subscribe`.
+///   Returning this variant on the subscribe path surfaces
+///   `SUBGRAPH_SUBSCRIBE_PLUGIN_HOOK_UNSUPPORTED` to the caller. Short-circuit
+///   from an earlier hook (`on_http_request`, `on_graphql_params`,
+///   `on_query_plan`) instead.
+/// * [`StartControlFlow::OnEnd`] callbacks are not invoked on the subscribe
+///   path — there is no symmetric end-of-stream point yet. The plugin's
+///   request-payload mutations made before returning `on_end` are still
+///   applied. Plugins that need end-of-stream behaviour for subscriptions
+///   should track it through a different hook.
+///
+/// Tracked in <https://github.com/graphql-hive/router/issues/922>.
+///
+/// [#1072]: https://github.com/graphql-hive/router/pull/1072
+/// [`StartHookResult`]: crate::plugin_trait::StartHookResult
+/// [`StartControlFlow::EndWithResponse`]: crate::plugin_trait::StartControlFlow::EndWithResponse
+/// [`StartControlFlow::OnEnd`]: crate::plugin_trait::StartControlFlow::OnEnd
 pub struct OnSubgraphExecuteStartHookPayload<'exec> {
     /// The incoming HTTP request to the router for which the GraphQL execution is happening.
     /// It includes all the details of the request such as headers, body, etc.
