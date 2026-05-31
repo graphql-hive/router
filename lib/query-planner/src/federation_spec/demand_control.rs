@@ -1,4 +1,4 @@
-use crate::federation_spec::directives::FederationDirective;
+use crate::federation_spec::{directives::FederationDirective, FederationRules};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CostDirective {
@@ -50,11 +50,18 @@ impl PartialOrd for CostDirective {
     }
 }
 
+type FieldCoordinateSteps = Vec<String>;
+type DotNotationFieldList = Vec<String>;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ListSizeDirective {
     pub assumed_size: Option<usize>,
-    pub slicing_arguments: Option<Vec<Vec<String>>>,
-    pub sized_fields: Option<Vec<Vec<String>>>,
+    /// `slicingArguments` is a list of lists of field names used to slice the list.
+    /// To access nested fields, use dot notation (e.g. `
+    /// ["inputFieldName.subInputField", "otherField"]` will be parsed into `[["inputFieldName"], ["subInputField"], ["otherField"]]`).
+    pub slicing_arguments: Option<Vec<DotNotationFieldList>>,
+    /// `sizedFields` is a list of field coordinate steps used to access nested fields.
+    pub sized_fields: Option<Vec<FieldCoordinateSteps>>,
     pub require_one_slicing_argument: bool,
 }
 
@@ -89,7 +96,7 @@ impl FederationDirective for ListSizeDirective {
                 }
                 "slicingArguments" => {
                     if let graphql_tools::parser::schema::Value::List(list_value) = arg_value {
-                        let parsed_val: Vec<Vec<String>> = list_value
+                        let parsed_val: Vec<DotNotationFieldList> = list_value
                             .iter()
                             .filter_map(|item| {
                                 if let graphql_tools::parser::schema::Value::String(str_value) =
@@ -113,29 +120,19 @@ impl FederationDirective for ListSizeDirective {
                 }
                 "sizedFields" => {
                     if let graphql_tools::parser::schema::Value::List(list_value) = arg_value {
-                        let parsed_val: Vec<Vec<String>> = list_value
+                        let parsed_val: Vec<FieldCoordinateSteps> = list_value
                             .iter()
                             .filter_map(|item| {
-                                if let graphql_tools::parser::schema::Value::String(path) = item {
-                                    let mut current = String::new();
-                                    let mut parsed_path = Vec::new();
-
-                                    for ch in path.chars() {
-                                        if ch.is_ascii_alphanumeric() || ch == '_' {
-                                            current.push(ch);
-                                        } else if !current.is_empty() {
-                                            parsed_path.push(std::mem::take(&mut current));
-                                        }
-                                    }
-
-                                    if !current.is_empty() {
-                                        parsed_path.push(current);
-                                    }
-                                    if parsed_path.is_empty() {
-                                        None
-                                    } else {
-                                        Some(parsed_path)
-                                    }
+                                if let graphql_tools::parser::schema::Value::String(
+                                    selection_set_str,
+                                ) = item
+                                {
+                                    Some(
+                                        FederationRules::parse_list_size_sized_fields(
+                                            selection_set_str,
+                                        )
+                                        .expect("failed to parse sizedFields"),
+                                    )
                                 } else {
                                     None
                                 }
