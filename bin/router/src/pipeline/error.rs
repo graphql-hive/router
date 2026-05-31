@@ -170,7 +170,9 @@ pub enum PipelineError {
     #[strum(serialize = "COST_ESTIMATED_TOO_EXPENSIVE")]
     CostEstimatedTooExpensive { estimated_cost: u64, max_cost: u64 },
 
-    #[error("Exactly one slicing argument is required for field '{field_name}', but found {found}")]
+    #[error(
+        "Exactly one slicing argument is required for field '{field_name}', but found {found}"
+    )]
     #[strum(serialize = "COST_INVALID_SLICING_ARGUMENTS")]
     CostInvalidSlicingArguments { field_name: String, found: usize },
 

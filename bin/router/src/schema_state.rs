@@ -43,7 +43,7 @@ use tracing::{debug, error, trace};
 use crate::{
     cache_state::CacheState,
     pipeline::{
-        authorization::AuthorizationMetadataError, demand_control::DemandControlFormulaPlan,
+        authorization::AuthorizationMetadataError, demand_control::runtime::DemandControlRuntime,
         normalize::GraphQLNormalizationPayload,
     },
     supergraph::{
@@ -57,7 +57,7 @@ pub struct SchemaState {
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
-    pub demand_control_formula_cache: Cache<u64, Arc<DemandControlFormulaPlan>>,
+    pub demand_control_runtime: Option<DemandControlRuntime>,
     pub telemetry_context: Arc<TelemetryContext>,
     pub callback_subscriptions: CallbackSubscriptionsMap,
 }
@@ -112,10 +112,28 @@ impl SchemaState {
         let plan_cache = cache_state.plan_cache.clone();
         let validate_cache = cache_state.validate_cache.clone();
         let normalize_cache = cache_state.normalize_cache.clone();
-        let demand_control_formula_cache = cache_state.demand_control_formula_cache.clone();
         let callback_subscriptions: CallbackSubscriptionsMap = Arc::new(DashMap::new());
 
-        // This is cheap clone, as Cache is thread-safe and can be cloned without any performance penalty.
+        let demand_control_runtime = DemandControlRuntime::from_config(
+            router_config.demand_control.as_ref(),
+            telemetry_context.metrics.clone(),
+        );
+
+        if router_config.telemetry.metrics.is_enabled() {
+            if let Some(runtime) = demand_control_runtime.as_ref() {
+                let formula_cache = runtime.formula_cache().clone();
+                telemetry_context
+                    .metrics
+                    .cache
+                    .demand_control_formula
+                    .observe_size_with(move || formula_cache.entry_count());
+            }
+        }
+
+        let demand_control_formula_cache_for_invalidation = demand_control_runtime
+            .as_ref()
+            .map(|runtime| runtime.formula_cache().clone());
+
         let cache_state_for_invalidation = cache_state.clone();
         let callback_subscriptions_for_build_data = callback_subscriptions.clone();
 
@@ -241,6 +259,10 @@ impl SchemaState {
                         debug!("Supergraph updated successfully");
 
                         cache_state_for_invalidation.on_schema_change();
+                        if let Some(formula_cache) = &demand_control_formula_cache_for_invalidation
+                        {
+                            formula_cache.invalidate_all();
+                        }
                         debug!("Schema-associated caches cleared successfully");
                         process_capture.finish_ok();
                     }
@@ -257,7 +279,7 @@ impl SchemaState {
             plan_cache,
             validate_cache,
             normalize_cache,
-            demand_control_formula_cache,
+            demand_control_runtime,
             telemetry_context: telemetry_context.clone(),
             callback_subscriptions,
         })

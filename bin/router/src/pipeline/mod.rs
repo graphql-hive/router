@@ -49,7 +49,6 @@ use crate::{
         client_identification::identify_client,
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
-        demand_control::evaluate_demand_control,
         error::PipelineError,
         execution::{execute_plan, PlannedRequest},
         execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult},
@@ -665,26 +664,29 @@ pub async fn execute_pipeline<'exec>(
 
     let variable_payload = Arc::new(variable_payload);
 
-    let demand_control_execution_context = match evaluate_demand_control(
-        shared_state,
-        schema_state,
-        supergraph,
-        &variable_payload,
-        &query_plan_payload,
-        normalize_payload.operation_for_plan.as_ref(),
-        normalize_payload.root_type_name,
-        normalize_payload.normalized_operation_hash,
-        (&normalize_payload.operation_identity).into(),
-    )
-    .await
-    {
-        Ok(context) => context,
-        Err(err @ PipelineError::CostEstimatedTooExpensive { estimated_cost, .. }) => {
-            let result: &'static str = (&DemandControlResultCode::CostEstimatedTooExpensive).into();
-            operation_span.record_demand_control(estimated_cost, None, None, result, None);
-            return Err(err);
-        }
-        Err(err) => return Err(err),
+    let demand_control_execution_context = match schema_state.demand_control_runtime.as_ref() {
+        Some(runtime) => match runtime
+            .evaluate(
+                supergraph,
+                &variable_payload,
+                &query_plan_payload,
+                normalize_payload.operation_for_plan.as_ref(),
+                normalize_payload.root_type_name,
+                normalize_payload.normalized_operation_hash,
+                (&normalize_payload.operation_identity).into(),
+            )
+            .await
+        {
+            Ok(context) => Some(context),
+            Err(err @ PipelineError::CostEstimatedTooExpensive { estimated_cost, .. }) => {
+                let result: &'static str =
+                    (&DemandControlResultCode::CostEstimatedTooExpensive).into();
+                operation_span.record_demand_control(estimated_cost, None, None, result, None);
+                return Err(err);
+            }
+            Err(err) => return Err(err),
+        },
+        None => None,
     };
 
     if let Some(demand_control) = demand_control_execution_context.as_ref() {
