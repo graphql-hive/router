@@ -60,6 +60,7 @@ enum CostExpr {
     },
     /// Integer resolved from request variables (list size via slicing arguments).
     ListSize {
+        field_name: String,
         args: Vec<(AstValue, Vec<String>)>, // (argument value, path within value)
         require_one: bool,
         default: usize,
@@ -131,6 +132,7 @@ impl fmt::Display for CostExpr {
                 write!(f, "(if ${variable} then {if_true} else {if_false})")
             }
             Self::ListSize {
+                field_name: _,
                 args,
                 require_one,
                 default,
@@ -238,7 +240,7 @@ pub async fn evaluate_demand_control<'exec>(
         compiled_plan.as_ref(),
         &supergraph.planner.supergraph,
         variable_payload,
-    );
+    )?;
 
     let estimated_exceeds_max = estimation.estimated_cost > config.strategy.static_estimated().max;
     let subgraphs_exceed_limits = subgraphs_over_limit(config, &estimation);
@@ -566,7 +568,7 @@ fn evaluate_formula_plan(
     formula_plan: &DemandControlFormulaPlan,
     supergraph_state: &SupergraphState,
     variable_payload: &CoerceVariablesPayload,
-) -> DemandControlEvaluation {
+) -> Result<DemandControlEvaluation, PipelineError> {
     let mut per_subgraph = BTreeMap::new();
     let mut estimation = 0u64;
     evaluate_formula_plan_node(
@@ -575,11 +577,11 @@ fn evaluate_formula_plan(
         variable_payload,
         &mut per_subgraph,
         &mut estimation,
-    );
-    DemandControlEvaluation {
+    )?;
+    Ok(DemandControlEvaluation {
         estimated_cost: estimation,
         per_subgraph: Arc::new(per_subgraph),
-    }
+    })
 }
 
 fn evaluate_formula_plan_node(
@@ -588,14 +590,14 @@ fn evaluate_formula_plan_node(
     variable_payload: &CoerceVariablesPayload,
     per_subgraph: &mut BTreeMap<String, u64>,
     estimated_cost: &mut u64,
-) {
+) -> Result<(), PipelineError> {
     match node {
         FormulaPlanNode::Fetch(fetch_node) => {
             let cost = eval_cost_expr(
                 &fetch_node.estimated_expr,
                 supergraph_state,
                 variable_payload,
-            );
+            )?;
             *estimated_cost = estimated_cost.saturating_add(cost);
             if let Some(subgraph_cost) = per_subgraph.get_mut(&fetch_node.service_name) {
                 *subgraph_cost = subgraph_cost.saturating_add(cost);
@@ -611,7 +613,7 @@ fn evaluate_formula_plan_node(
                     variable_payload,
                     per_subgraph,
                     estimated_cost,
-                );
+                )?;
             }
         }
         FormulaPlanNode::Condition {
@@ -632,10 +634,12 @@ fn evaluate_formula_plan_node(
                     variable_payload,
                     per_subgraph,
                     estimated_cost,
-                );
+                )?;
             }
         }
     }
+
+    Ok(())
 }
 
 // ── Evaluate phase: CostExpr ─────────────────────────────────────────────────
@@ -646,15 +650,22 @@ fn eval_cost_expr(
     expr: &CostExpr,
     supergraph_state: &SupergraphState,
     variable_payload: &CoerceVariablesPayload,
-) -> u64 {
+) -> Result<u64, PipelineError> {
     match expr {
-        CostExpr::Const(n) => *n,
-        CostExpr::Add(exprs) => exprs
-            .iter()
-            .map(|e| eval_cost_expr(e, supergraph_state, variable_payload))
-            .fold(0u64, |acc, v| acc.saturating_add(v)),
-        CostExpr::Mul(lhs, rhs) => eval_cost_expr(lhs, supergraph_state, variable_payload)
-            .saturating_mul(eval_cost_expr(rhs, supergraph_state, variable_payload)),
+        CostExpr::Const(n) => Ok(*n),
+        CostExpr::Add(exprs) => {
+            let mut total = 0u64;
+            for e in exprs {
+                total =
+                    total.saturating_add(eval_cost_expr(e, supergraph_state, variable_payload)?);
+            }
+            Ok(total)
+        }
+        CostExpr::Mul(lhs, rhs) => {
+            let lhs = eval_cost_expr(lhs, supergraph_state, variable_payload)?;
+            let rhs = eval_cost_expr(rhs, supergraph_state, variable_payload)?;
+            Ok(lhs.saturating_mul(rhs))
+        }
         CostExpr::Cond {
             variable,
             if_true,
@@ -667,26 +678,28 @@ fn eval_cost_expr(
             }
         }
         CostExpr::ListSize {
+            field_name,
             args,
             require_one,
             default,
         } => {
             if *require_one {
-                let mut seen = 0usize;
+                let mut resolved_count = 0usize;
                 let mut only_value = 0u64;
                 for (value, path) in args {
                     if let Some(resolved) = resolve_integer_value(value, path, variable_payload) {
-                        seen += 1;
-                        if seen == 1 {
-                            only_value = resolved;
-                        }
+                        resolved_count += 1;
+                        only_value = resolved;
                     }
                 }
 
-                if seen == 1 {
-                    only_value
+                if resolved_count == 1 {
+                    Ok(only_value)
                 } else {
-                    *default as u64
+                    Err(PipelineError::CostInvalidSlicingArguments {
+                        field_name: field_name.clone(),
+                        found: resolved_count,
+                    })
                 }
             } else {
                 let mut max_value: Option<u64> = None;
@@ -699,12 +712,15 @@ fn eval_cost_expr(
                     }
                 }
 
-                max_value.unwrap_or(*default as u64)
+                Ok(max_value.unwrap_or(*default as u64))
             }
         }
-        CostExpr::InputArgCost { value, value_type } => {
-            estimate_input_value_cost(value, value_type, supergraph_state, variable_payload)
-        }
+        CostExpr::InputArgCost { value, value_type } => Ok(estimate_input_value_cost(
+            value,
+            value_type,
+            supergraph_state,
+            variable_payload,
+        )),
     }
 }
 
@@ -1024,19 +1040,24 @@ fn compile_cost_expr_for_list_size(
     let Some(slicing_arguments) = &directive.slicing_arguments else {
         return CostExpr::Const(default_list_size as u64);
     };
-    let Some(arguments) = &field.arguments else {
-        return CostExpr::Const(default_list_size as u64);
-    };
     let mut args = Vec::new();
-    for segments in slicing_arguments {
-        if let Some(root_value) = arguments.get_argument(&segments[0]) {
-            args.push((root_value.clone(), segments[1..].to_vec()));
+    if let Some(arguments) = &field.arguments {
+        for segments in slicing_arguments {
+            if let Some(root_value) = arguments.get_argument(&segments[0]) {
+                args.push((root_value.clone(), segments[1..].to_vec()));
+            }
         }
     }
-    if args.is_empty() {
+    // When `requireOneSlicingArgument` is set we must always evaluate at request
+    // time so that the "exactly one slicing argument" rule can be enforced (0 or
+    // 2+ resolved arguments → error), even when none of the slicing arguments are
+    // present on the field. Without it, an empty `args` list can safely fall back
+    // to the default list size.
+    if !directive.require_one_slicing_argument && args.is_empty() {
         return CostExpr::Const(default_list_size as u64);
     }
     CostExpr::ListSize {
+        field_name: field.name.clone(),
         args,
         require_one: directive.require_one_slicing_argument,
         default: default_list_size,

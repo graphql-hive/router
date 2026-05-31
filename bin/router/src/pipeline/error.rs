@@ -170,6 +170,10 @@ pub enum PipelineError {
     #[strum(serialize = "COST_ESTIMATED_TOO_EXPENSIVE")]
     CostEstimatedTooExpensive { estimated_cost: u64, max_cost: u64 },
 
+    #[error("Exactly one slicing argument is required for field '{field_name}', but found {found}")]
+    #[strum(serialize = "COST_INVALID_SLICING_ARGUMENTS")]
+    CostInvalidSlicingArguments { field_name: String, found: usize },
+
     #[error(transparent)]
     CoprocessorError(#[from] CoprocessorError),
 
@@ -252,6 +256,8 @@ impl PipelineError {
             (Self::ValidationErrors(_), false) => StatusCode::BAD_REQUEST,
             (Self::CostEstimatedTooExpensive { .. }, true) => StatusCode::OK,
             (Self::CostEstimatedTooExpensive { .. }, false) => StatusCode::BAD_REQUEST,
+            (Self::CostInvalidSlicingArguments { .. }, true) => StatusCode::OK,
+            (Self::CostInvalidSlicingArguments { .. }, false) => StatusCode::BAD_REQUEST,
             (Self::AuthorizationFailed(_), _) => StatusCode::FORBIDDEN,
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,

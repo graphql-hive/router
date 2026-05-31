@@ -517,9 +517,10 @@ mod estimator_tests {
         )
         .await;
     }
-    // requireOneSlicingArgument=true with missing slicing argument falls back to default list_size.
+    // requireOneSlicingArgument=true with no slicing argument resolving (the
+    // nested `input.limit` path is absent) is a request error (matching Apollo).
     #[ntex::test]
-    async fn require_one_missing_slicing_argument_uses_default_list_size() {
+    async fn require_one_missing_slicing_argument_errors() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
@@ -564,14 +565,12 @@ mod estimator_tests {
 
         assert_eq!(
             json["errors"][0]["extensions"]["code"].as_str(),
-            Some("COST_ESTIMATED_TOO_EXPENSIVE"),
+            Some("COST_INVALID_SLICING_ARGUMENTS"),
             "response body: {body}"
         );
         assert_eq!(
             json["errors"][0]["message"].as_str(),
-            // CostlySearchInput input object instance default 1 + fallback list_size 7 = ... ;
-            // input objects contribute a per-instance default cost of 1.
-            Some("Operation estimated cost 10 exceeds configured max cost 6"),
+            Some("Exactly one slicing argument is required for field 'searchByCostlyInput', but found 0"),
             "response body: {body}"
         );
     }
@@ -755,26 +754,58 @@ mod estimator_tests {
         )
         .await;
     }
-    // Error case: requireOneSlicingArgument true with multiple args should not error in cost calc.
+    // requireOneSlicingArgument=true with multiple slicing arguments present is a
+    // request error (matching Apollo), not a silent fallback or max().
     #[ntex::test]
-    async fn requires_one_slicing_argument_true_with_multiple_args() {
-        // This tests the behavior when requireOneSlicingArgument=true but multiple args provided
-        // Should use the highest value or error handling logic
-        assert_estimated_too_expensive(
-            r#"
+    async fn requires_one_slicing_argument_true_with_multiple_args_errors() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph_demand_control.graphql
+                demand_control:
+                    enabled: true
+                    mode: enforce
+                    strategy:
+                      static_estimated:
+                        max: 1000
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
                 query {
-                    newestAdditions2(first: 2, last: 4) {
+                    newestAdditions3(first: 2, last: 4) {
                         title
                     }
                 }
-            "#,
-            None,
-            // newestAdditions2 has requireOneSlicingArgument=false, so max(2, 4) = 4
-            // query(0) + 4 * (Book(1) + title(0)) = 4
-            4,
-        )
-        .await;
+                "#,
+                None,
+                None,
+            )
+            .await;
+        let json = res.json_body().await;
+        let body = json.to_string();
+
+        assert_eq!(
+            json["errors"][0]["extensions"]["code"].as_str(),
+            Some("COST_INVALID_SLICING_ARGUMENTS"),
+            "response body: {body}"
+        );
+        assert_eq!(
+            json["errors"][0]["message"].as_str(),
+            Some("Exactly one slicing argument is required for field 'newestAdditions3', but found 2"),
+            "response body: {body}"
+        );
     }
+
     // Conditional with undefined variable defaults to not including the field.
     #[ntex::test]
     async fn conditional_with_undefined_variable_excludes_field() {
