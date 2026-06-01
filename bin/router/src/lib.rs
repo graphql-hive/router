@@ -191,7 +191,7 @@ async fn graphql_endpoint_dispatch(
             // If the request handler returns an error, convert it to an HTTP response.
             Err(err) => {
                 write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                handle_pipeline_error(err, &app_state, &response_mode)
+                handle_pipeline_error(err, request, &app_state, &response_mode)
             }
         };
 
@@ -217,7 +217,7 @@ async fn graphql_endpoint_dispatch(
                 Err(error) => {
                     warn!(%error, "coprocessor graphql.response stage failed");
                     write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                    handle_pipeline_error(error.into(), &app_state, &response_mode)
+                    handle_pipeline_error(error.into(), request, &app_state, &response_mode)
                 }
             };
         }

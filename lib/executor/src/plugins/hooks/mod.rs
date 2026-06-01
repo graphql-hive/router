@@ -24,6 +24,7 @@ pub struct OnQueryPlan;
 pub struct OnExecute;
 pub struct OnSubgraphExecute;
 pub struct OnSubgraphHttp;
+pub struct OnGraphqlError;
 
 impl sealed::Sealed for OnHttpRequest {}
 impl sealed::Sealed for OnGraphqlParams {}
@@ -33,6 +34,7 @@ impl sealed::Sealed for OnQueryPlan {}
 impl sealed::Sealed for OnExecute {}
 impl sealed::Sealed for OnSubgraphExecute {}
 impl sealed::Sealed for OnSubgraphHttp {}
+impl sealed::Sealed for OnGraphqlError {}
 
 impl HookMarker for OnHttpRequest {}
 impl HookMarker for OnGraphqlParams {}
@@ -42,3 +44,4 @@ impl HookMarker for OnQueryPlan {}
 impl HookMarker for OnExecute {}
 impl HookMarker for OnSubgraphExecute {}
 impl HookMarker for OnSubgraphHttp {}
+impl HookMarker for OnGraphqlError {}

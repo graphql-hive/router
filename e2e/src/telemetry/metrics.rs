@@ -921,10 +921,10 @@ async fn test_otlp_graphql_errors_total_uses_post_plugin_error_codes() {
             payload.initialize_plugin_with_defaults()
         }
 
-        fn on_graphql_error(
+        fn on_graphql_error<'req>(
             &self,
-            mut payload: OnGraphQLErrorHookPayload,
-        ) -> OnGraphQLErrorHookResult {
+            mut payload: OnGraphQLErrorHookPayload<'req>,
+        ) -> OnGraphQLErrorHookResult<'req> {
             payload.error.extensions.code = Some("PLUGIN_MAPPED_ERROR".to_string());
             payload.proceed()
         }
