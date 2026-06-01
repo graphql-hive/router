@@ -10,7 +10,6 @@ pub enum OperationNameForwardConfig {
     Only(HashSet<String>),
 }
 
-
 impl OperationNameForwardConfig {
     pub fn new<'a, I>(config: &'a TrafficShapingConfig, known_subgraph_names: I) -> Self
     where

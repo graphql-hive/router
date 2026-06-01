@@ -45,9 +45,9 @@ mod max_directives;
 #[cfg(test)]
 mod max_tokens;
 #[cfg(test)]
-mod override_subgraph_urls;
-#[cfg(test)]
 mod operation_name;
+#[cfg(test)]
+mod override_subgraph_urls;
 #[cfg(test)]
 mod persisted_documents;
 #[cfg(test)]

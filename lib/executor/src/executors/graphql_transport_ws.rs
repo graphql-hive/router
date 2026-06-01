@@ -501,11 +501,7 @@ mod tests {
 
     #[test]
     fn build_subscribe_payload_inlines_name_for_shorthand_query() {
-        let request = make_request(
-            "{ me { id } }",
-            0,
-            Some("GetMe_accounts_0".to_string()),
-        );
+        let request = make_request("{ me { id } }", 0, Some("GetMe_accounts_0".to_string()));
 
         let (payload, _) = build_subscribe_payload(request);
 
