@@ -468,6 +468,8 @@ async fn execute_query_plan_with_data<'exec>(
         if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
             let (new_errors, new_status_code) = handle_graphql_errors_with_plugins(
                 plugin_req_state.plugins.as_ref(),
+                plugin_req_state.context.as_ref(),
+                &plugin_req_state.request_context,
                 errors,
                 status_code,
             );

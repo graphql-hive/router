@@ -450,7 +450,10 @@ pub trait RouterPlugin: Send + Sync + 'static {
         start_payload.proceed()
     }
     #[inline]
-    fn on_graphql_error(&self, payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
+    fn on_graphql_error<'req>(
+        &'req self,
+        payload: OnGraphQLErrorHookPayload<'req>,
+    ) -> OnGraphQLErrorHookResult<'req> {
         payload.proceed()
     }
     #[inline]
@@ -495,7 +498,10 @@ pub trait DynRouterPlugin: Send + Sync + 'static {
         &'exec self,
         start_payload: OnSupergraphLoadStartHookPayload,
     ) -> OnSupergraphLoadStartHookResult<'exec>;
-    fn on_graphql_error(&self, payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult;
+    fn on_graphql_error<'req>(
+        &'req self,
+        payload: OnGraphQLErrorHookPayload<'req>,
+    ) -> OnGraphQLErrorHookResult<'req>;
     async fn on_shutdown<'exec>(&'exec self);
 }
 
@@ -568,7 +574,10 @@ where
         RouterPlugin::on_supergraph_reload(self, start_payload)
     }
     #[inline]
-    fn on_graphql_error(&self, payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
+    fn on_graphql_error<'req>(
+        &'req self,
+        payload: OnGraphQLErrorHookPayload<'req>,
+    ) -> OnGraphQLErrorHookResult<'req> {
         RouterPlugin::on_graphql_error(self, payload)
     }
     #[inline]

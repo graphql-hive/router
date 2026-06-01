@@ -3,17 +3,23 @@
 use hive_router::{
     async_trait,
     http::status,
-    ntex::util::HashMap,
+    ntex::{
+        http::header::{HeaderName, HeaderValue},
+        util::HashMap,
+    },
     plugins::{
         hooks::{
             on_graphql_error::{OnGraphQLErrorHookPayload, OnGraphQLErrorHookResult},
+            on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
         },
-        plugin_trait::RouterPlugin,
+        plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
     },
     tracing,
 };
 use serde::Deserialize;
+
+const MAPPED_ERRORS_COUNT_HEADER: HeaderName = HeaderName::from_static("x-mapped-errors-count");
 
 #[derive(Deserialize)]
 pub struct ErrorMappingConfig {
@@ -23,6 +29,10 @@ pub struct ErrorMappingConfig {
 
 pub struct ErrorMappingPlugin {
     config: HashMap<String, ErrorMappingConfig>,
+}
+
+pub struct ErrorMappingCtx {
+    count: usize,
 }
 
 #[async_trait]
@@ -35,11 +45,16 @@ impl RouterPlugin for ErrorMappingPlugin {
         let config = payload.config()?;
         payload.initialize_plugin(Self { config })
     }
-    fn on_graphql_error(&self, mut payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
+    fn on_graphql_error<'req>(
+        &self,
+        mut payload: OnGraphQLErrorHookPayload<'req>,
+    ) -> OnGraphQLErrorHookResult<'req> {
+        let mut mapped = false;
         if let Some(code) = &payload.error.extensions.code {
             if let Some(mapping) = self.config.get(code) {
                 if let Some(status_code) = mapping.status_code {
                     if let Ok(status_code) = status::StatusCode::from_u16(status_code) {
+                        mapped = true;
                         payload.status_code = status_code;
                     } else {
                         tracing::error!(
@@ -50,10 +65,39 @@ impl RouterPlugin for ErrorMappingPlugin {
                     }
                 }
                 if let Some(new_code) = &mapping.code {
+                    mapped = true;
                     payload.error.extensions.code = Some(new_code.clone());
                 }
             }
         }
+        if mapped {
+            if let Some(mut ctx) = payload.context.get_mut::<ErrorMappingCtx>() {
+                ctx.count += 1;
+            } else {
+                payload.context.insert(ErrorMappingCtx { count: 1 });
+            }
+        }
         payload.proceed()
+    }
+    fn on_http_request<'req>(
+        &'req self,
+        payload: OnHttpRequestHookPayload<'req>,
+    ) -> OnHttpRequestHookResult<'req> {
+        payload.on_end(move |payload| {
+            let mapped_errors_count = payload
+                .context
+                .get_ref::<ErrorMappingCtx>()
+                .map(|ctx| ctx.count);
+            payload
+                .map_response(move |mut response| {
+                    if let Some(count) = mapped_errors_count {
+                        response
+                            .headers_mut()
+                            .insert(MAPPED_ERRORS_COUNT_HEADER, HeaderValue::from(count));
+                    }
+                    response
+                })
+                .proceed()
+        })
     }
 }
