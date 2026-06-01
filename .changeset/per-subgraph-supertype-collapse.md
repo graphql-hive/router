@@ -61,7 +61,7 @@ And the client sends an interface-shaped query against the union:
 }
 ```
 
-Before, the planner sent this exploded shape to the subgraph:
+Before, the planner expanded the interface selection into concrete object-type selections before sending it to the subgraph:
 
 ```graphql
 {
