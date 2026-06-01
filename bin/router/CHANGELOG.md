@@ -116,6 +116,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.64 (2026-06-01)
+
+### Features
+
+#### Expose `context` and `request_context` on `on_graphql_error`
+
+The `on_graphql_error` plugin hook now holds the `PluginContext` and a
+`RequestContextPluginApi<OnGraphqlError>` as `context` and `request_context`, matching other request-scoped hooks (`on_http_request`, `on_execute`, etc.).
+
+#### Migration
+
+`on_graphql_error` now has a generic over the request lifetime; signatures must be
+updated from:
+
+```rust
+fn on_graphql_error(&self, mut payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
+    // ...
+}
+```
+
+to:
+
+```rust
+fn on_graphql_error<'req>(
+    &'req self,
+    mut payload: OnGraphQLErrorHookPayload<'req>,
+) -> OnGraphQLErrorHookResult<'req> {
+    // ...
+}
+```
+
+### Fixes
+
+#### Add `end_with_graphql_errors(...)` to the plugin hook API.
+
+Plugin authors can now terminate execution with multiple GraphQL errors in a single response. This avoids forcing plugins to either return only one error or manually build a raw GraphQL error response when several errors should be reported together.
+
 ## 0.0.63 (2026-05-27)
 
 ### Fixes
