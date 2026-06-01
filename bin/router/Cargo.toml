@@ -64,7 +64,7 @@ rustls = { workspace = true, features = ["aws-lc-rs"] }
 hyper-rustls = { workspace = true, features = ["aws-lc-rs"]}
 dashmap = { workspace = true }
 notify = { workspace = true }
-memchr = "2.8.1"
+memchr = "2.8.0"
 percent-encoding = "2.3.2"
 matchit = "0.9.2"
 
