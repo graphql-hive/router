@@ -72,6 +72,22 @@ impl PossibleTypes {
         possible_types.insert(type_name.to_string());
         possible_types
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_pairs<I, M>(entries: I) -> Self
+    where
+        I: IntoIterator<Item = (&'static str, M)>,
+        M: IntoIterator<Item = &'static str>,
+    {
+        let mut map: HashMap<String, HashSet<String>> = HashMap::default();
+        for (parent, members) in entries {
+            map.insert(
+                parent.to_string(),
+                members.into_iter().map(|s| s.to_string()).collect(),
+            );
+        }
+        Self { map }
+    }
 }
 
 pub trait SchemaWithMetadata {

@@ -919,4 +919,140 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1070
+    ///
+    /// When resolving a field via `@requires`, the router must include
+    /// `__typename` in `_entities` representations sent to subgraphs — even
+    /// when the client query does not select `__typename` and the parent
+    /// subgraph response did not echo it back. Without `__typename` the
+    /// receiving subgraph cannot dispatch `__resolveReference` and fails with
+    /// `tried to load an entity for type "undefined"`.
+    async fn issue_1070_typename_in_entity_representations() {
+        use sonic_rs::JsonValueTrait;
+
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1070.graphql
+                  query_planner:
+                    allow_expose: true
+                  override_subgraph_urls:
+                    search:
+                      url: "http://{host}/search"
+                    offers:
+                      url: "http://{host}/offers"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // Mock the first hop. Intentionally omit `__typename` on
+        // `productSearchResult` to simulate the failure mode from #1070,
+        // where the parent's response data does not carry `__typename`.
+        let search_mock = server
+            .mock("POST", "/search")
+            .match_request(|r| {
+                let body = r.body().unwrap();
+                let body_str = String::from_utf8(body.clone()).unwrap();
+                body_str.contains("productSearchResult")
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "data": {
+                    "productSearchResult": {
+                      "partialCriteria": "partialCriteria",
+                      "category": "books"
+                    }
+                  }
+                }
+                "#,
+            )
+            .create();
+
+        // The second hop is the entity fetch for `bestOffer`. Assert in the
+        // request matcher that the representation includes `__typename`.
+        let offers_mock = server
+            .mock("POST", "/offers")
+            .match_request(|r| {
+                let body_bytes = r.body().unwrap();
+                let body_str = String::from_utf8(body_bytes.clone()).unwrap();
+                if !body_str.contains("_entities") {
+                    return false;
+                }
+
+                let parsed: sonic_rs::Value = sonic_rs::from_slice(body_bytes)
+                    .expect("offers subgraph body must be valid JSON");
+                let variables = parsed
+                    .get(&"variables")
+                    .expect("subgraph body must contain `variables`");
+                let representations = variables
+                    .get(&"representations")
+                    .expect("variables must contain `representations`");
+                let first = representations
+                    .get(0)
+                    .expect("representations must have at least one entry");
+                let typename = first
+                    .get(&"__typename")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                assert_eq!(
+                    typename.as_deref(),
+                    Some("ProductSearchResultResponse"),
+                    "expected `__typename` in entity representation, got: {body_str}"
+                );
+
+                true
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "data": {
+                    "_entities": [
+                      { "bestOffer": { "price": 9.99 } }
+                    ]
+                  }
+                }
+                "#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{ productSearchResult(partialCriteria: "partialCriteria") { bestOffer { price } } }"#,
+                None,
+                None,
+            )
+            .await;
+
+        search_mock.assert();
+        offers_mock.assert();
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "productSearchResult": {
+              "bestOffer": {
+                "price": 9.99
+              }
+            }
+          }
+        }
+        "#);
+    }
 }

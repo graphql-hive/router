@@ -102,6 +102,7 @@ pub fn project_requires(
                 &mut first,
                 response_key,
                 parent_first,
+                None,
             );
             if first {
                 // If no fields were projected, "first" is still true,
@@ -115,6 +116,7 @@ pub fn project_requires(
     true
 }
 
+#[allow(clippy::too_many_arguments)]
 fn project_requires_map_mut(
     possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
@@ -123,6 +125,7 @@ fn project_requires_map_mut(
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,
+    current_type_name: Option<&str>,
 ) {
     for requires_selection in requires_selections {
         match &requires_selection {
@@ -162,10 +165,14 @@ fn project_requires_map_mut(
                     write_response_key(parent_first, parent_response_key, buffer);
                     buffer.put(OPEN_BRACE);
                     // Write __typename only if the object has other fields
+                    // Prefer the value existing in response data; otherwise fallback
+                    // to the enclosing inline fragment's type condition so that
+                    // entity representations always include __typename
                     if let Some(type_name) = entity_obj
                         .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
                         .ok()
                         .and_then(|idx| entity_obj[idx].1.as_str())
+                        .or(current_type_name)
                     {
                         buffer.put(QUOTE);
                         buffer.put(TYPENAME);
@@ -226,6 +233,7 @@ fn project_requires_map_mut(
                         first,
                         parent_response_key,
                         parent_first,
+                        Some(type_name),
                     );
                 }
             }
@@ -272,18 +280,24 @@ mod tests {
     }
 
     fn project_requires_pretty(requires: &str, entity_json: sonic_rs::Value) -> Option<String> {
+        project_requires_pretty_with_possible_types(
+            requires,
+            entity_json,
+            &PossibleTypes::default(),
+        )
+    }
+
+    fn project_requires_pretty_with_possible_types(
+        requires: &str,
+        entity_json: sonic_rs::Value,
+        possible_types: &PossibleTypes,
+    ) -> Option<String> {
         let requires = requires_from_str(requires);
         let entity = Value::from(entity_json.as_ref());
 
         let mut buffer = Vec::new();
-        let projected = project_requires(
-            &PossibleTypes::default(),
-            &requires,
-            &entity,
-            &mut buffer,
-            true,
-            None,
-        );
+        let projected =
+            project_requires(possible_types, &requires, &entity, &mut buffer, true, None);
 
         if !projected {
             return None;
@@ -391,5 +405,98 @@ mod tests {
 
         let pretty = project_requires_pretty("contactOptions", json!({}));
         assert_eq!(pretty, None);
+    }
+
+    /// When the parent response data lacks `__typename` (e.g. because the client
+    /// did not select it and the field came back from a previous `_entities`
+    /// response that didn't carry it), the executor must still emit
+    /// `__typename` in the entity representation, using the enclosing
+    /// `InlineFragment.type_condition` as the fallback. Without `__typename`
+    /// the receiving subgraph cannot dispatch `__resolveReference`.
+    #[test]
+    fn project_requires_injects_typename_from_inline_fragment() {
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "... on ProductSearchResultResponse { __typename partialCriteria }",
+              json!({
+                  "partialCriteria": "partialCriteria"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "ProductSearchResultResponse",
+            "partialCriteria": "partialCriteria"
+          }
+        "#);
+
+        // When the entity does carry __typename, the response value still
+        // wins over the inline fragment's type_condition. Matches existing
+        // behavior (e.g. @interfaceObject input_rewrites apply earlier).
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "... on Product { __typename upc }",
+              json!({
+                  "__typename": "Product",
+                  "upc": "abc-123"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Product",
+            "upc": "abc-123"
+          }
+        "#);
+
+        // Interface case: the inline fragment uses the interface type
+        // (`Node`) but the entity's `__typename` carries the concrete object
+        // type (`Book`). The concrete __typename in the response data must
+        // win over the inline fragment's type_condition — otherwise we'd
+        // send the wrong type name to the subgraph and break dispatch.
+        let possible_types = PossibleTypes::from_pairs([("Node", ["Book", "Magazine"])]);
+        insta::assert_snapshot!(
+          &project_requires_pretty_with_possible_types(
+              "... on Node { __typename id }",
+              json!({
+                  "__typename": "Book",
+                  "id": "b-1"
+              }),
+              &possible_types,
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Book",
+            "id": "b-1"
+          }
+        "#);
+
+        // Nested non-entity sub-objects without their own inline fragment do
+        // not get a typename fallback, because the planner does not wrap them
+        // in an InlineFragment. The fix is scoped to the entity-level
+        // representation, which is what `_entities` actually needs.
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "... on Ad { __typename id branch { contactOptions { email } } }",
+              json!({
+                  "id": "1",
+                  "branch": {
+                      "contactOptions": { "email": "a@b.c" }
+                  }
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Ad",
+            "branch": {
+              "contactOptions": {
+                "email": "a@b.c"
+              }
+            },
+            "id": "1"
+          }
+        "#);
     }
 }
