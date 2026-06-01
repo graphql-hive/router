@@ -195,7 +195,7 @@ pub async fn execute_query_plan<'exec>(
             select_fetch_variables(&opts.variable_values, fetch_node.variable_usages.as_ref());
 
         let mut subgraph_request = SubgraphExecutionRequest {
-            anonymous_document_str: fetch_node.operation.document_str.as_str(),
+            query: fetch_node.operation.document_str.as_str(),
             document_name_write_pos: fetch_node.operation.name_write_position,
             dedupe: false,
             operation_name: opts
@@ -1329,7 +1329,7 @@ impl<'exec> Executor<'exec> {
             let variable_refs = select_fetch_variables(self.variable_values, opts.variable_usages);
 
             let mut subgraph_request = SubgraphExecutionRequest {
-                anonymous_document_str: &opts.operation.document_str,
+                query: &opts.operation.document_str,
                 document_name_write_pos: opts.operation.name_write_position,
                 dedupe: self.dedupe_subgraph_requests,
                 operation_name: opts.operation_name,

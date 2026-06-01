@@ -103,7 +103,7 @@ pub fn build_subscribe_payload(
     let query = match &execution_request.operation_name {
         Some(operation_name) => {
             let pos = execution_request.document_name_write_pos;
-            let input = execution_request.anonymous_document_str;
+            let input = execution_request.query;
             let mut result = String::with_capacity(input.len() + operation_name.len() + 6);
             if pos == 0 && input.starts_with('{') {
                 result.push_str("query ");
@@ -118,7 +118,7 @@ pub fn build_subscribe_payload(
             }
             result
         }
-        None => execution_request.anonymous_document_str.to_string(),
+        None => execution_request.query.to_string(),
     };
     let subscribe_payload = SubscribePayload {
         query,
@@ -463,7 +463,7 @@ mod tests {
         operation_name: Option<String>,
     ) -> SubgraphExecutionRequest<'static> {
         SubgraphExecutionRequest {
-            anonymous_document_str,
+            query: anonymous_document_str,
             document_name_write_pos,
             dedupe: false,
             operation_name,

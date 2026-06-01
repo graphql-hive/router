@@ -87,10 +87,10 @@ pub fn build_request_body(
             &mut body,
             operation_name.as_bytes(),
             execution_request.document_name_write_pos,
-            execution_request.anonymous_document_str,
+            execution_request.query,
         );
     } else {
-        write_and_escape_string(&mut body, execution_request.anonymous_document_str);
+        write_and_escape_string(&mut body, execution_request.query);
     }
 
     let mut first_variable = true;
@@ -695,7 +695,7 @@ mod tests {
     #[test]
     fn build_request_body_with_forwarded_operation_name_and_no_variables_is_valid_json() {
         let execution_request = SubgraphExecutionRequest {
-            anonymous_document_str: "query { me { id } }",
+            query: "query { me { id } }",
             document_name_write_pos: 5,
             dedupe: false,
             operation_name: Some("GetMe_accounts_0".to_string()),
