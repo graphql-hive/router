@@ -105,10 +105,57 @@ impl OperationNameFactory {
         }
 
         let client_operation_name = self.client_operation_name.as_deref()?;
+        let mut fetch_step_id_buf = itoa::Buffer::new();
+        let fetch_step_id = fetch_step_id_buf.format(fetch_step_id);
+        let mut operation_name = String::with_capacity(
+            /* 2 "_" separators */
+            2 + client_operation_name.len() + subgraph_name.len() + fetch_step_id.len(),
+        );
 
-        Some(format!(
-            "{}_{}_{}",
-            client_operation_name, subgraph_name, fetch_step_id
-        ))
+        // Operation name does not need to be sanitized, so we use it raw
+        operation_name.push_str(client_operation_name);
+        operation_name.push('_');
+
+        // Sanitize the subgraph name as it may contain characters
+        // that will make the operation name invalid
+        for char in subgraph_name.chars() {
+            operation_name.push(if char.is_ascii_alphanumeric() {
+                char
+            } else {
+                '_'
+            });
+        }
+
+        // Finally the fetch step id
+        operation_name.push('_');
+        operation_name.push_str(fetch_step_id);
+
+        Some(operation_name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OperationNameFactory, OperationNameForwardConfig};
+    use std::sync::Arc;
+
+    #[test]
+    fn sanitizes_subgraph_names() {
+        let name =
+            OperationNameFactory::new(Arc::new(OperationNameForwardConfig::all()), Some("Example"));
+
+        assert_eq!(name.generate("foo", 2).as_deref(), Some("Example_foo_2"));
+        assert_eq!(
+            name.generate("foo-v2", 2).as_deref(),
+            Some("Example_foo_v2_2")
+        );
+        assert_eq!(
+            name.generate("foo service", 3).as_deref(),
+            Some("Example_foo_service_3")
+        );
+        assert_eq!(
+            name.generate("123foo", 4).as_deref(),
+            Some("Example_123foo_4")
+        );
     }
 }
