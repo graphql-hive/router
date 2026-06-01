@@ -309,7 +309,6 @@ pub fn handle_pipeline_error(
     if let Some(plugins) = &shared_state.plugins {
         let plugin_context = req.extensions().get::<Arc<PluginContext>>().cloned();
         let request_context = req.read_request_context().ok();
-
         if let (Some(plugin_context), Some(request_context)) = (plugin_context, request_context) {
             let (new_errors, new_status_code) = handle_graphql_errors_with_plugins(
                 plugins,
