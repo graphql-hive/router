@@ -119,17 +119,6 @@ impl SchemaState {
             telemetry_context.metrics.clone(),
         );
 
-        if router_config.telemetry.metrics.is_enabled() {
-            if let Some(runtime) = demand_control_runtime.as_ref() {
-                let formula_cache = runtime.formula_cache().clone();
-                telemetry_context
-                    .metrics
-                    .cache
-                    .demand_control_formula
-                    .observe_size_with(move || formula_cache.entry_count());
-            }
-        }
-
         let demand_control_formula_cache_for_invalidation = demand_control_runtime
             .as_ref()
             .map(|runtime| runtime.formula_cache().clone());

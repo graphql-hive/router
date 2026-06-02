@@ -30,7 +30,7 @@ impl DemandControlMetrics {
         let estimated_cost = meter.map(|meter| {
             meter
                 .u64_histogram(names::COST_ESTIMATED)
-                .with_unit("By")
+                .with_unit("{cost}")
                 .with_description("The estimated cost of an operation before execution")
                 .build()
         });
@@ -38,7 +38,7 @@ impl DemandControlMetrics {
         let actual_cost = meter.map(|meter| {
             meter
                 .u64_histogram(names::COST_ACTUAL)
-                .with_unit("By")
+                .with_unit("{cost}")
                 .with_description("The actual cost of an operation, measured after execution")
                 .build()
         });
@@ -46,7 +46,7 @@ impl DemandControlMetrics {
         let delta = meter.map(|meter| {
             meter
                 .f64_histogram(names::COST_DELTA)
-                .with_unit("By")
+                .with_unit("{cost}")
                 .with_description("The difference between actual and estimated operation cost")
                 .build()
         });

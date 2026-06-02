@@ -82,10 +82,6 @@ impl DemandControlRuntime {
     pub fn invalidate_formula_cache(&self) {
         self.formula_cache.invalidate_all();
     }
-
-    pub fn formula_cache_entry_count(&self) -> u64 {
-        self.formula_cache.entry_count()
-    }
 }
 
 impl DemandControlRuntime {
@@ -101,7 +97,6 @@ impl DemandControlRuntime {
         operation_identity: GraphQLSpanOperationIdentity<'exec>,
     ) -> Result<DemandControlExecutionContext, PipelineError> {
         let operation_name = operation_identity.name;
-        let formula_cache_capture = self.metrics.cache.demand_control_formula.capture_request();
         let mut formula_cache_hit = true;
 
         let compiled_plan = self
@@ -116,15 +111,8 @@ impl DemandControlRuntime {
                 ))
             })
             .await
-            .into_value_with_hit_miss(|hit_miss| match hit_miss {
-                CacheHitMiss::Hit => {
-                    formula_cache_hit = true;
-                    formula_cache_capture.finish_hit();
-                }
-                CacheHitMiss::Miss | CacheHitMiss::Error => {
-                    formula_cache_hit = false;
-                    formula_cache_capture.finish_miss();
-                }
+            .into_value_with_hit_miss(|hit_miss| {
+                formula_cache_hit = matches!(hit_miss, CacheHitMiss::Hit);
             });
 
         let estimation = evaluate_formula_plan(

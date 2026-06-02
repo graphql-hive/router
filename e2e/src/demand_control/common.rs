@@ -42,19 +42,6 @@ pub(super) fn assert_histogram_sample_count_at_least(
     );
 }
 
-pub(super) fn assert_counter_at_least(
-    metrics: &CollectedMetrics,
-    name: &str,
-    attrs: &[(&str, &str)],
-    expected_min: f64,
-) {
-    let value = metrics.latest_counter(name, attrs);
-    assert!(
-        value >= expected_min,
-        "Expected {name} counter to be >= {expected_min}, got {value}"
-    );
-}
-
 pub(super) async fn assert_estimated_too_expensive(
     query: &str,
     variables: Option<sonic_rs::Value>,
