@@ -499,6 +499,16 @@ async fn execute_query_plan_with_data<'exec>(
             Some(demand_control.formula_cache_hit),
         );
 
+        if actual_cost_result.actual > demand_control.max_cost {
+            tracing::info!(
+                operation_name = ?opts.operation_for_plan.name.as_deref(),
+                actual_cost = actual_cost_result.actual,
+                estimated_cost = demand_control.evaluation.estimated_cost,
+                max_cost = demand_control.max_cost,
+                "actual cost exceeds max cost (not enforced)"
+            );
+        }
+
         if demand_control.include_extension_metadata {
             opts.extensions.cost = Some(DemandControlCostMetadataExtensions {
                 estimated: demand_control.evaluation.estimated_cost,

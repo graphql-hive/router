@@ -15,6 +15,7 @@ use hive_router_query_planner::{
     state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState, TypeNode},
 };
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
+use tracing::warn;
 
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
@@ -338,6 +339,12 @@ fn eval_cost_expr(
                 if resolved_count == 1 {
                     Ok(only_value)
                 } else {
+                    warn!(
+                        field = field_name.as_str(),
+                        found = resolved_count,
+                        "rejecting operation: expected exactly one slicing argument for @listSize"
+                    );
+
                     Err(PipelineError::CostInvalidSlicingArguments {
                         field_name: field_name.clone(),
                         found: resolved_count,

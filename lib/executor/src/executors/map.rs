@@ -267,13 +267,22 @@ impl SubgraphExecutorMap {
             if demand_control_opts.mode == DemandControlMode::Enforce {
                 if let Some(max_cost) = demand_control_opts.subgraphs_over_limit.get(subgraph_name)
                 {
+                    let estimated_cost = demand_control_opts
+                        .evaluation
+                        .per_subgraph
+                        .get(subgraph_name)
+                        .copied()
+                        .unwrap_or_default();
+
+                    tracing::warn!(
+                        subgraph_name,
+                        estimated_cost,
+                        subgraph_max_cost = *max_cost,
+                        "skipping subgraph fetch: estimated cost exceeds subgraph budget"
+                    );
+
                     return Err(SubgraphExecutorError::CostEstimatedTooExpensive {
-                        estimated_cost: demand_control_opts
-                            .evaluation
-                            .per_subgraph
-                            .get(subgraph_name)
-                            .copied()
-                            .unwrap_or_default(),
+                        estimated_cost,
                         max_cost: *max_cost,
                     });
                 }

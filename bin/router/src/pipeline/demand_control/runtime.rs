@@ -19,6 +19,7 @@ use hive_router_query_planner::ast::operation::{OperationDefinition, SubgraphFet
 use hive_router_query_planner::planner::plan_nodes::{PlanNode, QueryPlan};
 use hive_router_query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use moka::future::Cache;
+use tracing::{debug, info, warn};
 
 use crate::cache_state::{CacheHitMiss, EntryValueHitMissExt};
 use crate::pipeline::error::PipelineError;
@@ -41,7 +42,30 @@ impl DemandControlRuntime {
     ) -> Option<Self> {
         let config = config?;
         if !config.enabled {
+            debug!("demand control is disabled");
             return None;
+        }
+
+        let static_estimated = config.strategy.static_estimated();
+        info!(
+            mode = ?config.mode,
+            max_cost = static_estimated.max,
+            default_list_size = ?static_estimated.list_size,
+            actual_cost_mode = ?static_estimated.actual_cost_mode,
+            "demand control enabled"
+        );
+
+        if config.mode == DemandControlMode::Enforce {
+            if static_estimated.max == 0 {
+                warn!(
+                    "demand control is in enforce mode with a max cost of 0; all operations with non-zero cost will be rejected"
+                );
+            }
+            if static_estimated.list_size.is_none() {
+                warn!(
+                    "demand control is in enforce mode without a default list_size; list fields without an @listSize directive are estimated as 0 and may be under-counted"
+                );
+            }
         }
 
         Some(Self {
@@ -113,16 +137,47 @@ impl DemandControlRuntime {
         let estimated_exceeds_max = estimation.estimated_cost > max_cost;
         let subgraphs_exceed_limits = self.subgraphs_over_limit(&estimation);
 
-        if self.config.mode == DemandControlMode::Enforce && estimated_exceeds_max {
-            self.metrics.demand_control.record_estimated_cost(
-                estimation.estimated_cost,
-                &DemandControlResultCode::CostEstimatedTooExpensive,
-                operation_name,
-            );
-            return Err(PipelineError::CostEstimatedTooExpensive {
-                estimated_cost: estimation.estimated_cost,
-                max_cost,
-            });
+        if estimated_exceeds_max {
+            match self.config.mode {
+                DemandControlMode::Enforce => {
+                    warn!(
+                        operation_name = ?operation_name,
+                        estimated_cost = estimation.estimated_cost,
+                        max_cost,
+                        "rejecting operation: estimated cost exceeds configured max cost"
+                    );
+
+                    let mut formulas = AHashMap::new();
+                    collect_estimated_formulas(&compiled_plan.root, &mut formulas);
+
+                    for (subgraph, formula) in &formulas {
+                        debug!(
+                            operation_name = ?operation_name,
+                            subgraph = subgraph.as_str(),
+                            %formula,
+                            "demand control cost formula for rejected operation"
+                        );
+                    }
+
+                    self.metrics.demand_control.record_estimated_cost(
+                        estimation.estimated_cost,
+                        &DemandControlResultCode::CostEstimatedTooExpensive,
+                        operation_name,
+                    );
+                    return Err(PipelineError::CostEstimatedTooExpensive {
+                        estimated_cost: estimation.estimated_cost,
+                        max_cost,
+                    });
+                }
+                DemandControlMode::Measure => {
+                    debug!(
+                        operation_name = ?operation_name,
+                        estimated_cost = estimation.estimated_cost,
+                        max_cost,
+                        "measure mode: operation would be rejected in enforce mode"
+                    );
+                }
+            }
         }
 
         let estimated_result = if estimated_exceeds_max {
