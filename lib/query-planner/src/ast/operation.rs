@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use crate::{
     ast::{document::Document, hash::ast_hash},
+    planner::plan_nodes::hash_minified_query,
     state::supergraph_state::TypeNode,
 };
 use graphql_tools::parser::query as parser;
@@ -44,10 +45,17 @@ pub struct SubgraphFetchOperation {
     pub document: Document,
     pub document_str: String,
     pub hash: u64,
+    /// All operations produced by the query planner are anonymous.
+    /// The input query may contain name operation, but it's not used.
+    /// It's by design, to avoid a situation where changing the operation name,
+    /// requires to recompute the plan.
+    ///
+    /// The value is the position in the document where the operation name should be written.
+    pub name_write_position: usize,
 }
 
 impl SubgraphFetchOperation {
-    pub fn get_inner_selection_set(&self) -> &SelectionSet {
+    pub(crate) fn get_inner_selection_set(&self) -> &SelectionSet {
         if self.document.operation.selection_set.items.len() == 1 {
             if let SelectionItem::Field(field) = &self.document.operation.selection_set.items[0] {
                 if field.name == "_entities" && field.alias.is_none() {
@@ -57,6 +65,40 @@ impl SubgraphFetchOperation {
         }
 
         &self.document.operation.selection_set
+    }
+
+    pub fn from_anonymous_operation(document: Document) -> Self {
+        let document_str = document.to_string();
+        let hash = hash_minified_query(&document_str);
+
+        // Find the operation name write position
+        // by looking for the operation kind prefix in the document.
+        // If no prefix is found, fall back to the start of the document.
+        //
+        // IMPORTANT NOTE:
+        // Documents produced by `Display` impl of `OperationDefinition` always have the operation definition printed first, before fragments.
+        //
+        let name_write_position = ["query", "mutation", "subscription"]
+            .into_iter()
+            .find_map(|operation_kind| {
+                document_str
+                    .strip_prefix(operation_kind)
+                    .and_then(|suffix| {
+                        if suffix.starts_with('(') || suffix.starts_with('{') {
+                            Some(operation_kind.len())
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .unwrap_or(0);
+
+        Self {
+            document,
+            document_str,
+            hash,
+            name_write_position,
+        }
     }
 }
 
@@ -270,5 +312,192 @@ impl<'a, T: parser::Text<'a>> From<parser::VariableDefinition<'a, T>> for Variab
             variable_type: (&value.var_type).into(),
             default_value: value.default_value.as_ref().map(|v| v.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SubgraphFetchOperation;
+    use crate::{ast::document::Document, utils::parsing::parse_operation};
+    use graphql_tools::parser::query::Definition;
+    use std::fmt;
+
+    fn parse_document(query: &str) -> Document {
+        let document = parse_operation(query);
+        let mut operation = None;
+        let mut fragments = Vec::new();
+
+        for definition in document.definitions {
+            match definition {
+                Definition::Operation(current_operation) => {
+                    if operation.is_none() {
+                        operation = Some(current_operation.into());
+                    }
+                }
+                Definition::Fragment(fragment) => fragments.push(fragment.into()),
+            }
+        }
+
+        Document {
+            operation: operation.expect("operation definition should exist"),
+            fragments,
+        }
+    }
+
+    fn parse_subgraph_fetch_operation(query: &str) -> SubgraphFetchOperation {
+        SubgraphFetchOperation::from_anonymous_operation(parse_document(query))
+    }
+
+    struct InsertPosition<'a> {
+        document: &'a str,
+        start: usize,
+    }
+
+    impl<'a> InsertPosition<'a> {
+        fn new(operation: &'a SubgraphFetchOperation) -> Self {
+            Self {
+                document: &operation.document_str,
+                start: operation.name_write_position,
+            }
+        }
+    }
+
+    impl fmt::Display for InsertPosition<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            for _ in 0..self.start {
+                write!(f, " ")?;
+            }
+            writeln!(f, "↓ {}", self.start)?;
+            writeln!(f, "{}", self.document)?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn operation_name_position_tests() {
+        let operation = parse_subgraph_fetch_operation("{ field }");
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+            ↓ 0
+            {field}
+            "
+        );
+
+        let operation = parse_subgraph_fetch_operation("{ query mutation: subscription }");
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+            ↓ 0
+            {query mutation: subscription}
+            "
+        );
+
+        let operation = parse_subgraph_fetch_operation(
+            "query($id: ID!) { node(id: $id) { aliasQuery: query } }",
+        );
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+             ↓ 5
+        query($id:ID!){node(id: $id){aliasQuery: query}}
+        "
+        );
+
+        let operation = parse_subgraph_fetch_operation("mutation { updateUser(id: 1) { name } }");
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+                    ↓ 8
+            mutation{updateUser(id: 1){name}}
+            "
+        );
+
+        let operation = parse_subgraph_fetch_operation("subscription { onMessage { text } }");
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+                        ↓ 12
+            subscription{onMessage{text}}
+            "
+        );
+
+        let operation =
+            parse_subgraph_fetch_operation("mutation($x: Int!) { updateUser(x: $x) { name } }");
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+                    ↓ 8
+            mutation($x:Int!){updateUser(x: $x){name}}
+            "
+        );
+
+        let operation = parse_subgraph_fetch_operation(
+            "subscription($channel: String!) { onMessage(channel: $channel) { text } }",
+        );
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+                        ↓ 12
+            subscription($channel:String!){onMessage(channel: $channel){text}}
+            "
+        );
+
+        let operation = parse_subgraph_fetch_operation(
+            "mutation { query mutation subscription query: update mutation: updateAlias subscription: updateSubscription }",
+        );
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+                    ↓ 8
+            mutation{query mutation subscription query: update mutation: updateAlias subscription: updateSubscription}
+            "
+        );
+
+        let operation = parse_subgraph_fetch_operation(
+            "subscription { query mutation subscription query: onQuery mutation: onMutation subscription: onSubscription }",
+        );
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+                        ↓ 12
+            subscription{query mutation subscription query: onQuery mutation: onMutation subscription: onSubscription}
+            "
+        );
+
+        let operation = parse_subgraph_fetch_operation(
+            "query($id: ID!) { node(id: $id) { ...QueryFields } } fragment QueryFields on Node { query mutation: subscription }",
+        );
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+                 ↓ 5
+            query($id:ID!){node(id: $id){...QueryFields}}
+
+            fragment QueryFields on Node {query mutation: subscription}
+            "
+        );
+
+        let operation = parse_subgraph_fetch_operation(
+            "fragment QueryFields on Node { query mutation: subscription } query($id: ID!) { node(id: $id) { ...QueryFields } }",
+        );
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+                 ↓ 5
+            query($id:ID!){node(id: $id){...QueryFields}}
+
+            fragment QueryFields on Node {query mutation: subscription}
+            "
+        );
+
+        let operation = parse_subgraph_fetch_operation("query query { field }");
+        insta::assert_snapshot!(
+            InsertPosition::new(&operation),
+            @r"
+            ↓ 0
+            query query {field}
+            "
+        );
     }
 }

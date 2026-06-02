@@ -5,6 +5,7 @@ use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_query_planner::planner::Planner;
 
 use crate::{
+    execution::operation_name::OperationNameForwardConfig,
     introspection::schema::SchemaMetadata,
     plugin_trait::{EndHookPayload, FromGraphQLErrorToResponse, StartHookPayload},
     response::graphql_error::GraphQLError,
@@ -33,6 +34,8 @@ pub struct SupergraphData {
     /// The public schema exposed by the router.
     /// It is generated from the supergraph schema and stripped from federation internals.
     pub public_schema: PublicSchema,
+    /// The operation name forward configuration that will be used to forward operation names to the subgraphs.
+    pub operation_name_forward_config: Arc<OperationNameForwardConfig>,
 }
 
 impl SupergraphData {
