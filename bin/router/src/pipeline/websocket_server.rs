@@ -467,7 +467,9 @@ async fn handle_text_frame(
                     &method,
                     ws_uri,
                     headers.as_ref().clone(),
-                    ws_path,
+                    // WebSocket subscriptions still do not expose route captures here because
+                    // the real upgrade request match info is not threaded through this flow yet.
+                    Default::default(),
                     payload,
                     &normalize_payload,
                     supergraph,

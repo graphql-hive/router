@@ -28,7 +28,7 @@ pub struct OverrideSubgraphUrlsConfig {
     ///
     /// The expression has access to the following variables:
     /// - `.request`: The incoming HTTP request, including headers, query
-    ///   parameters, the parsed GraphQL operation, and `url_matches`
+    ///   parameters, the parsed GraphQL operation, and `path_params`
     ///   (path parameters captured from `http.graphql_endpoint`).
     /// - `.default`: The original URL of the subgraph (from supergraph SDL).
     /// - `.subgraph.name`: The name of the subgraph the URL is being
@@ -57,7 +57,7 @@ pub struct OverrideSubgraphUrlsConfig {
     ///
     /// The expression has access to the following variables:
     /// - `.request`: The incoming HTTP request, including headers, query
-    ///   parameters, the parsed GraphQL operation, and `url_matches`
+    ///   parameters, the parsed GraphQL operation, and `path_params`
     ///   (path parameters captured from `http.graphql_endpoint`, e.g.
     ///   `/{tenant}/graphql`).
     /// - `.default`: The original URL of the subgraph (from supergraph SDL).
@@ -79,12 +79,12 @@ pub struct OverrideSubgraphUrlsConfig {
     /// ### Path parameter example
     /// When `http.graphql_endpoint` is set to `/{tenant}/graphql`, every
     /// path parameter captured from the request path becomes available
-    /// under `.request.url_matches`:
+    /// under `.request.path_params`:
     /// ```yaml
     /// override_subgraph_urls:
     ///   all:
     ///     expression: |
-    ///       tenant = string!(.request.url_matches.tenant)
+    ///       tenant = string!(.request.path_params.tenant)
     ///       replace(string!(.default), "/api/", "/api/" + tenant + "/")
     /// ```
     #[serde(default, skip_serializing_if = "Option::is_none")]

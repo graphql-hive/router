@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -247,7 +248,12 @@ pub async fn execute_query_plan<'exec>(
         let client_operation_query = opts.client_request.operation.query.to_string();
         let client_operation_kind = opts.client_request.operation.kind;
         let client_jwt = opts.client_request.jwt.clone();
-        let client_url_matches = opts.client_request.url_matches.clone();
+        let client_path_params: HashMap<Cow<'static, str>, Cow<'static, str>> = opts
+            .client_request
+            .path_params
+            .iter()
+            .map(|(key, value)| (Cow::Owned(key.to_string()), Cow::Owned(value.to_string())))
+            .collect();
 
         let body_stream = Box::pin(async_stream::stream! {
             while let Some(stream_result) = response_stream.next().await {
@@ -296,7 +302,7 @@ pub async fn execute_query_plan<'exec>(
                             kind: client_operation_kind,
                         },
                         jwt: client_jwt.clone(),
-                        url_matches: &client_url_matches,
+                        path_params: client_path_params.clone(),
                     }.into(),
                     introspection_context: opts.introspection_context.clone(),
                     operation_type_name: opts.operation_type_name,
@@ -1599,7 +1605,7 @@ mod tests {
                     kind: "query",
                 },
                 jwt: JwtRequestDetails::Unauthenticated.into(),
-                url_matches: &Default::default(),
+                path_params: Default::default(),
             },
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
@@ -1712,7 +1718,7 @@ mod tests {
                     kind: "query",
                 },
                 jwt: JwtRequestDetails::Unauthenticated.into(),
-                url_matches: &Default::default(),
+                path_params: Default::default(),
             },
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,

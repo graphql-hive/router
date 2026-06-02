@@ -56,13 +56,13 @@ override_subgraph_urls:
 
 The expression has access to:
 
-- `.request`: the incoming HTTP request (headers, query parameters, the parsed GraphQL operation, and `url_matches`, see below).
+- `.request`: the incoming HTTP request (headers, query parameters, the parsed GraphQL operation, and `path_params`, see below).
 - `.default`: the original subgraph URL from the supergraph SDL.
 - `.subgraph.name`: the name of the subgraph the URL is being resolved for.
 
-## New: path parameters under `.request.url_matches`
+## New: path parameters under `.request.path_params`
 
-`http.graphql_endpoint` already supports ntex's native `{name}` segments. Any path parameters captured from the configured pattern are now exposed to override expressions (and any other VRL expression that has access to the request) under `.request.url_matches`.
+`http.graphql_endpoint` already supports ntex's native `{name}` segments. Any path parameters captured from the configured pattern are now exposed to override expressions (and any other VRL expression that has access to the request) under `.request.path_params`.
 
 ```yaml
 http:
@@ -70,7 +70,7 @@ http:
 override_subgraph_urls:
   all:
     expression: |
-      tenant = string!(.request.url_matches.tenant)
+      tenant = string!(.request.path_params.tenant)
       replace(string!(.default), "/api/", "/api/" + tenant + "/")
 ```
 

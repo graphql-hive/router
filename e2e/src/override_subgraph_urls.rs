@@ -277,7 +277,7 @@ mod override_subgraph_urls_e2e_tests {
 
     #[ntex::test]
     /// Test that path parameters captured from a wildcard `graphql_endpoint`
-    /// are exposed to override expressions through `.request.url_matches`.
+    /// are exposed to override expressions through `.request.path_params`.
     /// The router is configured with `/{tenant}/graphql` so requests like
     /// `/acme/graphql` capture `tenant=acme` and the expression rewrites
     /// the subgraph URL accordingly.
@@ -296,7 +296,7 @@ mod override_subgraph_urls_e2e_tests {
                 override_subgraph_urls:
                     all:
                         expression: |
-                            tenant = string!(.request.url_matches.tenant)
+                            tenant = string!(.request.path_params.tenant)
                             if tenant == "acme" {{
                                 "{subgraphs_url}/" + string!(.subgraph.name)
                             }} else {{

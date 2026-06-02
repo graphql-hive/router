@@ -34,6 +34,7 @@ use ntex::{
 };
 use sonic_rs::{JsonContainerTrait, JsonType, JsonValueTrait, Value};
 use std::{
+    borrow::Cow,
     collections::HashMap,
     hash::{Hash, Hasher},
     ops::{ControlFlow, Deref},
@@ -351,12 +352,13 @@ pub async fn graphql_request_handler(
         };
 
         let request_context = req.read_request_context()?;
+        let path_params = collect_path_params(req.match_info());
 
         let exec = |guard| execute_planned_request(
             req.method(),
             req.uri(),
             request_headers,
-            req.match_info(),
+            path_params,
             graphql_params,
             &normalize_payload,
             supergraph,
@@ -439,7 +441,7 @@ pub async fn execute_planned_request<'exec>(
     method: &'exec Method,
     url: &'exec http::Uri,
     headers: HeaderMap,
-    url_matches: &'exec Path<Uri>,
+    path_params: HashMap<Cow<'exec, str>, Cow<'exec, str>>,
     mut graphql_params: GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     supergraph: &'exec SupergraphData,
@@ -486,7 +488,7 @@ pub async fn execute_planned_request<'exec>(
             query: graphql_params.get_query()?,
         },
         jwt: jwt_request_details.into(),
-        url_matches,
+        path_params,
     };
 
     match execute_pipeline(
@@ -568,6 +570,12 @@ pub async fn execute_planned_request<'exec>(
             }))
         }
     }
+}
+
+fn collect_path_params<'a>(path: &'a Path<Uri>) -> HashMap<Cow<'a, str>, Cow<'a, str>> {
+    path.iter()
+        .map(|(key, value)| (key.into(), value.into()))
+        .collect()
 }
 
 #[inline]
