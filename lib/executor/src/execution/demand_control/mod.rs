@@ -1,3 +1,5 @@
+pub mod extensions;
+
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -17,31 +19,9 @@ use hive_router_query_planner::{
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphState, TypeNode},
 };
-use serde::Serialize;
 use sonic_rs::JsonValueTrait;
 
 use crate::response::value::Value;
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DemandControlResponseExtensions {
-    pub estimated: u64,
-    pub result: DemandControlResultCode,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub estimated_cost_by_subgraph: Arc<BTreeMap<String, u64>>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub result_by_subgraph: BTreeMap<String, DemandControlResultCode>,
-    pub formula_cache_hit: bool,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub estimated_formula_by_subgraph: Arc<BTreeMap<String, String>>,
-
-    pub max_cost: u64,
-
-    pub actual: u64,
-    pub delta: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub actual_cost_by_subgraph: Option<BTreeMap<String, u64>>,
-}
 
 #[derive(Debug)]
 pub struct DemandControlEvaluation {

@@ -1,5 +1,5 @@
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
 
@@ -12,7 +12,6 @@ use futures::{
     FutureExt, StreamExt,
 };
 use hive_router_internal::graphql::ObservedError;
-use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
@@ -34,11 +33,12 @@ use sonic_rs::{JsonValueTrait, ValueRef};
 use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
-use crate::execution::operation_name::OperationNameFactory;
+use crate::execution::demand_control::extensions::DemandControlCostMetadataExtensions;
 use crate::execution::demand_control::{
     demand_control_actual_cost, estimate_actual_subgraph_response_cost_with_compiled_plan,
-    CompiledActualCostPlan, DemandControlExecutionContext, DemandControlResponseExtensions,
+    CompiledActualCostPlan, DemandControlExecutionContext,
 };
+use crate::execution::operation_name::OperationNameFactory;
 use crate::{
     execution::{
         client_request_details::ClientRequestDetails,
@@ -83,7 +83,7 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResultExtensions<'exec> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cost: Option<DemandControlResponseExtensions>,
+    pub cost: Option<DemandControlCostMetadataExtensions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query_plan: Option<&'exec QueryPlan>,
 
@@ -500,28 +500,10 @@ async fn execute_query_plan_with_data<'exec>(
         );
 
         if demand_control.include_extension_metadata {
-            let mut result_by_subgraph = BTreeMap::new();
-            for subgraph in demand_control.evaluation.per_subgraph.keys() {
-                result_by_subgraph.insert(subgraph.clone(), DemandControlResultCode::CostOk);
-            }
-            for subgraph in demand_control.subgraphs_over_limit.keys() {
-                result_by_subgraph.insert(
-                    subgraph.clone(),
-                    DemandControlResultCode::SubgraphCostEstimatedTooExpensive,
-                );
-            }
-
-            opts.extensions.cost = Some(DemandControlResponseExtensions {
+            opts.extensions.cost = Some(DemandControlCostMetadataExtensions {
                 estimated: demand_control.evaluation.estimated_cost,
-                result: actual_cost_result.result_code,
-                estimated_cost_by_subgraph: demand_control.evaluation.per_subgraph.clone(),
-                result_by_subgraph,
-                formula_cache_hit: demand_control.formula_cache_hit,
-                estimated_formula_by_subgraph: demand_control.estimated_formula_by_subgraph.clone(),
-                actual: actual_cost_result.actual,
-                delta: actual_cost_result.delta,
-                actual_cost_by_subgraph: actual_cost_result.actual_by_subgraph,
-                max_cost: demand_control.max_cost,
+                actual: Some(actual_cost_result.actual),
+                max: demand_control.max_cost,
             });
         }
     }

@@ -6,13 +6,14 @@ use hive_router_internal::http::ReadBodyStreamError;
 use hive_router_plan_executor::{
     coprocessor::CoprocessorError,
     execution::{
-        error::PlanExecutionError, jwt_forward::JwtForwardingError, plan::FailedExecutionResult,
+        demand_control::extensions::DemandControlCostMetadataExtensions, error::PlanExecutionError,
+        jwt_forward::JwtForwardingError, plan::FailedExecutionResult,
     },
     headers::errors::HeaderRuleRuntimeError,
     hooks::on_graphql_error::handle_graphql_errors_with_plugins,
     plugin_context::PluginContext,
     request_context::{RequestContextError, RequestContextExt},
-    response::graphql_error::{GraphQLError, GraphQLErrorCostExtension},
+    response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
@@ -323,9 +324,10 @@ pub fn handle_pipeline_error(
                 err.graphql_error_message(),
                 "COST_ESTIMATED_TOO_EXPENSIVE",
             );
-            graphql_error.extensions.cost = Some(GraphQLErrorCostExtension {
+            graphql_error.extensions.cost = Some(DemandControlCostMetadataExtensions {
                 estimated: *estimated_cost,
                 max: *max_cost,
+                actual: None,
             });
             vec![graphql_error]
         }

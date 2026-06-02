@@ -6,6 +6,8 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 use sonic_rs::Value;
 use std::collections::{BTreeMap, HashMap};
 
+use crate::execution::demand_control::extensions::DemandControlCostMetadataExtensions;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphQLError {
@@ -282,13 +284,6 @@ impl GraphQLErrorPath {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GraphQLErrorCostExtension {
-    pub estimated: u64,
-    pub max: u64,
-}
-
 #[derive(Clone, Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphQLErrorExtensions {
@@ -302,7 +297,7 @@ pub struct GraphQLErrorExtensions {
     /// Demand-control cost numbers attached to estimated/actual cost
     /// rejections (both supergraph-wide and per-subgraph).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cost: Option<GraphQLErrorCostExtension>,
+    pub cost: Option<DemandControlCostMetadataExtensions>,
     #[serde(flatten)]
     pub extensions: BTreeMap<String, Value>,
 }

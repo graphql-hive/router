@@ -29,15 +29,6 @@ strategy:
             "[{}] measure mode must not reject: {json}",
             fixture.query_file
         );
-        // The cost extension still records the over-budget result.
-        assert_top_result(json, fixture.query_file, "COST_ESTIMATED_TOO_EXPENSIVE");
-        // In measure mode, every subgraph that's over the per-subgraph
-        // budget surfaces SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE.
-        let by_sg: Vec<(&str, &str)> = expected_call_counts(&fixture)
-            .iter()
-            .map(|(sg, _)| (*sg, "SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE"))
-            .collect();
-        assert_result_by_subgraph(json, fixture.query_file, &by_sg);
         // And subgraphs are still actually called (full execution).
         assert_call_counts(&outcome, fixture.query_file, expected_call_counts(&fixture));
     }

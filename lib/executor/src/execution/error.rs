@@ -1,10 +1,9 @@
 use strum::IntoStaticStr;
 
 use crate::{
-    executors::error::SubgraphExecutorError,
-    headers::errors::HeaderRuleRuntimeError,
-    projection::error::ProjectionError,
-    response::graphql_error::{GraphQLError, GraphQLErrorCostExtension},
+    execution::demand_control::extensions::DemandControlCostMetadataExtensions,
+    executors::error::SubgraphExecutorError, headers::errors::HeaderRuleRuntimeError,
+    projection::error::ProjectionError, response::graphql_error::GraphQLError,
 };
 
 #[derive(thiserror::Error, Debug, IntoStaticStr)]
@@ -101,9 +100,10 @@ impl From<&PlanExecutionError> for GraphQLError {
             },
         ) = &val.kind
         {
-            error.extensions.cost = Some(GraphQLErrorCostExtension {
+            error.extensions.cost = Some(DemandControlCostMetadataExtensions {
                 estimated: *estimated_cost,
                 max: *max_cost,
+                actual: None,
             });
         }
 

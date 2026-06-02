@@ -74,26 +74,8 @@ mod subgraph_budgets_tests {
                   "extensions": {
                     "cost": {
                       "estimated": 2,
-                      "result": "COST_OK",
-                      "estimatedCostBySubgraph": {
-                        "accounts": 1,
-                        "reviews": 1
-                      },
-                      "resultBySubgraph": {
-                        "accounts": "COST_OK",
-                        "reviews": "SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE"
-                      },
-                      "formulaCacheHit": false,
-                      "estimatedFormulaBySubgraph": {
-                        "accounts": "1",
-                        "reviews": "1"
-                      },
-                      "maxCost": 1000,
-                      "actual": 1,
-                      "delta": -1,
-                      "actualCostBySubgraph": {
-                        "accounts": 1
-                      }
+                      "max": 1000,
+                      "actual": 1
                     }
                   }
                 }

@@ -90,11 +90,8 @@ mod enforcement_tests {
         assert!(json.get("errors").is_none() || json["errors"].is_null());
         assert_eq!(json["data"]["me"]["name"].as_str(), Some("Uri Goldshtein"));
         assert_eq!(json["extensions"]["cost"]["estimated"].as_u64(), Some(1));
-        assert_eq!(
-            json["extensions"]["cost"]["result"].as_str(),
-            Some("COST_ESTIMATED_TOO_EXPENSIVE")
-        );
-        assert_eq!(json["extensions"]["cost"]["maxCost"].as_u64(), Some(0));
+        assert_eq!(json["extensions"]["cost"]["actual"].as_u64(), Some(1));
+        assert_eq!(json["extensions"]["cost"]["max"].as_u64(), Some(0));
     }
     #[ntex::test]
     async fn mode_measure_does_not_reject_when_actual_cost_exceeds_max() {
@@ -143,11 +140,7 @@ mod enforcement_tests {
             json.get("errors").is_none() || json["errors"].is_null(),
             "measure mode must not reject the operation when actual cost exceeds max"
         );
-        assert_eq!(
-            json["extensions"]["cost"]["result"].as_str(),
-            Some("COST_ACTUAL_TOO_EXPENSIVE")
-        );
-        assert_eq!(json["extensions"]["cost"]["maxCost"].as_u64(), Some(3));
+        assert_eq!(json["extensions"]["cost"]["max"].as_u64(), Some(3));
     }
     #[ntex::test]
     async fn subscription_is_rejected_when_estimated_cost_exceeds_max() {

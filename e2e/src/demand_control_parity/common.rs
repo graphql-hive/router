@@ -169,28 +169,6 @@ pub(super) fn expected_call_counts(fixture: &Fixture) -> &'static [(&'static str
     }
 }
 
-/// Per-fixture `resultBySubgraph` entries when the request is accepted
-/// (every subgraph reports COST_OK).
-pub(super) fn expected_ok_result_by_subgraph(
-    fixture: &Fixture,
-) -> &'static [(&'static str, &'static str)] {
-    match fixture.query_file {
-        "basic_fragments_query.graphql" => &[("products", "COST_OK")],
-        "basic_mutation.graphql" => &[("products", "COST_OK")],
-        "federated_ships_required_query.graphql" => {
-            &[("users", "COST_OK"), ("vehicles", "COST_OK")]
-        }
-        "federated_ships_fragment_query.graphql" => {
-            &[("users", "COST_OK"), ("vehicles", "COST_OK")]
-        }
-        "custom_cost_query.graphql" => &[
-            ("subgraphWithCost", "COST_OK"),
-            ("subgraphWithListSize", "COST_OK"),
-        ],
-        other => panic!("expected_ok_result_by_subgraph: unknown fixture {other}"),
-    }
-}
-
 /// Stand up subgraphs (with the canned mock responses) and a router
 /// pointing at them with the given inline `demand_control` YAML block,
 /// run the fixture query and return the JSON response body.
@@ -322,65 +300,6 @@ pub(super) fn assert_cost(
         act, expected_actual,
         "[{label}] actual cost drift (expected={expected_actual}, ours={act}): {json}"
     );
-}
-
-/// Asserts a single subgraph entry inside `extensions.cost.<key>`.
-pub(super) fn assert_cost_by_subgraph(
-    json: &SonicValue,
-    label: &str,
-    key: &str,
-    subgraph: &str,
-    expected: f64,
-) {
-    let v = cost_num(json, &["extensions", "cost", key, subgraph])
-        .unwrap_or_else(|| panic!("[{label}] missing extensions.cost.{key}.{subgraph}: {json}"));
-    assert_eq!(
-        v, expected,
-        "[{label}] {key}.{subgraph} drift (expected={expected}, ours={v}): {json}"
-    );
-}
-
-/// Asserts that `extensions.cost.actualCostBySubgraph` is null/absent
-/// (the `by_response_shape` mode emits a top-level `actual` only).
-pub(super) fn assert_actual_by_subgraph_null(json: &SonicValue, label: &str) {
-    let v = json
-        .get("extensions")
-        .and_then(|e| e.get("cost"))
-        .and_then(|c| c.get("actualCostBySubgraph"));
-    match v {
-        None => {}
-        Some(val) if val.is_null() => {}
-        Some(val) if val.as_object().map(|o| o.is_empty()).unwrap_or(false) => {}
-        Some(other) => panic!(
-            "[{label}] expected extensions.cost.actualCostBySubgraph to be null/absent, got: {other}"
-        ),
-    }
-}
-
-/// Asserts the top-level `extensions.cost.result` matches the expected
-/// reference value.
-/// expected result code (e.g. `"COST_OK"`,
-/// `"COST_ESTIMATED_TOO_EXPENSIVE"`).
-pub(super) fn assert_top_result(json: &SonicValue, label: &str, expected: &str) {
-    let actual = json["extensions"]["cost"]["result"].as_str();
-    assert_eq!(
-        actual,
-        Some(expected),
-        "[{label}] result drift (expected={expected}, ours={actual:?}): {json}"
-    );
-}
-
-/// Asserts each `(subgraph, expected_code)` entry inside
-/// `extensions.cost.resultBySubgraph` matches the expected value.
-pub(super) fn assert_result_by_subgraph(json: &SonicValue, label: &str, expected: &[(&str, &str)]) {
-    for (subgraph, code) in expected {
-        let actual = json["extensions"]["cost"]["resultBySubgraph"][*subgraph].as_str();
-        assert_eq!(
-            actual,
-            Some(*code),
-            "[{label}] resultBySubgraph.{subgraph} drift (expected={code}, ours={actual:?}): {json}"
-        );
-    }
 }
 
 /// Asserts the per-subgraph request counts captured by the mock harness

@@ -50,12 +50,8 @@ mod actual_cost_tests {
         let actual = json["extensions"]["cost"]["actual"]
             .as_u64()
             .expect("actual should be present");
-        let delta = json["extensions"]["cost"]["delta"]
-            .as_i64()
-            .expect("delta should be present");
 
         assert!(actual < estimated);
-        assert_eq!(delta, actual as i64 - estimated as i64);
     }
     #[ntex::test]
     async fn computes_by_subgraph_actual_from_responses_not_estimates() {
@@ -106,32 +102,10 @@ mod actual_cost_tests {
         let actual_total = json["extensions"]["cost"]["actual"]
             .as_u64()
             .expect("actual should be present");
-        let delta = json["extensions"]["cost"]["delta"]
-            .as_i64()
-            .expect("delta should be present");
 
-        let estimated_reviews = json["extensions"]["cost"]["estimatedCostBySubgraph"]["reviews"]
-            .as_u64()
-            .expect("estimated reviews cost should be present");
-        let actual_reviews = json["extensions"]["cost"]["actualCostBySubgraph"]["reviews"]
-            .as_u64()
-            .expect("actual reviews cost should be present");
-
-        let actual_accounts = json["extensions"]["cost"]["actualCostBySubgraph"]["accounts"]
-            .as_u64()
-            .expect("actual accounts cost should be present");
-
-        // Regression guard: in by_subgraph mode, actual cost must come from real subgraph
-        // responses, not copied from estimated per-subgraph values.
-        assert!(
-            actual_reviews < estimated_reviews,
-            "actual reviews cost should be lower than estimated reviews cost"
-        );
-
-        assert_eq!(actual_total, actual_accounts + actual_reviews);
-        assert_eq!(delta, actual_total as i64 - estimated_total as i64);
         assert!(actual_total < estimated_total);
     }
+
     // Actual cost exceeding the configured max never returns a GraphQL error.
     // The router records `cost.result = COST_ACTUAL_TOO_EXPENSIVE` in the
     // response extensions and metrics, but lets the response through.
@@ -182,10 +156,6 @@ mod actual_cost_tests {
             json.get("errors").is_none() || json["errors"].is_null(),
             "router must not return a GraphQL error when actual cost exceeds max; got: {json}"
         );
-        assert_eq!(
-            json["extensions"]["cost"]["result"].as_str(),
-            Some("COST_ACTUAL_TOO_EXPENSIVE")
-        );
 
         let estimated = json["extensions"]["cost"]["estimated"]
             .as_u64()
@@ -193,7 +163,7 @@ mod actual_cost_tests {
         let actual = json["extensions"]["cost"]["actual"]
             .as_u64()
             .expect("actual should be present");
-        let max_cost = json["extensions"]["cost"]["maxCost"]
+        let max_cost = json["extensions"]["cost"]["max"]
             .as_u64()
             .expect("maxCost should be present");
 
@@ -205,10 +175,15 @@ mod actual_cost_tests {
             actual > max_cost,
             "actual cost should exceed max cost in this scenario"
         );
+        assert!(
+            actual > estimated,
+            "actual cost should exceed estimated cost in this scenario"
+        );
     }
-    // Verify maxCost is included in cost extensions when actual cost exceeds max.
+
+    // Verify `cost` is included in cost extensions
     // No GraphQL error is emitted, but the response extensions still expose the
-    // configured maxCost so clients can correlate cost.actual against it.
+    // configured `cost` so clients can correlate cost.actual against it.
     #[ntex::test]
     async fn extension_cost_includes_max_cost_value_when_actual_exceeds_max() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
@@ -257,15 +232,26 @@ mod actual_cost_tests {
             "no GraphQL error must be emitted for actual cost overruns; got: {json}"
         );
         assert_eq!(
-            json["extensions"]["cost"]["result"].as_str(),
-            Some("COST_ACTUAL_TOO_EXPENSIVE")
-        );
-        assert_eq!(
-            json["extensions"]["cost"]["maxCost"].as_u64(),
+            json["extensions"]["cost"]["max"].as_u64(),
             Some(3),
-            "maxCost should be present in cost extensions with value 3"
+            "max should be present in cost extensions with value 3"
+        );
+        assert!(
+            json["extensions"]["cost"]["actual"].as_u64().unwrap() > 0,
+            "actual cost must be non-zero"
+        );
+        assert!(
+            json["extensions"]["cost"]["actual"].as_u64().unwrap()
+                > json["extensions"]["cost"]["estimated"].as_u64().unwrap(),
+            "actual cost must be greater than estimated cost"
+        );
+        assert!(
+            json["extensions"]["cost"]["actual"].as_u64().unwrap()
+                > json["extensions"]["cost"]["max"].as_u64().unwrap(),
+            "actual cost must be greater than max cost"
         );
     }
+
     // Verify delta is negative when actual < estimated (fewer list items than assumed).
     #[ntex::test]
     async fn negative_delta_when_actual_smaller_than_estimated() {
@@ -309,9 +295,13 @@ mod actual_cost_tests {
             .await;
 
         let json = res.json_body().await;
-        let delta = json["extensions"]["cost"]["delta"]
+        let actual = json["extensions"]["cost"]["actual"]
             .as_i64()
-            .expect("delta should be present");
+            .expect("actual should be present");
+        let estimated = json["extensions"]["cost"]["estimated"]
+            .as_i64()
+            .expect("estimated should be present");
+        let delta = actual - estimated;
 
         assert!(
             delta < 0,
@@ -365,9 +355,7 @@ mod actual_cost_tests {
         let actual = json["extensions"]["cost"]["actual"]
             .as_u64()
             .expect("actual should be present");
-        let delta = json["extensions"]["cost"]["delta"]
-            .as_i64()
-            .expect("delta should be present");
+        let delta = actual - estimated;
 
         assert!(
             actual > estimated,
@@ -377,7 +365,6 @@ mod actual_cost_tests {
             delta > 0,
             "delta should be positive when actual > estimated"
         );
-        assert_eq!(delta, actual as i64 - estimated as i64);
     }
     // Verify delta remains accurate across a range of configured list-size assumptions.
     #[ntex::test]
@@ -427,9 +414,7 @@ mod actual_cost_tests {
             let actual = json["extensions"]["cost"]["actual"]
                 .as_u64()
                 .expect("actual should be present");
-            let delta = json["extensions"]["cost"]["delta"]
-                .as_i64()
-                .expect("delta should be present");
+            let delta = actual as i64 - estimated as i64;
 
             assert_eq!(
                 delta,
@@ -505,9 +490,6 @@ mod actual_cost_tests {
         let actual = json["extensions"]["cost"]["actual"]
             .as_u64()
             .expect("actual should be present");
-        let delta = json["extensions"]["cost"]["delta"]
-            .as_i64()
-            .expect("delta should be present");
 
         // Final response shape is a single Product object with one scalar field.
         assert_eq!(
@@ -518,7 +500,6 @@ mod actual_cost_tests {
             estimated > actual,
             "estimated cost should still include assumed list fanout"
         );
-        assert_eq!(delta, actual as i64 - estimated as i64);
     }
     // BatchFetch: when two independent paths need entity resolution from the same subgraph
     // in parallel, the planner merges them into a single BatchFetch with aliased _entities
@@ -576,16 +557,6 @@ mod actual_cost_tests {
             "query should succeed: {:?}",
             json["errors"]
         );
-
-        let reviews_actual = json["extensions"]["cost"]["actualCostBySubgraph"]["reviews"]
-            .as_u64()
-            .expect("actualBySubgraph.reviews should be present");
-
-        assert!(
-            reviews_actual > 0,
-            "reviews actual cost must be > 0 even when accessed via BatchFetch aliases; got {}",
-            reviews_actual
-        );
     }
     // When actual cost mode is by_subgraph and a BatchFetch returns entities, the cost
     // must be summed across both alias groups. Verify that turning down the per-subgraph
@@ -640,17 +611,6 @@ mod actual_cost_tests {
             json["errors"]
         );
 
-        let reviews_actual = json["extensions"]["cost"]["actualCostBySubgraph"]["reviews"]
-            .as_u64()
-            .expect("actualBySubgraph.reviews should be present");
-
-        // The actual cost must be > 0 — if BatchFetch aliased entities were costed as 0,
-        // this assertion would fail, confirming the regression.
-        assert!(
-            reviews_actual > 0,
-            "reviews actual cost must be > 0 even when served via BatchFetch aliases"
-        );
-
         // Verify estimated cost is also > 0, confirming that BatchFetch estimation
         // correctly processes aliased _entities fields during formula compilation.
         let estimated_total = json["extensions"]["cost"]["estimated"]
@@ -666,13 +626,10 @@ mod actual_cost_tests {
         let actual_total = json["extensions"]["cost"]["actual"]
             .as_u64()
             .expect("actual should be present");
-        let delta = json["extensions"]["cost"]["delta"]
-            .as_i64()
-            .expect("delta should be present");
-        assert_eq!(
-            delta,
-            actual_total as i64 - estimated_total as i64,
-            "delta must equal actual - estimated"
+        assert!(actual_total > 0, "actual cost must be non-zero");
+        assert!(
+            actual_total > estimated_total,
+            "actual cost must be greater than estimated cost"
         );
     }
     // When an _entities response includes __typename, the evaluator must use the
@@ -722,22 +679,22 @@ mod actual_cost_tests {
         let json = res.json_body().await;
         assert!(json["errors"].is_null(), "query should succeed");
 
-        let actual_reviews = json["extensions"]["cost"]["actualCostBySubgraph"]["reviews"]
+        let actual = json["extensions"]["cost"]["actual"]
             .as_u64()
-            .expect("actualBySubgraph.reviews should be present");
-        let estimated_reviews = json["extensions"]["cost"]["estimatedCostBySubgraph"]["reviews"]
+            .expect("actual reviews should be present");
+        let estimated = json["extensions"]["cost"]["estimated"]
             .as_u64()
-            .expect("bySubgraph.reviews should be present");
+            .expect("estimated reviews should be present");
 
         // With list_size=10 (assumed) the estimated review count is inflated;
         // actual is based on the real response items.
         assert!(
-            actual_reviews < estimated_reviews,
-            "actual reviews cost ({}) should be less than estimated ({})",
-            actual_reviews,
-            estimated_reviews
+            actual < estimated,
+            "actual cost ({}) should be less than estimated ({})",
+            actual,
+            estimated
         );
-        assert!(actual_reviews > 0, "actual reviews cost must be non-zero");
+        assert!(actual > 0, "actual cost must be non-zero");
     }
     // Type-conditioned selections can still be deterministic even when the final
     // merged response omits __typename. If the parent type is already known at
@@ -966,12 +923,11 @@ mod actual_cost_tests {
             json["errors"]
         );
 
-        let reviews_actual = json["extensions"]["cost"]["actualCostBySubgraph"]["reviews"]
-            .as_u64()
-            .unwrap_or(0);
+        let actual = json["extensions"]["cost"]["actual"].as_u64().unwrap_or(0);
+
         assert!(
-            reviews_actual > 0,
-            "non-empty users.reviews should produce non-zero reviews actual cost"
+            actual > 0,
+            "non-empty users.reviews should produce non-zero actual cost"
         );
     }
     // `_entities` fetches can contain nested inline fragments for child objects.
@@ -1031,12 +987,12 @@ mod actual_cost_tests {
             json["errors"]
         );
 
-        let reviews_actual = json["extensions"]["cost"]["actualCostBySubgraph"]["reviews"]
+        let actual = json["extensions"]["cost"]["actual"]
             .as_u64()
-            .expect("actualBySubgraph.reviews should be present");
+            .expect("actual should be present");
 
         assert!(
-            reviews_actual > 0,
+            actual > 0,
             "nested inline fragments must not collapse single-type _entities cost to zero"
         );
     }
@@ -1150,28 +1106,13 @@ mod actual_cost_tests {
         let json = res.json_body().await;
         assert!(json["errors"].is_null(), "query should succeed");
 
-        let products_actual = json["extensions"]["cost"]["actualCostBySubgraph"]["products"]
-            .as_u64()
-            .expect("actualBySubgraph.products should be present");
-        let products_estimated = json["extensions"]["cost"]["estimatedCostBySubgraph"]["products"]
-            .as_u64()
-            .expect("bySubgraph.products should be present");
-
-        assert!(
-            products_actual > 0,
-            "actual products cost must be non-zero (includes both fetch and entity phases)"
-        );
         // With list_size=2 assumed but real data returned, actual may differ from estimated.
-        let delta = json["extensions"]["cost"]["delta"]
-            .as_i64()
-            .expect("delta should be present");
         let actual_total = json["extensions"]["cost"]["actual"]
             .as_u64()
             .expect("actual should be present");
         let estimated_total = json["extensions"]["cost"]["estimated"]
             .as_u64()
             .expect("estimated should be present");
-        assert_eq!(delta, actual_total as i64 - estimated_total as i64);
-        let _ = products_estimated; // used in assertion context
+        assert!(actual_total > estimated_total);
     }
 }
