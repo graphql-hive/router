@@ -2,7 +2,7 @@
 mod override_subgraph_urls_e2e_tests {
     use crate::{
         some_header_map,
-        testkit::{ClientResponseExt, TestRouter, TestSubgraphs},
+        testkit::{ClientResponseExt, ResponseLike, TestRouter, TestSubgraphs},
     };
     use sonic_rs::json;
 
@@ -334,6 +334,80 @@ mod override_subgraph_urls_e2e_tests {
             accounts_requests.len(),
             1,
             "expected 1 request to accounts subgraph after URL rewrite"
+        );
+    }
+
+    #[ntex::test]
+    /// Makes sure `/{tenant}/graphql` graphql endpoint works and is
+    /// covered in expression as `.request.path_params.tenant`.
+    async fn should_rewrite_default_api_path_using_graphql_endpoint_path_params() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|request| {
+                // Since the graphql endpoint is `/acme/graphql`, the tenant should be `acme`,
+                // and because the expression uses `.default`, it should be rewritten to `/api/acme/accounts`.
+                if request.path == "/api/acme/accounts" {
+                    return Some(ResponseLike::new(
+                        axum::http::StatusCode::OK,
+                        Some(
+                            json!({
+                                "data": {
+                                  "users": [{ "id": "1" }]
+                                },
+                            })
+                            .to_string(),
+                        ),
+                        None,
+                    ));
+                }
+
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                http:
+                    graphql_endpoint: /{{tenant}}/graphql
+                override_subgraph_urls:
+                    all:
+                        url:
+                            expression: |
+                                tenant = string!(.request.path_params.tenant)
+                                replace(string!(.default), "/accounts", "/api/" + tenant + "/accounts")
+                "#,
+            ))
+            .with_subgraphs(&subgraphs)
+            .build()
+            .start()
+            .await;
+
+        // Send the graphql request as `acme` tenant
+        let res = router
+            .send_post_request(
+                "/acme/graphql",
+                json!({
+                    "query": "{ users { id } }",
+                }),
+                None,
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        // Verify that the request was rewritten to `/api/acme/accounts`
+        let accounts_requests = subgraphs
+            .get_requests_log("api/acme/accounts")
+            .expect("expected rewritten requests sent to /api/acme/accounts");
+        assert_eq!(
+            accounts_requests.len(),
+            1,
+            "expected 1 request to rewritten accounts path"
         );
     }
 }
