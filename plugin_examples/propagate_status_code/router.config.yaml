@@ -5,11 +5,13 @@ supergraph:
 override_subgraph_urls:
   subgraphs:
     accounts:
-      url: env("ACCOUNTS_URL_OVERRIDE", string!(.default))
+      url:
+        expression: env("ACCOUNTS_URL_OVERRIDE", string!(.default))
     products:
-      url: env("PRODUCTS_URL_OVERRIDE", string!(.default))
+      url:
+        expression: env("PRODUCTS_URL_OVERRIDE", string!(.default))
 plugins:
   propagate_status_code:
     enabled: true
     config:
-        status_codes: [206, 207]
+      status_codes: [206, 207]
