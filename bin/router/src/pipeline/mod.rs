@@ -354,8 +354,6 @@ pub async fn graphql_request_handler(
         let request_context = req.read_request_context()?;
         let path_params = collect_path_params(req.match_info());
 
-        println!("{:?}", path_params);
-
         let exec = |guard| execute_planned_request(
             req.method(),
             req.uri(),
