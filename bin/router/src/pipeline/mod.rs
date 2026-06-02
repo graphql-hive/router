@@ -116,17 +116,16 @@ pub async fn graphql_request_handler(
         return Ok(early_response);
     }
 
-    // agree on the response content type
-    *response_mode = req.negotiate()?;
+    // agree on the response content type. when Laboratory is disabled, negotiation
+    // ignores the `text/html` preference and falls through to regular GraphQL handling,
+    // so browser GETs still get a valid response instead of a 404.
+    *response_mode = req.negotiate(shared_state.router_config.laboratory.enabled)?;
 
+    // `negotiate` only returns `Laboratory` when it is enabled.
     if *response_mode == ResponseMode::Laboratory {
-        if shared_state.router_config.laboratory.enabled {
-            return Ok(web::HttpResponse::Ok()
-                .header(CONTENT_TYPE, TEXT_HTML_MIME)
-                .body(LABORATORY_HTML));
-        } else {
-            return Ok(web::HttpResponse::NotFound().into());
-        }
+        return Ok(web::HttpResponse::Ok()
+            .header(CONTENT_TYPE, TEXT_HTML_MIME)
+            .body(LABORATORY_HTML));
     }
 
     let started_at = Instant::now();

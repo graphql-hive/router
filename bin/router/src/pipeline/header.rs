@@ -223,15 +223,20 @@ impl ResponseMode {
 pub trait RequestAccepts {
     /// Reads the request's `Accept` header and returns the agreed response mode.
     ///
+    /// When `laboratory_enabled` is `true`, a GET request that prefers `text/html`
+    /// (e.g. a browser) negotiates to [`ResponseMode::Laboratory`]. When it is
+    /// `false`, the `text/html` preference is ignored and negotiation falls through
+    /// to the regular GraphQL content types so browsers still get a valid response.
+    ///
     /// Returns an error if no valid content types are found in the Accept header.
-    fn negotiate(&self) -> Result<ResponseMode, PipelineError>;
+    fn negotiate(&self, laboratory_enabled: bool) -> Result<ResponseMode, PipelineError>;
 }
 
 impl RequestAccepts for HttpRequest {
     #[inline]
     /// Reads the `Accept` header contents and returns a tuple of accepted/parsed content types.
     /// It perform negotiation and respects q-weights.
-    fn negotiate(&self) -> Result<ResponseMode, PipelineError> {
+    fn negotiate(&self, laboratory_enabled: bool) -> Result<ResponseMode, PipelineError> {
         let accept_header = self
             .headers()
             .get(ACCEPT)
@@ -249,7 +254,7 @@ impl RequestAccepts for HttpRequest {
             PipelineError::InvalidHeaderValue(ACCEPT)
         })?;
 
-        if self.method() == Method::GET {
+        if laboratory_enabled && self.method() == Method::GET {
             // if the client GETs we negotiate with the all supported media type, including HTML
             // to see if the client wants Laboratory. we negotiate with everything because browsers
             // tend to send very broad accept headers that include text/html with highest q-weight,
@@ -290,10 +295,12 @@ mod tests {
 
     #[test]
     fn negotiate_content_types() {
+        // (method, accept header, laboratory enabled, expected mode)
         let cases = vec![
             (
                 Method::GET,
                 "",
+                true,
                 ResponseMode::Dual(
                     SingleContentType::JSON,
                     StreamContentType::IncrementalDelivery,
@@ -302,6 +309,7 @@ mod tests {
             (
                 Method::GET,
                 "*/*",
+                true,
                 ResponseMode::Dual(
                     SingleContentType::JSON,
                     StreamContentType::IncrementalDelivery,
@@ -310,6 +318,7 @@ mod tests {
             (
                 Method::GET,
                 r#"application/json, text/event-stream, multipart/mixed;subscriptionSpec="1.0""#,
+                true,
                 ResponseMode::Dual(
                     SingleContentType::JSON,
                     StreamContentType::ApolloMultipartHTTP,
@@ -318,6 +327,7 @@ mod tests {
             (
                 Method::GET,
                 r#"application/graphql-response+json, multipart/mixed;q=0.5, text/event-stream;q=1"#,
+                true,
                 ResponseMode::Dual(
                     SingleContentType::GraphQLResponseJSON,
                     StreamContentType::SSE,
@@ -326,46 +336,110 @@ mod tests {
             (
                 Method::GET,
                 r#"application/json;q=0.5, application/graphql-response+json;q=1"#,
+                true,
                 ResponseMode::SingleOnly(SingleContentType::GraphQLResponseJSON),
             ),
             (
                 Method::GET,
                 r#"text/event-stream;q=0.5, multipart/mixed;q=1;subscriptionSpec="1.0""#,
+                true,
                 ResponseMode::StreamOnly(StreamContentType::ApolloMultipartHTTP),
             ),
             (
                 Method::GET,
                 r#"text/event-stream, application/json"#,
+                true,
                 ResponseMode::Dual(SingleContentType::JSON, StreamContentType::SSE),
             ),
             (
                 // actual browser request loading a page
                 Method::GET,
                 r#"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"#,
+                true,
                 ResponseMode::Laboratory,
             ),
             (
                 // browser accept header snippet but for a POST request
                 Method::POST,
                 r#"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"#,
+                true,
                 ResponseMode::Dual(
                     SingleContentType::JSON,
                     StreamContentType::IncrementalDelivery,
                 ),
             ),
+            (
+                // browser GET while Laboratory is disabled: the `text/html` preference is
+                // ignored and the broad `*/*` browsers send is honored, so the client gets a
+                // normal GraphQL response instead of a 404.
+                Method::GET,
+                r#"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"#,
+                false,
+                ResponseMode::Dual(
+                    SingleContentType::JSON,
+                    StreamContentType::IncrementalDelivery,
+                ),
+            ),
+            (
+                // empty Accept on a GET with Laboratory disabled still negotiates normally.
+                Method::GET,
+                "",
+                false,
+                ResponseMode::Dual(
+                    SingleContentType::JSON,
+                    StreamContentType::IncrementalDelivery,
+                ),
+            ),
+            (
+                // explicit GraphQL content type on a GET is unaffected by Laboratory being disabled.
+                Method::GET,
+                r#"application/graphql-response+json"#,
+                false,
+                ResponseMode::SingleOnly(SingleContentType::GraphQLResponseJSON),
+            ),
         ];
 
-        for (method, accept_header, excepted_agreed) in cases {
+        for (method, accept_header, laboratory_enabled, excepted_agreed) in cases {
             let request = TestRequest::default()
                 .method(method.clone())
                 .header(ACCEPT, accept_header)
                 .to_http_request();
-            let agreed = request.negotiate().expect("unable to parse accept header");
+            let agreed = request
+                .negotiate(laboratory_enabled)
+                .expect("unable to parse accept header");
             assert_eq!(
                 agreed, excepted_agreed,
-                "wrong agreed response mode when negotiating method {} with accept: {}",
-                method, accept_header
+                "wrong agreed response mode when negotiating method {} with accept: {} (laboratory_enabled={})",
+                method, accept_header, laboratory_enabled
             );
         }
+    }
+
+    #[test]
+    fn browser_get_with_only_html_and_laboratory_disabled_is_unsupported() {
+        // A client that GETs accepting *only* `text/html` (no `*/*` fallback) while
+        // Laboratory is disabled has no acceptable GraphQL content type, so negotiation
+        // fails with an explicit unsupported-content-type error rather than a misleading 404.
+        let request = TestRequest::default()
+            .method(Method::GET)
+            .header(ACCEPT, "text/html")
+            .to_http_request();
+        let result = request.negotiate(false);
+        assert!(
+            matches!(result, Err(PipelineError::UnsupportedContentType)),
+            "expected UnsupportedContentType, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn html_only_get_renders_laboratory_when_enabled() {
+        // The same `text/html`-only GET renders Laboratory when it is enabled.
+        let request = TestRequest::default()
+            .method(Method::GET)
+            .header(ACCEPT, "text/html")
+            .to_http_request();
+        let agreed = request.negotiate(true).expect("unable to parse accept header");
+        assert_eq!(agreed, ResponseMode::Laboratory);
     }
 }
