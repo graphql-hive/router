@@ -114,8 +114,8 @@ mod operation_name_e2e_tests {
             to_string_pretty(&accounts_body).unwrap(),
             @r#"
             {
-              "operationName": "GetUser_accounts_2",
-              "query": "query GetUser_accounts_2($id:ID!){user(id: $id){id name}}",
+              "operationName": "GetUser__2",
+              "query": "query GetUser__2($id:ID!){user(id: $id){id name}}",
               "variables": {
                 "id": "1"
               }
@@ -161,8 +161,8 @@ mod operation_name_e2e_tests {
             to_string_pretty(&accounts_body).unwrap(),
             @r#"
             {
-              "operationName": "Second_accounts_2",
-              "query": "query Second_accounts_2 {user(id: \"1\"){id}}"
+              "operationName": "Second__2",
+              "query": "query Second__2 {user(id: \"1\"){id}}"
             }
             "#
         );
@@ -203,8 +203,8 @@ mod operation_name_e2e_tests {
             to_string_pretty(&accounts_body).unwrap(),
             @r#"
             {
-              "operationName": "GetMeReviews_accounts_2",
-              "query": "query GetMeReviews_accounts_2 {me{__typename id}}"
+              "operationName": "GetMeReviews__2",
+              "query": "query GetMeReviews__2 {me{__typename id}}"
             }
             "#
         );
@@ -275,8 +275,8 @@ mod operation_name_e2e_tests {
             to_string_pretty(&reviews_body).unwrap(),
             @r#"
             {
-              "operationName": "GetMeReviews_reviews_3",
-              "query": "query GetMeReviews_reviews_3($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{body}}}}",
+              "operationName": "GetMeReviews__3",
+              "query": "query GetMeReviews__3($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{body}}}}",
               "variables": {
                 "representations": [
                   {
@@ -327,8 +327,8 @@ mod operation_name_e2e_tests {
             to_string_pretty(&products_body).unwrap(),
             @r#"
             {
-              "operationName": "SaveOneof_products_2",
-              "query": "mutation SaveOneof_products_2($input:OneOfTestInput!){oneofTest(input: $input){string}}",
+              "operationName": "SaveOneof__2",
+              "query": "mutation SaveOneof__2($input:OneOfTestInput!){oneofTest(input: $input){string}}",
               "variables": {
                 "input": {
                   "string": "hello"
