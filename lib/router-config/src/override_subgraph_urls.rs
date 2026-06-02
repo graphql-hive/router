@@ -92,7 +92,7 @@ pub struct OverrideSubgraphUrlsConfig {
     ///         replace(string!(.default), "/api/", "/api/" + tenant + "/")
     /// ```
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub all: Option<OverrideUrlConfig>,
+    pub all: Option<OverrideAllUrlConfig>,
 }
 
 impl OverrideSubgraphUrlsConfig {
@@ -102,8 +102,10 @@ impl OverrideSubgraphUrlsConfig {
     }
 
     /// Returns the global (`all`) override, if any.
-    pub fn get_all_url(&self) -> Option<&UrlOrExpression> {
-        self.all.as_ref().map(|config| &config.url)
+    pub fn get_all_url(&self) -> Option<&str> {
+        self.all
+            .as_ref()
+            .map(|config| config.url.expression.as_str())
     }
 }
 
@@ -114,12 +116,45 @@ pub struct OverrideUrlConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct OverrideAllUrlConfig {
+    pub url: OverrideExpressionConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct OverrideExpressionConfig {
+    pub expression: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
 pub enum UrlOrExpression {
     /// A static URL string.
     Url(String),
     /// A dynamic value computed by a VRL expression.
     Expression { expression: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::parse_yaml_config;
+
+    #[test]
+    fn rejects_static_all_url_override() {
+        let config = r#"
+        supergraph:
+          source: file
+          path: supergraph.graphql
+        override_subgraph_urls:
+          all:
+            url: "https://example.com/graphql"
+        "#;
+
+        let result = parse_yaml_config(config.to_string());
+
+        assert!(result.is_err(), "expected static all.url to be rejected");
+    }
 }
 
 fn override_subgraph_urls_example_1() -> OverrideSubgraphUrlsConfig {

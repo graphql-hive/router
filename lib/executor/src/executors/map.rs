@@ -67,8 +67,8 @@ struct GlobalSubgraphUrlOverride {
 }
 
 impl GlobalSubgraphUrlOverride {
-    fn new(all_url_config: Option<&UrlOrExpression>) -> Result<Self, SubgraphExecutorError> {
-        let Some(UrlOrExpression::Expression { expression }) = all_url_config else {
+    fn new(all_url_config: Option<&str>) -> Result<Self, SubgraphExecutorError> {
+        let Some(expression) = all_url_config else {
             return Ok(Self::default());
         };
 
@@ -87,10 +87,8 @@ impl GlobalSubgraphUrlOverride {
     }
 
     fn get_expression_for_subgraph(&self, name: &str) -> Option<&VrlProgram> {
-        self.ignored_subgraphs
-            .iter()
-            .any(|n| n.as_str() == name)
-            .then(|| self.program.as_ref())
+        (!self.ignored_subgraphs.iter().any(|n| n.as_str() == name))
+            .then_some(self.program.as_ref())
             .flatten()
     }
 }
@@ -239,15 +237,10 @@ impl SubgraphExecutorMap {
                         .register_endpoint_expression(subgraph_name, expression)?;
                     original_endpoint_str
                 }
-                None => match all_url_config {
-                    // A static `all` URL is unusual but supported: it points every
-                    // subgraph at the same endpoint.
-                    Some(UrlOrExpression::Url(url)) => url,
-                    // The expression is registered above and applied lazily per-subgraph
-                    // in `resolve_endpoint`. Keep the SDL endpoint as the static fallback /
-                    // `.default` value.
-                    Some(UrlOrExpression::Expression { .. }) | None => original_endpoint_str,
-                },
+                // The global `all.url.expression` is applied lazily per-subgraph in
+                // `resolve_endpoint`. Keep the SDL endpoint as the static fallback /
+                // `.default` value.
+                None => original_endpoint_str,
             };
 
             subgraph_executor_map.register_static_endpoint(subgraph_name, endpoint_str);
@@ -255,6 +248,8 @@ impl SubgraphExecutorMap {
             subgraph_executor_map.register_subgraph_timeout(subgraph_name)?;
             subgraph_executor_map.register_circuit_breaker(subgraph_name)?;
         }
+
+        subgraph_executor_map.all_endpoint_expression = global_url_override;
 
         Ok(subgraph_executor_map)
     }
