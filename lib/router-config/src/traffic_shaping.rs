@@ -110,8 +110,8 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     pub allow_only_http2: Option<bool>,
 
     /// When enabled, forwards client operation name to the selected subgraph.
-    /// The operation name will include subgraph name, fetch node id and operation name from the client request.
-    /// Format: <Client Operation Name>_<Subgraph Name>_<Fetch Node ID>
+    /// The operation name will include fetch node id and operation name from the client request.
+    /// Format: <Client Operation Name>__<Fetch Node ID>
     ///
     /// This setting takes precedence over the value set in `all` section.
     #[serde(default)]
@@ -177,8 +177,8 @@ pub struct TrafficShapingExecutorGlobalConfig {
     pub allow_only_http2: bool,
 
     /// When enabled, forwards client operation name to subgraphs.
-    /// The operation name will include subgraph name, fetch node id and operation name from the client request.
-    /// Format: <Client Operation Name>_<Subgraph Name>_<Fetch Node ID>
+    /// The operation name will fetch node id and operation name from the client request.
+    /// Format: <Client Operation Name>__<Fetch Node ID>
     #[serde(default)]
     pub forward_operation_name: bool,
 }
