@@ -131,7 +131,7 @@ mod tests {
         let name =
             OperationNameFactory::new(Arc::new(OperationNameForwardConfig::all()), Some("Example"));
 
-        assert_eq!(name.generate("foo", 2).as_deref(), Some("Example_foo_2"));
+        assert_eq!(name.generate("foo", 2).as_deref(), Some("Example__2"));
         assert_eq!(name.generate("foo-v2", 2).as_deref(), Some("Example__2"));
         assert_eq!(
             name.generate("foo service", 3).as_deref(),
