@@ -32,7 +32,8 @@ mod router_timeout_e2e_tests {
                         request_timeout: 2s
                 override_subgraph_urls:
                     subgraphs:
-                        accounts: "http://{host}/accounts"
+                        accounts:
+                            url: "http://{host}/accounts"
                 "#
             ))
             .build()

@@ -23,7 +23,8 @@ mod override_subgraph_urls_e2e_tests {
                     path: supergraph.graphql
                 override_subgraph_urls:
                     subgraphs:
-                        accounts: "{subgraphs_url}/accounts"
+                        accounts:
+                            url: "{subgraphs_url}/accounts"
                 "#,
             ))
             .build()
@@ -66,12 +67,13 @@ mod override_subgraph_urls_e2e_tests {
                 override_subgraph_urls:
                     subgraphs:
                         accounts:
-                            expression: |
-                                if .request.headers."x-accounts-port" == "4100" {{
-                                    "{subgraphs_url}/accounts"
-                                }} else {{
-                                    .default
-                                }}
+                            url:
+                                expression: |
+                                    if .request.headers."x-accounts-port" == "4100" {{
+                                        "{subgraphs_url}/accounts"
+                                    }} else {{
+                                        .default
+                                    }}
                 "#,
             ))
             .build()
@@ -150,18 +152,19 @@ mod override_subgraph_urls_e2e_tests {
                     path: supergraph.graphql
                 override_subgraph_urls:
                     all:
-                        expression: |
-                            if .subgraph.name == "accounts" {{
-                                "{subgraphs_url}/accounts"
-                            }} else if .subgraph.name == "reviews" {{
-                                "{subgraphs_url}/reviews"
-                            }} else if .subgraph.name == "products" {{
-                                "{subgraphs_url}/products"
-                            }} else if .subgraph.name == "inventory" {{
-                                "{subgraphs_url}/inventory"
-                            }} else {{
-                                .default
-                            }}
+                        url:
+                            expression: |
+                                if .subgraph.name == "accounts" {{
+                                    "{subgraphs_url}/accounts"
+                                }} else if .subgraph.name == "reviews" {{
+                                    "{subgraphs_url}/reviews"
+                                }} else if .subgraph.name == "products" {{
+                                    "{subgraphs_url}/products"
+                                }} else if .subgraph.name == "inventory" {{
+                                    "{subgraphs_url}/inventory"
+                                }} else {{
+                                    .default
+                                }}
                 "#,
             ))
             .build()
@@ -201,10 +204,12 @@ mod override_subgraph_urls_e2e_tests {
                     path: supergraph.graphql
                 override_subgraph_urls:
                     subgraphs:
-                        accounts: "{subgraphs_url}/accounts"
+                        accounts:
+                            url: "{subgraphs_url}/accounts"
                     all:
-                        expression: |
-                            "http://0.0.0.0:1/should-not-be-used"
+                        url:
+                            expression: |
+                                "http://0.0.0.0:1/should-not-be-used"
                 "#,
             ))
             .build()
@@ -243,12 +248,13 @@ mod override_subgraph_urls_e2e_tests {
                     path: supergraph.graphql
                 override_subgraph_urls:
                     all:
-                        expression: |
-                            if .request.headers."x-route-to" == "accounts" {{
-                                "{subgraphs_url}/accounts"
-                            }} else {{
-                                .default
-                            }}
+                        url:
+                            expression: |
+                                if .request.headers."x-route-to" == "accounts" {{
+                                    "{subgraphs_url}/accounts"
+                                }} else {{
+                                    .default
+                                }}
                 "#,
             ))
             .build()
@@ -295,13 +301,14 @@ mod override_subgraph_urls_e2e_tests {
                     graphql_endpoint: /{{tenant}}/graphql
                 override_subgraph_urls:
                     all:
-                        expression: |
-                            tenant = string!(.request.path_params.tenant)
-                            if tenant == "acme" {{
-                                "{subgraphs_url}/" + string!(.subgraph.name)
-                            }} else {{
-                                .default
-                            }}
+                        url:
+                            expression: |
+                                tenant = string!(.request.path_params.tenant)
+                                if tenant == "acme" {{
+                                    "{subgraphs_url}/" + string!(.subgraph.name)
+                                }} else {{
+                                    .default
+                                }}
                 "#,
             ))
             .build()

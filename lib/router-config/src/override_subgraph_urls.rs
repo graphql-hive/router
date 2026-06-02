@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// Two top-level keys are supported:
 /// - `subgraphs`: per-subgraph URL overrides, keyed by subgraph name. Each
-///   value is either a static URL string or an object with an `expression`
-///   field for dynamic VRL evaluation.
+///   value is configured under `url:` as either a static URL string or an
+///   object with an `expression` field for dynamic VRL evaluation.
 /// - `all`: a single override that is applied to every subgraph, useful when the
 ///   override logic is the same (or depends on the subgraph name) for all of them.
 ///
@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 pub struct OverrideSubgraphUrlsConfig {
     /// Per-subgraph URL overrides, keyed by subgraph name.
     ///
-    /// Each entry is either a static URL string or an object with an
-    /// `expression` field for dynamic VRL evaluation.
+    /// Each entry configures `url:` as either a static URL string or an object
+    /// with an `expression` field for dynamic VRL evaluation.
     ///
     /// The expression has access to the following variables:
     /// - `.request`: The incoming HTTP request, including headers, query
@@ -38,17 +38,19 @@ pub struct OverrideSubgraphUrlsConfig {
     /// ```yaml
     /// override_subgraph_urls:
     ///   subgraphs:
-    ///     accounts: "https://accounts.example.com/graphql"
+    ///     accounts:
+    ///       url: "https://accounts.example.com/graphql"
     ///     products:
-    ///       expression: |
-    ///         if .request.headers."x-region" == "us-east" {
-    ///           "https://products-us-east.example.com/graphql"
-    ///         } else {
-    ///           .default
-    ///         }
+    ///       url:
+    ///         expression: |
+    ///           if .request.headers."x-region" == "us-east" {
+    ///             "https://products-us-east.example.com/graphql"
+    ///           } else {
+    ///             .default
+    ///           }
     /// ```
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub subgraphs: HashMap<String, UrlOrExpression>,
+    pub subgraphs: HashMap<String, OverrideUrlConfig>,
 
     /// Override applied to every subgraph that does not have its own
     /// per-subgraph override under `subgraphs.<name>`. Useful when the
@@ -68,12 +70,13 @@ pub struct OverrideSubgraphUrlsConfig {
     /// ```yaml
     /// override_subgraph_urls:
     ///   all:
-    ///     expression: |
-    ///       if .subgraph.name == "products" && .request.headers."x-region" == "us-east" {
-    ///         "https://products-us-east.example.com/graphql"
-    ///       } else {
-    ///         .default
-    ///       }
+    ///     url:
+    ///       expression: |
+    ///         if .subgraph.name == "products" && .request.headers."x-region" == "us-east" {
+    ///           "https://products-us-east.example.com/graphql"
+    ///         } else {
+    ///           .default
+    ///         }
     /// ```
     ///
     /// ### Path parameter example
@@ -83,24 +86,31 @@ pub struct OverrideSubgraphUrlsConfig {
     /// ```yaml
     /// override_subgraph_urls:
     ///   all:
-    ///     expression: |
-    ///       tenant = string!(.request.path_params.tenant)
-    ///       replace(string!(.default), "/api/", "/api/" + tenant + "/")
+    ///     url:
+    ///       expression: |
+    ///         tenant = string!(.request.path_params.tenant)
+    ///         replace(string!(.default), "/api/", "/api/" + tenant + "/")
     /// ```
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub all: Option<UrlOrExpression>,
+    pub all: Option<OverrideUrlConfig>,
 }
 
 impl OverrideSubgraphUrlsConfig {
     /// Returns the per-subgraph override configured for `subgraph_name`, if any.
     pub fn get_subgraph_url(&self, subgraph_name: &str) -> Option<&UrlOrExpression> {
-        self.subgraphs.get(subgraph_name)
+        self.subgraphs.get(subgraph_name).map(|config| &config.url)
     }
 
     /// Returns the global (`all`) override, if any.
     pub fn get_all_url(&self) -> Option<&UrlOrExpression> {
-        self.all.as_ref()
+        self.all.as_ref().map(|config| &config.url)
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct OverrideUrlConfig {
+    pub url: UrlOrExpression,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -125,12 +135,16 @@ fn override_subgraph_urls_example_1() -> OverrideSubgraphUrlsConfig {
     let mut subgraphs = HashMap::new();
     subgraphs.insert(
         "accounts".to_string(),
-        UrlOrExpression::Url("https://accounts.example.com/graphql".to_string()),
+        OverrideUrlConfig {
+            url: UrlOrExpression::Url("https://accounts.example.com/graphql".to_string()),
+        },
     );
     subgraphs.insert(
         "products".to_string(),
-        UrlOrExpression::Expression {
-            expression: expression.to_string(),
+        OverrideUrlConfig {
+            url: UrlOrExpression::Expression {
+                expression: expression.to_string(),
+            },
         },
     );
 

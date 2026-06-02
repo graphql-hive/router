@@ -5,9 +5,9 @@ supergraph:
 override_subgraph_urls:
   subgraphs:
     accounts:
-      expression: env("ACCOUNTS_URL_OVERRIDE", string!(.default))
+      url: env("ACCOUNTS_URL_OVERRIDE", string!(.default))
     products:
-      expression: env("PRODUCTS_URL_OVERRIDE", string!(.default))
+      url: env("PRODUCTS_URL_OVERRIDE", string!(.default))
 plugins:
   propagate_status_code:
     enabled: true

@@ -8,10 +8,6 @@ hive-router: minor
 
 Closes [#985](https://github.com/graphql-hive/router/issues/985).
 
-## Breaking: new shape for `override_subgraph_urls`
-
-`override_subgraph_urls` is no longer a flat map keyed by subgraph name. Per-subgraph overrides now live under a `subgraphs` key, alongside a new optional `all` override. The redundant `url` wrapper has also been removed: each entry under `subgraphs.<name>` is now either a static URL string or an object with an `expression` field directly.
-
 ```yaml
 # Before
 override_subgraph_urls:
@@ -29,14 +25,17 @@ override_subgraph_urls:
 # After
 override_subgraph_urls:
   subgraphs:
-    accounts: "https://accounts.example.com/graphql"
+    accounts:
+      url: "https://accounts.example.com/graphql"
     products:
-      expression: |
-        if .request.headers."x-region" == "us-east" {
-          "https://products-us-east.example.com/graphql"
-        } else {
-          .default
-        }
+      url:
+        expression: |
+          if .request.headers."x-region" == "us-east" {
+            "https://products-us-east.example.com/graphql"
+          } else {
+            .default
+          }
+
 ```
 
 ## New: `override_subgraph_urls.all`
@@ -46,12 +45,13 @@ A single override applied to every subgraph that does not have its own per-subgr
 ```yaml
 override_subgraph_urls:
   all:
-    expression: |
-      if .subgraph.name == "products" && .request.headers."x-region" == "us-east" {
-        "https://products-us-east.example.com/graphql"
-      } else {
-        .default
-      }
+    url:
+      expression: |
+        if .subgraph.name == "products" && .request.headers."x-region" == "us-east" {
+          "https://products-us-east.example.com/graphql"
+        } else {
+          .default
+        }
 ```
 
 The expression has access to:
@@ -69,9 +69,10 @@ http:
   graphql_endpoint: /{tenant}/graphql
 override_subgraph_urls:
   all:
-    expression: |
-      tenant = string!(.request.path_params.tenant)
-      replace(string!(.default), "/api/", "/api/" + tenant + "/")
+    url:
+      expression: |
+        tenant = string!(.request.path_params.tenant)
+        replace(string!(.default), "/api/", "/api/" + tenant + "/")
 ```
 
 A request to `/acme/graphql` resolves `tenant` to `"acme"` before the expression runs.

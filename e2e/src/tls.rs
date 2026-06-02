@@ -140,8 +140,10 @@ mod tls_tests {
                         cert_file: "{}"
             override_subgraph_urls:
                 subgraphs:
-                    accounts: "{}/accounts"
-                    reviews: "{}/reviews"
+                    accounts:
+                        url: "{}/accounts"
+                    reviews:
+                        url: "{}/reviews"
             "#,
                 combined_ca_file
                     .path()
