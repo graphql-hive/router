@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -248,12 +247,7 @@ pub async fn execute_query_plan<'exec>(
         let client_operation_query = opts.client_request.operation.query.to_string();
         let client_operation_kind = opts.client_request.operation.kind;
         let client_jwt = opts.client_request.jwt.clone();
-        let client_path_params: HashMap<Cow<'static, str>, Cow<'static, str>> = opts
-            .client_request
-            .path_params
-            .iter()
-            .map(|(key, value)| (Cow::Owned(key.to_string()), Cow::Owned(value.to_string())))
-            .collect();
+        let client_path_params = opts.client_request.path_params.into_owned();
 
         let body_stream = Box::pin(async_stream::stream! {
             while let Some(stream_result) = response_stream.next().await {

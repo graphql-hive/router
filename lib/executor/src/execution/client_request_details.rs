@@ -5,8 +5,8 @@ use std::{
 };
 
 use hive_router_internal::expressions::{vrl::core::Value, ToVrlValue};
-use http::Method;
-use ntex::http::HeaderMap as NtexHeaderMap;
+use http::{Method, Uri};
+use ntex::{http::HeaderMap as NtexHeaderMap, router::Path};
 
 use crate::request_context::{RequestContextError, SharedRequestContext};
 
@@ -16,13 +16,47 @@ pub struct OperationDetails<'exec> {
     pub kind: &'static str,
 }
 
+type PathParamsMap<'exec> = HashMap<Cow<'exec, str>, Cow<'exec, str>>;
+
+#[derive(Debug, Clone, Default)]
+pub struct PathParams<'exec>(PathParamsMap<'exec>);
+
+impl<'exec> From<&'exec Path<Uri>> for PathParams<'exec> {
+    fn from(path: &'exec Path<Uri>) -> Self {
+        Self(
+            path.iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect(),
+        )
+    }
+}
+
+impl<'a> std::ops::Deref for PathParams<'a> {
+    type Target = PathParamsMap<'a>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'exec> PathParams<'exec> {
+    pub fn into_owned(&self) -> PathParams<'static> {
+        PathParams(
+            self.0
+                .clone()
+                .into_iter()
+                .map(|(key, value)| (Cow::Owned(key.into_owned()), Cow::Owned(value.into_owned())))
+                .collect(),
+        )
+    }
+}
+
 pub struct MutableClientRequestDetails<'exec> {
     pub method: &'exec Method,
     pub url: &'exec http::Uri,
     pub headers: NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
     pub jwt: Arc<JwtRequestDetails>,
-    pub path_params: HashMap<Cow<'exec, str>, Cow<'exec, str>>,
+    pub path_params: PathParams<'exec>,
 }
 
 pub struct ClientRequestDetails<'exec> {
@@ -33,7 +67,7 @@ pub struct ClientRequestDetails<'exec> {
     pub jwt: Arc<JwtRequestDetails>,
     /// Path parameters captured from the GraphQL endpoint pattern (e.g. `/{tenant}/graphql`)
     /// during URL routing. Exposed to VRL expressions as `.request.path_params`.
-    pub path_params: HashMap<Cow<'exec, str>, Cow<'exec, str>>,
+    pub path_params: PathParams<'exec>,
 }
 
 // Trait for accessing read-only client request details.
@@ -44,7 +78,7 @@ pub trait ClientRequestDetailsView {
     fn headers(&self) -> &NtexHeaderMap;
     fn operation<'a>(&'a self) -> &'a OperationDetails<'a>;
     fn jwt(&self) -> &JwtRequestDetails;
-    fn path_params(&self) -> &HashMap<Cow<'_, str>, Cow<'_, str>>;
+    fn path_params<'a>(&'a self) -> &'a PathParams<'a>;
 
     fn to_vrl_value(&self) -> Value {
         request_details_to_vrl_value(self)
@@ -72,7 +106,7 @@ impl ClientRequestDetailsView for MutableClientRequestDetails<'_> {
         &self.jwt
     }
 
-    fn path_params(&self) -> &HashMap<Cow<'_, str>, Cow<'_, str>> {
+    fn path_params<'a>(&'a self) -> &'a PathParams<'a> {
         &self.path_params
     }
 }
@@ -98,7 +132,7 @@ impl ClientRequestDetailsView for ClientRequestDetails<'_> {
         &self.jwt
     }
 
-    fn path_params(&self) -> &HashMap<Cow<'_, str>, Cow<'_, str>> {
+    fn path_params<'a>(&'a self) -> &'a PathParams<'a> {
         &self.path_params
     }
 }

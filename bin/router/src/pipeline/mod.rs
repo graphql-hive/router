@@ -10,7 +10,7 @@ use hive_router_plan_executor::{
     coprocessor::runtime::MutableRequestState,
     execution::{
         client_request_details::{
-            JwtRequestDetails, MutableClientRequestDetails, OperationDetails,
+            JwtRequestDetails, MutableClientRequestDetails, OperationDetails, PathParams,
         },
         plan::{PlanExecutionOutput, QueryPlanExecutionResult},
     },
@@ -22,19 +22,17 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{header::CONTENT_TYPE, Method, Uri};
+use http::{header::CONTENT_TYPE, Method};
 use ntex::{
     http::{
         body::{Body, ResponseBody},
         HeaderMap,
     },
-    router::Path,
     rt,
     web::{self, HttpRequest},
 };
 use sonic_rs::{JsonContainerTrait, JsonType, JsonValueTrait, Value};
 use std::{
-    borrow::Cow,
     collections::HashMap,
     hash::{Hash, Hasher},
     ops::{ControlFlow, Deref},
@@ -352,7 +350,7 @@ pub async fn graphql_request_handler(
         };
 
         let request_context = req.read_request_context()?;
-        let path_params = collect_path_params(req.match_info());
+        let path_params = req.match_info().into();
 
         let exec = |guard| execute_planned_request(
             req.method(),
@@ -441,7 +439,7 @@ pub async fn execute_planned_request<'exec>(
     method: &'exec Method,
     url: &'exec http::Uri,
     headers: HeaderMap,
-    path_params: HashMap<Cow<'exec, str>, Cow<'exec, str>>,
+    path_params: PathParams<'exec>,
     mut graphql_params: GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     supergraph: &'exec SupergraphData,
@@ -570,12 +568,6 @@ pub async fn execute_planned_request<'exec>(
             }))
         }
     }
-}
-
-fn collect_path_params<'a>(path: &'a Path<Uri>) -> HashMap<Cow<'a, str>, Cow<'a, str>> {
-    path.iter()
-        .map(|(key, value)| (key.into(), value.into()))
-        .collect()
 }
 
 #[inline]
