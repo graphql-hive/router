@@ -2202,8 +2202,8 @@ Configuration for overriding subgraph URLs.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**all**](#override_subgraph_urlsall)|`object`, `null`|Override applied to every subgraph that does not have its own<br/>|yes|
-|[**subgraphs**](#override_subgraph_urlssubgraphs)|`object`|Per-subgraph URL overrides, keyed by subgraph name.<br/>||
+|[**all**](#override_subgraph_urlsall)|`object`, `null`|Default URL override for all subgraphs.<br/>|yes|
+|[**subgraphs**](#override_subgraph_urlssubgraphs)|`object`|URL overrides for specific subgraphs.<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2230,85 +2230,39 @@ subgraphs:
 <a name="override_subgraph_urlsall"></a>
 ### override\_subgraph\_urls\.all: object,null
 
-Override applied to every subgraph that does not have its own
-per-subgraph override under `subgraphs.<name>`. Useful when the
-override logic is the same (or only depends on the subgraph name)
-for every subgraph in the supergraph.
+Default URL override for all subgraphs.
 
-The expression has access to the following variables:
-- `.request`: The incoming HTTP request, including headers, query
-  parameters, the parsed GraphQL operation, and `path_params`
-  (path parameters captured from `http.graphql_endpoint`, e.g.
-  `/{tenant}/graphql`).
-- `.default`: The original URL of the subgraph (from supergraph SDL).
-- `.subgraph.name`: The name of the subgraph the URL is being
-  resolved for.
-
-### Example
-```yaml
-override_subgraph_urls:
-  all:
-    url:
-      expression: |
-        if .subgraph.name == "products" && .request.headers."x-region" == "us-east" {
-          "https://products-us-east.example.com/graphql"
-        } else {
-          .default
-        }
-```
-
-### Path parameter example
-When `http.graphql_endpoint` is set to `/{tenant}/graphql`, every
-path parameter captured from the request path becomes available
-under `.request.path_params`:
-```yaml
-override_subgraph_urls:
-  all:
-    url:
-      expression: |
-        tenant = string!(.request.path_params.tenant)
-        replace(string!(.default), "/api/", "/api/" + tenant + "/")
-```
+This override is used when a subgraph does not have its own override in
+`subgraphs`.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**url**|||yes|
+|[**url**](#override_subgraph_urlsallurl)|`object`||yes|
+
+**Additional Properties:** not allowed  
+<a name="override_subgraph_urlsallurl"></a>
+#### override\_subgraph\_urls\.all\.url: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expression**|`string`||yes|
 
 **Additional Properties:** not allowed  
 <a name="override_subgraph_urlssubgraphs"></a>
 ### override\_subgraph\_urls\.subgraphs: object
 
-Per-subgraph URL overrides, keyed by subgraph name.
+URL overrides for specific subgraphs.
 
-Each entry configures `url:` as either a static URL string or an object
-with an `expression` field for dynamic VRL evaluation.
+The key is the subgraph name.
 
-The expression has access to the following variables:
-- `.request`: The incoming HTTP request, including headers, query
-  parameters, the parsed GraphQL operation, and `path_params`
-  (path parameters captured from `http.graphql_endpoint`).
-- `.default`: The original URL of the subgraph (from supergraph SDL).
-- `.subgraph.name`: The name of the subgraph the URL is being
-  resolved for.
-
-### Example
-```yaml
-override_subgraph_urls:
-  subgraphs:
-    accounts:
-      url: "https://accounts.example.com/graphql"
-    products:
-      url:
-        expression: |
-          if .request.headers."x-region" == "us-east" {
-            "https://products-us-east.example.com/graphql"
-          } else {
-            .default
-          }
-```
+Each subgraph can use:
+- a fixed URL string
+- a dynamic expression
 
 
 **Additional Properties**
