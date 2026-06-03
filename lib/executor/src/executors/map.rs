@@ -469,11 +469,10 @@ impl SubgraphExecutorMap {
         subgraph_name: &str,
         client_request: &ClientRequestDetails<'_>,
     ) -> Result<String, SubgraphExecutorError> {
-        // Per-subgraph expressions take priority. The global `all` expression
-        // applies only when the subgraph has no per-subgraph override.
         let expression = self
             .expression_endpoints_by_subgraph
             .get(subgraph_name)
+            // Fallbacks to the global `all` expression when no per-subgraph override is set
             .or_else(|| {
                 self.all_endpoint_expression
                     .get_expression_for_subgraph(subgraph_name)
