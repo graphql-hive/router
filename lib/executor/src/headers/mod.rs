@@ -98,6 +98,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
 
         let mut out = HeaderMap::new();
@@ -132,6 +133,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
         let mut out = HeaderMap::new();
         modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
@@ -179,6 +181,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
 
         let mut out = HeaderMap::new();
@@ -217,6 +220,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
 
         let mut out = HeaderMap::new();
@@ -251,6 +255,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
 
         let mut out = HeaderMap::new();
@@ -291,6 +296,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
 
         // For "accounts" subgraph, the specific rule should apply.
@@ -335,6 +341,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
 
         let mut accumulator = ResponseHeaderAggregator::default();
@@ -404,6 +411,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
 
         let mut accumulator = ResponseHeaderAggregator::default();
@@ -472,6 +480,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
         let mut accumulator = ResponseHeaderAggregator::default();
 
@@ -533,6 +542,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
         let mut accumulator = ResponseHeaderAggregator::default();
 
@@ -595,6 +605,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
 
         let mut accumulator = ResponseHeaderAggregator::default();
@@ -658,6 +669,7 @@ mod tests {
                 kind: "query",
             },
             jwt: JwtRequestDetails::Unauthenticated.into(),
+            path_params: Default::default(),
         };
 
         let mut out = HeaderMap::new();

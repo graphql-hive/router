@@ -108,20 +108,21 @@ log:
   level: info
 override_labels: {}
 override_subgraph_urls:
-  accounts:
-    url: https://accounts.example.com/graphql
-  products:
-    url:
-      expression: |2-
+  subgraphs:
+    accounts:
+      url: https://accounts.example.com/graphql
+    products:
+      url:
+        expression: |2-
 
-                if .request.headers."x-region" == "us-east" {
-                    "https://products-us-east.example.com/graphql"
-                } else if .request.headers."x-region" == "eu-west" {
-                    "https://products-eu-west.example.com/graphql"
-                } else {
-                  .default
-                }
-            
+                  if .request.headers."x-region" == "us-east" {
+                      "https://products-us-east.example.com/graphql"
+                  } else if .request.headers."x-region" == "eu-west" {
+                      "https://products-eu-west.example.com/graphql"
+                  } else {
+                    .default
+                  }
+              
 persisted_documents:
   enabled: false
   log_missing_id: false
@@ -2200,41 +2201,89 @@ Configuration for overriding labels.
 Configuration for overriding subgraph URLs.
 
 
-**Additional Properties**
+**Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**Additional Properties**](#override_subgraph_urlsadditionalproperties)|`object`||yes|
+|[**all**](#override_subgraph_urlsall)|`object`, `null`|Default URL override for all subgraphs.<br/>|yes|
+|[**subgraphs**](#override_subgraph_urlssubgraphs)|`object`|URL overrides for specific subgraphs.<br/>||
 
+**Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-accounts:
-  url: https://accounts.example.com/graphql
-products:
-  url:
-    expression: |2-
+subgraphs:
+  accounts:
+    url: https://accounts.example.com/graphql
+  products:
+    url:
+      expression: |2-
 
-              if .request.headers."x-region" == "us-east" {
-                  "https://products-us-east.example.com/graphql"
-              } else if .request.headers."x-region" == "eu-west" {
-                  "https://products-eu-west.example.com/graphql"
-              } else {
-                .default
-              }
-          
+                if .request.headers."x-region" == "us-east" {
+                    "https://products-us-east.example.com/graphql"
+                } else if .request.headers."x-region" == "eu-west" {
+                    "https://products-eu-west.example.com/graphql"
+                } else {
+                  .default
+                }
+            
 
 ```
 
-<a name="override_subgraph_urlsadditionalproperties"></a>
-### override\_subgraph\_urls\.additionalProperties: object
+<a name="override_subgraph_urlsall"></a>
+### override\_subgraph\_urls\.all: object,null
+
+Default URL override for all subgraphs.
+
+This override is used when a subgraph does not have its own override in
+`subgraphs`.
+
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**url**||Overrides for the URL of the subgraph.<br/><br/>For convenience, a plain string in your configuration will be treated as a static URL.<br/><br/>### Static URL Example<br/>```yaml<br/>url: "https://api.example.com/graphql"<br/>```<br/><br/>### Dynamic Expression Example<br/><br/>The expression has access to the following variables:<br/>- `request`: The incoming HTTP request, including headers and other metadata.<br/>- `default`: The original URL of the subgraph (from supergraph sdl).<br/><br/>```yaml<br/>url:<br/>  expression: \|<br/>    if .request.headers."x-region" == "us-east" {<br/>      "https://products-us-east.example.com/graphql"<br/>    } else if .request.headers."x-region" == "eu-west" {<br/>      "https://products-eu-west.example.com/graphql"<br/>    } else {<br/>      .default<br/>    }<br/>|yes|
+|[**url**](#override_subgraph_urlsallurl)|`object`||yes|
 
+**Additional Properties:** not allowed  
+<a name="override_subgraph_urlsallurl"></a>
+#### override\_subgraph\_urls\.all\.url: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expression**|`string`||yes|
+
+**Additional Properties:** not allowed  
+<a name="override_subgraph_urlssubgraphs"></a>
+### override\_subgraph\_urls\.subgraphs: object
+
+URL overrides for specific subgraphs.
+
+The key is the subgraph name.
+
+Each subgraph can use:
+- a fixed URL string
+- a dynamic expression
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**Additional Properties**](#override_subgraph_urlssubgraphsadditionalproperties)|`object`||yes|
+
+<a name="override_subgraph_urlssubgraphsadditionalproperties"></a>
+#### override\_subgraph\_urls\.subgraphs\.additionalProperties: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**url**|||yes|
+
+**Additional Properties:** not allowed  
 <a name="persisted_documents"></a>
 ## persisted\_documents: object
 

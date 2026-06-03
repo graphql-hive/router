@@ -1,9 +1,13 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use bytes::Bytes;
 use hive_router_internal::expressions::{vrl::core::Value, ToVrlValue};
-use http::Method;
-use ntex::http::HeaderMap as NtexHeaderMap;
+use http::{Method, Uri};
+use ntex::{http::HeaderMap as NtexHeaderMap, router::Path};
 
 use crate::request_context::{RequestContextError, SharedRequestContext};
 
@@ -13,12 +17,47 @@ pub struct OperationDetails<'exec> {
     pub kind: &'static str,
 }
 
+type PathParamsMap<'exec> = HashMap<Cow<'exec, str>, Cow<'exec, str>>;
+
+#[derive(Debug, Clone, Default)]
+pub struct PathParams<'exec>(PathParamsMap<'exec>);
+
+impl<'exec> From<&'exec Path<Uri>> for PathParams<'exec> {
+    fn from(path: &'exec Path<Uri>) -> Self {
+        Self(
+            path.iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect(),
+        )
+    }
+}
+
+impl<'a> std::ops::Deref for PathParams<'a> {
+    type Target = PathParamsMap<'a>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'exec> PathParams<'exec> {
+    pub fn into_owned(&self) -> PathParams<'static> {
+        PathParams(
+            self.0
+                .clone()
+                .into_iter()
+                .map(|(key, value)| (Cow::Owned(key.into_owned()), Cow::Owned(value.into_owned())))
+                .collect(),
+        )
+    }
+}
+
 pub struct MutableClientRequestDetails<'exec> {
     pub method: &'exec Method,
     pub url: &'exec http::Uri,
     pub headers: NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
     pub jwt: Arc<JwtRequestDetails>,
+    pub path_params: PathParams<'exec>,
 }
 
 pub struct ClientRequestDetails<'exec> {
@@ -27,6 +66,9 @@ pub struct ClientRequestDetails<'exec> {
     pub headers: Arc<NtexHeaderMap>,
     pub operation: OperationDetails<'exec>,
     pub jwt: Arc<JwtRequestDetails>,
+    /// Path parameters captured from the GraphQL endpoint pattern (e.g. `/{tenant}/graphql`)
+    /// during URL routing. Exposed to VRL expressions as `.request.path_params`.
+    pub path_params: PathParams<'exec>,
 }
 
 // Trait for accessing read-only client request details.
@@ -37,6 +79,7 @@ pub trait ClientRequestDetailsView {
     fn headers(&self) -> &NtexHeaderMap;
     fn operation<'a>(&'a self) -> &'a OperationDetails<'a>;
     fn jwt(&self) -> &JwtRequestDetails;
+    fn path_params<'a>(&'a self) -> &'a PathParams<'a>;
 
     fn to_vrl_value(&self) -> Value {
         request_details_to_vrl_value(self)
@@ -63,6 +106,10 @@ impl ClientRequestDetailsView for MutableClientRequestDetails<'_> {
     fn jwt(&self) -> &JwtRequestDetails {
         &self.jwt
     }
+
+    fn path_params<'a>(&'a self) -> &'a PathParams<'a> {
+        &self.path_params
+    }
 }
 
 impl ClientRequestDetailsView for ClientRequestDetails<'_> {
@@ -85,6 +132,10 @@ impl ClientRequestDetailsView for ClientRequestDetails<'_> {
     fn jwt(&self) -> &JwtRequestDetails {
         &self.jwt
     }
+
+    fn path_params<'a>(&'a self) -> &'a PathParams<'a> {
+        &self.path_params
+    }
 }
 
 impl<'exec> MutableClientRequestDetails<'exec> {
@@ -95,6 +146,7 @@ impl<'exec> MutableClientRequestDetails<'exec> {
             headers: self.headers.into(),
             operation: self.operation,
             jwt: self.jwt,
+            path_params: self.path_params,
         }
     }
 }
@@ -163,6 +215,16 @@ fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Size
     // .request.url
     let url_value = details.url().to_vrl_value();
 
+    // .request.path_params - parameters captured from the GraphQL endpoint pattern
+    // (e.g. `/{tenant}/graphql`).
+    let path_params_value = Value::Object(
+        details
+            .path_params()
+            .iter()
+            .map(|(k, v)| (k.as_ref().into(), v.as_ref().into()))
+            .collect(),
+    );
+
     // .request.operation
     let operation_value = Value::Object(BTreeMap::from([
         ("name".into(), details.operation().name.into()),
@@ -179,7 +241,7 @@ fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Size
             scopes,
         } => Value::Object(BTreeMap::from([
             ("authenticated".into(), Value::Boolean(true)),
-            ("token".into(), token.to_string().into()),
+            ("token".into(), token.as_str().into()),
             (
                 "prefix".into(),
                 prefix.as_deref().unwrap_or_default().into(),
@@ -188,12 +250,9 @@ fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Size
             (
                 "scopes".into(),
                 match scopes {
-                    Some(scopes) => Value::Array(
-                        scopes
-                            .iter()
-                            .map(|v| Value::Bytes(Bytes::from(v.clone())))
-                            .collect(),
-                    ),
+                    Some(scopes) => {
+                        Value::Array(scopes.iter().map(|v| v.as_str().into()).collect())
+                    }
                     None => Value::Array(vec![]),
                 },
             ),
@@ -211,6 +270,7 @@ fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Size
         ("method".into(), details.method().as_str().into()),
         ("headers".into(), headers_value),
         ("url".into(), url_value),
+        ("path_params".into(), path_params_value),
         ("operation".into(), operation_value),
         ("jwt".into(), jwt_value),
     ]))

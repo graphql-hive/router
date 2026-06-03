@@ -57,6 +57,42 @@ type StaticEndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
 type ExpressionEndpointsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
 type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
 
+#[derive(Default)]
+struct GlobalSubgraphUrlOverride {
+    /// Subgraphs that have a per-subgraph URL override (static URL or expression).
+    /// They opt out of the global `all` expression.
+    ignored_subgraphs: Vec<SubgraphName>,
+    /// VRL expression applied to all subgraphs that don't have a per-subgraph override.
+    program: Option<VrlProgram>,
+}
+
+impl GlobalSubgraphUrlOverride {
+    fn new(all_url_config: Option<&str>) -> Result<Self, SubgraphExecutorError> {
+        let Some(expression) = all_url_config else {
+            return Ok(Self::default());
+        };
+
+        let program = expression.compile_expression(None).map_err(|err| {
+            SubgraphExecutorError::EndpointExpressionBuild("all".to_string(), err.diagnostics)
+        })?;
+
+        Ok(Self {
+            ignored_subgraphs: Vec::new(),
+            program: Some(program),
+        })
+    }
+
+    fn ignore_subgraph(&mut self, name: SubgraphName) {
+        self.ignored_subgraphs.push(name);
+    }
+
+    fn get_expression_for_subgraph(&self, name: &str) -> Option<&VrlProgram> {
+        (!self.ignored_subgraphs.iter().any(|n| n.as_str() == name))
+            .then_some(self.program.as_ref())
+            .flatten()
+    }
+}
+
 #[derive(Clone)]
 struct SubgraphCircuitBreaker {
     recloser: AsyncRecloser,
@@ -106,6 +142,7 @@ pub struct SubgraphExecutorMap {
     /// Mapping from subgraph name to VRL expression program
     /// Only contains subgraphs with expression-based endpoint overrides
     expression_endpoints_by_subgraph: ExpressionEndpointsBySubgraphMap,
+    all_endpoint_expression: GlobalSubgraphUrlOverride,
     timeouts_by_subgraph: TimeoutsBySubgraph,
     circuit_breakers_by_subgraph: CircuitBreakersBySubgraph,
     global_timeout: DurationOrProgram,
@@ -143,6 +180,7 @@ impl SubgraphExecutorMap {
             subscription_executors_by_subgraph: Default::default(),
             static_endpoints_by_subgraph: Default::default(),
             expression_endpoints_by_subgraph: Default::default(),
+            all_endpoint_expression: Default::default(),
             config,
             client: Arc::new(client),
             semaphores_by_origin: Default::default(),
@@ -174,26 +212,37 @@ impl SubgraphExecutorMap {
             SubgraphExecutorMap::new(config.clone(), global_timeout, telemetry_context)?;
         subgraph_executor_map.callback_subscriptions = active_callback_subscriptions;
 
+        // The `all` expression is configured once but evaluated against each subgraph.
+        // It only applies as a fallback when there is no per-subgraph override.
+        let mut global_url_override =
+            GlobalSubgraphUrlOverride::new(config.override_subgraph_urls.get_all_url())?;
+
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.iter() {
             let endpoint_config = config
                 .override_subgraph_urls
                 .get_subgraph_url(subgraph_name);
 
             let endpoint_str = match endpoint_config {
-                Some(UrlOrExpression::Url(url)) => url.clone(),
+                Some(UrlOrExpression::Url(url)) => {
+                    global_url_override.ignore_subgraph(subgraph_name.clone());
+                    url
+                }
                 Some(UrlOrExpression::Expression { expression }) => {
+                    global_url_override.ignore_subgraph(subgraph_name.clone());
                     subgraph_executor_map
                         .register_endpoint_expression(subgraph_name, expression)?;
-                    original_endpoint_str.clone()
+                    original_endpoint_str
                 }
-                None => original_endpoint_str.clone(),
+                None => original_endpoint_str,
             };
 
-            subgraph_executor_map.register_static_endpoint(subgraph_name, &endpoint_str);
-            subgraph_executor_map.register_executor(subgraph_name, &endpoint_str, false)?;
+            subgraph_executor_map.register_static_endpoint(subgraph_name, endpoint_str);
+            subgraph_executor_map.register_executor(subgraph_name, endpoint_str, false)?;
             subgraph_executor_map.register_subgraph_timeout(subgraph_name)?;
             subgraph_executor_map.register_circuit_breaker(subgraph_name)?;
         }
+
+        subgraph_executor_map.all_endpoint_expression = global_url_override;
 
         Ok(subgraph_executor_map)
     }
@@ -420,7 +469,16 @@ impl SubgraphExecutorMap {
         subgraph_name: &str,
         client_request: &ClientRequestDetails<'_>,
     ) -> Result<String, SubgraphExecutorError> {
-        if let Some(expression) = self.expression_endpoints_by_subgraph.get(subgraph_name) {
+        let expression = self
+            .expression_endpoints_by_subgraph
+            .get(subgraph_name)
+            // Fallbacks to the global `all` expression when no per-subgraph override is set
+            .or_else(|| {
+                self.all_endpoint_expression
+                    .get_expression_for_subgraph(subgraph_name)
+            });
+
+        if let Some(expression) = expression {
             let original_url_value = VrlValue::Bytes(
                 self.static_endpoints_by_subgraph
                     .get(subgraph_name)
@@ -429,9 +487,13 @@ impl SubgraphExecutorMap {
                     .into(),
             );
 
+            let subgraph_value =
+                VrlValue::Object(BTreeMap::from([("name".into(), subgraph_name.into())]));
+
             let value = VrlValue::Object(BTreeMap::from([
                 ("request".into(), client_request.into()),
                 ("default".into(), original_url_value),
+                ("subgraph".into(), subgraph_value),
             ]));
 
             let endpoint_result = expression.execute(value).map_err(|err| {

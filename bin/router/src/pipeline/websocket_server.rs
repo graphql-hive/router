@@ -467,6 +467,8 @@ async fn handle_text_frame(
                     &method,
                     ws_uri,
                     headers.as_ref().clone(),
+                    // TODO: WebSocket subscriptions do not yet expose route path params
+                    Default::default(),
                     payload,
                     &normalize_payload,
                     supergraph,

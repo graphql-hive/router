@@ -252,6 +252,7 @@ pub async fn execute_query_plan<'exec>(
         let client_operation_query = opts.client_request.operation.query.to_string();
         let client_operation_kind = opts.client_request.operation.kind;
         let client_jwt = opts.client_request.jwt.clone();
+        let client_path_params = opts.client_request.path_params.into_owned();
 
         let operation_name_factory = opts.operation_name_factory.clone();
 
@@ -302,6 +303,7 @@ pub async fn execute_query_plan<'exec>(
                             kind: client_operation_kind,
                         },
                         jwt: client_jwt.clone(),
+                        path_params: client_path_params.clone(),
                     }.into(),
                     introspection_context: opts.introspection_context.clone(),
                     operation_type_name: opts.operation_type_name,
@@ -1637,6 +1639,7 @@ mod tests {
                     kind: "query",
                 },
                 jwt: JwtRequestDetails::Unauthenticated.into(),
+                path_params: Default::default(),
             },
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
@@ -1750,6 +1753,7 @@ mod tests {
                     kind: "query",
                 },
                 jwt: JwtRequestDetails::Unauthenticated.into(),
+                path_params: Default::default(),
             },
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
