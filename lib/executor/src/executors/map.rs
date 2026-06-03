@@ -214,19 +214,15 @@ impl SubgraphExecutorMap {
 
         // The `all` expression is configured once but evaluated against each subgraph.
         // It only applies as a fallback when there is no per-subgraph override.
-        let all_url_config = config.override_subgraph_urls.get_all_url();
-        let mut global_url_override = GlobalSubgraphUrlOverride::new(all_url_config)?;
+        let mut global_url_override =
+            GlobalSubgraphUrlOverride::new(config.override_subgraph_urls.get_all_url())?;
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.iter() {
-            let per_subgraph_config = config
+            let endpoint_config = config
                 .override_subgraph_urls
                 .get_subgraph_url(subgraph_name);
 
-            // Resolution priority:
-            //   1. Per-subgraph override (`override_subgraph_urls.subgraphs.<name>`)
-            //   2. Global `all` override (`override_subgraph_urls.all`)
-            //   3. Original endpoint from the supergraph SDL
-            let endpoint_str = match per_subgraph_config {
+            let endpoint_str = match endpoint_config {
                 Some(UrlOrExpression::Url(url)) => {
                     global_url_override.ignore_subgraph(subgraph_name.clone());
                     url
@@ -237,9 +233,6 @@ impl SubgraphExecutorMap {
                         .register_endpoint_expression(subgraph_name, expression)?;
                     original_endpoint_str
                 }
-                // The global `all.url.expression` is applied lazily per-subgraph in
-                // `resolve_endpoint`. Keep the SDL endpoint as the static fallback /
-                // `.default` value.
                 None => original_endpoint_str,
             };
 
@@ -477,10 +470,7 @@ impl SubgraphExecutorMap {
         client_request: &ClientRequestDetails<'_>,
     ) -> Result<String, SubgraphExecutorError> {
         // Per-subgraph expressions take priority. The global `all` expression
-        // applies only when the subgraph has NO per-subgraph override at all
-        // (neither a static URL nor an expression). Subgraphs with a
-        // per-subgraph static URL override should resolve to that static URL,
-        // not the `all` expression.
+        // applies only when the subgraph has no per-subgraph override.
         let expression = self
             .expression_endpoints_by_subgraph
             .get(subgraph_name)

@@ -3,94 +3,43 @@ use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Configuration for how the Router should override subgraph URLs.
-/// This can be used to point to different subgraph endpoints based on environment,
-/// or to use dynamic expressions to determine the URL at runtime.
+/// Defines how the Router changes subgraph URLs.
 ///
-/// Two top-level keys are supported:
-/// - `subgraphs`: per-subgraph URL overrides, keyed by subgraph name. Each
-///   value is configured under `url:` as either a static URL string or an
-///   object with an `expression` field for dynamic VRL evaluation.
-/// - `all`: a single override that is applied to every subgraph, useful when the
-///   override logic is the same (or depends on the subgraph name) for all of them.
+/// Use this when you want the Router to send requests to a different URL than
+/// the one defined in the supergraph.
 ///
-/// When both are present, the `subgraphs.<name>` override takes precedence over
-/// `all` for the matching subgraph; subgraphs without a per-subgraph override
-/// fall back to the `all` override.
+/// You can configure it in two ways:
+///
+/// - `subgraphs`: overrides URLs for specific subgraphs.
+///   Each subgraph can use either a fixed URL or a dynamic `expression`.
+///
+/// - `all`: one override used for every subgraph.
+///   This is useful when the same rule should apply to all subgraphs.
+///
+/// If both `subgraphs` and `all` are set, the per-subgraph override wins.
+///
+/// Expressions can use:
+/// - `.request`: the incoming HTTP request
+/// - `.request.path_params`: path parameters from `http.graphql_endpoint`
+/// - `.default`: the original subgraph URL from the supergraph
+/// - `.subgraph.name`: the current subgraph name
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 #[schemars(example = override_subgraph_urls_example_1())]
 pub struct OverrideSubgraphUrlsConfig {
-    /// Per-subgraph URL overrides, keyed by subgraph name.
+    /// URL overrides for specific subgraphs.
     ///
-    /// Each entry configures `url:` as either a static URL string or an object
-    /// with an `expression` field for dynamic VRL evaluation.
+    /// The key is the subgraph name.
     ///
-    /// The expression has access to the following variables:
-    /// - `.request`: The incoming HTTP request, including headers, query
-    ///   parameters, the parsed GraphQL operation, and `path_params`
-    ///   (path parameters captured from `http.graphql_endpoint`).
-    /// - `.default`: The original URL of the subgraph (from supergraph SDL).
-    /// - `.subgraph.name`: The name of the subgraph the URL is being
-    ///   resolved for.
-    ///
-    /// ### Example
-    /// ```yaml
-    /// override_subgraph_urls:
-    ///   subgraphs:
-    ///     accounts:
-    ///       url: "https://accounts.example.com/graphql"
-    ///     products:
-    ///       url:
-    ///         expression: |
-    ///           if .request.headers."x-region" == "us-east" {
-    ///             "https://products-us-east.example.com/graphql"
-    ///           } else {
-    ///             .default
-    ///           }
-    /// ```
+    /// Each subgraph can use:
+    /// - a fixed URL string
+    /// - a dynamic expression
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub subgraphs: HashMap<String, OverrideUrlConfig>,
-
-    /// Override applied to every subgraph that does not have its own
-    /// per-subgraph override under `subgraphs.<name>`. Useful when the
-    /// override logic is the same (or only depends on the subgraph name)
-    /// for every subgraph in the supergraph.
+    /// Default URL override for all subgraphs.
     ///
-    /// The expression has access to the following variables:
-    /// - `.request`: The incoming HTTP request, including headers, query
-    ///   parameters, the parsed GraphQL operation, and `path_params`
-    ///   (path parameters captured from `http.graphql_endpoint`, e.g.
-    ///   `/{tenant}/graphql`).
-    /// - `.default`: The original URL of the subgraph (from supergraph SDL).
-    /// - `.subgraph.name`: The name of the subgraph the URL is being
-    ///   resolved for.
-    ///
-    /// ### Example
-    /// ```yaml
-    /// override_subgraph_urls:
-    ///   all:
-    ///     url:
-    ///       expression: |
-    ///         if .subgraph.name == "products" && .request.headers."x-region" == "us-east" {
-    ///           "https://products-us-east.example.com/graphql"
-    ///         } else {
-    ///           .default
-    ///         }
-    /// ```
-    ///
-    /// ### Path parameter example
-    /// When `http.graphql_endpoint` is set to `/{tenant}/graphql`, every
-    /// path parameter captured from the request path becomes available
-    /// under `.request.path_params`:
-    /// ```yaml
-    /// override_subgraph_urls:
-    ///   all:
-    ///     url:
-    ///       expression: |
-    ///         tenant = string!(.request.path_params.tenant)
-    ///         replace(string!(.default), "/api/", "/api/" + tenant + "/")
-    /// ```
+    /// This override is used when a subgraph does not have its own override in
+    /// `subgraphs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all: Option<OverrideAllUrlConfig>,
 }
