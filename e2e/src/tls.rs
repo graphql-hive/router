@@ -18,6 +18,56 @@ mod tls_tests {
         GeneratedKeyPair, TestRouter, TestSubgraphs,
     };
 
+    #[ntex::test]
+    #[should_panic(
+        expected = "failed to parse inline YAML config: ConfigLoadError(Failed to canonicalize path: No such file or directory (os error 2) for key `traffic_shaping.router.tls.key_file`)"
+    )]
+    async fn config_validation_fails_due_to_missing_key_file() {
+        let generated_key_pair = generate_keypair().await;
+        TestRouter::builder()
+            .inline_config(format!(
+                r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            traffic_shaping:
+                router:
+                    tls:
+                        key_file: /doesnt/exists.key
+                        cert_file: {}
+                "#,
+                generated_key_pair.cert_file_path
+            ))
+            .build()
+            .start_without_healthcheck()
+            .await;
+    }
+
+    #[ntex::test]
+    #[should_panic(
+        expected = "failed to parse inline YAML config: ConfigLoadError(expected single value or array, but parsing both failed with error: Failed to canonicalize path: No such file or directory (os error 2) for key `traffic_shaping.router.tls.cert_file"
+    )]
+    async fn config_validation_fails_due_to_missing_cert_file() {
+        let generated_key_pair = generate_keypair().await;
+        TestRouter::builder()
+            .inline_config(format!(
+                r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            traffic_shaping:
+                router:
+                    tls:
+                        key_file: {}
+                        cert_file: /doesnt/exists.crt
+                "#,
+                generated_key_pair.key_file_path
+            ))
+            .build()
+            .start_without_healthcheck()
+            .await;
+    }
+
     // Setup TLS on router
     // And send a request from a client, that has the router's certificate configured as a trusted root, to the router
     // Verify that the request succeeds, indicating that TLS is working correctly on the router
