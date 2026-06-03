@@ -89,10 +89,6 @@ pub enum PersistedDocumentsStorageConfig {
         #[serde(flatten)]
         config: PersistedDocumentsHiveStorageConfig,
     },
-    Storage {
-        #[serde(flatten)]
-        config: PersistedDocumentsStorageRefConfig,
-    },
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -101,24 +97,6 @@ pub struct PersistedDocumentsFileStorageConfig {
     pub path: FilePath,
     #[serde(default = "default_watch")]
     pub watch: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct PersistedDocumentsStorageRefConfig {
-    pub storage_id: String,
-    pub location: String,
-    #[serde(
-        default = "default_storage_poll_interval",
-        deserialize_with = "humantime_serde::deserialize",
-        serialize_with = "humantime_serde::serialize"
-    )]
-    #[schemars(with = "String")]
-    pub poll_interval: Option<Duration>,
-}
-
-fn default_storage_poll_interval() -> Option<Duration> {
-    None
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

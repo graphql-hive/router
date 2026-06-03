@@ -15,7 +15,6 @@ pub mod override_subgraph_urls;
 pub mod persisted_documents;
 pub mod primitives;
 pub mod query_planner;
-pub mod storage;
 pub mod subscriptions;
 pub mod supergraph;
 pub mod telemetry;
@@ -31,7 +30,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{collections::HashMap, convert::Infallible};
 
-use crate::storage::StorageConfigMap;
 use crate::{
     env_overrides::{EnvVarOverrides, EnvVarOverridesError},
     http_server::HttpServerConfig,
@@ -139,21 +137,6 @@ pub struct HiveRouterConfig {
     /// Configuration for coprocessor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coprocessor: Option<coprocessor::CoprocessorConfig>,
-
-    /// Configuration for storage sources.
-    ///
-    /// Each key is a unique identifier for the storage source, that can later be references in other parts of the config file.
-    ///
-    /// Example:
-    /// ```yaml
-    /// storages:
-    ///   my-s3:
-    ///     type: s3
-    ///     bucket: my-bucket
-    ///     region: eu-west-1
-    /// ```
-    #[serde(default, skip_serializing_if = "StorageConfigMap::is_empty")]
-    pub storages: StorageConfigMap,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

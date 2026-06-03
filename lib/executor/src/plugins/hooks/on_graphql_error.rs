@@ -1,24 +1,15 @@
 use http::StatusCode;
 
-use crate::{
-    plugin_context::PluginContext, plugin_trait::RouterPluginBoxed,
-    request_context::RequestContextPluginApi, request_context::SharedRequestContext,
-    response::graphql_error::GraphQLError,
-};
+use crate::{plugin_trait::RouterPluginBoxed, response::graphql_error::GraphQLError};
 
-type RequestContextApi = RequestContextPluginApi<super::OnGraphqlError>;
+pub type OnGraphQLErrorHookResult = OnGraphQLErrorHookPayload;
 
-pub type OnGraphQLErrorHookResult<'req> = OnGraphQLErrorHookPayload<'req>;
-
-pub struct OnGraphQLErrorHookPayload<'req> {
+pub struct OnGraphQLErrorHookPayload {
     /// The GraphQL error that occurred during the execution of the request.
     /// The plugin can modify the error before proceeding, or it can replace it with a new error.
     /// Example:
     /// ```
-    /// fn on_graphql_error<'req>(
-    ///     &'req self,
-    ///     mut payload: OnGraphQLErrorHookPayload<'req>,
-    /// ) -> OnGraphQLErrorHookResult<'req> {
+    /// fn on_graphql_error(mut payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
     ///     // Add additional information to the error message
     ///     payload.error.message = format!("{} - Additional info from plugin", payload.error.message);
     ///     payload.proceed()
@@ -29,46 +20,30 @@ pub struct OnGraphQLErrorHookPayload<'req> {
     /// The plugin can modify the status code before proceeding.
     /// Example:
     /// ```
-    /// fn on_graphql_error<'req>(
-    ///     &'req self,
-    ///     mut payload: OnGraphQLErrorHookPayload<'req>,
-    /// ) -> OnGraphQLErrorHookResult<'req> {
+    /// fn on_graphql_error(mut payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
     ///     // Change the status code to 500 Internal Server Error
     ///     payload.status_code = StatusCode::INTERNAL_SERVER_ERROR;
     ///     payload.proceed()
     /// }
     /// ```
     pub status_code: StatusCode,
-    /// The context object that can be used to share data across different plugin hooks for the same request.
-    /// It is unique per request and is dropped after the response is sent.
-    ///
-    /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
-    pub context: &'req PluginContext,
-    pub request_context: RequestContextApi,
 }
 
-impl<'req> OnGraphQLErrorHookPayload<'req> {
+impl OnGraphQLErrorHookPayload {
     /// Returning this will proceed the hook with `payload.error`, and `payload.status_code`
-    pub fn proceed(self) -> OnGraphQLErrorHookResult<'req> {
+    pub fn proceed(self) -> OnGraphQLErrorHookResult {
         self
     }
 }
 
 pub fn handle_graphql_errors_with_plugins(
     plugins: &[RouterPluginBoxed],
-    context: &PluginContext,
-    request_context: &SharedRequestContext,
     errors: Vec<GraphQLError>,
     mut status_code: StatusCode,
 ) -> (Vec<GraphQLError>, StatusCode) {
     let mut new_errors = Vec::with_capacity(errors.len());
     for error in errors {
-        let mut payload = OnGraphQLErrorHookPayload {
-            error,
-            status_code,
-            context,
-            request_context: request_context.for_plugin::<super::OnGraphqlError>(),
-        };
+        let mut payload = OnGraphQLErrorHookPayload { error, status_code };
 
         for plugin in plugins {
             payload = plugin.on_graphql_error(payload);

@@ -10,8 +10,7 @@ use hive_router_plan_executor::{
     },
     headers::errors::HeaderRuleRuntimeError,
     hooks::on_graphql_error::handle_graphql_errors_with_plugins,
-    plugin_context::PluginContext,
-    request_context::{RequestContextError, RequestContextExt},
+    request_context::RequestContextError,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
@@ -21,7 +20,7 @@ use http::header;
 use http::{header::RETRY_AFTER, HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
-    web::{self, error::QueryPayloadError, HttpRequest},
+    web::{self, error::QueryPayloadError},
 };
 use strum::IntoStaticStr;
 
@@ -270,7 +269,6 @@ impl PipelineError {
 #[inline]
 pub fn handle_pipeline_error(
     err: PipelineError,
-    req: &HttpRequest,
     shared_state: &RouterSharedState,
     response_mode: &ResponseMode,
 ) -> web::HttpResponse {
@@ -307,19 +305,10 @@ pub fn handle_pipeline_error(
     };
 
     if let Some(plugins) = &shared_state.plugins {
-        let plugin_context = req.extensions().get::<Arc<PluginContext>>().cloned();
-        let request_context = req.read_request_context().ok();
-        if let (Some(plugin_context), Some(request_context)) = (plugin_context, request_context) {
-            let (new_errors, new_status_code) = handle_graphql_errors_with_plugins(
-                plugins,
-                plugin_context.as_ref(),
-                &request_context,
-                errors,
-                status,
-            );
-            errors = new_errors;
-            res.status(new_status_code);
-        }
+        let (new_errors, new_status_code) =
+            handle_graphql_errors_with_plugins(plugins, errors, status);
+        errors = new_errors;
+        res.status(new_status_code);
     }
 
     if let Some(error_recorder) = shared_state

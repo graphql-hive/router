@@ -4,7 +4,7 @@ use hive_router_plan_executor::executors::error::TlsCertificatesError;
 use crate::{
     jwt::jwks_manager::JwksSourceError, pipeline::usage_reporting::UsageReportingError,
     plugins::registry::PluginRegistryError, schema_state::SupergraphManagerError,
-    shared_state::SharedStateError, storage::error::StorageError, telemetry::TelemetryInitError,
+    shared_state::SharedStateError, telemetry::TelemetryInitError,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +39,4 @@ pub enum RouterInitError {
     },
     #[error(transparent)]
     TlsCertificatesError(#[from] TlsCertificatesError),
-    #[error(transparent)]
-    StorageError(#[from] StorageError),
 }

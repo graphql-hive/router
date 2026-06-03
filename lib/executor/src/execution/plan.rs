@@ -33,7 +33,6 @@ use sonic_rs::ValueRef;
 use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
-use crate::execution::operation_name::OperationNameFactory;
 use crate::{
     execution::{
         client_request_details::ClientRequestDetails,
@@ -90,7 +89,6 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub initial_errors: Vec<GraphQLError>,
     pub span: GraphQLOperationSpan,
     pub plugin_req_state: Option<PluginRequestState<'exec>>,
-    pub operation_name_factory: OperationNameFactory,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -196,11 +194,8 @@ pub async fn execute_query_plan<'exec>(
 
         let mut subgraph_request = SubgraphExecutionRequest {
             query: fetch_node.operation.document_str.as_str(),
-            document_name_write_pos: fetch_node.operation.name_write_position,
             dedupe: false,
-            operation_name: opts
-                .operation_name_factory
-                .generate(&fetch_node.service_name, fetch_node.id),
+            operation_name: fetch_node.operation_name.as_deref(),
             variables: variable_refs,
             headers: headers_map,
             raw_variable_values: None,
@@ -252,8 +247,7 @@ pub async fn execute_query_plan<'exec>(
         let client_operation_query = opts.client_request.operation.query.to_string();
         let client_operation_kind = opts.client_request.operation.kind;
         let client_jwt = opts.client_request.jwt.clone();
-
-        let operation_name_factory = opts.operation_name_factory.clone();
+        let client_path_params = opts.client_request.path_params.into_owned();
 
         let body_stream = Box::pin(async_stream::stream! {
             while let Some(stream_result) = response_stream.next().await {
@@ -302,6 +296,7 @@ pub async fn execute_query_plan<'exec>(
                             kind: client_operation_kind,
                         },
                         jwt: client_jwt.clone(),
+                        path_params: client_path_params.clone(),
                     }.into(),
                     introspection_context: opts.introspection_context.clone(),
                     operation_type_name: opts.operation_type_name,
@@ -312,7 +307,6 @@ pub async fn execute_query_plan<'exec>(
                     // TODO: plugins for subscriptions are not yet supported
                     plugin_req_state: None,
                     graphql_error_recorder: None,
-                    operation_name_factory: operation_name_factory.clone(),
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
@@ -411,7 +405,6 @@ async fn execute_query_plan_with_data<'exec>(
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
         plugin_req_state: opts.plugin_req_state.as_ref(),
-        operation_name_factory: &opts.operation_name_factory,
     };
 
     if let Some(node) = &opts.query_plan.node {
@@ -477,8 +470,6 @@ async fn execute_query_plan_with_data<'exec>(
         if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
             let (new_errors, new_status_code) = handle_graphql_errors_with_plugins(
                 plugin_req_state.plugins.as_ref(),
-                plugin_req_state.context.as_ref(),
-                &plugin_req_state.request_context,
                 errors,
                 status_code,
             );
@@ -520,7 +511,6 @@ pub struct Executor<'exec> {
     pub jwt_forwarding_plan: Option<Arc<JwtAuthForwardingPlan>>,
     pub dedupe_subgraph_requests: bool,
     pub plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
-    pub operation_name_factory: &'exec OperationNameFactory,
 }
 
 enum ExecutionJob<'exec> {
@@ -603,7 +593,7 @@ struct PrepareExecutionJobOpts<'exec> {
     // Variable usages
     variable_usages: Option<&'exec BTreeSet<String>>,
     // Operation name
-    operation_name: Option<String>,
+    operation_name: Option<&'exec str>,
     // Operation Kind
     operation_kind: Option<&'exec OperationKind>,
     // Operation
@@ -679,9 +669,7 @@ impl<'exec> Executor<'exec> {
                 self.prepare_execution_job(PrepareExecutionJobOpts {
                     subgraph_name: &fetch_node.service_name,
                     variable_usages: fetch_node.variable_usages.as_ref(),
-                    operation_name: self
-                        .operation_name_factory
-                        .generate(&fetch_node.service_name, fetch_node.id),
+                    operation_name: fetch_node.operation_name.as_deref(),
                     operation_kind: fetch_node.operation_kind.as_ref(),
                     operation: &fetch_node.operation,
                     output_rewrites: fetch_node.output_rewrites.as_deref(),
@@ -712,9 +700,7 @@ impl<'exec> Executor<'exec> {
                     self.prepare_execution_job(PrepareExecutionJobOpts {
                         subgraph_name: &batch_fetch_node.service_name,
                         variable_usages: batch_fetch_node.variable_usages.as_ref(),
-                        operation_name: self
-                            .operation_name_factory
-                            .generate(&batch_fetch_node.service_name, batch_fetch_node.id),
+                        operation_name: batch_fetch_node.operation_name.as_deref(),
                         operation_kind: batch_fetch_node.operation_kind.as_ref(),
                         operation: &batch_fetch_node.operation,
                         output_rewrites: None,
@@ -802,9 +788,7 @@ impl<'exec> Executor<'exec> {
                     self.prepare_execution_job(PrepareExecutionJobOpts {
                         subgraph_name: &fetch_node.service_name,
                         variable_usages: fetch_node.variable_usages.as_ref(),
-                        operation_name: self
-                            .operation_name_factory
-                            .generate(&fetch_node.service_name, fetch_node.id),
+                        operation_name: fetch_node.operation_name.as_deref(),
                         operation_kind: fetch_node.operation_kind.as_ref(),
                         operation: &fetch_node.operation,
                         output_rewrites: fetch_node.output_rewrites.as_deref(),
@@ -1330,7 +1314,6 @@ impl<'exec> Executor<'exec> {
 
             let mut subgraph_request = SubgraphExecutionRequest {
                 query: &opts.operation.document_str,
-                document_name_write_pos: opts.operation.name_write_position,
                 dedupe: self.dedupe_subgraph_requests,
                 operation_name: opts.operation_name,
                 variables: variable_refs,
@@ -1342,7 +1325,7 @@ impl<'exec> Executor<'exec> {
 
             let client_document_hash_str = opts.operation.hash.to_string();
             subgraph_operation_span.record_operation_identity(GraphQLSpanOperationIdentity {
-                name: subgraph_request.operation_name.as_deref(),
+                name: opts.operation_name,
                 operation_type: match opts.operation_kind {
                     Some(OperationKind::Query) | None => "query",
                     Some(OperationKind::Mutation) => "mutation",
@@ -1434,26 +1417,27 @@ mod tests {
     use crate::{
         execution::{
             client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-            operation_name::OperationNameFactory,
             plan::Executor,
         },
         execution_context::ExecutionContext,
         headers::plan::HeaderRulesPlan,
         introspection::schema::SchemaMetadata,
-        response::{
-            graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
-            value::Value as ResponseValue,
-        },
+        response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
+        response::value::Value as ResponseValue,
         SubgraphExecutorMap,
     };
 
     use super::select_fetch_variables;
     use dashmap::DashMap;
-    use graphql_tools::parser::query::{self, Definition};
+    use graphql_tools::parser::query;
     use hive_router_config::HiveRouterConfig;
     use hive_router_internal::telemetry::TelemetryContext;
     use hive_router_query_planner::{
-        ast::{document::Document, operation::SubgraphFetchOperation},
+        ast::{
+            document::Document,
+            operation::{OperationDefinition, SubgraphFetchOperation},
+            selection_set::SelectionSet,
+        },
         planner::plan_nodes::{EntityBatch, EntityBatchAlias, FetchNode, ParallelNode, PlanNode},
         utils::parsing::parse_operation,
     };
@@ -1468,28 +1452,6 @@ mod tests {
 
     fn value_from_number(n: i32) -> Value {
         sonic_rs::from_str(&n.to_string()).unwrap()
-    }
-
-    fn parse_document(query: &str) -> Document {
-        let document = parse_operation(query);
-        let mut operation = None;
-        let mut fragments = Vec::new();
-
-        for definition in document.definitions {
-            match definition {
-                Definition::Operation(current_operation) => {
-                    if operation.is_none() {
-                        operation = Some(current_operation.into());
-                    }
-                }
-                Definition::Fragment(fragment) => fragments.push(fragment.into()),
-            }
-        }
-
-        Document {
-            operation: operation.expect("operation definition should exist"),
-            fragments,
-        }
     }
 
     #[test]
@@ -1637,12 +1599,12 @@ mod tests {
                     kind: "query",
                 },
                 jwt: JwtRequestDetails::Unauthenticated.into(),
+                path_params: Default::default(),
             },
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
             plugin_req_state: None,
-            operation_name_factory: &OperationNameFactory::default(),
         };
 
         let data: ResponseValue = sonic_rs::from_str(
@@ -1750,12 +1712,12 @@ mod tests {
                     kind: "query",
                 },
                 jwt: JwtRequestDetails::Unauthenticated.into(),
+                path_params: Default::default(),
             },
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
             plugin_req_state: None,
-            operation_name_factory: &OperationNameFactory::default(),
         };
 
         let mock_a = subgraph_a
@@ -1797,6 +1759,17 @@ mod tests {
             })
             .create();
 
+        let dummy_doc = Document {
+            operation: OperationDefinition {
+                name: None,
+                operation_kind: None,
+                variable_definitions: None,
+                selection_set: SelectionSet { items: vec![] },
+            },
+
+            fragments: vec![],
+        };
+
         executor
             .execute_plan_node(
                 &mut exec_ctx,
@@ -1805,10 +1778,13 @@ mod tests {
                         PlanNode::Fetch(FetchNode {
                             id: 1,
                             service_name: "subgraph_a".to_string(),
-                            operation: SubgraphFetchOperation::from_anonymous_operation(
-                                parse_document("{ from_a }"),
-                            ),
+                            operation: SubgraphFetchOperation {
+                                document_str: "{ from_a }".to_string(),
+                                document: dummy_doc.clone(),
+                                hash: 0,
+                            },
                             custom_scalar_paths: None,
+                            operation_name: None,
                             requires: None,
                             input_rewrites: None,
                             output_rewrites: None,
@@ -1818,10 +1794,13 @@ mod tests {
                         PlanNode::Fetch(FetchNode {
                             id: 2,
                             service_name: "subgraph_b".to_string(),
-                            operation: SubgraphFetchOperation::from_anonymous_operation(
-                                parse_document("{ from_b }"),
-                            ),
+                            operation: SubgraphFetchOperation {
+                                document_str: "{ from_b }".to_string(),
+                                document: dummy_doc.clone(),
+                                hash: 0,
+                            },
                             custom_scalar_paths: None,
+                            operation_name: None,
                             requires: None,
                             input_rewrites: None,
                             output_rewrites: None,

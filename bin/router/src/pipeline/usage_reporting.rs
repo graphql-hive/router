@@ -154,19 +154,3 @@ impl BackgroundTask for UsageAgentTask {
         self.0.start_flush_interval(&token).await
     }
 }
-
-#[inline]
-pub fn request_details_from_ntex_request(req: &ntex::web::HttpRequest) -> RequestDetails {
-    let mut headers = Vec::with_capacity(req.headers().len());
-    for (name, value) in req.headers().iter() {
-        if let Ok(val_str) = value.to_str() {
-            headers.push((name.to_string(), val_str.to_string()));
-        }
-    }
-
-    RequestDetails {
-        method: req.method().clone(),
-        url: req.uri().clone(),
-        headers,
-    }
-}

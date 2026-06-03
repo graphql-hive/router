@@ -1,6 +1,9 @@
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use notify::{Config as NotifyConfig, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::Deserialize;
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,16 +16,24 @@ use tracing::{info, warn};
 use hive_router_config::persisted_documents::PersistedDocumentsFileStorageConfig;
 use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
 
-use crate::pipeline::persisted_documents::resolve::shared_file_manifest::{
-    parse_manifest, DocumentsById,
-};
-
 use super::{
     PersistedDocumentResolveInput, PersistedDocumentResolver, PersistedDocumentResolverError,
     ResolvedDocument,
 };
 
 const RELOAD_EVENT_DEBOUNCE: Duration = Duration::from_millis(150);
+
+// In-memory map used by the file manifest resolver.
+// Values are Arc-backed so lookups only clone cheap references.
+struct DocumentsById(HashMap<String, Arc<str>>);
+
+impl Deref for DocumentsById {
+    type Target = HashMap<String, Arc<str>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[async_trait]
 impl PersistedDocumentResolver for FileManifestResolver {
@@ -70,10 +81,43 @@ impl Deref for FileManifestReloadTask {
     }
 }
 
+#[derive(Deserialize)]
+struct ApolloPersistedQueryManifest<'a> {
+    #[serde(borrow)]
+    format: Cow<'a, str>,
+    version: u8,
+    #[serde(borrow)]
+    operations: Vec<ApolloPersistedQueryOperation<'a>>,
+}
+
+#[derive(Deserialize)]
+struct ApolloPersistedQueryOperation<'a> {
+    #[serde(borrow)]
+    id: Cow<'a, str>,
+    #[serde(borrow)]
+    body: Cow<'a, str>,
+}
+
+type KeyValueManifest<'a> = HashMap<Cow<'a, str>, Cow<'a, str>>;
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+#[serde(bound(deserialize = "'de: 'a"))]
+enum PersistedDocumentsManifest<'a> {
+    Apollo(ApolloPersistedQueryManifest<'a>),
+    KeyValue(KeyValueManifest<'a>),
+}
+
 #[derive(Debug, Error)]
 pub enum FileResolverError {
     #[error("failed to read persisted documents manifest at '{path}': {message}")]
     ReadManifest { path: String, message: String },
+    #[error("failed to parse persisted documents manifest at '{path}': {message}")]
+    ParseManifest { path: String, message: String },
+    #[error("unsupported apollo manifest format. Expected 'apollo-persisted-query-manifest', received '{format}'")]
+    UnsupportedApolloManifestFormat { format: String },
+    #[error("unsupported apollo manifest version. Expected '1', received '{version}'")]
+    UnsupportedApolloManifestVersion { version: u8 },
     #[error("failed to initialize persisted documents file watcher for '{path}': {message}")]
     WatcherInit { path: String, message: String },
     #[error("failed to watch persisted documents path '{path}': {message}")]
@@ -196,9 +240,14 @@ impl FileManifestResolver {
                     message: err.to_string(),
                 })
             })
-            .and_then(|raw| match parse_manifest(manifest_path, &raw) {
-                Ok(manifest) => manifest.try_into(),
-                Err(err) => Err(PersistedDocumentResolverError::FileManifest(err)),
+            .and_then(|raw| {
+                let manifest: PersistedDocumentsManifest<'_> =
+                    sonic_rs::from_slice(&raw).map_err(|err| FileResolverError::ParseManifest {
+                        path: manifest_path.to_string(),
+                        message: err.to_string(),
+                    })?;
+
+                manifest.try_into()
             })
     }
 }
@@ -223,5 +272,55 @@ impl BackgroundTask for FileManifestReloadTask {
                 warn!("persisted documents background reload failed: {err}");
             }
         }
+    }
+}
+
+impl<'a> TryFrom<PersistedDocumentsManifest<'a>> for DocumentsById {
+    type Error = PersistedDocumentResolverError;
+
+    fn try_from(value: PersistedDocumentsManifest<'a>) -> Result<Self, Self::Error> {
+        match value {
+            PersistedDocumentsManifest::Apollo(manifest) => manifest.try_into(),
+            PersistedDocumentsManifest::KeyValue(manifest) => Ok(manifest.into()),
+        }
+    }
+}
+
+impl<'a> TryFrom<ApolloPersistedQueryManifest<'a>> for DocumentsById {
+    type Error = PersistedDocumentResolverError;
+
+    fn try_from(manifest: ApolloPersistedQueryManifest<'a>) -> Result<Self, Self::Error> {
+        if manifest.format != "apollo-persisted-query-manifest" {
+            return Err(FileResolverError::UnsupportedApolloManifestFormat {
+                format: manifest.format.into_owned(),
+            }
+            .into());
+        }
+
+        if manifest.version != 1 {
+            return Err(FileResolverError::UnsupportedApolloManifestVersion {
+                version: manifest.version,
+            }
+            .into());
+        }
+
+        Ok(DocumentsById(
+            manifest
+                .operations
+                .into_iter()
+                .map(|op| (op.id.into_owned(), Arc::<str>::from(op.body)))
+                .collect::<HashMap<_, _>>(),
+        ))
+    }
+}
+
+impl<'a> From<KeyValueManifest<'a>> for DocumentsById {
+    fn from(manifest: KeyValueManifest<'a>) -> Self {
+        DocumentsById(
+            manifest
+                .into_iter()
+                .map(|(id, text)| (id.into_owned(), Arc::<str>::from(text)))
+                .collect(),
+        )
     }
 }

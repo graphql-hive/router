@@ -3,9 +3,10 @@ supergraph:
   source: file
   path: ../supergraph.graphql
 override_subgraph_urls:
-  accounts:
-    url:
-      expression: env("ACCOUNTS_URL_OVERRIDE", string!(.default))
+  subgraphs:
+    accounts:
+      url:
+        expression: env("ACCOUNTS_URL_OVERRIDE", string!(.default))
 headers:
   all:
     response:

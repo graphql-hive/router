@@ -7,18 +7,17 @@ pub(super) const DOC_ID: &str = "sha256:abc123";
 pub(super) const PATH_DOC_ID: &str = "abc-123";
 pub(super) const DOC_QUERY: &str = "{ topProducts { name } }";
 
-pub(super) fn create_manifest() -> String {
-    sonic_rs::to_string(&json!({
-        DOC_ID: DOC_QUERY,
-        PATH_DOC_ID: DOC_QUERY,
-    }))
-    .expect("failed to serialize persisted document manifest")
-}
-
 pub(super) fn write_manifest() -> NamedTempFile {
     let file = NamedTempFile::new().expect("failed to create temp persisted document manifest");
-    std::fs::write(file.path(), create_manifest())
-        .expect("failed to write persisted document manifest");
+    std::fs::write(
+        file.path(),
+        sonic_rs::to_string(&json!({
+            DOC_ID: DOC_QUERY,
+            PATH_DOC_ID: DOC_QUERY,
+        }))
+        .expect("failed to serialize persisted document manifest"),
+    )
+    .expect("failed to write persisted document manifest");
     file
 }
 

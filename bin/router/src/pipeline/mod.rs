@@ -1,4 +1,5 @@
 use futures::StreamExt;
+use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_router_internal::{
     http::read_body_stream,
     telemetry::traces::spans::{
@@ -9,7 +10,7 @@ use hive_router_plan_executor::{
     coprocessor::runtime::MutableRequestState,
     execution::{
         client_request_details::{
-            JwtRequestDetails, MutableClientRequestDetails, OperationDetails,
+            JwtRequestDetails, MutableClientRequestDetails, OperationDetails, PathParams,
         },
         plan::{PlanExecutionOutput, QueryPlanExecutionResult},
     },
@@ -23,8 +24,10 @@ use hive_router_query_planner::{
 };
 use http::{header::CONTENT_TYPE, Method};
 use ntex::{
-    http::body::{Body, ResponseBody},
-    http::HeaderMap,
+    http::{
+        body::{Body, ResponseBody},
+        HeaderMap,
+    },
     rt,
     web::{self, HttpRequest},
 };
@@ -347,11 +350,13 @@ pub async fn graphql_request_handler(
         };
 
         let request_context = req.read_request_context()?;
+        let path_params = req.match_info().into();
 
         let exec = |guard| execute_planned_request(
             req.method(),
             req.uri(),
             request_headers,
+            path_params,
             graphql_params,
             &normalize_payload,
             supergraph,
@@ -406,7 +411,7 @@ pub async fn graphql_request_handler(
                         "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
                     ),
                 shared_response.error_count(),
-                Some(usage_reporting::request_details_from_ntex_request(req)),
+                Some(RequestDetails::from(&*req)),
             )
             .await;
         }
@@ -434,6 +439,7 @@ pub async fn execute_planned_request<'exec>(
     method: &'exec Method,
     url: &'exec http::Uri,
     headers: HeaderMap,
+    path_params: PathParams<'exec>,
     mut graphql_params: GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     supergraph: &'exec SupergraphData,
@@ -480,6 +486,7 @@ pub async fn execute_planned_request<'exec>(
             query: graphql_params.get_query()?,
         },
         jwt: jwt_request_details.into(),
+        path_params,
     };
 
     match execute_pipeline(

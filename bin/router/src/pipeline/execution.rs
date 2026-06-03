@@ -11,7 +11,6 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
 };
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::operation_name::OperationNameFactory;
 use hive_router_plan_executor::execution::plan::{
     execute_query_plan, PlanExecutionOutput, QueryPlanExecutionOpts, QueryPlanExecutionResult,
 };
@@ -118,7 +117,6 @@ pub async fn execute_plan<'exec>(
             None
         };
 
-        let operation_name = planned_request.client_request_details.operation.name;
         let result = execute_query_plan(QueryPlanExecutionOpts {
             query_plan: planned_request.query_plan_payload,
             operation_for_plan: planned_request
@@ -142,10 +140,6 @@ pub async fn execute_plan<'exec>(
                 .collect(),
             span,
             plugin_req_state: planned_request.plugin_req_state,
-            operation_name_factory: OperationNameFactory::new(
-                supergraph.operation_name_forward_config.clone(),
-                operation_name,
-            ),
         })
         .await?;
 

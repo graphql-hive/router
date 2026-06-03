@@ -40,7 +40,6 @@ use crate::pipeline::persisted_documents::resolve::PersistedDocumentResolverErro
 use crate::pipeline::persisted_documents::PersistedDocumentsRuntime;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 use crate::pipeline::sse;
-use crate::storage::StorageManager;
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
 pub type RouterInflightRequestsMap = InFlightMap<u64, SharedRouterResponse>;
@@ -294,8 +293,6 @@ pub struct RouterSharedState {
     pub long_lived_client_count: Arc<AtomicUsize>,
     /// Tracks all active subscriptions from clients to the router.
     pub active_subscriptions: ActiveSubscriptions,
-    /// The storage manager for the router.
-    pub storage_manager: Arc<StorageManager>,
 }
 
 impl RouterSharedState {
@@ -310,7 +307,6 @@ impl RouterSharedState {
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         cache_state: Arc<CacheState>,
         active_subscriptions: ActiveSubscriptions,
-        storage_manager: Arc<StorageManager>,
     ) -> Result<Self, SharedStateError> {
         let parse_cache = cache_state.parse_cache.clone();
         let coprocessor = router_config
@@ -359,7 +355,6 @@ impl RouterSharedState {
                 .into(),
             long_lived_client_count: Arc::new(AtomicUsize::new(0)),
             active_subscriptions,
-            storage_manager,
         })
     }
 }

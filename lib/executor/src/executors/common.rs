@@ -46,13 +46,9 @@ pub type SubgraphExecutorBoxedArc = Arc<Box<SubgraphExecutorType>>;
 pub type SubgraphRequestExtensions = HashMap<String, Value>;
 
 pub struct SubgraphExecutionRequest<'a> {
-    /// Holds the query string to be executed.
-    /// The query string contains an anonymous GraphQL document.
-    /// The name is during execution at `document_name_write_pos` position in the query string.
     pub query: &'a str,
-    pub document_name_write_pos: usize,
     pub dedupe: bool,
-    pub operation_name: Option<String>,
+    pub operation_name: Option<&'a str>,
     // TODO: variables could be stringified before even executing the request
     pub variables: Option<HashMap<&'a str, &'a sonic_rs::Value>>,
     pub headers: HeaderMap,

@@ -1,10 +1,11 @@
 use crate::consts::PLUGIN_VERSION;
+use apollo_router::Context;
 use apollo_router::layers::ServiceBuilderExt;
 use apollo_router::plugin::Plugin;
 use apollo_router::plugin::PluginInit;
 use apollo_router::services::*;
-use apollo_router::Context;
 use core::ops::Drop;
+use std::collections::HashSet;
 use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_console_sdk::agent::usage_agent::UsageAgentExt;
@@ -15,7 +16,6 @@ use http::HeaderValue;
 use rand::RngExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -440,7 +440,7 @@ impl Drop for UsagePlugin {
 #[cfg(test)]
 mod hive_usage_tests {
     use apollo_router::{
-        plugin::{test::MockSupergraphService, Plugin, PluginInit},
+        plugin::{Plugin, PluginInit, test::MockSupergraphService},
         services::supergraph,
     };
     use http::header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
@@ -460,14 +460,12 @@ mod hive_usage_tests {
         }))
         .expect("config with expression object should deserialize");
 
-        assert!(matches!(
-            config.exclude,
-            Some(UsageReportingExclude::Expression { .. })
-        ));
+        assert!(matches!(config.exclude, Some(UsageReportingExclude::Expression { .. })));
 
         if let Some(UsageReportingExclude::Expression { expression }) = config.exclude {
             assert_eq!(
-                expression, ".request.operation.name == \"ExcludedOp\"",
+                expression,
+                ".request.operation.name == \"ExcludedOp\"",
                 "expression should match the input"
             );
         } else {
@@ -482,10 +480,7 @@ mod hive_usage_tests {
         }))
         .expect("config with legacy operation list should deserialize");
 
-        assert!(matches!(
-            config.exclude,
-            Some(UsageReportingExclude::OperationNames(_))
-        ));
+        assert!(matches!(config.exclude, Some(UsageReportingExclude::OperationNames(_))));
 
         if let Some(UsageReportingExclude::OperationNames(names)) = config.exclude {
             assert_eq!(

@@ -20,11 +20,10 @@
 |[**persisted\_documents**](#persisted_documents)|`object`|Configuration for persisted documents extraction and resolution.<br/>Default: `{"enabled":false,"log_missing_id":false,"require_id":false,"selectors":null,"storage":null}`<br/>||
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
-|[**storages**](#storages)|`object`|Configuration for storage sources.<br/>||
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"ip_header":null,"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"forward_operation_name":false,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
 |[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
 **Additional Properties:** not allowed  
@@ -108,20 +107,21 @@ log:
   level: info
 override_labels: {}
 override_subgraph_urls:
-  accounts:
-    url: https://accounts.example.com/graphql
-  products:
-    url:
-      expression: |2-
+  subgraphs:
+    accounts:
+      url: https://accounts.example.com/graphql
+    products:
+      url:
+        expression: |2-
 
-                if .request.headers."x-region" == "us-east" {
-                    "https://products-us-east.example.com/graphql"
-                } else if .request.headers."x-region" == "eu-west" {
-                    "https://products-eu-west.example.com/graphql"
-                } else {
-                  .default
-                }
-            
+                  if .request.headers."x-region" == "us-east" {
+                      "https://products-us-east.example.com/graphql"
+                  } else if .request.headers."x-region" == "eu-west" {
+                      "https://products-eu-west.example.com/graphql"
+                  } else {
+                    .default
+                  }
+              
 persisted_documents:
   enabled: false
   log_missing_id: false
@@ -132,7 +132,6 @@ plugins: {}
 query_planner:
   allow_expose: false
   timeout: 10s
-storages: {}
 subscriptions:
   broadcast_capacity: 0
   enabled: false
@@ -211,7 +210,6 @@ traffic_shaping:
     allow_only_http2: false
     circuit_breaker: null
     dedupe_enabled: true
-    forward_operation_name: false
     pool_idle_timeout: 50s
     request_timeout: 30s
   max_connections_per_host: 100
@@ -2200,41 +2198,89 @@ Configuration for overriding labels.
 Configuration for overriding subgraph URLs.
 
 
-**Additional Properties**
+**Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**Additional Properties**](#override_subgraph_urlsadditionalproperties)|`object`||yes|
+|[**all**](#override_subgraph_urlsall)|`object`, `null`|Default URL override for all subgraphs.<br/>|yes|
+|[**subgraphs**](#override_subgraph_urlssubgraphs)|`object`|URL overrides for specific subgraphs.<br/>||
 
+**Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-accounts:
-  url: https://accounts.example.com/graphql
-products:
-  url:
-    expression: |2-
+subgraphs:
+  accounts:
+    url: https://accounts.example.com/graphql
+  products:
+    url:
+      expression: |2-
 
-              if .request.headers."x-region" == "us-east" {
-                  "https://products-us-east.example.com/graphql"
-              } else if .request.headers."x-region" == "eu-west" {
-                  "https://products-eu-west.example.com/graphql"
-              } else {
-                .default
-              }
-          
+                if .request.headers."x-region" == "us-east" {
+                    "https://products-us-east.example.com/graphql"
+                } else if .request.headers."x-region" == "eu-west" {
+                    "https://products-eu-west.example.com/graphql"
+                } else {
+                  .default
+                }
+            
 
 ```
 
-<a name="override_subgraph_urlsadditionalproperties"></a>
-### override\_subgraph\_urls\.additionalProperties: object
+<a name="override_subgraph_urlsall"></a>
+### override\_subgraph\_urls\.all: object,null
+
+Default URL override for all subgraphs.
+
+This override is used when a subgraph does not have its own override in
+`subgraphs`.
+
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**url**||Overrides for the URL of the subgraph.<br/><br/>For convenience, a plain string in your configuration will be treated as a static URL.<br/><br/>### Static URL Example<br/>```yaml<br/>url: "https://api.example.com/graphql"<br/>```<br/><br/>### Dynamic Expression Example<br/><br/>The expression has access to the following variables:<br/>- `request`: The incoming HTTP request, including headers and other metadata.<br/>- `default`: The original URL of the subgraph (from supergraph sdl).<br/><br/>```yaml<br/>url:<br/>  expression: \|<br/>    if .request.headers."x-region" == "us-east" {<br/>      "https://products-us-east.example.com/graphql"<br/>    } else if .request.headers."x-region" == "eu-west" {<br/>      "https://products-eu-west.example.com/graphql"<br/>    } else {<br/>      .default<br/>    }<br/>|yes|
+|[**url**](#override_subgraph_urlsallurl)|`object`||yes|
 
+**Additional Properties:** not allowed  
+<a name="override_subgraph_urlsallurl"></a>
+#### override\_subgraph\_urls\.all\.url: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expression**|`string`||yes|
+
+**Additional Properties:** not allowed  
+<a name="override_subgraph_urlssubgraphs"></a>
+### override\_subgraph\_urls\.subgraphs: object
+
+URL overrides for specific subgraphs.
+
+The key is the subgraph name.
+
+Each subgraph can use:
+- a fixed URL string
+- a dynamic expression
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**Additional Properties**](#override_subgraph_urlssubgraphsadditionalproperties)|`object`||yes|
+
+<a name="override_subgraph_urlssubgraphsadditionalproperties"></a>
+#### override\_subgraph\_urls\.subgraphs\.additionalProperties: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**url**|||yes|
+
+**Additional Properties:** not allowed  
 <a name="persisted_documents"></a>
 ## persisted\_documents: object
 
@@ -2358,29 +2404,6 @@ allow_expose: false
 timeout: 10s
 
 ```
-
-<a name="storages"></a>
-## storages: object
-
-Configuration for storage sources.
-
-Each key is a unique identifier for the storage source, that can later be references in other parts of the config file.
-
-Example:
-```yaml
-storages:
-  my-s3:
-    type: s3
-    bucket: my-bucket
-    region: eu-west-1
-```
-
-
-**Additional Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**Additional Properties**||||
 
 <a name="subscriptions"></a>
 ## subscriptions: object
@@ -2553,26 +2576,6 @@ poll_interval: 10s
 request_timeout: 1m
 retry_policy:
   max_retries: 10
-
-```
-
-
-   
-**Option 3 (alternative):** 
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**location**||The path to the supergraph file in the storage/bucket.<br/>|yes|
-|**poll\_interval**|`string`|Optional interval at which the file should be polled for changes.<br/>If not provided, the file will only be loaded once when the router starts.<br/>|no|
-|**source**|`string`|Constant Value: `"storage"`<br/>|yes|
-|**storage\_id**|`string`|The storage id as it was defined in the config file, under `storages:` field.<br/>|yes|
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-poll_interval: null
 
 ```
 
@@ -3223,7 +3226,7 @@ propagation:
 |**max\_attributes\_per\_span**|`integer`|Default: `128`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
 |**max\_events\_per\_span**|`integer`|Default: `128`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
 |**parent\_based\_sampler**|`boolean`|Default: `false`<br/>||
-|**sampling**|`number`|Can also be set via the `TELEMETRY_TRACING_SAMPLING_RATE` environment variable.<br/>Default: `1`<br/>Format: `"double"`<br/>||
+|**sampling**|`number`|Default: `1`<br/>Format: `"double"`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -3494,7 +3497,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"forward_operation_name":false,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
+|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}`<br/>||
 |[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
@@ -3507,7 +3510,6 @@ all:
   allow_only_http2: false
   circuit_breaker: null
   dedupe_enabled: true
-  forward_operation_name: false
   pool_idle_timeout: 50s
   request_timeout: 30s
 max_connections_per_host: 100
@@ -3533,7 +3535,6 @@ The default configuration that will be applied to all subgraphs, unless overridd
 |**allow\_only\_http2**|`boolean`|Forces HTTP/2 for requests to subgraphs.<br/><br/>For plain HTTP, it will use HTTP/2 cleartext (h2c).<br/>For HTTPS, it also requires HTTP/2.<br/>This will make the subgraph requests never fall back to HTTP/1.1,<br/>and will fail if the subgraph doesn't support HTTP/2.<br/>Default: `false`<br/>||
 |[**circuit\_breaker**](#traffic_shapingallcircuit_breaker)|`object`, `null`|Circuit Breaker configuration for all subgraphs.<br/>||
 |**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
-|**forward\_operation\_name**|`boolean`|When enabled, forwards client operation name to subgraphs.<br/>The operation name will fetch node id and operation name from the client request.<br/>Format: <Client Operation Name>__<Fetch Node ID><br/>Default: `false`<br/>||
 |**pool\_idle\_timeout**|`string`|Timeout for idle sockets being kept-alive.<br/>Default: `"50s"`<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>Default: `"30s"`<br/>||
 |[**tls**](#traffic_shapingalltls)|`object`, `null`|||
@@ -3545,7 +3546,6 @@ The default configuration that will be applied to all subgraphs, unless overridd
 allow_only_http2: false
 circuit_breaker: null
 dedupe_enabled: true
-forward_operation_name: false
 pool_idle_timeout: 50s
 request_timeout: 30s
 
@@ -3729,19 +3729,11 @@ Optional per-subgraph configurations that will override the default configuratio
 |**allow\_only\_http2**|`boolean`, `null`|Forces HTTP/2 for requests to subgraphs.<br/><br/>For plain HTTP, it will use HTTP/2 cleartext (h2c).<br/>For HTTPS, it also requires HTTP/2.<br/>This will make the subgraph requests never fall back to HTTP/1.1,<br/>and will fail if the subgraph doesn't support HTTP/2.<br/>||
 |[**circuit\_breaker**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breaker)|`object`, `null`|Circuit Breaker configuration for the subgraph.<br/>||
 |**dedupe\_enabled**|`boolean`, `null`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>||
-|**forward\_operation\_name**|`boolean`, `null`|When enabled, forwards client operation name to the selected subgraph.<br/>The operation name will include fetch node id and operation name from the client request.<br/>Format: <Client Operation Name>__<Fetch Node ID><br/><br/>This setting takes precedence over the value set in `all` section.<br/>||
 |**pool\_idle\_timeout**|`string`, `null`|Timeout for idle sockets being kept-alive.<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
 |[**tls**](#traffic_shapingsubgraphsadditionalpropertiestls)|`object`, `null`|||
 
 **Additional Properties:** not allowed  
-**Example**
-
-```yaml
-forward_operation_name: null
-
-```
-
 <a name="traffic_shapingsubgraphsadditionalpropertiescircuit_breaker"></a>
 ##### traffic\_shaping\.subgraphs\.additionalProperties\.circuit\_breaker: object,null
 

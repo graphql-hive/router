@@ -1,6 +1,5 @@
 pub mod coprocessor;
 pub mod otel;
-pub mod s3_mock;
 
 use axum_server::{tls_rustls::RustlsConfig, Handle};
 use bytes::Bytes;

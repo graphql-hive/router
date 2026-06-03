@@ -80,7 +80,6 @@ pub struct TracingCollectConfig {
     pub max_attributes_per_event: u32,
     #[serde(default = "default_max_attributes_per_link")]
     pub max_attributes_per_link: u32,
-    /// Can also be set via the `TELEMETRY_TRACING_SAMPLING_RATE` environment variable.
     #[serde(default = "default_sampling")]
     pub sampling: f64,
     #[serde(default = "default_parent_based_sampler")]

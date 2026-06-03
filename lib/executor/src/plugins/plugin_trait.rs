@@ -113,23 +113,6 @@ where
         ))
     }
 
-    /// End the hook execution with multiple GraphQL errors,
-    /// returning a response with the appropriate error format to the client immediately, skipping the rest of the execution flow.
-    fn end_with_graphql_errors<'exec, TErrors>(
-        self,
-        errors: TErrors,
-        status_code: http::StatusCode,
-    ) -> StartHookResult<'exec, Self, TEndPayload, TResponse>
-    where
-        TErrors: IntoIterator<Item = GraphQLError>,
-        TResponse: FromGraphQLErrorsToResponse,
-    {
-        self.end_with_response(TResponse::from_graphql_errors_to_response(
-            errors.into_iter().collect(),
-            status_code,
-        ))
-    }
-
     /// Attach a callback to be executed at the end of the hook, allowing you to manipulate the end payload or response.
     /// This is useful when you want to execute some logic after the main execution of the hook
     ///
@@ -229,150 +212,26 @@ where
             status_code,
         ))
     }
-
-    /// End the hook execution with multiple GraphQL errors,
-    /// returning a response with the appropriate error format to the client immediately, skipping the rest of the execution flow.
-    fn end_with_graphql_errors<TErrors>(
-        self,
-        errors: TErrors,
-        status_code: http::StatusCode,
-    ) -> EndHookResult<Self, TResponse>
-    where
-        TErrors: IntoIterator<Item = GraphQLError>,
-        TResponse: FromGraphQLErrorsToResponse,
-    {
-        self.end_with_response(TResponse::from_graphql_errors_to_response(
-            errors.into_iter().collect(),
-            status_code,
-        ))
-    }
 }
 
 pub trait FromGraphQLErrorToResponse {
     fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self;
 }
 
-pub trait FromGraphQLErrorsToResponse: FromGraphQLErrorToResponse {
-    fn from_graphql_errors_to_response(
-        errors: Vec<GraphQLError>,
-        status_code: http::StatusCode,
-    ) -> Self;
-}
-
 pub fn from_graphql_error_to_bytes(error: GraphQLError) -> Vec<u8> {
-    from_graphql_errors_to_bytes(vec![error])
-}
-
-pub fn from_graphql_errors_to_bytes(errors: Vec<GraphQLError>) -> Vec<u8> {
     let body = json!({
-        "errors": errors
+        "errors": [error]
     });
     sonic_rs::to_vec(&body).unwrap_or_default()
 }
 
 impl FromGraphQLErrorToResponse for ntex::http::Response {
     fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self {
-        Self::from_graphql_errors_to_response(vec![error], status_code)
-    }
-}
-
-impl FromGraphQLErrorsToResponse for ntex::http::Response {
-    fn from_graphql_errors_to_response(
-        errors: Vec<GraphQLError>,
-        status_code: http::StatusCode,
-    ) -> Self {
-        let body = from_graphql_errors_to_bytes(errors);
+        let body = from_graphql_error_to_bytes(error);
         ntex::http::Response::build(ntex::http::StatusCode::OK)
             .content_type("application/json")
             .status(status_code)
             .body(body)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct TestStartPayload;
-    struct TestEndPayload;
-
-    struct TestResponse {
-        errors: Vec<GraphQLError>,
-        status_code: http::StatusCode,
-    }
-
-    impl FromGraphQLErrorToResponse for TestResponse {
-        fn from_graphql_error_to_response(
-            error: GraphQLError,
-            status_code: http::StatusCode,
-        ) -> Self {
-            Self::from_graphql_errors_to_response(vec![error], status_code)
-        }
-    }
-
-    impl FromGraphQLErrorsToResponse for TestResponse {
-        fn from_graphql_errors_to_response(
-            errors: Vec<GraphQLError>,
-            status_code: http::StatusCode,
-        ) -> Self {
-            TestResponse {
-                errors,
-                status_code,
-            }
-        }
-    }
-
-    impl StartHookPayload<TestEndPayload, TestResponse> for TestStartPayload {}
-    impl EndHookPayload<TestResponse> for TestEndPayload {}
-
-    #[test]
-    fn end_with_graphql_errors_returns_all_errors() {
-        let result = TestStartPayload.end_with_graphql_errors(
-            vec![
-                GraphQLError::from_message_and_code("First violation", "FIRST_VIOLATION"),
-                GraphQLError::from_message_and_code("Second violation", "SECOND_VIOLATION"),
-            ],
-            http::StatusCode::BAD_REQUEST,
-        );
-
-        let StartControlFlow::EndWithResponse(response) = result.control_flow else {
-            panic!("expected hook to end with response");
-        };
-
-        assert_eq!(response.status_code, http::StatusCode::BAD_REQUEST);
-        assert_eq!(response.errors.len(), 2);
-        assert_eq!(response.errors[0].message, "First violation");
-        assert_eq!(response.errors[1].message, "Second violation");
-    }
-
-    #[test]
-    fn from_graphql_errors_to_bytes_serializes_all_errors() {
-        let body = from_graphql_errors_to_bytes(vec![
-            GraphQLError::from_message_and_code("First violation", "FIRST_VIOLATION"),
-            GraphQLError::from_message_and_code("Second violation", "SECOND_VIOLATION"),
-        ]);
-
-        let body: sonic_rs::Value = sonic_rs::from_slice(&body).unwrap();
-
-        assert_eq!(
-            body,
-            json!({
-                "errors": [
-                    {
-                        "message": "First violation",
-                        "extensions": {
-                            "code": "FIRST_VIOLATION"
-                        }
-                    },
-                    {
-                        "message": "Second violation",
-                        "extensions": {
-                            "code": "SECOND_VIOLATION"
-                        }
-                    }
-                ]
-            })
-        );
     }
 }
 
@@ -450,10 +309,7 @@ pub trait RouterPlugin: Send + Sync + 'static {
         start_payload.proceed()
     }
     #[inline]
-    fn on_graphql_error<'req>(
-        &'req self,
-        payload: OnGraphQLErrorHookPayload<'req>,
-    ) -> OnGraphQLErrorHookResult<'req> {
+    fn on_graphql_error(&self, payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
         payload.proceed()
     }
     #[inline]
@@ -498,10 +354,7 @@ pub trait DynRouterPlugin: Send + Sync + 'static {
         &'exec self,
         start_payload: OnSupergraphLoadStartHookPayload,
     ) -> OnSupergraphLoadStartHookResult<'exec>;
-    fn on_graphql_error<'req>(
-        &'req self,
-        payload: OnGraphQLErrorHookPayload<'req>,
-    ) -> OnGraphQLErrorHookResult<'req>;
+    fn on_graphql_error(&self, payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult;
     async fn on_shutdown<'exec>(&'exec self);
 }
 
@@ -574,10 +427,7 @@ where
         RouterPlugin::on_supergraph_reload(self, start_payload)
     }
     #[inline]
-    fn on_graphql_error<'req>(
-        &'req self,
-        payload: OnGraphQLErrorHookPayload<'req>,
-    ) -> OnGraphQLErrorHookResult<'req> {
+    fn on_graphql_error(&self, payload: OnGraphQLErrorHookPayload) -> OnGraphQLErrorHookResult {
         RouterPlugin::on_graphql_error(self, payload)
     }
     #[inline]

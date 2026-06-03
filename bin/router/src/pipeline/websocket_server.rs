@@ -467,6 +467,8 @@ async fn handle_text_frame(
                     &method,
                     ws_uri,
                     headers.as_ref().clone(),
+                    // TODO: WebSocket subscriptions do not yet expose route path params
+                    Default::default(),
                     payload,
                     &normalize_payload,
                     supergraph,
@@ -518,17 +520,19 @@ async fn handle_text_frame(
                 };
 
                 if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-                    let mut headers_vec = Vec::with_capacity(headers.len());
-                    for (name, value) in headers.iter() {
-                        if let Ok(val_str) = value.to_str() {
-                            headers_vec.push((name.to_string(), val_str.to_string()));
-                        }
-                    }
-
+                    let headers = headers
+                        .iter()
+                        .filter_map(|(name, value)| {
+                            value
+                                .to_str()
+                                .ok()
+                                .map(|val_str| (name.to_string(), val_str.to_string()))
+                        })
+                        .collect();
                     let request_details = RequestDetails {
                         method: Method::POST,
                         url: (*ws_uri).clone(),
-                        headers: headers_vec,
+                        headers,
                     };
                     usage_reporting::collect_usage_report(
                         supergraph.supergraph_schema.clone(),

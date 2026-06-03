@@ -8,8 +8,7 @@ use sonic_rs::json;
 use crate::execution::plan::PlanExecutionOutput;
 use crate::plugin_context::{PluginContext, RouterHttpRequest};
 use crate::plugin_trait::{
-    from_graphql_errors_to_bytes, EndHookPayload, EndHookResult, FromGraphQLErrorToResponse,
-    FromGraphQLErrorsToResponse, StartHookPayload, StartHookResult,
+    EndHookPayload, EndHookResult, FromGraphQLErrorToResponse, StartHookPayload, StartHookResult,
 };
 use crate::request_context::RequestContextPluginApi;
 use crate::response::graphql_error::GraphQLError;
@@ -177,19 +176,12 @@ pub type OnExecuteEndHookResult<'exec> =
 
 impl FromGraphQLErrorToResponse for PlanExecutionOutput {
     fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self {
-        Self::from_graphql_errors_to_response(vec![error], status_code)
-    }
-}
-
-impl FromGraphQLErrorsToResponse for PlanExecutionOutput {
-    fn from_graphql_errors_to_response(
-        errors: Vec<GraphQLError>,
-        status_code: http::StatusCode,
-    ) -> Self {
-        let error_count = errors.len();
+        let body_json = json!({
+            "errors": [error],
+        });
         PlanExecutionOutput {
-            body: from_graphql_errors_to_bytes(errors),
-            error_count,
+            body: sonic_rs::to_vec(&body_json).unwrap_or_default(),
+            error_count: 1,
             response_headers_aggregator: None,
             status_code,
         }

@@ -6,14 +6,10 @@ use hive_router_config::persisted_documents::{
 use hive_router_internal::background_tasks::BackgroundTasksManager;
 
 use crate::pipeline::persisted_documents::extract::DocumentIdResolver;
-use crate::pipeline::persisted_documents::resolve::storage::{
-    StorageManifestReloadTask, StorageResolver,
-};
 use crate::pipeline::persisted_documents::resolve::{
     FileManifestReloadTask, FileManifestResolver, HiveCDNResolver, PersistedDocumentResolver,
     PersistedDocumentResolverError,
 };
-use crate::storage::StorageManager;
 
 pub mod extract;
 pub mod resolve;
@@ -29,7 +25,6 @@ impl PersistedDocumentsRuntime {
         config: &PersistedDocumentsConfig,
         graphql_endpoint: &str,
         background_tasks_mgr: &mut BackgroundTasksManager,
-        storage_manager: &Arc<StorageManager>,
     ) -> Result<Self, PersistedDocumentResolverError> {
         let document_id_resolver = Arc::new(
             DocumentIdResolver::from_config(config, graphql_endpoint).map_err(|error| {
@@ -57,29 +52,6 @@ impl PersistedDocumentsRuntime {
                 PersistedDocumentsStorageConfig::Hive { config } => {
                     let resolver = Arc::new(HiveCDNResolver::from_storage_config(config)?);
                     Some(resolver as Arc<dyn PersistedDocumentResolver>)
-                }
-                PersistedDocumentsStorageConfig::Storage { config } => {
-                    match storage_manager.get_storage_runtime(&config.storage_id) {
-                        Some(storage) => {
-                            let resolver = Arc::new(
-                                StorageResolver::from_storage_config(config, storage).await?,
-                            );
-
-                            if let Some(poll_interval) = &config.poll_interval {
-                                background_tasks_mgr.register_task(StorageManifestReloadTask::new(
-                                    resolver.clone(),
-                                    *poll_interval,
-                                ));
-                            }
-
-                            Some(resolver as Arc<dyn PersistedDocumentResolver>)
-                        }
-                        None => {
-                            return Err(PersistedDocumentResolverError::StorageNotFound(
-                                config.storage_id.to_string(),
-                            ));
-                        }
-                    }
                 }
             }
         } else {

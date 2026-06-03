@@ -69,8 +69,8 @@ use crate::{
     },
     planner::error::QueryPlanError,
     planner::plan_nodes::{
-        custom_scalar_paths_for_type_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
-        EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
+        custom_scalar_paths_for_type_selection, hash_minified_query, BatchFetchNode,
+        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
 };
@@ -275,6 +275,9 @@ impl<'a> BatchFetchBuilder<'a> {
             ))
         })?;
 
+        let document_str = document.to_string();
+        let hash = hash_minified_query(&document_str);
+
         Ok(BatchFetchNode {
             id: first_candidate.fetch_node_id,
             service_name: first_candidate.service_name.clone(),
@@ -284,7 +287,12 @@ impl<'a> BatchFetchBuilder<'a> {
                 Some(self.variable_usages)
             },
             operation_kind: Some(OperationKind::Query),
-            operation: SubgraphFetchOperation::from_anonymous_operation(document),
+            operation_name: None,
+            operation: SubgraphFetchOperation {
+                document,
+                document_str,
+                hash,
+            },
             custom_scalar_paths: (!self.custom_scalar_paths.is_empty())
                 .then_some(self.custom_scalar_paths),
             entity_batch: EntityBatch {
@@ -885,8 +893,8 @@ mod tests {
             operation::SubgraphFetchOperation,
         },
         planner::plan_nodes::{
-            FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode,
-            QueryPlan, ValueSetter,
+            hash_minified_query, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode,
+            FlattenNodePath, PlanNode, QueryPlan, ValueSetter,
         },
         state::supergraph_state::{OperationKind, SupergraphState},
         utils::parsing::{parse_operation, parse_schema},
@@ -2270,13 +2278,14 @@ mod tests {
             }
         };
 
-        let operation = SubgraphFetchOperation::from_anonymous_operation(entities_document);
+        let operation = build_subgraph_fetch_operation(entities_document);
 
         let fetch_node = FetchNode {
             id,
             service_name: service_name.to_string(),
             variable_usages: non_representation_variable_names,
             operation_kind: Some(OperationKind::Query),
+            operation_name: None,
             operation,
             custom_scalar_paths: None,
             requires: Some(requires),
@@ -2331,15 +2340,15 @@ mod tests {
     }
 
     fn non_entity_fetch_node(id: i64, service_name: &str) -> FetchNode {
-        let operation = SubgraphFetchOperation::from_anonymous_operation(parse_document(
-            "query { products { upc } }",
-        ));
+        let operation =
+            build_subgraph_fetch_operation(parse_document("query { products { upc } }"));
 
         FetchNode {
             id,
             service_name: service_name.to_string(),
             variable_usages: None,
             operation_kind: Some(OperationKind::Query),
+            operation_name: None,
             operation,
             custom_scalar_paths: None,
             requires: None,
@@ -2369,6 +2378,16 @@ mod tests {
         Document {
             operation: operation.expect("operation definition should exist"),
             fragments,
+        }
+    }
+
+    fn build_subgraph_fetch_operation(document: Document) -> SubgraphFetchOperation {
+        let document_str = document.to_string();
+
+        SubgraphFetchOperation {
+            hash: hash_minified_query(&document_str),
+            document,
+            document_str,
         }
     }
 }

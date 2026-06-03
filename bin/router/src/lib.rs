@@ -7,7 +7,6 @@ pub mod pipeline;
 pub mod plugins;
 mod schema_state;
 mod shared_state;
-mod storage;
 mod supergraph;
 pub mod telemetry;
 mod utils;
@@ -44,7 +43,6 @@ use crate::{
         websocket_server::ws_index,
     },
     plugins::plugins_service::PluginService,
-    storage::StorageManager,
     telemetry::{HeaderExtractor, PrometheusAttached},
 };
 
@@ -191,7 +189,7 @@ async fn graphql_endpoint_dispatch(
             // If the request handler returns an error, convert it to an HTTP response.
             Err(err) => {
                 write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                handle_pipeline_error(err, request, &app_state, &response_mode)
+                handle_pipeline_error(err, &app_state, &response_mode)
             }
         };
 
@@ -217,7 +215,7 @@ async fn graphql_endpoint_dispatch(
                 Err(error) => {
                     warn!(%error, "coprocessor graphql.response stage failed");
                     write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                    handle_pipeline_error(error.into(), request, &app_state, &response_mode)
+                    handle_pipeline_error(error.into(), &app_state, &response_mode)
                 }
             };
         }
@@ -231,14 +229,6 @@ async fn graphql_endpoint_dispatch(
 }
 
 pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), RouterInitError> {
-    if cfg!(debug_assertions) && std::env::var("CARGO").is_err() {
-        eprintln!("WARNING: You are running Hive Router using a debug binary, which is not recommended for production use.");
-        eprintln!("  Please consider to use the official binary / Docker image instead:");
-        eprintln!("    https://the-guild.dev/graphql/hive/docs/router/getting-started");
-        eprintln!("  Or, if you are building with custom plugins, refer to the documentation for building from source:");
-        eprintln!("    https://the-guild.dev/graphql/hive/docs/router/customizations/plugin-system/usage#build-your-router");
-    }
-
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     let telemetry = telemetry::Telemetry::init_global(&router_config)?;
@@ -397,7 +387,6 @@ pub async fn configure_app_from_config(
 
     let active_subscriptions =
         ActiveSubscriptions::new(router_config.subscriptions.broadcast_capacity);
-    let storage_manager = Arc::new(StorageManager::new(&router_config.storages)?);
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
     let cache_state = Arc::new(CacheState::new());
@@ -413,7 +402,6 @@ pub async fn configure_app_from_config(
         plugins_arc.clone(),
         cache_state.clone(),
         active_subscriptions.clone(),
-        storage_manager.clone(),
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
@@ -437,7 +425,6 @@ pub async fn configure_app_from_config(
         &router_config_arc.persisted_documents,
         &router_config_arc.http.graphql_endpoint,
         bg_tasks_manager,
-        &storage_manager,
     )
     .await
     .map_err(|err| crate::shared_state::SharedStateError::PersistedDocuments(Box::new(err)))?;
@@ -463,7 +450,6 @@ pub async fn configure_app_from_config(
         plugins_arc,
         cache_state,
         active_subscriptions.clone(),
-        storage_manager,
     )?);
 
     Ok((shared_state, schema_state_arc))
