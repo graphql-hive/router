@@ -439,7 +439,9 @@ mod tests {
             .method(Method::GET)
             .header(ACCEPT, "text/html")
             .to_http_request();
-        let agreed = request.negotiate(true).expect("unable to parse accept header");
+        let agreed = request
+            .negotiate(true)
+            .expect("unable to parse accept header");
         assert_eq!(agreed, ResponseMode::Laboratory);
     }
 }
