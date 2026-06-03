@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use bytes::Bytes;
 use hive_router_internal::expressions::{vrl::core::Value, ToVrlValue};
 use http::{Method, Uri};
 use ntex::{http::HeaderMap as NtexHeaderMap, router::Path};
