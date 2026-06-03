@@ -66,6 +66,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.1.0 (2026-06-03)
+
+### Breaking Changes
+
+#### BREAKING: `override_subgraph_urls.subgraphs` and global `all`
+
+In `override_subgraph_urls` the per-subgraph overrides now live under a `subgraphs` field, alongside a new optional `all` override.
+
+```yaml
+## Before
+override_subgraph_urls:
+  accounts:
+    url: "https://accounts.example.com/graphql"
+  products:
+    url:
+      expression: |
+        if .request.headers."x-region" == "us-east" {
+          "https://products-us-east.example.com/graphql"
+        } else {
+          .default
+        }
+
+## After
+override_subgraph_urls:
+  subgraphs:
+    accounts:
+      url: "https://accounts.example.com/graphql"
+    products:
+      url:
+        expression: |
+          if .request.headers."x-region" == "us-east" {
+            "https://products-us-east.example.com/graphql"
+          } else {
+            .default
+          }
+  all:
+    url:
+      expression: |
+        if .subgraph.name == "reviews" {
+          "https://reviews.example.com/graphql"
+        } else {
+          .default
+        }
+```
+
+A single override under `override_subgraph_urls.all.url` is now applied to every subgraph that does not have its own per-subgraph override. This is useful when the override logic is the same for all subgraphs or depends on the current subgraph name.
+
+The expression has access to:
+
+- `.request`: the incoming HTTP request
+- `.default`: the original subgraph URL from the supergraph SDL
+- `.subgraph.name`: the name of the subgraph the URL is being resolved for
+
+Per-subgraph entries under `subgraphs.<name>` always take precedence over `all`.
+
+### Features
+
+#### Path parameters from `http.graphql_endpoint`
+
+Any path parameters captured from the configured pattern are now exposed:
+
+- in expressions as `.request.path_params`
+- in plugins through the existing `RouterHttpRequest.match_info`
+
+```yaml
+http:
+  graphql_endpoint: /{tenant}/graphql
+override_subgraph_urls:
+  all:
+    url:
+      expression: |
+        tenant = string!(.request.path_params.tenant)
+        replace(string!(.default), "/api/", "/api/" + tenant + "/")
+```
+
+A request to `/acme/graphql` resolves `tenant` to `"acme"` before the expression runs.
+
+### Fixes
+
+#### Forward operation name to subgraphs
+
+Added the `traffic_shaping.all.forward_operation_name` and `traffic_shaping.subgraphs.<name>.forward_operation_name` options. The option defaults to `false`.
+
+The operation name is injected (opt-in) into the query document and the `operationName` JSON field, formatted as `<client_operation_name>__<fetch_step_id>`, when sending requests to subgraphs.
+
+Global opt-in:
+
+```yaml
+traffic_shaping:
+  all:
+    forward_operation_name: true
+```
+
+Per-subgraph opt-in:
+
+```yaml
+traffic_shaping:
+  subgraphs:
+    products:
+      # Overrides global setting for this subgraph
+      forward_operation_name: true
+```
+
+#### Improve parsing of Router configuration
+
+Improve error messages when parsing Router configuration, in cases where `SingleOrMultiple<T>` is used and parsing of `T` fails. 
+
+The error is now visible to the user, instead of being swallowed and reported as a generic error.
+
 ## 0.0.37 (2026-05-27)
 
 ### Fixes
