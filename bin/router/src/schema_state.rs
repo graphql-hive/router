@@ -31,7 +31,7 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::{
     planner::{Planner, PlannerError},
-    utils::parsing::parse_schema,
+    utils::parsing::safe_parse_schema,
 };
 use moka::future::Cache;
 use std::sync::Arc;
@@ -135,7 +135,14 @@ impl SchemaState {
                 let process_capture = supergraph_metrics.capture_process();
                 debug!("Received new supergraph SDL, building new supergraph state...");
 
-                let mut new_ast = parse_schema(&new_sdl);
+                let mut new_ast = match safe_parse_schema(&new_sdl) {
+                    Ok(ast) => ast,
+                    Err(e) => {
+                        process_capture.finish_error();
+                        error!(error = %e, "Failed to parse supergraph during update");
+                        continue;
+                    }
+                };
 
                 let mut on_end_callbacks = vec![];
 

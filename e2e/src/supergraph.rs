@@ -2,9 +2,107 @@
 mod supergraph_e2e_tests {
     use std::time::Duration;
 
-    use sonic_rs::JsonValueTrait;
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
     use crate::testkit::{wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs};
+
+    // This test starts the Router with a valid schema.
+    // Then, it triggeres a parser error that could collapse the channel in charge of the updates.
+    // This happens silently as described in https://github.com/graphql-hive/router/pull/1089
+    // Then, it returns a valid ("new") schema.
+    // If the mpsc channel collapsed or paniced, then the Router will still be serving the old schema
+    // and the channel never restores.
+    #[ntex::test]
+    async fn should_not_panic_when_supergraph_update_fail_to_parse() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+        let mock1 = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("type Query { old: Old } type Old { v: String }")
+            .create();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                    supergraph:
+                      source: hive
+                      endpoint: http://{host}/supergraph
+                      key: dummy_key
+                      poll_interval: 100ms
+                    "#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        wait_until_mock_matched(&mock1)
+            .await
+            .expect("Expected mock1 to be matched");
+
+        mock1.remove();
+
+        let mock2 = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("type Query {")
+            .create();
+
+        wait_until_mock_matched(&mock2)
+            .await
+            .expect("Expected mock2 to be matched");
+
+        mock1.remove();
+
+        let mock3 = server
+            .mock("GET", "/supergraph")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("type Query { new: New } type New { v: String }")
+            .create();
+
+        wait_until_mock_matched(&mock3)
+            .await
+            .expect("Expected mock3 to be matched");
+
+        mock3.remove();
+
+        ntex::time::sleep(Duration::from_millis(500)).await;
+
+        let res = router
+            .send_graphql_request("{ __schema { types { name } } }", None, None)
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+        let body_json = res.json_body().await;
+
+        assert!(body_json["data"].is_object());
+        assert!(body_json["errors"].is_null());
+
+        assert!(body_json["data"]["__schema"]["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v.as_object().unwrap()["name"] == "Query")
+            .is_some());
+        assert!(body_json["data"]["__schema"]["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v.as_object().unwrap()["name"] == "Old")
+            .is_none());
+        assert!(body_json["data"]["__schema"]["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v.as_object().unwrap()["name"] == "New")
+            .is_some());
+    }
 
     #[ntex::test]
     async fn should_clear_internal_caches_when_supergraph_changes() {
