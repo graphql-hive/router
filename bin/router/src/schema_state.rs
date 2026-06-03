@@ -139,7 +139,7 @@ impl SchemaState {
                     Ok(ast) => ast,
                     Err(e) => {
                         process_capture.finish_error();
-                        error!("Failed to build new supergraph data: {}", e);
+                        error!(error = %e, "Failed to parse supergraph during update");
                         continue;
                     }
                 };
