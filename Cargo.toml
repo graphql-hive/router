@@ -45,7 +45,7 @@ humantime = "2.3.0"
 http = "1.4.1"
 http-serde = "2.1.1"
 http-body-util = "0.1.3"
-hyper = { version = "1.6.0" }
+hyper = { version = "1.10.1" }
 thiserror = "2.0.14"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 tokio = { version = "1.52.3", features = ["full"] }
