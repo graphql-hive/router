@@ -2,6 +2,7 @@
 hive-router-config: major
 hive-router-plan-executor: minor
 hive-router: minor
+hive-router-internal: patch
 ---
 
 # BREAKING: `override_subgraph_urls.subgraphs` and global `all`

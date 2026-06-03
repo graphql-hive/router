@@ -2,6 +2,7 @@
 hive-router-plan-executor: minor
 hive-router: minor
 hive-router-config: minor
+hive-router-internal: patch
 ---
 
 # Path parameters from `http.graphql_endpoint`
