@@ -34,6 +34,12 @@ mod tests {
             "Expected error code to be BadGateway"
         );
 
+        assert_eq!(
+            res.header("x-mapped-errors-count").unwrap(),
+            "1",
+            "Expected x-mapped-errors-count header to be 1"
+        );
+
         mock.assert_async().await;
     }
 
@@ -55,6 +61,12 @@ mod tests {
         assert!(
             res.string_body().await.contains(r#""code":"InvalidInput""#),
             "Expected error code to be InvalidInput"
+        );
+
+        assert_eq!(
+            res.header("x-mapped-errors-count").unwrap(),
+            "1",
+            "Expected x-mapped-errors-count header to be 1"
         );
     }
 }

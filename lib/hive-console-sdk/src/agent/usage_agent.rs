@@ -316,37 +316,12 @@ impl UsageAgentExt for UsageAgent {
 
 impl<'req, TBody> From<&'req http::Request<TBody>> for RequestDetails {
     fn from(req: &'req http::Request<TBody>) -> Self {
-        let headers = req
-            .headers()
-            .iter()
-            .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|val_str| (name.to_string(), val_str.to_string()))
-            })
-            .collect();
-
-        RequestDetails {
-            method: req.method().clone(),
-            url: req.uri().clone(),
-            headers,
+        let mut headers = Vec::with_capacity(req.headers().len());
+        for (name, value) in req.headers().iter() {
+            if let Ok(val_str) = value.to_str() {
+                headers.push((name.to_string(), val_str.to_string()));
+            }
         }
-    }
-}
-
-impl<'req> From<&'req ntex::web::HttpRequest> for RequestDetails {
-    fn from(req: &'req ntex::web::HttpRequest) -> Self {
-        let headers = req
-            .headers()
-            .iter()
-            .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|val_str| (name.to_string(), val_str.to_string()))
-            })
-            .collect();
 
         RequestDetails {
             method: req.method().clone(),

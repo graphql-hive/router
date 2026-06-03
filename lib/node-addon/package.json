@@ -1,6 +1,6 @@
 {
   "name": "@graphql-hive/router-query-planner",
-  "version": "0.0.27",
+  "version": "0.0.28",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -54,7 +54,7 @@
     "test:updatesnaps": "node --test-update-snapshots tests/index.ts"
   },
   "devDependencies": {
-    "@types/node": "25.5.0",
+    "@types/node": "25.9.1",
     "@napi-rs/cli": "3.5.1"
   }
 }

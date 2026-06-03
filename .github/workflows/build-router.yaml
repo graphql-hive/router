@@ -49,7 +49,7 @@ jobs:
       - name: generate documentation
         working-directory: docs/generator
         run: npm run generate
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         name: upload config artifact
         with:
           name: router-config.schema.json
@@ -136,7 +136,7 @@ jobs:
         run: cargo build --release --target ${{ matrix.rust_target }}
         if: ${{ !matrix.zigbuild }}
 
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         name: upload router artifact
         with:
           name: hive_router_${{ matrix.name }}
@@ -155,7 +155,7 @@ jobs:
           CROSS_COMPILE: ${{ matrix.zigbuild }}
           TARGET: ${{ matrix.rust_target }}
         run: npm run build
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         name: upload node addon artifact
         with:
           name: node_addon_${{ matrix.name }}
@@ -227,10 +227,10 @@ jobs:
       - name: setup qemu
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
       - name: setup buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: setup docker tags
         id: meta
-        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
         with:
           images: ${{ env.DOCKER_IMAGE_NAME }}
           labels: |
@@ -256,14 +256,14 @@ jobs:
           mv ./artifacts/${{ env.BINARY_NAME }}_linux_amd64/${{ env.BINARY_NAME }} ./target/linux/amd64/${{ env.BINARY_NAME }}
           ls -ltra ./target/linux/arm64/
           ls -ltra ./target/linux/amd64/
-      - uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: build and push
         id: docker
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           file: ./docker/router.Dockerfile
           context: .
@@ -272,7 +272,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
       - name: docker pr comment
-        uses: marocchino/sticky-pull-request-comment@70d2764d1a7d5d9560b100cbea0077fc8f633987 # v3
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
         with:
           header: ${{ github.workflow }}

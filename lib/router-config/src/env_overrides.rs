@@ -4,7 +4,7 @@ use tracing::debug;
 
 use crate::log::{LogFormat, LogLevel};
 
-#[derive(Envconfig)]
+#[derive(Default, Envconfig)]
 pub struct EnvVarOverrides {
     // Logger overrides
     #[envconfig(from = "LOG_LEVEL")]
@@ -51,6 +51,10 @@ pub struct EnvVarOverrides {
     pub hive_tracing_enabled: Option<bool>,
     #[envconfig(from = "HIVE_USAGE_REPORTING_ENABLED")]
     pub hive_usage_reporting_enabled: Option<bool>,
+
+    // Tracing overrides
+    #[envconfig(from = "TELEMETRY_TRACING_SAMPLING_RATE")]
+    pub tracing_sampling_rate: Option<f64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -149,6 +153,15 @@ impl EnvVarOverrides {
             config = config.set_override("telemetry.hive.target", hive_target)?;
         }
 
+        if let Some(tracing_sampling_rate) = self.tracing_sampling_rate.take() {
+            debug!(
+                "[config-override] 'telemetry.tracing.collect.sampling' = {}",
+                tracing_sampling_rate
+            );
+            config =
+                config.set_override("telemetry.tracing.collect.sampling", tracing_sampling_rate)?;
+        }
+
         // Laboratory overrides
         if let Some(laboratory_enabled) = self.laboratory_enabled.take() {
             config = config.set_override("laboratory.enabled", laboratory_enabled)?;
@@ -163,5 +176,58 @@ impl EnvVarOverrides {
         }
 
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use config::{Config, File, FileFormat};
+
+    use crate::HiveRouterConfig;
+
+    use super::*;
+
+    fn config_from_overrides(overrides: EnvVarOverrides) -> HiveRouterConfig {
+        overrides
+            .apply_overrides(Config::builder())
+            .unwrap()
+            .build()
+            .unwrap()
+            .try_deserialize::<HiveRouterConfig>()
+            .unwrap()
+    }
+
+    #[test]
+    fn tracing_sampling_rate_override_sets_tracing_collect_sampling() {
+        let config = config_from_overrides(EnvVarOverrides {
+            tracing_sampling_rate: Some(0.25),
+            ..Default::default()
+        });
+
+        assert_eq!(config.telemetry.tracing.collect.sampling, 0.25);
+    }
+
+    #[test]
+    fn tracing_sampling_rate_override_wins_over_config_file_value() {
+        let config = EnvVarOverrides {
+            tracing_sampling_rate: Some(0.1),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            r#"
+telemetry:
+  tracing:
+    collect:
+      sampling: 0.75
+"#,
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        assert_eq!(config.telemetry.tracing.collect.sampling, 0.1);
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-plan-executor"
-version = "6.13.3"
+version = "6.14.0"
 edition = "2021"
 description = "GraphQL query planner executor for Federation specification"
 license = "MIT"
@@ -15,10 +15,10 @@ authors = ["The Guild"]
 doctest = false
 
 [dependencies]
-hive-router-query-planner = { path = "../query-planner", version = "2.8.2" }
-hive-router-config = { path = "../router-config", version = "0.0.34" }
-hive-router-internal = { path = "../internal", version = "0.0.21" }
-graphql-tools =  { path = "../graphql-tools", version = "0.5.4" }
+hive-router-query-planner = { path = "../query-planner", version = "2.8.3" }
+hive-router-config = { path = "../router-config", version = "0.0.37" }
+hive-router-internal = { path = "../internal", version = "0.0.25" }
+graphql-tools =  { path = "../graphql-tools", version = "0.5.5" }
 hive-console-sdk = { path = "../hive-console-sdk", version = "0.3.8" }
 
 async-trait = { workspace = true }
@@ -58,12 +58,12 @@ hyper-util = { version = "0.1.16", features = [
 itoa = "1.0.15"
 ryu = "1.0.20"
 indexmap = "2.10.0"
-bumpalo = "3.19.0"
+bumpalo = "3.20.3"
 sonic-simd = "0.1.2"
 async-stream = "0.3.6"
 futures-util = "0.3.31"
 ulid = "1.2.1"
-uuid = { version = "1.23.0", features = ["v4", "fast-rng"] }
+uuid = { version = "1.23.1", features = ["v4", "fast-rng"] }
 
 [dev-dependencies]
 subgraphs = { path = "../../bench/subgraphs" }

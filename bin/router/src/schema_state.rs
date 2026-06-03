@@ -1,5 +1,6 @@
 use crate::pipeline::active_subscriptions::ActiveSubscriptions;
 use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
+use crate::storage::StorageManager;
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -11,6 +12,7 @@ use hive_router_internal::{
     authorization::metadata::AuthorizationMetadata,
     background_tasks::{BackgroundTask, BackgroundTasksManager},
 };
+use hive_router_plan_executor::execution::operation_name::OperationNameForwardConfig;
 use hive_router_plan_executor::executors::http_callback::{
     CallbackMessage, CallbackSubscriptionsMap,
 };
@@ -90,12 +92,14 @@ impl SchemaState {
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         cache_state: Arc<CacheState>,
         active_subscriptions: ActiveSubscriptions,
+        storage_manager: Arc<StorageManager>,
     ) -> Result<Self, SupergraphManagerError> {
         let (tx, mut rx) = mpsc::channel::<String>(1);
         let background_loader = SupergraphBackgroundLoader::new(
             &router_config.supergraph,
             tx,
             telemetry_context.metrics.clone(),
+            storage_manager.clone(),
         )?;
         bg_tasks_manager.register_task(SupergraphBackgroundLoaderTask(Arc::new(background_loader)));
 
@@ -255,6 +259,10 @@ impl SchemaState {
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
         let metadata = Arc::new(planner.consumer_schema.schema_metadata());
         let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata)?;
+        let operation_name_forward_config = Arc::new(OperationNameForwardConfig::new(
+            &router_config.traffic_shaping,
+            planner.supergraph.known_subgraphs.values(),
+        ));
         let subgraph_executor_map = Arc::new(SubgraphExecutorMap::from_http_endpoint_map(
             &planner.supergraph.subgraph_endpoint_map,
             router_config,
@@ -272,6 +280,7 @@ impl SchemaState {
             planner,
             authorization,
             subgraph_executor_map,
+            operation_name_forward_config,
         })
     }
 }
@@ -287,8 +296,9 @@ impl SupergraphBackgroundLoader {
         config: &SupergraphSource,
         sender: mpsc::Sender<String>,
         metrics: Arc<Metrics>,
+        storage_manager: Arc<StorageManager>,
     ) -> Result<Self, LoadSupergraphError> {
-        let loader = resolve_from_config(config)?;
+        let loader = resolve_from_config(config, storage_manager)?;
 
         Ok(Self {
             loader,

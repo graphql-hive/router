@@ -2,14 +2,18 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::pipeline::error::PipelineError;
+use crate::pipeline::persisted_documents::resolve::shared_file_manifest::FileManifestError;
 use crate::pipeline::persisted_documents::types::{ClientIdentity, PersistedDocumentId};
-use file::FileResolverError;
+use crate::storage::error::StorageError;
+use fs::FileResolverError;
 use hive::HiveResolverError;
 
-pub mod file;
+pub mod fs;
 pub mod hive;
+pub mod shared_file_manifest;
+pub mod storage;
 
-pub use file::{FileManifestReloadTask, FileManifestResolver};
+pub use fs::{FileManifestReloadTask, FileManifestResolver};
 pub use hive::HiveCDNResolver;
 
 #[derive(Debug, Clone, Copy)]
@@ -26,10 +30,16 @@ pub enum PersistedDocumentResolverError {
     Configuration(String),
     #[error("Persisted documents storage is not configured")]
     StorageNotConfigured,
+    #[error("Persisted documents storage with id '{0}' does not exists")]
+    StorageNotFound(String),
     #[error("Hive Storage: {0}")]
     Hive(#[from] HiveResolverError),
     #[error("File Storage: {0}")]
     File(#[from] FileResolverError),
+    #[error("Manifest error: {0}")]
+    FileManifest(#[from] FileManifestError),
+    #[error("Storage: {0}")]
+    Storage(#[from] StorageError),
 }
 
 impl From<PersistedDocumentResolverError> for PipelineError {

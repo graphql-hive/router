@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-config"
-version = "0.0.34"
+version = "0.0.37"
 edition = "2021"
 publish = true
 license = "MIT"
@@ -34,5 +34,5 @@ url = { version = "2.5.8", features = ["serde"] }
 humantime-serde = "1.1.1"
 humantime = { workspace = true }
 human-size = { version = "0.4.3" ,features = ["serde"] }
-config = { version = "0.15.14", features = ["yaml", "json", "json5"] }
+config = { version = "0.15.23", features = ["yaml", "json", "json5"] }
 envconfig = "0.11.0"

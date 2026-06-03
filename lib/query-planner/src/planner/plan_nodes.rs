@@ -111,8 +111,6 @@ pub struct FetchNode {
     pub variable_usages: Option<BTreeSet<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub operation_name: Option<String>,
     pub operation: SubgraphFetchOperation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
@@ -134,8 +132,6 @@ pub struct BatchFetchNode {
     pub variable_usages: Option<BTreeSet<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub operation_name: Option<String>,
     pub operation: SubgraphFetchOperation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
@@ -688,14 +684,7 @@ fn create_output_operation(
 
     let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
 
-    let document_str = document.to_string();
-    let hash = hash_minified_query(&document_str);
-
-    SubgraphFetchOperation {
-        document,
-        document_str,
-        hash,
-    }
+    SubgraphFetchOperation::from_anonymous_operation(document)
 }
 
 impl From<&FetchStepData<MultiTypeFetchStep>> for OperationKind {
@@ -720,7 +709,6 @@ impl FetchNode {
                 service_name: step.service_name.0.clone(),
                 variable_usages: step.variable_usages.clone(),
                 operation_kind: Some(OperationKind::Query),
-                operation_name: None,
                 operation: create_output_operation(step, supergraph),
                 custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                     &step.output,
@@ -740,20 +728,13 @@ impl FetchNode {
                 };
                 let document =
                     minify_operation(operation_def, supergraph).expect("Failed to minify");
-                let document_str = document.to_string();
-                let hash = hash_minified_query(&document_str);
 
                 FetchNode {
                     id: step.id,
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.into()),
-                    operation_name: None,
-                    operation: SubgraphFetchOperation {
-                        document,
-                        document_str,
-                        hash,
-                    },
+                    operation: SubgraphFetchOperation::from_anonymous_operation(document),
                     custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                         &step.output,
                         supergraph,
