@@ -139,6 +139,100 @@ mod metrics_tests {
         assert_histogram_sample_count_at_least(&metrics, names::COST_ACTUAL, &attrs, 1);
         assert_histogram_sample_count_at_least(&metrics, names::COST_DELTA, &attrs, 1);
     }
+
+    // Ensures that the `graphql.operation.name` attribute can be
+    // opted out of the cost metrics via `telemetry.metrics.instrumentation.instruments`,
+    #[ntex::test]
+    async fn operation_name_attribute_can_be_opted_out_of_cost_metrics() {
+        let supergraph_path =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+        let otlp_collector = crate::testkit::otel::OtlpCollector::start()
+            .await
+            .expect("Failed to start OTLP collector");
+        let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: "{}"
+
+                demand_control:
+                    enabled: true
+                    mode: enforce
+                    strategy:
+                      static_estimated:
+                        max: 1000
+                        actual_cost_mode: by_response_shape
+                telemetry:
+                    metrics:
+                        exporters:
+                            - kind: otlp
+                              endpoint: "{}"
+                              protocol: http
+                              interval: 30ms
+                              max_export_timeout: 50ms
+                        instrumentation:
+                            instruments:
+                                cost.estimated:
+                                    attributes:
+                                        graphql.operation.name: false
+                                cost.actual:
+                                    attributes:
+                                        graphql.operation.name: false
+                                cost.delta:
+                                    attributes:
+                                        graphql.operation.name: false
+                "#,
+                supergraph_path.to_str().unwrap(),
+                otlp_endpoint
+            ))
+            .with_subgraphs(&subgraphs)
+            .build()
+            .start()
+            .await;
+
+        // Named operation: `graphql.operation.name` would be recorded by default.
+        router
+            .send_graphql_request(
+                r#"
+                        query NamedCostOp {
+                            me {
+                                reviews {
+                                    body
+                                }
+                            }
+                        }"#,
+                None,
+                None,
+            )
+            .await;
+
+        wait_for_metrics_export().await;
+
+        let metrics = otlp_collector.metrics_view().await;
+
+        for metric in [names::COST_ESTIMATED, names::COST_ACTUAL, names::COST_DELTA] {
+            let attrs = metrics.latest_attribute_names(metric);
+            // The opted-out high-cardinality attribute is gone...
+            assert!(
+                !attrs.contains(labels::GRAPHQL_OPERATION_NAME),
+                "expected `{}` to be dropped from `{metric}`, got attributes: {attrs:?}",
+                labels::GRAPHQL_OPERATION_NAME
+            );
+            // ...while the opt-out stays surgical: `cost.result` is preserved
+            // (this also asserts the metric was actually emitted).
+            assert!(
+                attrs.contains(labels::COST_RESULT),
+                "expected `{}` to remain on `{metric}`, got attributes: {attrs:?}",
+                labels::COST_RESULT
+            );
+        }
+    }
     // Ensures cost.actual and cost.delta are emitted with
     // cost.result=COST_ACTUAL_TOO_EXPENSIVE when execution exceeds max_cost.
     #[ntex::test]

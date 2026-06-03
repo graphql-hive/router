@@ -33,7 +33,10 @@ use crate::{
     http::normalize_route_path,
     telemetry::{
         error::TelemetryError,
-        metrics::catalog::{all_metric_names, labels_for},
+        metrics::catalog::{
+            all_metric_names, labels_for,
+            units::{BYTES, DEMAND_CONTROL_COST_UNIT, SECONDS},
+        },
         resolve_string_map,
         utils::{build_metadata, build_tls_config, resolve_value_or_expression},
     },
@@ -274,19 +277,19 @@ fn histogram_aggregation_for_unit(
         }),
         MetricsHistogramConfig::Explicit { seconds, bytes } => {
             let (buckets, record_min_max) = match instrument_unit {
-                "s" => (
+                SECONDS => (
                     seconds
                         .resolve_seconds_buckets()
                         .map_err(TelemetryError::MetricsExporterSetup)?,
                     seconds.record_min_max,
                 ),
-                "By" => (
+                BYTES => (
                     bytes
                         .resolve_bytes_buckets()
                         .map_err(TelemetryError::MetricsExporterSetup)?,
                     bytes.record_min_max,
                 ),
-                "{cost}" => (DEMAND_CONTROL_COST_BUCKETS.to_vec(), false),
+                DEMAND_CONTROL_COST_UNIT => (DEMAND_CONTROL_COST_BUCKETS.to_vec(), false),
                 _ => {
                     return Err(TelemetryError::MetricsExporterSetup(format!(
                         "Unsupported histogram unit '{instrument_unit}' for instrument '{instrument_name}' in explicit histogram aggregation. Supported units: s, By, {{cost}}"

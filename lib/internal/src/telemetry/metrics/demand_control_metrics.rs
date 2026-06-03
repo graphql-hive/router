@@ -7,7 +7,7 @@ use strum::IntoStaticStr;
 
 #[cfg(debug_assertions)]
 use crate::telemetry::metrics::catalog::debug_assert_attrs;
-use crate::telemetry::metrics::catalog::{labels, names};
+use crate::telemetry::metrics::catalog::{labels, names, units::DEMAND_CONTROL_COST_UNIT};
 
 struct DemandControlInstruments {
     estimated_cost: Option<Histogram<u64>>,
@@ -30,7 +30,7 @@ impl DemandControlMetrics {
         let estimated_cost = meter.map(|meter| {
             meter
                 .u64_histogram(names::COST_ESTIMATED)
-                .with_unit("{cost}")
+                .with_unit(DEMAND_CONTROL_COST_UNIT)
                 .with_description("The estimated cost of an operation before execution")
                 .build()
         });
@@ -38,7 +38,7 @@ impl DemandControlMetrics {
         let actual_cost = meter.map(|meter| {
             meter
                 .u64_histogram(names::COST_ACTUAL)
-                .with_unit("{cost}")
+                .with_unit(DEMAND_CONTROL_COST_UNIT)
                 .with_description("The actual cost of an operation, measured after execution")
                 .build()
         });
@@ -46,7 +46,7 @@ impl DemandControlMetrics {
         let delta = meter.map(|meter| {
             meter
                 .f64_histogram(names::COST_DELTA)
-                .with_unit("{cost}")
+                .with_unit(DEMAND_CONTROL_COST_UNIT)
                 .with_description("The difference between actual and estimated operation cost")
                 .build()
         });

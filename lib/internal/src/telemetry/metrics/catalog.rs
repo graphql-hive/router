@@ -120,6 +120,12 @@ pub mod labels {
     pub const CIRCUIT_BREAKER_TO_STATE: &str = "circuit_breaker.to_state";
 }
 
+pub mod units {
+    pub const DEMAND_CONTROL_COST_UNIT: &str = "{cost}";
+    pub const BYTES: &str = "By";
+    pub const SECONDS: &str = "s";
+}
+
 pub mod names {
     pub const GRAPHQL_ERRORS_TOTAL: &str = "hive.router.graphql.errors_total";
     pub const COST_ESTIMATED: &str = "cost.estimated";
