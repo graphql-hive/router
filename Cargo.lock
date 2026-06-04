@@ -1772,7 +1772,7 @@ dependencies = [
  "opentelemetry-proto",
  "prost 0.14.3",
  "rcgen",
- "reqwest",
+ "reqwest 0.12.28",
  "rustls",
  "s3s",
  "s3s-fs",
@@ -2290,7 +2290,7 @@ dependencies = [
  "hive-router-plan-executor",
  "hive-router-query-planner",
  "rand 0.10.1",
- "reqwest",
+ "reqwest 0.12.28",
  "serde_json",
  "tokio",
 ]
@@ -2489,9 +2489,9 @@ dependencies = [
  "recloser",
  "regex-automata",
  "regress",
- "reqwest",
- "reqwest-middleware",
- "reqwest-retry 0.8.0",
+ "reqwest 0.12.28",
+ "reqwest-middleware 0.5.2",
+ "reqwest-retry 0.9.1",
  "retry-policies 0.5.2",
  "serde",
  "serde_json",
@@ -2555,9 +2555,9 @@ dependencies = [
  "prometheus",
  "rand 0.10.1",
  "regex-automata",
- "reqwest",
- "reqwest-middleware",
- "reqwest-retry 0.8.0",
+ "reqwest 0.12.28",
+ "reqwest-middleware 0.5.2",
+ "reqwest-retry 0.9.1",
  "retry-policies 0.5.2",
  "rustls",
  "serde",
@@ -4298,7 +4298,7 @@ dependencies = [
  "percent-encoding",
  "quick-xml 0.39.4",
  "rand 0.10.1",
- "reqwest",
+ "reqwest 0.12.28",
  "ring",
  "serde",
  "serde_json",
@@ -4435,7 +4435,7 @@ dependencies = [
  "bytes",
  "http",
  "opentelemetry",
- "reqwest",
+ "reqwest 0.12.28",
 ]
 
 [[package]]
@@ -4459,7 +4459,7 @@ dependencies = [
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost 0.14.3",
- "reqwest",
+ "reqwest 0.12.28",
  "thiserror 2.0.18",
  "tokio",
  "tonic",
@@ -4518,7 +4518,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-http",
  "opentelemetry_sdk",
- "reqwest",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -5575,6 +5575,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "reqwest"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
+dependencies = [
+ "base64",
+ "bytes",
+ "futures-core",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "js-sys",
+ "log",
+ "percent-encoding",
+ "pin-project-lite",
+ "serde",
+ "serde_json",
+ "sync_wrapper",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tower-service",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "reqwest-middleware"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5583,9 +5614,24 @@ dependencies = [
  "anyhow",
  "async-trait",
  "http",
- "reqwest",
+ "reqwest 0.12.28",
  "serde",
  "thiserror 1.0.69",
+ "tower-service",
+]
+
+[[package]]
+name = "reqwest-middleware"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07bc3f1384cffa4f274dad2d4ddd73aed32fed8f786d96c6be8aa4e5fd3c3b58"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "http",
+ "reqwest 0.13.4",
+ "serde",
+ "thiserror 2.0.18",
  "tower-service",
 ]
 
@@ -5602,8 +5648,8 @@ dependencies = [
  "http",
  "hyper",
  "parking_lot 0.11.2",
- "reqwest",
- "reqwest-middleware",
+ "reqwest 0.12.28",
+ "reqwest-middleware 0.4.2",
  "retry-policies 0.4.0",
  "thiserror 1.0.69",
  "tokio",
@@ -5612,9 +5658,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest-retry"
-version = "0.8.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "105747e3a037fe5bf17458d794de91149e575b6183fc72c85623a44abb9683f5"
+checksum = "fe2412db2af7d2268e7a5406be0431f37d9eb67ff390f35b395716f5f06c2eaa"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5622,8 +5668,8 @@ dependencies = [
  "getrandom 0.2.17",
  "http",
  "hyper",
- "reqwest",
- "reqwest-middleware",
+ "reqwest 0.13.4",
+ "reqwest-middleware 0.5.2",
  "retry-policies 0.5.2",
  "thiserror 2.0.18",
  "tokio",
@@ -6462,7 +6508,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6631,7 +6677,7 @@ dependencies = [
  "http",
  "lazy_static",
  "rand 0.10.1",
- "reqwest",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tokio",
@@ -7546,8 +7592,8 @@ dependencies = [
  "quoted_printable",
  "rand 0.8.6",
  "regex",
- "reqwest",
- "reqwest-middleware",
+ "reqwest 0.12.28",
+ "reqwest-middleware 0.4.2",
  "reqwest-retry 0.7.0",
  "roxmltree",
  "rust_decimal",
