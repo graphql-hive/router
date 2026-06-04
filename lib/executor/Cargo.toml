@@ -27,7 +27,7 @@ http = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client"] }
 hyperlocal = "0.9.1"
-brotli = "8.0.2"
+brotli = "8.0.3"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] } # Use zlib-rs for performance
 serde = { workspace = true }
 sonic-rs = { workspace = true }
