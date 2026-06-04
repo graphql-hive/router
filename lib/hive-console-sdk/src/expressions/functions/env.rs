@@ -16,6 +16,14 @@ impl Function for Env {
         "env(name, default)"
     }
 
+    fn category(&self) -> &'static str {
+        "os"
+    }
+
+    fn return_kind(&self) -> u16 {
+        kind::BYTES | kind::NULL
+    }
+
     fn parameters(&self) -> &'static [Parameter] {
         &[
             Parameter {
@@ -23,18 +31,27 @@ impl Function for Env {
                 keyword: "name",
                 kind: kind::BYTES, // VRL strings are bytes under the hood
                 required: true,
+                default: None,
+                description: "The name of the environment variable",
+                enum_variants: None,
             },
             Parameter {
                 // A fallback value if the environment variable is not set.
                 keyword: "default",
                 kind: kind::BYTES,
                 required: false,
+                default: None,
+                description: "A fallback value if the environment variable is not set",
+                enum_variants: None,
             },
             Parameter {
                 // If `true`, treats an empty environment variable as unset.
                 keyword: "treat_empty_as_unset",
                 kind: kind::BOOLEAN,
                 required: false,
+                default: None,
+                description: "If `true`, treats an empty environment variable as unset.",
+                enum_variants: None,
             },
         ]
     }
@@ -47,6 +64,9 @@ impl Function for Env {
                 result: Ok("http://collector:4317"),
                 file: "get_env.vrl",
                 line: 1,
+                deterministic: true,
+                input: None,
+                skip: false,
             },
             Example {
                 title: "Default when unset",
@@ -54,6 +74,9 @@ impl Function for Env {
                 file: "default_env.vrl",
                 line: 1,
                 result: Ok("fallback"),
+                deterministic: true,
+                input: None,
+                skip: false,
             },
             Example {
                 title: "Default when unset or empty",
@@ -61,6 +84,9 @@ impl Function for Env {
                 file: "default_empty_env.vrl",
                 line: 1,
                 result: Ok("fallback"),
+                deterministic: true,
+                input: None,
+                skip: false,
             },
         ]
     }
