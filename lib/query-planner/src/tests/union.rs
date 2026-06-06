@@ -503,3 +503,93 @@ fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn union_list_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        {
+          orders {
+            ... on OrdersPageConnections {
+              items {
+                id
+                items {
+                  ... on PaperBook {
+                    product {
+                      id
+                      name
+                      slug
+                    }
+                  }
+                  ... on DigitalBook {
+                    product {
+                      id
+                      name
+                      slug
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan("fixture/tests/union-list.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            orders {
+              __typename
+              ... on OrdersPageConnections {
+                items {
+                  id
+                  items {
+                    __typename
+                    ... on PaperBook {
+                      product {
+                        ...a
+                      }
+                    }
+                    ... on DigitalBook {
+                      product {
+                        ...a
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          fragment a on Product {
+            __typename
+            id
+          }
+        },
+        Flatten(path: "orders|[OrdersPageConnections].items.@.items.@.product") {
+          Fetch(service: "b") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                name
+                slug
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
