@@ -452,7 +452,7 @@ async fn execute_query_plan_with_data<'exec>(
         headers_plan: &opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
-        demand_control: opts.demand_control,
+        demand_control: opts.demand_control.clone(),
         plugin_req_state: opts.plugin_req_state.as_ref(),
         operation_name_factory: &opts.operation_name_factory,
     };
@@ -488,7 +488,7 @@ async fn execute_query_plan_with_data<'exec>(
             opts.operation_for_plan.name.as_deref(),
             &data,
             &opts.variable_values.variables_map,
-            exec_ctx.actual_cost_by_subgraph,
+            &exec_ctx.actual_cost_by_subgraph,
         );
         let result: &'static str = (&actual_cost_result.result_code).into();
         opts.span.record_demand_control(
@@ -508,14 +508,16 @@ async fn execute_query_plan_with_data<'exec>(
                 "actual cost exceeds max cost (not enforced)"
             );
         }
+        /*
+        * estimated: demand_control.evaluation.estimated_cost,
+        actual: Some(actual_cost_result.actual),
+        max: demand_control.max_cost,
+        */
 
-        if demand_control.include_extension_metadata {
-            opts.extensions.cost = Some(DemandControlCostMetadataExtensions {
-                estimated: demand_control.evaluation.estimated_cost,
-                actual: Some(actual_cost_result.actual),
-                max: demand_control.max_cost,
-            });
-        }
+        demand_control.apply_expose_headers(
+            &mut exec_ctx.response_headers_aggregator,
+            actual_cost_result.actual,
+        );
     }
 
     // TODO: coprocessor.on_execution_response

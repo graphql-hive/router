@@ -6,7 +6,9 @@ use std::{
 };
 
 use ahash::{HashMap as AHashMap, HashSet as AHashSet};
-use hive_router_config::demand_control::{DemandControlActualCostMode, DemandControlMode};
+use hive_router_config::demand_control::{
+    DemandControlActualCostMode, DemandControlExposeHeadersConfig, DemandControlMode,
+};
 use hive_router_internal::telemetry::metrics::demand_control_metrics::{
     DemandControlMetricsRecorder, DemandControlResultCode,
 };
@@ -19,9 +21,13 @@ use hive_router_query_planner::{
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphState, TypeNode},
 };
+use http::HeaderValue;
 use sonic_rs::JsonValueTrait;
 
-use crate::response::value::Value;
+use crate::{
+    headers::{plan::HeaderAggregationStrategy, response::ResponseHeaderAggregator},
+    response::value::Value,
+};
 
 #[derive(Debug)]
 pub struct DemandControlEvaluation {
@@ -44,11 +50,44 @@ pub struct DemandControlExecutionContext {
     pub subgraphs_over_limit: BTreeMap<String, u64>,
     pub result_code: DemandControlResultCode,
     pub metrics_recorder: Option<DemandControlMetricsRecorder>,
-    pub include_extension_metadata: bool,
+    pub expose_headers_flags: Arc<DemandControlExposeHeadersConfig>,
     pub formula_cache_hit: bool,
     pub estimated_formula_by_subgraph: Arc<BTreeMap<String, String>>,
     pub actual_cost_mode: DemandControlActualCostMode,
     pub actual_cost_plan: Arc<CompiledActualCostPlan>,
+}
+
+impl DemandControlExecutionContext {
+    #[inline]
+    pub fn apply_expose_headers(
+        &self,
+        response_header_aggregator: &mut ResponseHeaderAggregator,
+        actual_cost: u64,
+    ) {
+        if let Some(header_name) = &self.expose_headers_flags.actual {
+            response_header_aggregator.write(
+                header_name.get_header_ref(),
+                &HeaderValue::from(actual_cost),
+                HeaderAggregationStrategy::Last,
+            );
+        }
+
+        if let Some(header_name) = &self.expose_headers_flags.estimated {
+            response_header_aggregator.write(
+                header_name.get_header_ref(),
+                &HeaderValue::from(self.evaluation.estimated_cost),
+                HeaderAggregationStrategy::Last,
+            );
+        }
+
+        if let Some(header_name) = &self.expose_headers_flags.max {
+            response_header_aggregator.write(
+                header_name.get_header_ref(),
+                &HeaderValue::from(self.max_cost),
+                HeaderAggregationStrategy::Last,
+            );
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -495,24 +534,16 @@ pub fn demand_control_actual_cost(
     operation_name: Option<&str>,
     data: &Value<'_>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    actual_cost_by_subgraph_from_responses: Option<ahash::HashMap<&str, u64>>,
+    actual_cost_by_subgraph_from_responses: &Option<ahash::HashMap<&str, u64>>,
 ) -> DemandControlActualCostResult {
-    let mut actual_by_subgraph: Option<BTreeMap<String, u64>> = None;
     let actual = match demand_control.actual_cost_plan.as_ref() {
         CompiledActualCostPlan::BySubgraph(_) => {
             if let Some(actual_cost_by_subgraph_from_responses) =
                 actual_cost_by_subgraph_from_responses
             {
-                let total = actual_cost_by_subgraph_from_responses
+                actual_cost_by_subgraph_from_responses
                     .values()
-                    .fold(0u64, |acc, cost| acc.saturating_add(*cost));
-                actual_by_subgraph = Some(
-                    actual_cost_by_subgraph_from_responses
-                        .into_iter()
-                        .map(|(subgraph, cost)| (subgraph.to_string(), cost))
-                        .collect::<BTreeMap<_, _>>(),
-                );
-                total
+                    .fold(0u64, |acc, cost| acc.saturating_add(*cost))
             } else {
                 0
             }
@@ -549,7 +580,6 @@ pub fn demand_control_actual_cost(
 
     DemandControlActualCostResult {
         actual,
-        actual_by_subgraph,
         result_code,
         delta: delta_i64,
     }
@@ -558,7 +588,6 @@ pub fn demand_control_actual_cost(
 pub struct DemandControlActualCostResult {
     pub actual: u64,
     pub delta: i64,
-    pub actual_by_subgraph: Option<BTreeMap<String, u64>>,
     pub result_code: DemandControlResultCode,
 }
 

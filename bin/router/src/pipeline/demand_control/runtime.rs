@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use ahash::{HashMap as AHashMap, HashMapExt};
 use hive_router_config::demand_control::{
-    DemandControlActualCostMode, DemandControlConfig, DemandControlMode,
+    DemandControlActualCostMode, DemandControlConfig, DemandControlExposeHeadersConfig,
+    DemandControlMode,
 };
 use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use hive_router_internal::telemetry::metrics::Metrics;
@@ -31,6 +32,7 @@ use super::formula::{
 
 pub struct DemandControlRuntime {
     config: DemandControlConfig,
+    expose_headers_flags: Arc<DemandControlExposeHeadersConfig>,
     metrics: Arc<Metrics>,
     formula_cache: Cache<u64, Arc<DemandControlFormulaPlan>>,
 }
@@ -69,6 +71,7 @@ impl DemandControlRuntime {
         }
 
         Some(Self {
+            expose_headers_flags: Arc::new(config.expose_headers.clone()),
             config: config.clone(),
             metrics,
             formula_cache: Cache::new(1000),
@@ -188,7 +191,7 @@ impl DemandControlRuntime {
             actual_cost_mode: self.config.strategy.static_estimated().actual_cost_mode,
             result_code: estimated_result,
             metrics_recorder: self.metrics.demand_control.recorder(),
-            include_extension_metadata: self.config.include_extension_metadata.unwrap_or(false),
+            expose_headers_flags: self.expose_headers_flags.clone(),
             formula_cache_hit,
             estimated_formula_by_subgraph: compiled_plan.formula_by_subgraph.clone(),
             actual_cost_plan: compiled_plan.actual_cost_plan.clone(),
@@ -243,8 +246,6 @@ impl DemandControlRuntime {
         root_type_name: &str,
         supergraph_state: &SupergraphState,
     ) -> DemandControlFormulaPlan {
-        let include_extension_metadata = self.config.include_extension_metadata.unwrap_or(false);
-
         let mut actual_plans_by_fetch_hash =
             if self.config.strategy.static_estimated().actual_cost_mode
                 == DemandControlActualCostMode::BySubgraph
@@ -266,16 +267,7 @@ impl DemandControlRuntime {
             })
             .unwrap_or(FormulaPlanNode::Aggregate(vec![]));
 
-        let formula_by_subgraph = if include_extension_metadata {
-            let mut expr_by_subgraph = AHashMap::new();
-            collect_estimated_formulas(&root, &mut expr_by_subgraph);
-            expr_by_subgraph
-                .into_iter()
-                .map(|(service, expr)| (service, expr.to_string()))
-                .collect::<BTreeMap<_, _>>()
-        } else {
-            BTreeMap::new()
-        };
+        let formula_by_subgraph = BTreeMap::new();
 
         let actual_cost_plan = if self.config.strategy.static_estimated().actual_cost_mode
             == DemandControlActualCostMode::BySubgraph

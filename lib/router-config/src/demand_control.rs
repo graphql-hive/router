@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::primitives::http_header::HttpHeaderName;
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DemandControlConfig {
@@ -21,17 +23,95 @@ pub struct DemandControlConfig {
     ///   to `enforce`.
     pub mode: DemandControlMode,
 
-    /// When `true`, a `cost` object is appended to `extensions` on every
-    /// response. It includes `estimated`, `result`, `bySubgraph`,
-    /// `formulaCacheHit`, `estimatedFormulaBySubgraph`, `maxCost`, and
-    /// (when `actual_cost_mode` is configured) `actual`, `delta`,
-    /// `actualBySubgraph`.
-    pub include_extension_metadata: Option<bool>,
+    #[serde(default = "default_expose_headers_config")]
+    pub expose_headers: DemandControlExposeHeadersConfig,
 
     /// The cost estimation strategy. Currently only `static_estimated` is
     /// supported, which estimates cost before execution using `@cost` and
     /// `@listSize` directives.
     pub strategy: DemandControlStrategy,
+}
+
+/// Default header name used to expose the configured `max` cost limit when
+/// `max` is set to `true`.
+const DEFAULT_MAX_HEADER_NAME: &str = "X-Cost-Max";
+/// Default header name used to expose the estimated cost when `estimated` is
+/// set to `true`.
+const DEFAULT_ESTIMATED_HEADER_NAME: &str = "X-Cost-Estimated";
+/// Default header name used to expose the actual cost when `actual` is set to
+/// `true`.
+const DEFAULT_ACTUAL_HEADER_NAME: &str = "X-Cost-Actual";
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DemandControlExposeHeadersConfig {
+    #[serde(default, deserialize_with = "deserialize_max_header")]
+    pub max: Option<HttpHeaderName>,
+    #[serde(default, deserialize_with = "deserialize_estimated_header")]
+    pub estimated: Option<HttpHeaderName>,
+    #[serde(default, deserialize_with = "deserialize_actual_header")]
+    pub actual: Option<HttpHeaderName>,
+}
+
+fn default_expose_headers_config() -> DemandControlExposeHeadersConfig {
+    DemandControlExposeHeadersConfig {
+        max: None,
+        estimated: None,
+        actual: None,
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum HeaderNameOrBool {
+    Bool(bool),
+    Name(String),
+}
+
+/// Deserializes an expose-header field that may be set to a boolean or an
+/// explicit header name:
+///
+/// - `true` -> `Some(default_header_name)`
+/// - `false` -> `None`
+/// - `"X-My-Header"` -> `Some("X-My-Header")`
+///
+fn deserialize_header_name_or_bool<'de, D>(
+    deserializer: D,
+    default_header_name: &'static str,
+) -> Result<Option<HttpHeaderName>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match HeaderNameOrBool::deserialize(deserializer)? {
+        HeaderNameOrBool::Bool(true) => Ok(Some(
+            HttpHeaderName::new(default_header_name).map_err(serde::de::Error::custom)?,
+        )),
+        HeaderNameOrBool::Bool(false) => Ok(None),
+        HeaderNameOrBool::Name(name) => Ok(Some(
+            HttpHeaderName::new(name).map_err(serde::de::Error::custom)?,
+        )),
+    }
+}
+
+fn deserialize_max_header<'de, D>(deserializer: D) -> Result<Option<HttpHeaderName>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_header_name_or_bool(deserializer, DEFAULT_MAX_HEADER_NAME)
+}
+
+fn deserialize_estimated_header<'de, D>(deserializer: D) -> Result<Option<HttpHeaderName>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_header_name_or_bool(deserializer, DEFAULT_ESTIMATED_HEADER_NAME)
+}
+
+fn deserialize_actual_header<'de, D>(deserializer: D) -> Result<Option<HttpHeaderName>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_header_name_or_bool(deserializer, DEFAULT_ACTUAL_HEADER_NAME)
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]

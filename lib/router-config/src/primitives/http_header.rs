@@ -14,6 +14,10 @@ impl From<HeaderName> for HttpHeaderName {
 }
 
 impl HttpHeaderName {
+    pub fn new(header_name: impl AsRef<str>) -> Result<Self, http::header::InvalidHeaderName> {
+        HeaderName::from_str(header_name.as_ref()).map(HttpHeaderName)
+    }
+
     pub fn get_header_ref(&self) -> &HeaderName {
         &self.0
     }
