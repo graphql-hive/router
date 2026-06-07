@@ -201,8 +201,6 @@ pub(crate) fn collect_estimated_formulas(
     }
 }
 
-// ── Evaluate phase: plan ─────────────────────────────────────────────────────
-
 pub(crate) fn evaluate_formula_plan(
     formula_plan: &DemandControlFormulaPlan,
     supergraph_state: &SupergraphState,
@@ -521,15 +519,21 @@ fn compile_cost_expr_for_field_selection<'exec>(
     let (return_type_name, _field_type_is_list) = if let Some(def) = field_def {
         let mut base_cost = def.cost.as_ref().map(|c| c.weight).unwrap_or(0);
         if let Some(arguments) = &field.arguments {
-            for (key, arg_value) in arguments {
+            for key in arguments.keys() {
                 if let Some(cost) = def.cost_by_arguments.get(key) {
                     base_cost = base_cost.saturating_add(cost.weight);
                 }
                 if let Some(arg_type) = def.argument_types.get(key) {
-                    base_parts.push(CostExpr::InputArgCost {
-                        value: arg_value.clone(),
-                        value_type: arg_type.clone(),
-                    });
+                    // Only `input Something` arguments can have `@cost` for their fields.
+                    // Scalars, enums and scalar lists always evaluate to 0, so we can skip those.
+                    if is_input_object_typed(arg_type, supergraph_state) {
+                        if let Some(arg_value) = arguments.get_argument(key) {
+                            base_parts.push(CostExpr::InputArgCost {
+                                value: arg_value.clone(),
+                                value_type: arg_type.clone(),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -821,6 +825,18 @@ fn unwrap_non_null(value_type: &TypeNode) -> &TypeNode {
     match value_type {
         TypeNode::NonNull(inner) => unwrap_non_null(inner),
         _ => value_type,
+    }
+}
+
+fn is_input_object_typed(value_type: &TypeNode, supergraph_state: &SupergraphState) -> bool {
+    match value_type {
+        TypeNode::NonNull(inner) | TypeNode::List(inner) => {
+            is_input_object_typed(inner, supergraph_state)
+        }
+        TypeNode::Named(name) => matches!(
+            supergraph_state.definitions.get(name),
+            Some(SupergraphDefinition::InputObject(_))
+        ),
     }
 }
 
