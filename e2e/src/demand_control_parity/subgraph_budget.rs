@@ -9,7 +9,10 @@ mod requests_exceeding_one_subgraph_cost_are_accepted_tests {
                 r#"
 enabled: true
 mode: enforce
-include_extension_metadata: true
+expose_headers:
+  estimated: true
+  actual: true
+  max: true
 strategy:
   static_estimated:
     list_size: 10

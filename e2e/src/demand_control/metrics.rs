@@ -97,7 +97,10 @@ mod metrics_tests {
                       static_estimated:
                         max: 1000
                         actual_cost_mode: by_response_shape
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 telemetry:
                     metrics:
                         exporters:
@@ -262,7 +265,10 @@ mod metrics_tests {
                         list_size: 0
                         max: 3
                         actual_cost_mode: by_subgraph
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 telemetry:
                     metrics:
                         exporters:
@@ -333,7 +339,10 @@ mod metrics_tests {
                         list_size: 10
                         max: 1000
                         actual_cost_mode: by_response_shape
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 telemetry:
                     metrics:
                         exporters:
@@ -407,7 +416,10 @@ mod metrics_tests {
                         list_size: 10
                         max: 1000
                         actual_cost_mode: by_response_shape
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 telemetry:
                     tracing:
                       exporters:

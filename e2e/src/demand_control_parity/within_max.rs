@@ -9,7 +9,10 @@ mod requests_within_max_are_accepted_tests {
                 r#"
 enabled: true
 mode: enforce
-include_extension_metadata: true
+expose_headers:
+  estimated: true
+  actual: true
+  max: true
 strategy:
   static_estimated:
     list_size: 10
@@ -22,7 +25,7 @@ strategy:
         let json = &outcome.json;
         let label = format!("{} eq max={max}", fixture.query_file);
         assert_accepted(json, &label);
-        assert_cost(json, &label, expected_estimated, expected_actual);
+        assert_cost(&outcome, &label, expected_estimated, expected_actual);
         assert_call_counts(&outcome, &label, expected_call_counts(&fixture));
     }
 

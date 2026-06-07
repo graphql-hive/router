@@ -20,7 +20,10 @@ mod actual_cost_tests {
                 list_size: 10
                 max: 1000
                 actual_cost_mode: by_response_shape
-            include_extension_metadata: true
+            expose_headers:
+              estimated: true
+              actual: true
+              max: true
         "#,
             )
             .build()
@@ -43,12 +46,11 @@ mod actual_cost_tests {
             )
             .await;
 
-        let json = res.json_body().await;
-        let estimated = json["extensions"]["cost"]["estimated"]
-            .as_u64()
+        let estimated = res
+            .cost_header("x-cost-estimated")
             .expect("estimated should be present");
-        let actual = json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual = res
+            .cost_header("x-cost-actual")
             .expect("actual should be present");
 
         assert!(actual < estimated);
@@ -71,7 +73,10 @@ mod actual_cost_tests {
                 list_size: 10
                 max: 1000
                 actual_cost_mode: by_subgraph
-            include_extension_metadata: true
+            expose_headers:
+              estimated: true
+              actual: true
+              max: true
         "#,
             )
             .build()
@@ -94,13 +99,11 @@ mod actual_cost_tests {
             )
             .await;
 
-        let json = res.json_body().await;
-
-        let estimated_total = json["extensions"]["cost"]["estimated"]
-            .as_u64()
+        let estimated_total = res
+            .cost_header("x-cost-estimated")
             .expect("estimated should be present");
-        let actual_total = json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual_total = res
+            .cost_header("x-cost-actual")
             .expect("actual should be present");
 
         assert!(actual_total < estimated_total);
@@ -127,7 +130,10 @@ mod actual_cost_tests {
                 list_size: 0
                 max: 3
                 actual_cost_mode: by_subgraph
-            include_extension_metadata: true
+            expose_headers:
+              estimated: true
+              actual: true
+              max: true
         "#,
             )
             .build()
@@ -157,14 +163,14 @@ mod actual_cost_tests {
             "router must not return a GraphQL error when actual cost exceeds max; got: {json}"
         );
 
-        let estimated = json["extensions"]["cost"]["estimated"]
-            .as_u64()
+        let estimated = res
+            .cost_header("x-cost-estimated")
             .expect("estimated should be present");
-        let actual = json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual = res
+            .cost_header("x-cost-actual")
             .expect("actual should be present");
-        let max_cost = json["extensions"]["cost"]["max"]
-            .as_u64()
+        let max_cost = res
+            .cost_header("x-cost-max")
             .expect("maxCost should be present");
 
         assert!(
@@ -202,7 +208,10 @@ mod actual_cost_tests {
                         list_size: 0
                         max: 3
                         actual_cost_mode: by_subgraph
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -232,22 +241,21 @@ mod actual_cost_tests {
             "no GraphQL error must be emitted for actual cost overruns; got: {json}"
         );
         assert_eq!(
-            json["extensions"]["cost"]["max"].as_u64(),
+            res.cost_header("x-cost-max"),
             Some(3),
             "max should be present in cost extensions with value 3"
         );
         assert!(
-            json["extensions"]["cost"]["actual"].as_u64().unwrap() > 0,
+            res.cost_header("x-cost-actual").unwrap() > 0,
             "actual cost must be non-zero"
         );
         assert!(
-            json["extensions"]["cost"]["actual"].as_u64().unwrap()
-                > json["extensions"]["cost"]["estimated"].as_u64().unwrap(),
+            res.cost_header("x-cost-actual").unwrap()
+                > res.cost_header("x-cost-estimated").unwrap(),
             "actual cost must be greater than estimated cost"
         );
         assert!(
-            json["extensions"]["cost"]["actual"].as_u64().unwrap()
-                > json["extensions"]["cost"]["max"].as_u64().unwrap(),
+            res.cost_header("x-cost-actual").unwrap() > res.cost_header("x-cost-max").unwrap(),
             "actual cost must be greater than max cost"
         );
     }
@@ -271,7 +279,10 @@ mod actual_cost_tests {
                         list_size: 10
                         max: 1000
                         actual_cost_mode: by_response_shape
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -294,13 +305,12 @@ mod actual_cost_tests {
             )
             .await;
 
-        let json = res.json_body().await;
-        let actual = json["extensions"]["cost"]["actual"]
-            .as_i64()
-            .expect("actual should be present");
-        let estimated = json["extensions"]["cost"]["estimated"]
-            .as_i64()
-            .expect("estimated should be present");
+        let actual = res
+            .cost_header("x-cost-actual")
+            .expect("actual should be present") as i64;
+        let estimated = res
+            .cost_header("x-cost-estimated")
+            .expect("estimated should be present") as i64;
         let delta = actual - estimated;
 
         assert!(
@@ -327,7 +337,10 @@ mod actual_cost_tests {
                         list_size: 0
                         max: 1000
                         actual_cost_mode: by_response_shape
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -348,12 +361,11 @@ mod actual_cost_tests {
             )
             .await;
 
-        let json = res.json_body().await;
-        let estimated = json["extensions"]["cost"]["estimated"]
-            .as_u64()
+        let estimated = res
+            .cost_header("x-cost-estimated")
             .expect("estimated should be present");
-        let actual = json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual = res
+            .cost_header("x-cost-actual")
             .expect("actual should be present");
         let delta = actual - estimated;
 
@@ -386,7 +398,10 @@ mod actual_cost_tests {
                             list_size: {list_size}
                             max: 1000
                             actual_cost_mode: by_response_shape
-                        include_extension_metadata: true
+                        expose_headers:
+                          estimated: true
+                          actual: true
+                          max: true
                     "#,
                 ))
                 .build()
@@ -407,12 +422,11 @@ mod actual_cost_tests {
                 )
                 .await;
 
-            let json = res.json_body().await;
-            let estimated = json["extensions"]["cost"]["estimated"]
-                .as_u64()
+            let estimated = res
+                .cost_header("x-cost-estimated")
                 .expect("estimated should be present");
-            let actual = json["extensions"]["cost"]["actual"]
-                .as_u64()
+            let actual = res
+                .cost_header("x-cost-actual")
                 .expect("actual should be present");
             let delta = actual as i64 - estimated as i64;
 
@@ -455,7 +469,10 @@ mod actual_cost_tests {
                         list_size: 10
                         max: 1000
                         actual_cost_mode: by_response_shape
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -484,11 +501,11 @@ mod actual_cost_tests {
             Some(1)
         );
 
-        let estimated = json["extensions"]["cost"]["estimated"]
-            .as_u64()
+        let estimated = res
+            .cost_header("x-cost-estimated")
             .expect("estimated should be present");
-        let actual = json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual = res
+            .cost_header("x-cost-actual")
             .expect("actual should be present");
 
         // Final response shape is a single Product object with one scalar field.
@@ -526,7 +543,10 @@ mod actual_cost_tests {
                         list_size: 0
                         max: 100000
                         actual_cost_mode: by_subgraph
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -579,7 +599,10 @@ mod actual_cost_tests {
                         list_size: 0
                         max: 10000
                         actual_cost_mode: by_subgraph
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -613,8 +636,8 @@ mod actual_cost_tests {
 
         // Verify estimated cost is also > 0, confirming that BatchFetch estimation
         // correctly processes aliased _entities fields during formula compilation.
-        let estimated_total = json["extensions"]["cost"]["estimated"]
-            .as_u64()
+        let estimated_total = res
+            .cost_header("x-cost-estimated")
             .expect("estimated should be present");
         assert!(
             estimated_total > 0,
@@ -623,8 +646,8 @@ mod actual_cost_tests {
         );
 
         // The total actual must equal the sum of per-subgraph actuals that we can see.
-        let actual_total = json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual_total = res
+            .cost_header("x-cost-actual")
             .expect("actual should be present");
         assert!(actual_total > 0, "actual cost must be non-zero");
         assert!(
@@ -653,7 +676,10 @@ mod actual_cost_tests {
                         list_size: 10
                         max: 100000
                         actual_cost_mode: by_subgraph
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -679,11 +705,11 @@ mod actual_cost_tests {
         let json = res.json_body().await;
         assert!(json["errors"].is_null(), "query should succeed");
 
-        let actual = json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual = res
+            .cost_header("x-cost-actual")
             .expect("actual reviews should be present");
-        let estimated = json["extensions"]["cost"]["estimated"]
-            .as_u64()
+        let estimated = res
+            .cost_header("x-cost-estimated")
             .expect("estimated reviews should be present");
 
         // With list_size=10 (assumed) the estimated review count is inflated;
@@ -717,7 +743,10 @@ mod actual_cost_tests {
                         list_size: 0
                         max: 100000
                         actual_cost_mode: by_response_shape
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -769,11 +798,11 @@ mod actual_cost_tests {
             json["errors"]
         );
 
-        let baseline_actual = baseline_json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let baseline_actual = baseline
+            .cost_header("x-cost-actual")
             .expect("baseline actual should be present");
-        let actual = json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual = res
+            .cost_header("x-cost-actual")
             .expect("actual should be present");
 
         // If the inline fragment were skipped because __typename is absent,
@@ -805,7 +834,10 @@ mod actual_cost_tests {
                         list_size: 5
                         max: 100000
                         actual_cost_mode: by_response_shape
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -859,11 +891,11 @@ mod actual_cost_tests {
             json_b["errors"]
         );
 
-        let actual_a = json_a["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual_a = include_true_skip_false
+            .cost_header("x-cost-actual")
             .expect("actual should be present for query A");
-        let actual_b = json_b["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual_b = include_true_skip_true
+            .cost_header("x-cost-actual")
             .expect("actual should be present for query B");
 
         assert!(
@@ -893,7 +925,10 @@ mod actual_cost_tests {
                         list_size: 0
                         max: 100000
                         actual_cost_mode: by_subgraph
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -923,7 +958,7 @@ mod actual_cost_tests {
             json["errors"]
         );
 
-        let actual = json["extensions"]["cost"]["actual"].as_u64().unwrap_or(0);
+        let actual = res.cost_header("x-cost-actual").unwrap_or(0);
 
         assert!(
             actual > 0,
@@ -951,7 +986,10 @@ mod actual_cost_tests {
                                                 list_size: 0
                                                 max: 100000
                                                 actual_cost_mode: by_subgraph
-                                        include_extension_metadata: true
+                                        expose_headers:
+                                          estimated: true
+                                          actual: true
+                                          max: true
                                 "#,
             )
             .build()
@@ -987,8 +1025,8 @@ mod actual_cost_tests {
             json["errors"]
         );
 
-        let actual = json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual = res
+            .cost_header("x-cost-actual")
             .expect("actual should be present");
 
         assert!(
@@ -1016,7 +1054,10 @@ mod actual_cost_tests {
                         list_size: 0
                         max: 100000
                         actual_cost_mode: by_subgraph
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -1042,13 +1083,14 @@ mod actual_cost_tests {
         let json = res.json_body().await;
         assert!(json["errors"].is_null(), "query should succeed");
 
-        // Products and inventory should either be absent or zero
-        let inventory_actual = json["extensions"]["cost"]["actualCostBySubgraph"]["inventory"]
-            .as_u64()
-            .unwrap_or(0);
+        // With an empty `topProducts` list there are no entity calls, so the
+        // total actual cost (and therefore every subgraph's contribution) is 0.
+        let actual = res
+            .cost_header("x-cost-actual")
+            .expect("actual should be present");
         assert_eq!(
-            inventory_actual, 0,
-            "actual inventory cost must be 0 when entity array is empty"
+            actual, 0,
+            "actual cost must be 0 when the entity array is empty"
         );
     }
     // Verifies that by_subgraph actual cost accumulates correctly across two sequential
@@ -1072,7 +1114,10 @@ mod actual_cost_tests {
                         list_size: 2
                         max: 100000
                         actual_cost_mode: by_subgraph
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -1107,11 +1152,11 @@ mod actual_cost_tests {
         assert!(json["errors"].is_null(), "query should succeed");
 
         // With list_size=2 assumed but real data returned, actual may differ from estimated.
-        let actual_total = json["extensions"]["cost"]["actual"]
-            .as_u64()
+        let actual_total = res
+            .cost_header("x-cost-actual")
             .expect("actual should be present");
-        let estimated_total = json["extensions"]["cost"]["estimated"]
-            .as_u64()
+        let estimated_total = res
+            .cost_header("x-cost-estimated")
             .expect("estimated should be present");
         assert!(actual_total > estimated_total);
     }

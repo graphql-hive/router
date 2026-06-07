@@ -25,7 +25,10 @@ mod subgraph_budgets_tests {
                   all:
                     list_size: 0
                 actual_cost_mode: by_subgraph
-            include_extension_metadata: true
+            expose_headers:
+              estimated: true
+              actual: true
+              max: true
         "#,
             )
             .build()
@@ -49,37 +52,40 @@ mod subgraph_budgets_tests {
             )
             .await;
 
-        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
-                {
-                  "data": {
-                    "me": {
-                      "name": "Uri Goldshtein",
-                      "reviews": null
-                    }
-                  },
-                  "errors": [
-                    {
-                      "message": "Skipped subgraph execution because the estimated cost (1) exceeds the maximum allowed cost (0).",
-                      "extensions": {
-                        "code": "SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE",
-                        "serviceName": "reviews",
-                        "affectedPath": "me",
-                        "cost": {
-                          "estimated": 1,
-                          "max": 0
-                        }
-                      }
-                    }
-                  ],
-                  "extensions": {
-                    "cost": {
-                      "estimated": 2,
-                      "max": 1000,
-                      "actual": 1
-                    }
-                  }
-                }
-                "#);
+        // Cost is exposed via the `X-Cost-*` headers (no longer in response extensions).
+        assert_eq!(res.cost_header("x-cost-estimated"), Some(2));
+        assert_eq!(res.cost_header("x-cost-actual"), Some(1));
+        assert_eq!(res.cost_header("x-cost-max"), Some(1000));
+
+        let json = res.json_body().await;
+
+        // The over-budget `reviews` subgraph is skipped; the rest of the plan runs.
+        assert_eq!(json["data"]["me"]["name"].as_str(), Some("Uri Goldshtein"));
+        assert!(
+            json["data"]["me"]["reviews"].is_null(),
+            "reviews should be null after the subgraph was skipped: {json}"
+        );
+
+        // The subgraph-skip error keeps its `cost` extension.
+        let err = &json["errors"][0];
+        assert_eq!(
+            err["message"].as_str(),
+            Some("Skipped subgraph execution because the estimated cost (1) exceeds the maximum allowed cost (0).")
+        );
+        assert_eq!(
+            err["extensions"]["code"].as_str(),
+            Some("SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE")
+        );
+        assert_eq!(err["extensions"]["serviceName"].as_str(), Some("reviews"));
+        assert_eq!(err["extensions"]["affectedPath"].as_str(), Some("me"));
+        assert_eq!(err["extensions"]["cost"]["estimated"].as_u64(), Some(1));
+        assert_eq!(err["extensions"]["cost"]["max"].as_u64(), Some(0));
+
+        // Cost is no longer duplicated in the top-level response extensions.
+        assert!(
+            json["extensions"]["cost"].is_null(),
+            "top-level cost extension must be gone: {json}"
+        );
     }
     // Per-subgraph max_cost setting allows granular control.
     #[ntex::test]
@@ -103,7 +109,10 @@ mod subgraph_budgets_tests {
                             all:
                                 list_size: 5
                                 max: 1
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -159,7 +168,10 @@ mod subgraph_budgets_tests {
                                         max: 100
                                 all:
                                     max: 1
-                        include_extension_metadata: true
+                        expose_headers:
+                          estimated: true
+                          actual: true
+                          max: true
                     "#,
             )
             .build()
@@ -220,7 +232,10 @@ mod subgraph_budgets_tests {
                                         max: 2
                                 all:
                                     max: 1000
-                        include_extension_metadata: true
+                        expose_headers:
+                          estimated: true
+                          actual: true
+                          max: true
                     "#,
             )
             .build()
@@ -279,7 +294,10 @@ mod subgraph_budgets_tests {
                                     reviews:
                                         list_size: 10
                                         max: 9
-                        include_extension_metadata: true
+                        expose_headers:
+                          estimated: true
+                          actual: true
+                          max: true
                     "#,
             )
             .build()

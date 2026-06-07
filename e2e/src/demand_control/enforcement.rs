@@ -65,7 +65,10 @@ mod enforcement_tests {
                     strategy:
                       static_estimated:
                         max: 0
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -89,9 +92,9 @@ mod enforcement_tests {
         let json = res.json_body().await;
         assert!(json.get("errors").is_none() || json["errors"].is_null());
         assert_eq!(json["data"]["me"]["name"].as_str(), Some("Uri Goldshtein"));
-        assert_eq!(json["extensions"]["cost"]["estimated"].as_u64(), Some(1));
-        assert_eq!(json["extensions"]["cost"]["actual"].as_u64(), Some(1));
-        assert_eq!(json["extensions"]["cost"]["max"].as_u64(), Some(0));
+        assert_eq!(res.cost_header("x-cost-estimated"), Some(1));
+        assert_eq!(res.cost_header("x-cost-actual"), Some(1));
+        assert_eq!(res.cost_header("x-cost-max"), Some(0));
     }
     #[ntex::test]
     async fn mode_measure_does_not_reject_when_actual_cost_exceeds_max() {
@@ -111,7 +114,10 @@ mod enforcement_tests {
                         list_size: 0
                         max: 3
                         actual_cost_mode: by_subgraph
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -140,7 +146,7 @@ mod enforcement_tests {
             json.get("errors").is_none() || json["errors"].is_null(),
             "measure mode must not reject the operation when actual cost exceeds max"
         );
-        assert_eq!(json["extensions"]["cost"]["max"].as_u64(), Some(3));
+        assert_eq!(res.cost_header("x-cost-max"), Some(3));
     }
     #[ntex::test]
     async fn subscription_is_rejected_when_estimated_cost_exceeds_max() {

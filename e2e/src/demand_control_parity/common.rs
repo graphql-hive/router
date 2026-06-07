@@ -179,6 +179,8 @@ pub(super) fn expected_call_counts(fixture: &Fixture) -> &'static [(&'static str
 pub(super) struct RunOutcome {
     pub(super) json: SonicValue,
     pub(super) call_counts: std::collections::BTreeMap<String, usize>,
+    pub(super) cost_estimated: Option<u64>,
+    pub(super) cost_actual: Option<u64>,
 }
 
 pub(super) async fn run_fixture(fixture: &Fixture, demand_control_yaml: &str) -> RunOutcome {
@@ -209,6 +211,8 @@ pub(super) async fn run_fixture(fixture: &Fixture, demand_control_yaml: &str) ->
         .await;
 
     let res = router.send_graphql_request(&query, None, None).await;
+    let cost_estimated = res.cost_header("x-cost-estimated");
+    let cost_actual = res.cost_header("x-cost-actual");
     let json = res.json_body().await;
 
     let mut call_counts = std::collections::BTreeMap::new();
@@ -222,7 +226,12 @@ pub(super) async fn run_fixture(fixture: &Fixture, demand_control_yaml: &str) ->
         }
     }
 
-    RunOutcome { json, call_counts }
+    RunOutcome {
+        json,
+        call_counts,
+        cost_estimated,
+        cost_actual,
+    }
 }
 
 fn indent_block(block: &str, prefix: &str) -> String {
@@ -267,38 +276,28 @@ pub(super) fn assert_rejected_estimated(json: &SonicValue, label: &str) {
     );
 }
 
-/// Reads a numeric value from `json` at the given path, accepting any of
-/// the JSON number forms (the reference emits `12.0`, our router may emit `12`).
-fn cost_num(json: &SonicValue, path: &[&str]) -> Option<f64> {
-    let mut cur = json;
-    for p in path {
-        let next = cur.get(p)?;
-        cur = next;
-    }
-    cur.as_f64()
-        .or_else(|| cur.as_u64().map(|n| n as f64))
-        .or_else(|| cur.as_i64().map(|n| n as f64))
-}
-
-/// Asserts `extensions.cost.estimated` and `extensions.cost.actual` match
+/// Asserts the `X-Cost-Estimated` and `X-Cost-Actual` response headers match
 /// the reference snapshot values exactly.
 pub(super) fn assert_cost(
-    json: &SonicValue,
+    outcome: &RunOutcome,
     label: &str,
     expected_estimated: f64,
     expected_actual: f64,
 ) {
-    let est = cost_num(json, &["extensions", "cost", "estimated"])
-        .unwrap_or_else(|| panic!("[{label}] missing extensions.cost.estimated: {json}"));
-    let act = cost_num(json, &["extensions", "cost", "actual"])
-        .unwrap_or_else(|| panic!("[{label}] missing extensions.cost.actual: {json}"));
+    let est = outcome
+        .cost_estimated
+        .unwrap_or_else(|| panic!("[{label}] missing X-Cost-Estimated header"))
+        as f64;
+    let act = outcome
+        .cost_actual
+        .unwrap_or_else(|| panic!("[{label}] missing X-Cost-Actual header")) as f64;
     assert_eq!(
         est, expected_estimated,
-        "[{label}] estimated cost drift (expected={expected_estimated}, ours={est}): {json}"
+        "[{label}] estimated cost drift (expected={expected_estimated}, ours={est})"
     );
     assert_eq!(
         act, expected_actual,
-        "[{label}] actual cost drift (expected={expected_actual}, ours={act}): {json}"
+        "[{label}] actual cost drift (expected={expected_actual}, ours={act})"
     );
 }
 

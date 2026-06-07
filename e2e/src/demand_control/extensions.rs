@@ -3,7 +3,7 @@ mod extensions_tests {
     use super::super::common::*;
 
     #[ntex::test]
-    async fn includes_cost_metadata_in_response_extensions_when_enabled() {
+    async fn exposes_cost_headers_when_enabled() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
@@ -18,7 +18,10 @@ mod extensions_tests {
             strategy:
               static_estimated:
                 max: 100
-            include_extension_metadata: true
+            expose_headers:
+              estimated: true
+              actual: true
+              max: true
         "#,
             )
             .build()
@@ -39,26 +42,21 @@ mod extensions_tests {
             )
             .await;
 
-        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
-                {
-                  "data": {
-                    "me": {
-                      "name": "Uri Goldshtein"
-                    }
-                  },
-                  "extensions": {
-                    "cost": {
-                      "estimated": 1,
-                      "max": 100,
-                      "actual": 1
-                    }
-                  }
-                }
-                "#);
+        assert_eq!(res.cost_header("x-cost-estimated"), Some(1));
+        assert_eq!(res.cost_header("x-cost-actual"), Some(1));
+        assert_eq!(res.cost_header("x-cost-max"), Some(100));
+
+        let json = res.json_body().await;
+        assert_eq!(json["data"]["me"]["name"].as_str(), Some("Uri Goldshtein"));
+        // Cost is exposed via the `X-Cost-*` headers, not response extensions.
+        assert!(
+            json["extensions"]["cost"].is_null(),
+            "cost must not be present in response extensions: {json}"
+        );
     }
 
     #[ntex::test]
-    async fn exposes_variable_placeholders_in_estimated_formula_metadata() {
+    async fn exposes_cost_headers_for_variable_driven_query() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
@@ -74,7 +72,10 @@ mod extensions_tests {
                     strategy:
                       static_estimated:
                         max: 1000
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -102,38 +103,13 @@ mod extensions_tests {
             )
             .await;
 
-        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
-                {
-                  "data": {
-                    "search": [
-                      {
-                        "title": "The Mystery at Midnight",
-                        "author": {
-                          "name": "Alice Smith"
-                        }
-                      },
-                      {
-                        "title": "Science Fiction Dreams",
-                        "author": {
-                          "name": "Bob Johnson"
-                        }
-                      },
-                      {
-                        "title": "Classic Fiction",
-                        "author": {
-                          "name": "Charlie Brown"
-                        }
-                      }
-                    ]
-                  },
-                  "extensions": {
-                    "cost": {
-                      "estimated": 8,
-                      "max": 1000,
-                      "actual": 6
-                    }
-                  }
-                }
-                "#);
+        // The slicing argument (`first: 3`) drives the estimated cost; the actual
+        // cost reflects the three books returned.
+        assert_eq!(res.cost_header("x-cost-estimated"), Some(8));
+        assert_eq!(res.cost_header("x-cost-actual"), Some(6));
+        assert_eq!(res.cost_header("x-cost-max"), Some(1000));
+
+        let json = res.json_body().await;
+        assert!(json["errors"].is_null(), "query should succeed: {json}");
     }
 }

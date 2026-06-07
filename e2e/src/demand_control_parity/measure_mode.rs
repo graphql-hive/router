@@ -9,7 +9,10 @@ mod requests_exceeding_max_are_not_rejected_in_measure_mode_tests {
             r#"
 enabled: true
 mode: measure
-include_extension_metadata: true
+expose_headers:
+  estimated: true
+  actual: true
+  max: true
 strategy:
   static_estimated:
     list_size: 100

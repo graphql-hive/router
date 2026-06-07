@@ -435,7 +435,10 @@ mod estimator_tests {
                     strategy:
                       static_estimated:
                         max: 100
-                    include_extension_metadata: true
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                 "#,
             )
             .build()
@@ -457,7 +460,7 @@ mod estimator_tests {
 
         let json = res.json_body().await;
         assert!(json["errors"].is_null());
-        assert_eq!(json["extensions"]["cost"]["estimated"].as_u64(), Some(0));
+        assert_eq!(res.cost_header("x-cost-estimated"), Some(0));
     }
     // Deeply nested slicingArguments path "input.level1.level2.count" resolves through variables.
     // Three input object instances (DeepPaginationInput + Level1 + Level2) each contribute the
