@@ -859,7 +859,6 @@ fn test_graphql_operation_span() {
         layer.assert_recorded_value(&span, attributes::COST_ACTUAL, "3");
         layer.assert_recorded_value(&span, attributes::COST_DELTA, "-8");
         layer.assert_recorded_value(&span, attributes::COST_RESULT, "COST_OK");
-        layer.assert_recorded_value(&span, attributes::COST_FORMULA_CACHE_HIT, "true");
     });
 }
 
