@@ -521,17 +521,15 @@ fn compile_cost_expr_for_field_selection<'exec>(
     let (return_type_name, _field_type_is_list) = if let Some(def) = field_def {
         let mut base_cost = def.cost.as_ref().map(|c| c.weight).unwrap_or(0);
         if let Some(arguments) = &field.arguments {
-            for key in arguments.keys() {
+            for (key, arg_value) in arguments {
                 if let Some(cost) = def.cost_by_arguments.get(key) {
                     base_cost = base_cost.saturating_add(cost.weight);
                 }
                 if let Some(arg_type) = def.argument_types.get(key) {
-                    if let Some(arg_value) = arguments.get_argument(key) {
-                        base_parts.push(CostExpr::InputArgCost {
-                            value: arg_value.clone(),
-                            value_type: arg_type.clone(),
-                        });
-                    }
+                    base_parts.push(CostExpr::InputArgCost {
+                        value: arg_value.clone(),
+                        value_type: arg_type.clone(),
+                    });
                 }
             }
         }
