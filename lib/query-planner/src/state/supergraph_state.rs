@@ -1061,6 +1061,13 @@ impl TypeNode {
         matches!(self, TypeNode::NonNull(_))
     }
 
+    pub fn unwrap_non_null(&self) -> &TypeNode {
+        match self {
+            TypeNode::NonNull(inner) => inner.unwrap_non_null(),
+            _ => self,
+        }
+    }
+
     pub fn is_list(&self) -> bool {
         match self {
             TypeNode::List(_) => true,

@@ -735,7 +735,7 @@ fn estimate_input_value_cost(
                 )
             },
         ),
-        AstValue::List(values) => match unwrap_non_null(value_type) {
+        AstValue::List(values) => match value_type.unwrap_non_null() {
             TypeNode::List(inner_type) => values
                 .iter()
                 .map(|item| {
@@ -759,7 +759,7 @@ fn estimate_input_json_value_cost(
     }
 
     if let Some(array) = value.as_array() {
-        return match unwrap_non_null(value_type) {
+        return match value_type.unwrap_non_null() {
             TypeNode::List(inner_type) => array
                 .iter()
                 .map(|item| estimate_input_json_value_cost(item, inner_type, supergraph_state))
@@ -793,7 +793,7 @@ where
     I: Iterator<Item = (&'a str, &'a V)>,
     F: Fn(&V, &TypeNode) -> u64,
 {
-    let TypeNode::Named(type_name) = unwrap_non_null(value_type) else {
+    let TypeNode::Named(type_name) = value_type.unwrap_non_null() else {
         return 0;
     };
 
@@ -819,13 +819,6 @@ where
         // input object without `@cost` directives still consumes budget
         // proportional to the depth/breadth of the values being passed in.
         .saturating_add(1)
-}
-
-fn unwrap_non_null(value_type: &TypeNode) -> &TypeNode {
-    match value_type {
-        TypeNode::NonNull(inner) => unwrap_non_null(inner),
-        _ => value_type,
-    }
 }
 
 fn is_input_object_typed(value_type: &TypeNode, supergraph_state: &SupergraphState) -> bool {

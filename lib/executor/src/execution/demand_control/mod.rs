@@ -608,7 +608,7 @@ fn compile_input_value_cost(
 ) -> u64 {
     match value {
         AstValue::Object(map) => {
-            let TypeNode::Named(type_name) = unwrap_non_null(value_type) else {
+            let TypeNode::Named(type_name) = value_type.unwrap_non_null() else {
                 return 0;
             };
             let Some(SupergraphDefinition::InputObject(input_object)) =
@@ -638,7 +638,7 @@ fn compile_input_value_cost(
             total
         }
         AstValue::List(items) => {
-            let TypeNode::List(inner_type) = unwrap_non_null(value_type) else {
+            let TypeNode::List(inner_type) = value_type.unwrap_non_null() else {
                 return 0;
             };
             items
@@ -653,13 +653,6 @@ fn compile_input_value_cost(
         | AstValue::String(_)
         | AstValue::Boolean(_)
         | AstValue::Enum(_) => 0,
-    }
-}
-
-fn unwrap_non_null(value_type: &TypeNode) -> &TypeNode {
-    match value_type {
-        TypeNode::NonNull(inner) => unwrap_non_null(inner),
-        _ => value_type,
     }
 }
 
