@@ -112,4 +112,109 @@ mod extensions_tests {
         let json = res.json_body().await;
         assert!(json["errors"].is_null(), "query should succeed: {json}");
     }
+
+    #[ntex::test]
+    async fn default_config_exposes_no_cost_headers() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+            source: file
+            path: supergraph.graphql
+        demand_control:
+            enabled: true
+            mode: enforce
+            strategy:
+              static_estimated:
+                max: 100
+        "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(r#"query { me { name } }"#, None, None)
+            .await;
+
+        assert_eq!(res.cost_header("x-cost-estimated"), None);
+        assert_eq!(res.cost_header("x-cost-actual"), None);
+        assert_eq!(res.cost_header("x-cost-max"), None);
+
+        let json = res.json_body().await;
+        assert_eq!(json["data"]["me"]["name"].as_str(), Some("Uri Goldshtein"));
+    }
+
+    #[ntex::test]
+    async fn cost_header_names_can_be_customized() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+            source: file
+            path: supergraph.graphql
+        demand_control:
+            enabled: true
+            mode: enforce
+            strategy:
+              static_estimated:
+                max: 100
+            expose_headers:
+              estimated: "X-My-Estimated"
+              actual: "X-My-Actual"
+        "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(r#"query { me { name } }"#, None, None)
+            .await;
+
+        assert_eq!(res.cost_header("x-my-estimated"), Some(1));
+        assert_eq!(res.cost_header("x-my-actual"), Some(1));
+
+        assert_eq!(res.cost_header("x-cost-estimated"), None);
+        assert_eq!(res.cost_header("x-cost-actual"), None);
+        // `max` was not enabled at all.
+        assert_eq!(res.cost_header("x-cost-max"), None);
+    }
+
+    #[ntex::test]
+    async fn exposes_only_estimated_header_when_only_estimated_enabled() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+            source: file
+            path: supergraph.graphql
+        demand_control:
+            enabled: true
+            mode: enforce
+            strategy:
+              static_estimated:
+                max: 100
+            expose_headers:
+              estimated: true
+        "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(r#"query { me { name } }"#, None, None)
+            .await;
+
+        assert_eq!(res.cost_header("x-cost-estimated"), Some(1));
+        assert_eq!(res.cost_header("x-cost-actual"), None);
+        assert_eq!(res.cost_header("x-cost-max"), None);
+    }
 }
