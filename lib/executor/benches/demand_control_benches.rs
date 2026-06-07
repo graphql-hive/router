@@ -30,6 +30,7 @@ fn build_subgraph_operation(
             hash: normalized.operation.hash(),
             document,
             document_str,
+            name_write_position: 0,
         },
     )
 }
@@ -170,6 +171,7 @@ fn demand_control_benchmarks(c: &mut Criterion) {
         hash: normalized.operation.hash(),
         document_str: batch_doc.to_string(),
         document: batch_doc,
+        name_write_position: 0,
     };
     let batch_compiled_plan =
         compile_actual_subgraph_cost_plan(&batch_operation, &batch_supergraph_state);

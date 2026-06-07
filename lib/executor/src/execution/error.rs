@@ -89,10 +89,6 @@ impl From<&PlanExecutionError> for GraphQLError {
     fn from(val: &PlanExecutionError) -> Self {
         let mut error = GraphQLError::from_message_and_code(val.to_string(), val.error_code());
 
-        // For per-subgraph estimated-cost rejections, surface the
-        // subgraph-level cost numbers to the client so operators can
-        // correlate them with the per-subgraph `max` configuration. The
-        // subgraph identity itself is already attached via `serviceName`.
         if let PlanExecutionErrorKind::SubgraphExecutor(
             SubgraphExecutorError::CostEstimatedTooExpensive {
                 estimated_cost,
