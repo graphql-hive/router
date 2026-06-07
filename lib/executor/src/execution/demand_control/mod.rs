@@ -9,9 +9,7 @@ use ahash::{HashMap as AHashMap, HashSet as AHashSet};
 use hive_router_config::demand_control::{
     DemandControlActualCostMode, DemandControlExposeHeadersConfig, DemandControlMode,
 };
-use hive_router_internal::telemetry::metrics::demand_control_metrics::{
-    DemandControlMetricsRecorder, DemandControlResultCode,
-};
+use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandControlMetricsRecorder;
 use hive_router_query_planner::{
     ast::{
         operation::{OperationDefinition, SubgraphFetchOperation},
@@ -48,10 +46,8 @@ pub struct DemandControlExecutionContext {
     /// the request still runs but the per-subgraph result code is recorded
     /// in the response extension.
     pub subgraphs_over_limit: BTreeMap<String, u64>,
-    pub result_code: DemandControlResultCode,
     pub metrics_recorder: Option<DemandControlMetricsRecorder>,
     pub expose_headers_flags: Arc<DemandControlExposeHeadersConfig>,
-    pub estimated_formula_by_subgraph: Arc<BTreeMap<String, String>>,
     pub actual_cost_mode: DemandControlActualCostMode,
     pub actual_cost_plan: Arc<CompiledActualCostPlan>,
 }
@@ -197,7 +193,7 @@ pub fn compile_actual_subgraph_cost_plan(
                 entity_plans_by_type.insert(
                     type_name.clone(),
                     CompiledEntityTypePlan {
-                        type_cost: dc_type_cost(supergraph_state, type_name),
+                        type_cost: demand_control_definition_cost(supergraph_state, type_name),
                         selections: compile_selection_set_actual_cost_plan(
                             &field.selections,
                             type_name,
@@ -428,7 +424,7 @@ fn compile_field_actual_cost_plan(
     CompiledFieldActualCostPlan {
         response_key: field.selection_identifier().to_string(),
         field_base_cost,
-        return_type_cost: dc_type_cost(supergraph_state, return_type_name),
+        return_type_cost: demand_control_definition_cost(supergraph_state, return_type_name),
         is_list: field_type.is_list(),
         include_if: field.include_if.clone(),
         skip_if: field.skip_if.clone(),
@@ -555,25 +551,6 @@ pub fn calculate_actual_cost(
             )
         }
     }
-
-    // let result_code = if demand_control.result_code != DemandControlResultCode::CostOk {
-    //     // Estimated cost already flagged a problem (e.g. COST_ESTIMATED_TOO_EXPENSIVE in
-    //     // measure mode). Preserve the estimated result — actual provides additional
-    //     // diagnostic info but does not change the root cause reported to the client.
-    //     demand_control.result_code.clone()
-    // } else if actual_exceeds_max {
-    //     DemandControlResultCode::CostActualTooExpensive
-    // } else {
-    //     DemandControlResultCode::CostOk
-    // };
-
-    // actual
-}
-
-pub struct DemandControlActualCostResult {
-    pub actual: u64,
-    pub delta: i64,
-    pub result_code: DemandControlResultCode,
 }
 
 fn should_skip_inline_fragment(
@@ -599,7 +576,7 @@ fn response_object_get<'a>(obj: &'a [(&'a str, Value<'a>)], key: &str) -> Option
         .map(|idx| &obj[idx].1)
 }
 
-fn dc_type_cost(supergraph_state: &SupergraphState, type_name: &str) -> u64 {
+pub fn demand_control_definition_cost(supergraph_state: &SupergraphState, type_name: &str) -> u64 {
     let Some(definition) = supergraph_state.definitions.get(type_name) else {
         return 0;
     };

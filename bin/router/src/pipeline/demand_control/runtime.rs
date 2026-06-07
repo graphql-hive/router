@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ahash::{HashMap as AHashMap, HashMapExt};
@@ -22,7 +21,6 @@ use hive_router_query_planner::state::supergraph_state::{OperationKind, Supergra
 use moka::future::Cache;
 use tracing::{debug, info, warn};
 
-use crate::cache_state::{CacheHitMiss, EntryValueHitMissExt};
 use crate::pipeline::error::PipelineError;
 
 use super::formula::{
@@ -100,7 +98,6 @@ impl DemandControlRuntime {
         operation_identity: GraphQLSpanOperationIdentity<'exec>,
     ) -> Result<DemandControlExecutionContext, PipelineError> {
         let operation_name = operation_identity.name;
-        let mut formula_cache_hit = true;
 
         let compiled_plan = self
             .formula_cache
@@ -114,9 +111,7 @@ impl DemandControlRuntime {
                 ))
             })
             .await
-            .into_value_with_hit_miss(|hit_miss| {
-                formula_cache_hit = matches!(hit_miss, CacheHitMiss::Hit);
-            });
+            .into_value();
 
         let estimation = evaluate_formula_plan(
             compiled_plan.as_ref(),
@@ -171,15 +166,13 @@ impl DemandControlRuntime {
             }
         }
 
-        let estimated_result = if estimated_exceeds_max {
-            DemandControlResultCode::CostEstimatedTooExpensive
-        } else {
-            DemandControlResultCode::CostOk
-        };
-
         self.metrics.demand_control.record_estimated_cost(
             estimation.estimated_cost,
-            &estimated_result,
+            &if estimated_exceeds_max {
+                DemandControlResultCode::CostEstimatedTooExpensive
+            } else {
+                DemandControlResultCode::CostOk
+            },
             operation_name,
         );
 
@@ -189,10 +182,8 @@ impl DemandControlRuntime {
             evaluation: estimation,
             subgraphs_over_limit: subgraphs_exceed_limits,
             actual_cost_mode: self.config.strategy.static_estimated().actual_cost_mode,
-            result_code: estimated_result,
             metrics_recorder: self.metrics.demand_control.recorder(),
             expose_headers_flags: self.expose_headers_flags.clone(),
-            estimated_formula_by_subgraph: compiled_plan.formula_by_subgraph.clone(),
             actual_cost_plan: compiled_plan.actual_cost_plan.clone(),
         })
     }
@@ -266,8 +257,6 @@ impl DemandControlRuntime {
             })
             .unwrap_or(FormulaPlanNode::Aggregate(vec![]));
 
-        let formula_by_subgraph = BTreeMap::new();
-
         let actual_cost_plan = if self.config.strategy.static_estimated().actual_cost_mode
             == DemandControlActualCostMode::BySubgraph
         {
@@ -285,7 +274,6 @@ impl DemandControlRuntime {
 
         DemandControlFormulaPlan {
             root,
-            formula_by_subgraph: Arc::new(formula_by_subgraph),
             actual_cost_plan: Arc::new(actual_cost_plan),
         }
     }

@@ -492,7 +492,6 @@ async fn execute_query_plan_with_data<'exec>(
         );
         let delta = actual as i128 - demand_control.evaluation.estimated_cost as i128;
         let delta_i64 = delta.max(i64::MIN as i128).min(i64::MAX as i128) as i64;
-        let actual_exceeds_max = actual > demand_control.max_cost;
         let result_code = DemandControlResultCode::from_artifacts(
             demand_control.max_cost,
             demand_control.evaluation.estimated_cost,
@@ -512,7 +511,7 @@ async fn execute_query_plan_with_data<'exec>(
             metrics_recorder.record_delta(delta as f64, &result_code, op_name);
         }
 
-        if actual_exceeds_max {
+        if actual > demand_control.max_cost {
             tracing::info!(
                 operation_name = ?opts.operation_for_plan.name.as_deref(),
                 actual_cost = actual,

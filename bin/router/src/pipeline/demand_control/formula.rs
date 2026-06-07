@@ -1,5 +1,6 @@
 use ahash::{HashMap as AHashMap, HashMapExt, HashSet as AHashSet, HashSetExt};
 
+use hive_router_plan_executor::execution::demand_control::demand_control_definition_cost;
 use hive_router_plan_executor::execution::demand_control::CompiledActualCostPlan;
 use hive_router_plan_executor::execution::demand_control::DemandControlEvaluation;
 use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
@@ -20,8 +21,6 @@ use tracing::warn;
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use crate::pipeline::error::PipelineError;
-
-// ── CostExpr compilation as a mathematical formula for estimated cost ───────────────────────
 
 /// Size overrides threaded from a parent @listSize(sizedFields:[…]) down to children.
 /// Each entry is (remaining path from the current selection, size expression).
@@ -148,11 +147,8 @@ impl fmt::Display for CostExpr {
     }
 }
 
-// ── Compiled plan types ──────────────────────────────────────────────────────
-
 pub struct DemandControlFormulaPlan {
     pub(crate) root: FormulaPlanNode,
-    pub(crate) formula_by_subgraph: Arc<BTreeMap<String, String>>,
     pub(crate) actual_cost_plan: Arc<CompiledActualCostPlan>,
 }
 
@@ -285,8 +281,6 @@ fn evaluate_formula_plan_node(
     Ok(())
 }
 
-// ── Evaluate phase: CostExpr ─────────────────────────────────────────────────
-
 /// Evaluate a CostExpr to a u64 cost.
 /// Pure arithmetic + variable lookups only, so zero schema traversal at request time.
 fn eval_cost_expr(
@@ -372,8 +366,6 @@ fn eval_cost_expr(
         )),
     }
 }
-
-// ── Compile phase: estimated cost → CostExpr ─────────────────────────────────
 
 pub(crate) fn compile_cost_expr_for_operation(
     operation: &OperationDefinition,
@@ -565,7 +557,7 @@ fn compile_cost_expr_for_field_selection<'exec>(
         (parent_type_name, false)
     };
 
-    let return_type_cost = type_cost(supergraph_state, return_type_name);
+    let return_type_cost = demand_control_definition_cost(supergraph_state, return_type_name);
     let children_expr = compile_cost_expr_for_selection_set(
         &field.selections,
         operation_fragments,
@@ -628,7 +620,7 @@ fn compile_cost_expr_for_entities_field_selection<'exec>(
         .items
         .iter()
         .filter_map(|item| match item {
-            SelectionItem::InlineFragment(fragment) => Some(type_cost(
+            SelectionItem::InlineFragment(fragment) => Some(demand_control_definition_cost(
                 supergraph_state,
                 fragment.type_condition.as_str(),
             )),
@@ -891,18 +883,4 @@ fn resolve_integer_from_json_value(value: &Value, path: &[String]) -> Option<u64
     }
 
     None
-}
-
-fn type_cost(supergraph_state: &SupergraphState, type_name: &str) -> u64 {
-    let Some(definition) = supergraph_state.definitions.get(type_name) else {
-        return 0;
-    };
-
-    match definition {
-        SupergraphDefinition::Object(def) => def.cost.as_ref().map(|cost| cost.weight).unwrap_or(1),
-        SupergraphDefinition::Interface(_) | SupergraphDefinition::Union(_) => 1,
-        SupergraphDefinition::Enum(def) => def.cost.as_ref().map(|cost| cost.weight).unwrap_or(0),
-        SupergraphDefinition::Scalar(def) => def.cost.as_ref().map(|cost| cost.weight).unwrap_or(0),
-        SupergraphDefinition::InputObject(_) => 0,
-    }
 }
