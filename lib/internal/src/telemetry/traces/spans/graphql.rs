@@ -4,15 +4,18 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     graphql::ObservedError,
-    telemetry::traces::{
-        disabled_span, is_level_enabled,
-        spans::{
-            attributes::{
-                self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
-                HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND,
+    telemetry::{
+        metrics::demand_control_metrics::DemandControlResultCode,
+        traces::{
+            disabled_span, is_level_enabled,
+            spans::{
+                attributes::{
+                    self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
+                    HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND,
+                },
+                kind::{HiveEventKind, HiveSpanKind},
+                TARGET_NAME,
             },
-            kind::{HiveEventKind, HiveSpanKind},
-            TARGET_NAME,
         },
     },
 };
@@ -401,25 +404,23 @@ impl GraphQLOperationSpan {
         estimated: u64,
         actual: Option<u64>,
         delta: Option<i64>,
-        result: &str,
-        formula_cache_hit: Option<bool>,
+        result: &DemandControlResultCode,
     ) {
         if self.span.is_disabled() {
             return;
         }
 
         self.span.record(attributes::COST_ESTIMATED, estimated);
+
         if let Some(actual) = actual {
             self.span.record(attributes::COST_ACTUAL, actual);
         }
+
         if let Some(delta) = delta {
             self.span.record(attributes::COST_DELTA, delta);
         }
-        self.span.record(attributes::COST_RESULT, result);
-        if let Some(formula_cache_hit) = formula_cache_hit {
-            self.span
-                .record(attributes::COST_FORMULA_CACHE_HIT, formula_cache_hit);
-        }
+
+        self.span.record(attributes::COST_RESULT, result.as_str());
     }
 }
 

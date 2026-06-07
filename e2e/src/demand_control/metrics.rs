@@ -467,10 +467,6 @@ mod metrics_tests {
             operation_span.attributes.get("cost.result"),
             Some(&"COST_OK".to_string())
         );
-        assert_eq!(
-            operation_span.attributes.get("cost.formula_cache_hit"),
-            Some(&"false".to_string())
-        );
 
         let estimated = operation_span
             .attributes

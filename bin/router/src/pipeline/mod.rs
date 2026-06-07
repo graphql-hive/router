@@ -1,9 +1,8 @@
 use futures::StreamExt;
 use hive_router_internal::{
     http::read_body_stream,
-    telemetry::{
-        metrics::demand_control_metrics::DemandControlResultCode,
-        traces::spans::{graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan},
+    telemetry::traces::spans::{
+        graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
     },
 };
 use hive_router_plan_executor::{
@@ -678,27 +677,10 @@ pub async fn execute_pipeline<'exec>(
             .await
         {
             Ok(context) => Some(context),
-            Err(err @ PipelineError::CostEstimatedTooExpensive { estimated_cost, .. }) => {
-                let result: &'static str =
-                    (&DemandControlResultCode::CostEstimatedTooExpensive).into();
-                operation_span.record_demand_control(estimated_cost, None, None, result, None);
-                return Err(err);
-            }
             Err(err) => return Err(err),
         },
         None => None,
     };
-
-    if let Some(demand_control) = demand_control_execution_context.as_ref() {
-        let result: &'static str = (&demand_control.result_code).into();
-        operation_span.record_demand_control(
-            demand_control.evaluation.estimated_cost,
-            None,
-            None,
-            result,
-            Some(demand_control.formula_cache_hit),
-        );
-    }
 
     let client_request_details = client_request_details.freeze();
     let planned_request = PlannedRequest {

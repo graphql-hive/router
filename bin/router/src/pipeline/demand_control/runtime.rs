@@ -192,7 +192,6 @@ impl DemandControlRuntime {
             result_code: estimated_result,
             metrics_recorder: self.metrics.demand_control.recorder(),
             expose_headers_flags: self.expose_headers_flags.clone(),
-            formula_cache_hit,
             estimated_formula_by_subgraph: compiled_plan.formula_by_subgraph.clone(),
             actual_cost_plan: compiled_plan.actual_cost_plan.clone(),
         })

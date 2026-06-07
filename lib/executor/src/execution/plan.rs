@@ -12,6 +12,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use hive_router_internal::graphql::ObservedError;
+use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
@@ -35,7 +36,7 @@ use tracing::Instrument;
 use crate::execution::client_request_details::OperationDetails;
 use crate::execution::demand_control::extensions::DemandControlCostMetadataExtensions;
 use crate::execution::demand_control::{
-    demand_control_actual_cost, estimate_actual_subgraph_response_cost_with_compiled_plan,
+    calculate_actual_cost, estimate_actual_subgraph_response_cost_with_compiled_plan,
     CompiledActualCostPlan, DemandControlExecutionContext,
 };
 use crate::execution::operation_name::OperationNameFactory;
@@ -483,41 +484,45 @@ async fn execute_query_plan_with_data<'exec>(
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
     if let Some(demand_control) = executor.demand_control {
-        let actual_cost_result = demand_control_actual_cost(
+        let actual = calculate_actual_cost(
             &demand_control,
-            opts.operation_for_plan.name.as_deref(),
             &data,
             &opts.variable_values.variables_map,
             &exec_ctx.actual_cost_by_subgraph,
         );
-        let result: &'static str = (&actual_cost_result.result_code).into();
-        opts.span.record_demand_control(
+        let delta = actual as i128 - demand_control.evaluation.estimated_cost as i128;
+        let delta_i64 = delta.max(i64::MIN as i128).min(i64::MAX as i128) as i64;
+        let actual_exceeds_max = actual > demand_control.max_cost;
+        let result_code = DemandControlResultCode::from_artifacts(
+            demand_control.max_cost,
             demand_control.evaluation.estimated_cost,
-            Some(actual_cost_result.actual),
-            Some(actual_cost_result.delta),
-            result,
-            Some(demand_control.formula_cache_hit),
+            actual,
         );
 
-        if actual_cost_result.actual > demand_control.max_cost {
+        opts.span.record_demand_control(
+            demand_control.evaluation.estimated_cost,
+            Some(actual),
+            Some(delta_i64),
+            &result_code,
+        );
+
+        if let Some(metrics_recorder) = &demand_control.metrics_recorder {
+            let op_name = opts.operation_for_plan.name.as_deref();
+            metrics_recorder.record_actual_cost(actual, &result_code, op_name);
+            metrics_recorder.record_delta(delta as f64, &result_code, op_name);
+        }
+
+        if actual_exceeds_max {
             tracing::info!(
                 operation_name = ?opts.operation_for_plan.name.as_deref(),
-                actual_cost = actual_cost_result.actual,
+                actual_cost = actual,
                 estimated_cost = demand_control.evaluation.estimated_cost,
                 max_cost = demand_control.max_cost,
                 "actual cost exceeds max cost (not enforced)"
             );
         }
-        /*
-        * estimated: demand_control.evaluation.estimated_cost,
-        actual: Some(actual_cost_result.actual),
-        max: demand_control.max_cost,
-        */
 
-        demand_control.apply_expose_headers(
-            &mut exec_ctx.response_headers_aggregator,
-            actual_cost_result.actual,
-        );
+        demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
     }
 
     // TODO: coprocessor.on_execution_response

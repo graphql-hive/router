@@ -51,7 +51,6 @@ pub struct DemandControlExecutionContext {
     pub result_code: DemandControlResultCode,
     pub metrics_recorder: Option<DemandControlMetricsRecorder>,
     pub expose_headers_flags: Arc<DemandControlExposeHeadersConfig>,
-    pub formula_cache_hit: bool,
     pub estimated_formula_by_subgraph: Arc<BTreeMap<String, String>>,
     pub actual_cost_mode: DemandControlActualCostMode,
     pub actual_cost_plan: Arc<CompiledActualCostPlan>,
@@ -529,14 +528,14 @@ fn evaluate_field_actual_cost_plan(
         .saturating_add(child)
 }
 
-pub fn demand_control_actual_cost(
+#[inline]
+pub fn calculate_actual_cost(
     demand_control: &DemandControlExecutionContext,
-    operation_name: Option<&str>,
     data: &Value<'_>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     actual_cost_by_subgraph_from_responses: &Option<ahash::HashMap<&str, u64>>,
-) -> DemandControlActualCostResult {
-    let actual = match demand_control.actual_cost_plan.as_ref() {
+) -> u64 {
+    match demand_control.actual_cost_plan.as_ref() {
         CompiledActualCostPlan::BySubgraph(_) => {
             if let Some(actual_cost_by_subgraph_from_responses) =
                 actual_cost_by_subgraph_from_responses
@@ -555,34 +554,20 @@ pub fn demand_control_actual_cost(
                 variable_values,
             )
         }
-    };
-
-    let delta = actual as i128 - demand_control.evaluation.estimated_cost as i128;
-    let delta_i64 = delta.max(i64::MIN as i128).min(i64::MAX as i128) as i64;
-
-    let actual_exceeds_max = actual > demand_control.max_cost;
-
-    let result_code = if demand_control.result_code != DemandControlResultCode::CostOk {
-        // Estimated cost already flagged a problem (e.g. COST_ESTIMATED_TOO_EXPENSIVE in
-        // measure mode). Preserve the estimated result — actual provides additional
-        // diagnostic info but does not change the root cause reported to the client.
-        demand_control.result_code.clone()
-    } else if actual_exceeds_max {
-        DemandControlResultCode::CostActualTooExpensive
-    } else {
-        DemandControlResultCode::CostOk
-    };
-
-    if let Some(metrics_recorder) = demand_control.metrics_recorder.as_ref() {
-        metrics_recorder.record_actual_cost(actual, &result_code, operation_name);
-        metrics_recorder.record_delta(delta_i64, &result_code, operation_name);
     }
 
-    DemandControlActualCostResult {
-        actual,
-        result_code,
-        delta: delta_i64,
-    }
+    // let result_code = if demand_control.result_code != DemandControlResultCode::CostOk {
+    //     // Estimated cost already flagged a problem (e.g. COST_ESTIMATED_TOO_EXPENSIVE in
+    //     // measure mode). Preserve the estimated result — actual provides additional
+    //     // diagnostic info but does not change the root cause reported to the client.
+    //     demand_control.result_code.clone()
+    // } else if actual_exceeds_max {
+    //     DemandControlResultCode::CostActualTooExpensive
+    // } else {
+    //     DemandControlResultCode::CostOk
+    // };
+
+    // actual
 }
 
 pub struct DemandControlActualCostResult {

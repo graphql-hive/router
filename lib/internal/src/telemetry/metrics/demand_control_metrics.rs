@@ -107,6 +107,24 @@ pub enum DemandControlResultCode {
     SubgraphCostEstimatedTooExpensive,
 }
 
+impl DemandControlResultCode {
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
+
+    pub fn from_artifacts(max: u64, estimated: u64, actual: u64) -> Self {
+        if estimated > max {
+            return Self::CostEstimatedTooExpensive;
+        }
+
+        if actual > max {
+            return Self::CostActualTooExpensive;
+        }
+
+        Self::CostOk
+    }
+}
+
 impl DemandControlMetricsRecorder {
     pub fn record_actual_cost(
         &self,
@@ -129,7 +147,7 @@ impl DemandControlMetricsRecorder {
 
     pub fn record_delta(
         &self,
-        delta: i64,
+        delta: f64,
         result: &DemandControlResultCode,
         operation_name: Option<&str>,
     ) {
@@ -143,6 +161,6 @@ impl DemandControlMetricsRecorder {
         }
         #[cfg(debug_assertions)]
         debug_assert_attrs(names::COST_DELTA, &attrs);
-        self.delta.record(delta as f64, &attrs);
+        self.delta.record(delta, &attrs);
     }
 }
