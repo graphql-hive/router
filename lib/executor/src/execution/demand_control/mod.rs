@@ -570,10 +570,9 @@ fn should_skip_inline_fragment(
     !apply_when_typename_missing
 }
 
+#[inline]
 fn response_object_get<'a>(obj: &'a [(&'a str, Value<'a>)], key: &str) -> Option<&'a Value<'a>> {
-    obj.binary_search_by_key(&key, |(k, _)| *k)
-        .ok()
-        .map(|idx| &obj[idx].1)
+    obj.iter().find(|(k, _)| *k == key).map(|(_, v)| v)
 }
 
 pub fn demand_control_definition_cost(supergraph_state: &SupergraphState, type_name: &str) -> u64 {
