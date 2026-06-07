@@ -6,6 +6,7 @@ use super::graphql::{
 };
 use super::http_request::{HttpClientRequestSpan, HttpInflightRequestSpan, HttpServerRequestSpan};
 use crate::graphql::ObservedError;
+use crate::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use crate::telemetry::traces::spans::http_request::HttpServerSpanRequest;
 use bytes::Bytes;
 use hive_router_config::telemetry::{ClientIpHeaderConfig, ClientIpHeaderTrustedProxiesConfig};
@@ -853,7 +854,7 @@ fn test_graphql_operation_span() {
         layer.assert_recorded_value(&span, attributes::HIVE_CLIENT_NAME, "client");
         layer.assert_recorded_value(&span, attributes::HIVE_CLIENT_VERSION, "1.0.0");
 
-        span.record_demand_control(11, Some(3), Some(-8), "COST_OK", Some(true));
+        span.record_demand_control(11, Some(3), Some(-8), &DemandControlResultCode::CostOk);
         layer.assert_recorded_value(&span, attributes::COST_ESTIMATED, "11");
         layer.assert_recorded_value(&span, attributes::COST_ACTUAL, "3");
         layer.assert_recorded_value(&span, attributes::COST_DELTA, "-8");
