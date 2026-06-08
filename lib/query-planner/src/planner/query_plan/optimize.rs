@@ -881,7 +881,7 @@ mod tests {
     use crate::{
         ast::{
             document::Document,
-            merge_path::{MergePath, Segment},
+            merge_path::{FieldPathSegment, MergePath, Segment},
             operation::SubgraphFetchOperation,
         },
         planner::plan_nodes::{
@@ -2285,7 +2285,11 @@ mod tests {
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
-            Segment::Field(root_path_field.to_string(), 0, None),
+            Segment::Field(
+                FieldPathSegment::named(root_path_field.to_string()),
+                0,
+                None,
+            ),
             Segment::List,
         ]));
 

@@ -224,6 +224,18 @@ impl SubgraphDefinition {
             _ => None,
         }
     }
+
+    pub fn is_object_type(&self) -> bool {
+        matches!(self, SubgraphDefinition::Object(_))
+    }
+
+    pub fn is_interface_type(&self) -> bool {
+        matches!(self, SubgraphDefinition::Interface(_))
+    }
+
+    pub fn field(&self, field_name: &str) -> Option<&SubgraphField> {
+        self.fields()?.iter().find(|field| field.name == field_name)
+    }
 }
 
 #[derive(Debug)]

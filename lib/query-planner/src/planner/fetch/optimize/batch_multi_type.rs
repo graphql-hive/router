@@ -499,7 +499,7 @@ mod tests {
     use std::collections::{BTreeSet, HashMap};
 
     use crate::{
-        ast::merge_path::{MergePath, Segment},
+        ast::merge_path::{FieldPathSegment, MergePath, Segment},
         planner::plan_nodes::FlattenNodePath,
     };
 
@@ -507,12 +507,12 @@ mod tests {
 
     fn path(type_name: &str) -> MergePath {
         MergePath::new(vec![
-            Segment::Field("products".to_string(), 0, None),
+            Segment::Field(FieldPathSegment::named("products".to_string()), 0, None),
             Segment::List,
             Segment::TypeCondition(BTreeSet::from([type_name.to_string()]), None),
-            Segment::Field("reviews".to_string(), 0, None),
+            Segment::Field(FieldPathSegment::named("reviews".to_string()), 0, None),
             Segment::List,
-            Segment::Field("product".to_string(), 0, None),
+            Segment::Field(FieldPathSegment::named("product".to_string()), 0, None),
         ])
     }
 

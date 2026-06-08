@@ -443,8 +443,8 @@ impl From<&MergePath> for Vec<FetchNodePathSegment> {
                 Segment::TypeCondition(type_names, _) => {
                     Some(FetchNodePathSegment::TypenameEquals(type_names.clone()))
                 }
-                Segment::Field(field_name, _args_hash, _) => {
-                    Some(FetchNodePathSegment::Key(field_name.clone()))
+                Segment::Field(field_seg, _args_hash, _) => {
+                    Some(FetchNodePathSegment::Key(field_seg.response_key().to_string()))
                 }
                 Segment::List => None,
             })
@@ -514,8 +514,8 @@ impl From<&MergePath> for FlattenNodePath {
                     Segment::TypeCondition(type_names, _) => {
                         FlattenNodePathSegment::TypeCondition(type_names.clone())
                     }
-                    Segment::Field(field_name, _args_hash, _) => {
-                        FlattenNodePathSegment::Field(field_name.clone())
+                    Segment::Field(field_seg, _args_hash, _) => {
+                        FlattenNodePathSegment::Field(field_seg.response_key().to_string())
                     }
                     Segment::List => FlattenNodePathSegment::List,
                 })

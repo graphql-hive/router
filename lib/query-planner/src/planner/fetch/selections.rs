@@ -434,6 +434,16 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         self.selections.entry(def_name.to_string()).or_default();
     }
 
+    pub fn replace_definitions_with_abstract(
+        &mut self,
+        abstract_type: &str,
+        selection_set: SelectionSet,
+    ) {
+        self.selections.clear();
+        self.selections
+            .insert(abstract_type.to_string(), selection_set);
+    }
+
     pub fn migrate_from_another(
         &mut self,
         other: &Self,

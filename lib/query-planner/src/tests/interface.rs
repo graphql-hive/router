@@ -523,14 +523,6 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
             products {
               id
               __typename
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
             }
           }
         },
@@ -613,26 +605,11 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
           fragment a on Product {
             id
             __typename
-            ... on Book {
-              __typename
-              sku
-              id
-              dimensions {
-                ...b
-              }
+            sku
+            dimensions {
+              weight
+              size
             }
-            ... on Magazine {
-              __typename
-              sku
-              id
-              dimensions {
-                ...b
-              }
-            }
-          }
-          fragment b on ProductDimension {
-            weight
-            size
           }
         },
         BatchFetch(service: "inventory") {
@@ -724,14 +701,6 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
             products {
               id
               __typename
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
             }
           }
         },
@@ -763,14 +732,6 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
               product {
                 id
                 __typename
-                ... on Book {
-                  __typename
-                  id
-                }
-                ... on Magazine {
-                  __typename
-                  id
-                }
               }
             }
           },
@@ -853,14 +814,6 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
             products {
               id
               __typename
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
             }
           }
         },
@@ -892,14 +845,6 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
               product {
                 id
                 __typename
-                ... on Book {
-                  __typename
-                  id
-                }
-                ... on Magazine {
-                  __typename
-                  id
-                }
               }
             }
           },

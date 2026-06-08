@@ -104,6 +104,35 @@ impl SelectionSet {
             None
         })
     }
+
+    pub fn iter_fields_and_fragments_of_same_type<'a>(
+        &'a self,
+        type_name: &'a str,
+    ) -> impl Iterator<Item = &'a FieldSelection> + 'a {
+        let mut stack = vec![self.items.iter()];
+
+        std::iter::from_fn(move || loop {
+            let iter = stack.last_mut()?;
+
+            match iter.next() {
+                Some(SelectionItem::Field(field)) => {
+                    return Some(field);
+                }
+
+                Some(SelectionItem::InlineFragment(fragment))
+                    if fragment.type_condition == type_name =>
+                {
+                    stack.push(fragment.selections.items.iter());
+                }
+
+                Some(_) => {}
+
+                None => {
+                    stack.pop();
+                }
+            }
+        })
+    }
 }
 
 impl Hash for SelectionSet {
@@ -567,14 +596,14 @@ pub fn find_selection_set_by_path_mut<'a>(
                     }
                 }
             }
-            Segment::Field(field_name, args_hash, condition) => {
+            Segment::Field(field_seg, args_hash, condition) => {
                 let next_selection_set_option =
                     current_selection_set
                         .items
                         .iter_mut()
                         .find_map(|item| match item {
                             SelectionItem::Field(field) => {
-                                if field.selection_identifier() == field_name
+                                if field.selection_identifier() == field_seg.response_key()
                                     && field.arguments_hash() == *args_hash
                                     && field_condition_equal(condition, field)
                                 {

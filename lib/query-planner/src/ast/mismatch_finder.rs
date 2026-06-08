@@ -96,7 +96,7 @@ fn handle_selection_set<'field, 'schema>(
                     }
 
                     let next_path = path.push(Segment::Field(
-                        field.selection_identifier().to_string(),
+                        field.into(),
                         field.arguments_hash(),
                         field.into(),
                     ));

@@ -16,7 +16,7 @@ use crate::{
         best::find_best_combination,
         fetch::{fetch_graph::FetchGraph, state::MultiTypeFetchStep},
     },
-    state::supergraph_state::SupergraphState,
+    state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::{CancellationError, CancellationToken},
 };
 
@@ -93,6 +93,10 @@ impl Planner {
             &self.supergraph,
             &override_context,
             query_tree,
+            normalized_operation
+                .operation_kind
+                .clone()
+                .unwrap_or(OperationKind::Query),
             cancellation_token,
         )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;

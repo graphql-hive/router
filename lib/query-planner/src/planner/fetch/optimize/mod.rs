@@ -1,10 +1,12 @@
 mod apply_internal_aliases_patching;
 mod batch_multi_type;
 mod deduplicate_and_prune_fetch_steps;
+mod fold_concrete_selections_to_interfaces;
 mod merge_children_with_parents;
 mod merge_leafs;
 mod merge_passthrough_child;
 mod merge_siblings;
+mod normalize_selection_sets;
 mod turn_mutations_into_sequence;
 mod type_mismatches;
 mod utils;
@@ -37,11 +39,17 @@ impl FetchGraph<MultiTypeFetchStep> {
             self.merge_leafs()?;
             self.deduplicate_and_prune_fetch_steps()?;
             self.batch_multi_type()?;
+            self.normalize_selection_sets(supergraph_state)?;
+            let abstract_type_converted =
+                self.fold_concrete_selections_to_interfaces(supergraph_state)?;
 
             let node_count_after = self.graph.node_count();
             let edge_count_after = self.graph.edge_count();
 
-            if node_count_before == node_count_after && edge_count_before == edge_count_after {
+            if node_count_before == node_count_after
+                && edge_count_before == edge_count_after
+                && !abstract_type_converted
+            {
                 break;
             }
         }

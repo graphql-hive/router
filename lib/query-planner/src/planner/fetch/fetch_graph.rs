@@ -1,4 +1,4 @@
-use crate::ast::merge_path::{Condition, MergePath, Segment};
+use crate::ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment};
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::ast::type_aware_selection::TypeAwareSelection;
@@ -13,7 +13,7 @@ use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
 use crate::planner::walker::path::OperationPath;
 use crate::planner::walker::pathfinder::can_satisfy_edge;
-use crate::state::supergraph_state::{SubgraphName, SupergraphState};
+use crate::state::supergraph_state::{OperationKind, SubgraphName, SupergraphState};
 use crate::utils::cancellation::CancellationToken;
 use petgraph::algo::has_path_connecting;
 use petgraph::graph::EdgeReference;
@@ -32,12 +32,7 @@ use super::error::FetchGraphError;
 pub struct FetchGraph<State> {
     pub(crate) graph: StableDiGraph<FetchStepData<State>, ()>,
     pub root_index: Option<NodeIndex>,
-}
-
-impl Default for FetchGraph<SingleTypeFetchStep> {
-    fn default() -> Self {
-        Self::new()
-    }
+    pub(crate) operation_kind: OperationKind,
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
@@ -49,13 +44,15 @@ impl FetchGraph<SingleTypeFetchStep> {
         FetchGraph {
             graph: new_graph,
             root_index: self.root_index,
+            operation_kind: self.operation_kind,
         }
     }
 
-    pub fn new() -> Self {
+    pub fn new(kind: OperationKind) -> Self {
         Self {
             graph: StableDiGraph::new(),
             root_index: None,
+            operation_kind: kind,
         }
     }
 }
@@ -1273,23 +1270,26 @@ fn process_plain_field_edge(
         },
     )?;
 
-    let child_segment = query_node.selection_alias().unwrap_or(&field_move.name);
+    let segment_args_hash = query_node
+        .selection_arguments()
+        .map(|a| a.hash_u64())
+        .unwrap_or(0);
+    let segment_field = FieldPathSegment::new(
+        field_move.name.to_string(),
+        query_node.selection_alias().map(|a| a.to_string()),
+    );
     let segment_condition = if should_strip_condition {
         None
     } else {
         condition.cloned()
     };
-    let segment_args_hash = query_node
-        .selection_arguments()
-        .map(|a| a.hash_u64())
-        .unwrap_or(0);
     let mut child_response_path = response_path.push(Segment::Field(
-        child_segment.to_string(),
+        segment_field.clone(),
         segment_args_hash,
         segment_condition.clone(),
     ));
     let mut child_fetch_path = fetch_path.push(Segment::Field(
-        child_segment.to_string(),
+        segment_field,
         segment_args_hash,
         segment_condition,
     ));
@@ -1493,21 +1493,21 @@ fn process_requires_field_edge(
 
     fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
 
-    let child_segment = query_node.selection_alias().unwrap_or(&field_move.name);
     let segment_args_hash = query_node
         .selection_arguments()
         .map(|a| a.hash_u64())
         .unwrap_or(0);
+    let segment_field = FieldPathSegment::new(
+        field_move.name.to_string(),
+        query_node.selection_alias().map(|a| a.to_string()),
+    );
     let mut child_response_path = response_path.push(Segment::Field(
-        child_segment.to_string(),
+        segment_field.clone(),
         segment_args_hash,
         None,
     ));
-    let mut child_fetch_path = MergePath::default().push(Segment::Field(
-        child_segment.to_string(),
-        segment_args_hash,
-        None,
-    ));
+    let mut child_fetch_path =
+        MergePath::default().push(Segment::Field(segment_field, segment_args_hash, None));
 
     if field_move.is_list {
         child_response_path = child_response_path.push(Segment::List);
@@ -1812,9 +1812,10 @@ pub fn build_fetch_graph_from_query_tree(
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_tree: QueryTree,
+    operation_kind: OperationKind,
     cancellation_token: &CancellationToken,
 ) -> Result<FetchGraph<MultiTypeFetchStep>, FetchGraphError> {
-    let mut fetch_graph = FetchGraph::new();
+    let mut fetch_graph = FetchGraph::new(operation_kind);
 
     process_query_node(
         graph,

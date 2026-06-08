@@ -5,8 +5,48 @@ use std::rc::Rc;
 
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection};
 
-// Can be either the alias or the name of the field. This will be used to identify the field in the selection set.
-type SelectionIdentifier = String;
+// This is used to identify the field in the selection set
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FieldPathSegment {
+    pub field_name: String,
+    pub alias: Option<String>,
+}
+
+impl FieldPathSegment {
+    pub fn new(field_name: String, alias: Option<String>) -> Self {
+        Self { field_name, alias }
+    }
+
+    pub fn named(field_name: String) -> Self {
+        Self {
+            field_name,
+            alias: None,
+        }
+    }
+
+    pub fn response_key(&self) -> &str {
+        self.alias.as_deref().unwrap_or(&self.field_name)
+    }
+
+    pub fn field_name(&self) -> &str {
+        &self.field_name
+    }
+}
+
+impl Display for FieldPathSegment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.response_key())
+    }
+}
+
+impl From<&FieldSelection> for FieldPathSegment {
+    fn from(field: &FieldSelection) -> Self {
+        Self {
+            field_name: field.name.clone(),
+            alias: field.alias.clone(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Condition {
@@ -90,7 +130,7 @@ impl From<&InlineFragmentSelection> for Option<Condition> {
 pub enum Segment {
     // A field with a unique identifier and the arguments hash
     // We used this to uniquely identify the field in the selection set.
-    Field(SelectionIdentifier, u64, Option<Condition>),
+    Field(FieldPathSegment, u64, Option<Condition>),
     List,
     TypeCondition(BTreeSet<String>, Option<Condition>),
 }
@@ -107,11 +147,11 @@ impl Display for Segment {
                     write!(f, "|[{}]", joined)
                 }
             }
-            Self::Field(field_name, _, condition) => {
+            Self::Field(field_seg, _, condition) => {
                 if let Some(condition) = condition {
-                    write!(f, "{} {}", field_name, condition)
+                    write!(f, "{} {}", field_seg.response_key(), condition)
                 } else {
-                    write!(f, "{}", field_name)
+                    write!(f, "{}", field_seg.response_key())
                 }
             }
         }
