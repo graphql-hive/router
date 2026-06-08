@@ -24,6 +24,15 @@ fn write_response_key(first: bool, response_key: Option<&str>, buffer: &mut Vec<
     }
 }
 
+#[inline]
+fn write_typename_field(buffer: &mut Vec<u8>, type_name: &str) {
+    buffer.put(QUOTE);
+    buffer.put(TYPENAME);
+    buffer.put(QUOTE);
+    buffer.put(COLON);
+    write_and_escape_string(buffer, type_name);
+}
+
 pub fn project_requires(
     possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
@@ -124,30 +133,47 @@ fn project_requires_map_mut(
     parent_response_key: Option<&str>,
     parent_first: bool,
 ) {
+    // First, check if __typename is present and if it's needs to be added
+    let type_name = entity_obj
+        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
+        .ok()
+        .and_then(|idx| entity_obj[idx].1.as_str());
+
     for requires_selection in requires_selections {
         match &requires_selection {
             SelectionItem::Field(requires_selection) => {
                 let field_name = &requires_selection.name;
                 let response_key = requires_selection.selection_identifier();
                 if response_key == TYPENAME_FIELD_NAME {
-                    // Skip __typename field, it is handled separately
+                    // __typename is normally written when the object is opened for
+                    // its first non-__typename field (see below).
+                    //
+                    // But, for the very rate case of using only __typename in key (`@key(fields: "__typename")`),
+                    // we need to write it here instead, because the code below never runs (no other fields).
+                    //
+                    // So: if this is the first field, write __typename immediately, and we need to write __typename anyway,
+                    // we write it, and then continue to the next field (marking first=false to avoid re-write)
+                    if *first {
+                        if let Some(type_name) = type_name {
+                            write_response_key(parent_first, parent_response_key, buffer);
+                            buffer.put(OPEN_BRACE);
+                            write_typename_field(buffer, type_name);
+                            *first = false;
+                        }
+                    }
+
                     continue;
                 }
 
                 let original = entity_obj
                     .binary_search_by_key(&field_name.as_str(), |(k, _)| k)
                     .ok()
-                    .map(|idx| &entity_obj[idx].1)
                     .or_else(|| {
-                        if response_key == TYPENAME_FIELD_NAME {
-                            None
-                        } else {
-                            entity_obj
-                                .binary_search_by_key(&response_key, |(k, _)| k)
-                                .ok()
-                                .map(|idx| &entity_obj[idx].1)
-                        }
-                    });
+                        entity_obj
+                            .binary_search_by_key(&response_key, |(k, _)| k)
+                            .ok()
+                    })
+                    .map(|idx| &entity_obj[idx].1);
 
                 let Some(original) = original else {
                     continue;
@@ -161,17 +187,10 @@ fn project_requires_map_mut(
                     object_start_offset = Some(buffer.len());
                     write_response_key(parent_first, parent_response_key, buffer);
                     buffer.put(OPEN_BRACE);
-                    // Write __typename only if the object has other fields
-                    if let Some(type_name) = entity_obj
-                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                        .ok()
-                        .and_then(|idx| entity_obj[idx].1.as_str())
-                    {
-                        buffer.put(QUOTE);
-                        buffer.put(TYPENAME);
-                        buffer.put(QUOTE);
-                        buffer.put(COLON);
-                        write_and_escape_string(buffer, type_name);
+                    // Write __typename only if the object has other fields,
+                    // and if it wasn't written before (first=true)
+                    if let Some(type_name) = type_name {
+                        write_typename_field(buffer, type_name);
                         *first = false;
                     }
                 }
@@ -391,5 +410,62 @@ mod tests {
 
         let pretty = project_requires_pretty("contactOptions", json!({}));
         assert_eq!(pretty, None);
+    }
+
+    /// Regression testt for https://github.com/graphql-hive/router/issues/1099:
+    /// a key that has only `__typename` must still produce a
+    /// representation, and using `__typename` alongside another field (in
+    /// either order) must not duplicate it, or drop any of the field/__typename
+    #[test]
+    fn project_requires_typename_key() {
+        // Only `__typename` in the key — must still build the representation and return a valid JSON
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "__typename", // @key(fields: ["__typename"])
+              json!({
+                  "__typename": "CatalogEntry",
+                  "sku": "SKU-REPRO-001"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "CatalogEntry"
+          }
+        "#);
+
+        // `__typename` is first, then another field
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "__typename id", // @key(fields: ["__typename", "id"])
+              json!({
+                  "__typename": "CatalogEntry",
+                  "id": "1"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "CatalogEntry",
+            "id": "1"
+          }
+        "#);
+
+        // Another field listed first, then `__typename` — same result, no duplicates
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "id __typename", // @key(fields: ["id", "__typename"])
+              json!({
+                  "__typename": "CatalogEntry",
+                  "id": "1"
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "CatalogEntry",
+            "id": "1"
+          }
+        "#);
     }
 }

@@ -815,6 +815,104 @@ mod issues_e2e_tests {
     }
 
     #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1099
+    ///
+    /// When an entity's `@key` is set to only `__typename` (use case is singleton that lives on another subgraph),
+    /// them the executor must still execute the `_entities` fetch call to the subgraph.
+    ///
+    /// Previously the representation projection skipped `__typename`, leading to an empty representation,
+    /// and no fetch call was made.
+    /// This happened because `__typename` has special handling in the representation projection
+    /// that bypassed the standard field projection logic.
+    async fn issue_1099_entities_fetch_with_only_typename_key() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1099.graphql
+                  query_planner:
+                    allow_expose: true
+                  override_subgraph_urls:
+                    subgraphs:
+                      warehouse:
+                        url: "http://{host}/warehouse"
+                      reviews:
+                        url: "http://{host}/reviews"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // Step 1: warehouse returns catalogEntry { __typename, sku }
+        let warehouse_mock = server
+            .mock("POST", "/warehouse")
+            .match_request(|r| {
+                let body = String::from_utf8(r.body().unwrap().clone()).unwrap();
+                body.contains("catalogEntry")
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                  "data": {
+                    "catalogEntry": { "__typename": "CatalogEntry", "sku": "SKU-REPRO-001" }
+                  }
+                }"#,
+            )
+            .create();
+
+        // Step 2: reviews must receive the _entities fetch built from a
+        // representation whose only key field is __typename.
+        let reviews_mock = server
+            .mock("POST", "/reviews")
+            .match_request(|r| {
+                let body = String::from_utf8(r.body().unwrap().clone()).unwrap();
+                body.contains("_entities") && body.contains("$representations")
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                  "data": {
+                    "_entities": [
+                      { "__typename": "CatalogEntry", "rating": { "score": 42 } }
+                    ]
+                  }
+                }"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request("{ catalogEntry { sku rating { score } } }", None, None)
+            .await;
+
+        warehouse_mock.assert();
+        reviews_mock.assert();
+
+        // The core thing here is `rating` field - if `__typename` is not written in projections, `rating` is `null`
+        // becuase no fetch is made (and the previous assertion has failed)
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "catalogEntry": {
+              "sku": "SKU-REPRO-001",
+              "rating": {
+                "score": 42
+              }
+            }
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
     /// Inline string arguments must be re-escaped per the GraphQL spec when
     /// the router emits the operation to a subgraph. A value such as
     /// `"\"quoted\""` is decoded to `"quoted"` while parsing the incoming
