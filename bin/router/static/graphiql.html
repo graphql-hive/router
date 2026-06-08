@@ -68,7 +68,7 @@
     <script src="https://unpkg.com/@graphql-yoga/graphiql/dist/yoga-graphiql.umd.js"></script>
     <script>
       function parseInitialVariables() {
-        const rawVariables = new URL(location.href).searchParams.get(
+        const rawVariables = new URLSearchParams(location.search).get(
           "variables",
         );
 
