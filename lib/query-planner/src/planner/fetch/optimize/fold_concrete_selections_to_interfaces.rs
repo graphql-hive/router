@@ -133,6 +133,11 @@ impl<'a> StepConverter<'a> {
         &self,
         step: &mut FetchStepData<MultiTypeFetchStep>,
     ) -> Result<bool, FetchGraphError> {
+        // Only rewrite if the step is at the root (no response path).
+        if !step.response_path.inner.is_empty() {
+            return Ok(false);
+        }
+
         let interface_name = step
             .response_path
             .resolve_type_name(self.root_type_name, self.supergraph)?;
@@ -532,19 +537,17 @@ impl MergePath {
                 Segment::Field(field_seg, _, _) => {
                     let definition = supergraph.definitions.get(type_name).ok_or_else(|| {
                         FetchGraphError::Internal(format!(
-                            "Type definition for {type_name} not found"
+                            "Type definition for {type_name} not found for given path {}",
+                            self
                         ))
                     })?;
-                    let field =
-                        definition
-                            .fields()
-                            .get(field_seg.field_name())
-                            .ok_or_else(|| {
-                                FetchGraphError::Internal(format!(
-                                    "Field {} not found in type {type_name}",
-                                    field_seg.field_name()
-                                ))
-                            })?;
+                    let field = definition.fields().get(field_seg.field_name()).ok_or_else(|| {
+                            FetchGraphError::Internal(format!(
+                                "Field {} not found in type {type_name} for given path {}",
+                                field_seg.field_name(),
+                                self
+                            ))
+                        })?;
 
                     type_name = field.field_type.inner_type();
                 }
