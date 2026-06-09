@@ -4,7 +4,9 @@ mod http_callback_e2e_tests {
     use ntex::http;
     use sonic_rs::{json, JsonValueTrait};
 
-    use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        some_header_map, ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     async fn listen_on_different_port() {
@@ -334,5 +336,74 @@ mod http_callback_e2e_tests {
 
         // keep alive until the end of the test so the subscription stays active
         drop(res);
+    }
+
+    #[ntex::test]
+    async fn public_url_from_env_expression() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let router_port = router_listener.local_addr().unwrap().port();
+
+        let _env_guard = EnvVarsGuard::new()
+            .set(
+                "ROUTER_CALLBACK_PUBLIC_URL",
+                &format!("http://0.0.0.0:{router_port}/callback"),
+            )
+            .apply()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .with_listener(router_listener)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    callback:
+                        public_url:
+                            expression: 'env("ROUTER_CALLBACK_PUBLIC_URL")'
+                        subgraphs:
+                            - reviews
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAdded(intervalInMs: 0) {
+                        id
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                None,
+                some_header_map!(
+                    http::header::ACCEPT => "text/event-stream",
+                ),
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        let body = res.string_body().await;
+
+        assert!(
+            body.contains(
+                r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
+            ),
+            "Expected at least one emitted event, got: {}",
+            body
+        );
+        assert!(body.contains("event: complete"));
     }
 }

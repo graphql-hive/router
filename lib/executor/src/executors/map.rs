@@ -10,6 +10,7 @@ use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerErr
 use hive_router_config::{
     demand_control::DemandControlMode,
     override_subgraph_urls::UrlOrExpression,
+    primitives::value_or_expression::ValueOrExpression,
     subscriptions::SubscriptionProtocol,
     traffic_shaping::{DurationOrExpression, StatusCodeMatcher},
     HiveRouterConfig,
@@ -758,11 +759,36 @@ impl SubgraphExecutorMap {
 
                 let subgraph_config = self.resolve_subgraph_config(subgraph_name)?;
 
+                let public_url = match &callback_config.public_url {
+                    ValueOrExpression::Value(url) => url.clone(),
+                    ValueOrExpression::Expression { expression } => expression
+                        .compile_expression(None)
+                        .map_err(|err| {
+                            SubgraphExecutorError::EndpointExpressionBuild(
+                                "callback.public_url".to_string(),
+                                err.diagnostics,
+                            )
+                        })?
+                        .execute(VrlValue::Null)
+                        .map_err(|err| {
+                            SubgraphExecutorError::EndpointExpressionResolutionFailure(
+                                err.to_string(),
+                            )
+                        })?
+                        .as_str()
+                        .ok_or(SubgraphExecutorError::EndpointExpressionWrongType)?
+                        .to_string(),
+                };
+                // validate that the resolved value is a well-formed URL
+                public_url.parse::<Uri>().map_err(|err| {
+                    SubgraphExecutorError::EndpointParseFailure(public_url.clone(), err)
+                })?;
+
                 let callback_executor = HttpCallbackSubgraphExecutor::new(
                     subgraph_name.to_string(),
                     endpoint_uri,
                     subgraph_config.client,
-                    callback_config.public_url.to_string(),
+                    public_url,
                     heartbeat_interval_ms,
                     self.callback_subscriptions.clone(),
                 )

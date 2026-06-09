@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::Duration;
-use url::Url;
 
 use crate::primitives::absolute_path::AbsolutePath;
+use crate::primitives::value_or_expression::ValueOrExpression;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
@@ -47,8 +47,15 @@ pub struct CallbackConfig {
     /// Meaning, if your server is `http://localhost:4000` and the path is `/callback`,
     /// your `public_url` should be `http://localhost:4000/callback`.
     ///
-    /// Example: `https://example.com:4000/callback`
-    pub public_url: Url,
+    /// Can be a static URL string or a VRL expression. Expressions are useful for
+    /// service discovery in horizontally scaled deployments where the URL can be
+    /// read from an environment variable:
+    ///
+    /// ```yaml
+    /// public_url:
+    ///   expression: 'env("ROUTER_PUBLIC_URL")'
+    /// ```
+    pub public_url: ValueOrExpression<String>,
     /// The path of the router's callback endpoint.
     /// Must be an absolute path starting with `/`. Defaults to `/callback`.
     #[serde(default = "default_callback_path")]
