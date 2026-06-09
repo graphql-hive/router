@@ -541,13 +541,17 @@ impl MergePath {
                             self
                         ))
                     })?;
-                    let field = definition.fields().get(field_seg.field_name()).ok_or_else(|| {
-                            FetchGraphError::Internal(format!(
-                                "Field {} not found in type {type_name} for given path {}",
-                                field_seg.field_name(),
-                                self
-                            ))
-                        })?;
+                    let field =
+                        definition
+                            .fields()
+                            .get(field_seg.field_name())
+                            .ok_or_else(|| {
+                                FetchGraphError::Internal(format!(
+                                    "Field {} not found in type {type_name} for given path {}",
+                                    field_seg.field_name(),
+                                    self
+                                ))
+                            })?;
 
                     type_name = field.field_type.inner_type();
                 }
