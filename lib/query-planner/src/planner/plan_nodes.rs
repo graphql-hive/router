@@ -443,9 +443,9 @@ impl From<&MergePath> for Vec<FetchNodePathSegment> {
                 Segment::TypeCondition(type_names, _) => {
                     Some(FetchNodePathSegment::TypenameEquals(type_names.clone()))
                 }
-                Segment::Field(field_seg, _args_hash, _) => {
-                    Some(FetchNodePathSegment::Key(field_seg.response_key().to_string()))
-                }
+                Segment::Field(field_seg, _args_hash, _) => Some(FetchNodePathSegment::Key(
+                    field_seg.response_key().to_string(),
+                )),
                 Segment::List => None,
             })
             .collect()
