@@ -155,7 +155,11 @@ pub async fn graphql_request_handler(
         let mut request_headers = req.headers().clone();
         let request_context = req.read_request_context()?;
 
-        let client = identify_client(&request_headers, &request_context, &shared_state.router_config.telemetry.client_identification)?;
+        let client = identify_client(
+            &request_headers,
+            &request_context,
+            &shared_state.router_config.telemetry.client_identification,
+        )?;
         let client_name = client.name.as_deref();
         let client_version = client.version.as_deref();
 
@@ -214,7 +218,7 @@ pub async fn graphql_request_handler(
 
         let Some(ref supergraph) = **schema_state.current_supergraph() else {
             return Err(PipelineError::NoSupergraphAvailable {
-              response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
+                response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
             });
         };
 
@@ -231,23 +235,24 @@ pub async fn graphql_request_handler(
         }
 
         request_context.update(|ctx| {
-          ctx.operation.update(parser_payload.operation_name.clone(), Some(parser_payload.operation_type.clone()));
+            ctx.operation.update(
+                parser_payload.operation_name.clone(),
+                Some(parser_payload.operation_type.clone()),
+            );
 
-          // Set initial state for progressive overrides in request context
-          let progressive_overrides = &supergraph.planner.supergraph.progressive_overrides;
-          if !progressive_overrides.flags.is_empty() {
-            ctx.progressive_override.unresolved_labels = Some(progressive_overrides.flags.clone());
-          }
+            // Set initial state for progressive overrides in request context
+            let progressive_overrides = &supergraph.planner.supergraph.progressive_overrides;
+            if !progressive_overrides.flags.is_empty() {
+                ctx.progressive_override.unresolved_labels =
+                    Some(progressive_overrides.flags.clone());
+            }
         })?;
 
         if let Some(coprocessor_runtime) = shared_state.coprocessor.as_ref() {
             let performed_mutations = match coprocessor_runtime
-                .on_graphql_request(
-                    req,
-                    &mut request_headers,
-                    &mut graphql_params,
-                    || supergraph.public_schema.sdl.clone()
-                )
+                .on_graphql_request(req, &mut request_headers, &mut graphql_params, || {
+                    supergraph.public_schema.sdl.clone()
+                })
                 .await?
             {
                 ControlFlow::Break(response) => return Ok(response),
@@ -289,16 +294,17 @@ pub async fn graphql_request_handler(
             Some(normalize_payload.operation_identity.operation_type.as_str()),
         );
 
-                // Update the request context if the operation name or type has changed
-                if parser_payload.operation_name.as_ref() != normalize_payload.operation_identity.name.as_ref()
-                        || parser_payload.operation_type != normalize_payload.operation_identity.operation_type
-                {
-                        request_context.update(|ctx| {
-                                ctx.operation.update(
-                                        normalize_payload.operation_identity.name.clone(),
-                                        Some(normalize_payload.operation_identity.operation_type.clone()),
-                                );
-                        })?;
+        // Update the request context if the operation name or type has changed
+        if parser_payload.operation_name.as_ref()
+            != normalize_payload.operation_identity.name.as_ref()
+            || parser_payload.operation_type != normalize_payload.operation_identity.operation_type
+        {
+            request_context.update(|ctx| {
+                ctx.operation.update(
+                    normalize_payload.operation_identity.name.clone(),
+                    Some(normalize_payload.operation_identity.operation_type.clone()),
+                );
+            })?;
         }
 
         if req.method() == Method::GET {
@@ -322,8 +328,12 @@ pub async fn graphql_request_handler(
             return Err(PipelineError::SubscriptionsNotSupported);
         }
 
-        let request_dedupe_enabled =
-            shared_state.router_config.traffic_shaping.router.dedupe.enabled;
+        let request_dedupe_enabled = shared_state
+            .router_config
+            .traffic_shaping
+            .router
+            .dedupe
+            .enabled;
 
         let fingerprint = if request_dedupe_enabled
             && matches!(
@@ -355,22 +365,24 @@ pub async fn graphql_request_handler(
         let request_context = req.read_request_context()?;
         let path_params = req.match_info().into();
 
-        let exec = |guard| execute_planned_request(
-            req.method(),
-            req.uri(),
-            request_headers,
-            path_params,
-            graphql_params,
-            &normalize_payload,
-            supergraph,
-            shared_state,
-            schema_state,
-            operation_span,
-            plugin_req_state,
-            &request_context,
-            response_mode,
-            guard,
-        );
+        let exec = |guard| {
+            execute_planned_request(
+                req.method(),
+                req.uri(),
+                request_headers,
+                path_params,
+                graphql_params,
+                &normalize_payload,
+                supergraph,
+                shared_state,
+                schema_state,
+                operation_span,
+                plugin_req_state,
+                &request_context,
+                response_mode,
+                guard,
+            )
+        };
 
         let shared_response = if let Some(fp) = fingerprint {
             let (shared_response, _role) = if is_subscription {
@@ -401,18 +413,6 @@ pub async fn graphql_request_handler(
                 normalize_payload.operation_for_plan.operation_kind.as_ref(),
                 &parser_payload.minified_document,
                 hive_usage_agent,
-                shared_state
-                    .router_config
-                    .telemetry
-                    .hive
-                    .as_ref()
-                    .map(|c| &c.usage_reporting)
-                    .expect(
-                        // SAFETY: According to `configure_app_from_config` in `bin/router/src/lib.rs`,
-                        // the UsageAgent is only created when usage reporting is enabled.
-                        // Thus, this expect should never panic.
-                        "Expected Usage Reporting options to be present when Hive Usage Agent is initialized",
-                    ),
                 shared_response.error_count(),
                 Some(usage_reporting::request_details_from_ntex_request(req)),
             )

@@ -2557,6 +2557,7 @@ dependencies = [
 name = "hive-console-sdk"
 version = "0.3.15"
 dependencies = [
+ "ahash",
  "anyhow",
  "async-dropper-simple",
  "async-trait",
@@ -2570,6 +2571,7 @@ dependencies = [
  "md5",
  "mockito",
  "moka",
+ "rand 0.10.1",
  "recloser",
  "regex-automata",
  "regress",
@@ -2587,6 +2589,7 @@ dependencies = [
  "tracing",
  "typify",
  "vrl",
+ "xxhash-rust",
 ]
 
 [[package]]
