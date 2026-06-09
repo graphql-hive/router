@@ -3,6 +3,130 @@ mod issues_e2e_tests {
     use crate::testkit::{ClientResponseExt, Started, TestRouter};
 
     #[ntex::test]
+    /// https://github.com/graphql-hive/federation-gateway-audit `src/test-suites/null-keys`
+    async fn federation_audit_null_keys() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.null-keys.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                      b:
+                        url: "http://{host}/b"
+                      c:
+                        url: "http://{host}/c"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"bookContainers":[
+                    {"book":{"__typename":"Book","upc":"b1"}},
+                    {"book":{"__typename":"Book","upc":"b2"}},
+                    {"book":{"__typename":"Book","upc":"b3"}}
+                ]}}"#,
+            )
+            .create();
+
+        let _b = server
+            .mock("POST", "/b")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"_entities":[
+                    {"__typename":"Book","id":"1"},
+                    {"__typename":"Book","id":"2"},
+                    null
+                ]}}"#,
+            )
+            .create();
+
+        let _c_invalid = server
+            .mock("POST", "/c")
+            .match_request(|r| {
+                let body = String::from_utf8(r.body().unwrap().clone()).unwrap();
+                body.contains(r#"{"__typename":"Book"}"#)
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"_entities":[
+                    {"__typename":"Book","author":{"__typename":"Author","name":"Alice"}},
+                    {"__typename":"Book","author":{"__typename":"Author","name":"Bob"}},
+                    null
+                ]},"errors":[{"message":"Invalid reference","path":["_entities",2]}]}"#,
+            )
+            .create();
+        let _c_ok = server
+            .mock("POST", "/c")
+            .match_request(|r| {
+                let body = String::from_utf8(r.body().unwrap().clone()).unwrap();
+                !body.contains(r#"{"__typename":"Book"}"#)
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"_entities":[
+                    {"__typename":"Book","author":{"__typename":"Author","name":"Alice"}},
+                    {"__typename":"Book","author":{"__typename":"Author","name":"Bob"}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"query { bookContainers { book { upc author { name } } } }"#,
+                None,
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "bookContainers": [
+              {
+                "book": {
+                  "upc": "b1",
+                  "author": {
+                    "name": "Alice"
+                  }
+                }
+              },
+              {
+                "book": {
+                  "upc": "b2",
+                  "author": {
+                    "name": "Bob"
+                  }
+                }
+              },
+              {
+                "book": {
+                  "upc": "b3",
+                  "author": null
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
     /// https://github.com/graphql-hive/router/issues/880
     async fn issue_880_null_in_required_field() {
         let mut server = mockito::Server::new_async().await;

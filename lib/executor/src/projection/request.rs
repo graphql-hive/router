@@ -133,35 +133,38 @@ fn project_requires_map_mut(
     parent_response_key: Option<&str>,
     parent_first: bool,
 ) {
-    // First, check if __typename is present and if it's needs to be added
+    // First, check if __typename is present in the entity object, we'll use it later
     let type_name = entity_obj
         .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
         .ok()
         .and_then(|idx| entity_obj[idx].1.as_str());
+
+    // An indicator that only `__typename` is used for the key fields.
+    // This is an edge case that we need to identify, in order to detect when
+    // `__typename` alone is a valid key but other fields are also required
+    let only_typename = requires_selections.len() == 1 && requires_selections.iter().all(|selection| {
+        matches!(selection, SelectionItem::Field(field) if field.selection_identifier() == TYPENAME_FIELD_NAME)
+    });
+
+    // If the requires selection is only `__typename`, we can skip the rest of the logic, and just write the `__typename` field
+    if only_typename {
+        if let Some(type_name) = type_name {
+            write_response_key(parent_first, parent_response_key, buffer);
+            buffer.put(OPEN_BRACE);
+            write_typename_field(buffer, type_name);
+            *first = false;
+
+            return;
+        }
+    }
 
     for requires_selection in requires_selections {
         match &requires_selection {
             SelectionItem::Field(requires_selection) => {
                 let field_name = &requires_selection.name;
                 let response_key = requires_selection.selection_identifier();
-                if response_key == TYPENAME_FIELD_NAME {
-                    // __typename is normally written when the object is opened for
-                    // its first non-__typename field (see below).
-                    //
-                    // But, for the very rate case of using only __typename in key (`@key(fields: "__typename")`),
-                    // we need to write it here instead, because the code below never runs (no other fields).
-                    //
-                    // So: if this is the first field, write __typename immediately, and we need to write __typename anyway,
-                    // we write it, and then continue to the next field (marking first=false to avoid re-write)
-                    if *first {
-                        if let Some(type_name) = type_name {
-                            write_response_key(parent_first, parent_response_key, buffer);
-                            buffer.put(OPEN_BRACE);
-                            write_typename_field(buffer, type_name);
-                            *first = false;
-                        }
-                    }
 
+                if response_key == TYPENAME_FIELD_NAME {
                     continue;
                 }
 
