@@ -8,7 +8,7 @@ use crate::{
     response::value::Value,
     utils::consts::{
         CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET, QUOTE,
-        TRUE, TYPENAME, TYPENAME_FIELD_NAME,
+        TRUE, TYPENAME_FIELD_NAME, TYPENAME_JSON_FIELD,
     },
 };
 
@@ -26,10 +26,7 @@ fn write_response_key(first: bool, response_key: Option<&str>, buffer: &mut Vec<
 
 #[inline]
 fn write_typename_field(buffer: &mut Vec<u8>, type_name: &str) {
-    buffer.put(QUOTE);
-    buffer.put(TYPENAME);
-    buffer.put(QUOTE);
-    buffer.put(COLON);
+    buffer.put(TYPENAME_JSON_FIELD);
     write_and_escape_string(buffer, type_name);
 }
 
