@@ -116,6 +116,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.66 (2026-06-09)
+
+### Fixes
+
+#### Fix projection when only `__typename` is used as key
+
+As described in [issue #1099](https://github.com/graphql-hive/router/issues/1099), when an entity's `@key` is only `__typename` (e.g. `@key(fields: "__typename")`), the executor built a correct query plan but never issued the `_entities` request to the other subgraph, leaving the cross-subgraph field resolved as `null`.
+
+The representation projection skipped the `__typename` field and only emitted it alongside other fields, so a key using only `__typename` field produced an empty representation and the entity fetch was silently dropped.
+
+The projection now emits a `{ "__typename": ... }` representation in this case, so the entity fetch runs and the field resolves as expected.
+
 ## 0.0.65 (2026-06-03)
 
 ### Features
