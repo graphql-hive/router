@@ -398,6 +398,70 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+// Related: https://github.com/graphql-hive/router/issues/1098
+// Related: https://github.com/graphql-hive/federation-gateway-audit/pull/347
+#[test]
+fn partial_union_member_only_in_one_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query {
+          getResponse {
+            message
+            actions {
+              __typename
+              ... on Alpha {
+                id
+                value
+              }
+              ... on Beta {
+                id
+                name
+                details
+              }
+              ... on Gamma {
+                id
+                label
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan("fixture/tests/partial-union.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          getResponse {
+            message
+            actions {
+              __typename
+              ... on Alpha {
+                id
+                value
+              }
+              ... on Beta {
+                id
+                name
+                details
+              }
+              ... on Gamma {
+                id
+                label
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
     init_logger();
