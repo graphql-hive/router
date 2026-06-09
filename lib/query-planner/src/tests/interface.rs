@@ -539,19 +539,11 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
               }
             } =>
             {
-              ... on Book {
+              ... on Product {
                 reviews {
-                  ...a
+                  id
                 }
               }
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              id
             }
           },
         },
@@ -641,22 +633,12 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
           }
           {
             _e0: _entities(representations: $__batch_reps_0) {
-              ... on Book {
+              ... on Product {
                 delivery(zip: "1234") {
-                  ...a
+                  fastestDelivery
+                  estimatedDelivery
                 }
               }
-              ... on Magazine {
-                delivery(zip: "1234") {
-                  ...a
-                }
-              }
-            }
-          }
-          fragment a on DeliveryEstimates {
-            ... on DeliveryEstimates {
-              fastestDelivery
-              estimatedDelivery
             }
           }
         },
@@ -717,21 +699,13 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
               }
             } =>
             {
-              ... on Book {
+              ... on Product {
                 reviews {
-                  ...a
+                  product {
+                    id
+                    __typename
+                  }
                 }
-              }
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              product {
-                id
-                __typename
               }
             }
           },
@@ -830,21 +804,13 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
               }
             } =>
             {
-              ... on Book {
+              ... on Product {
                 reviews {
-                  ...a
+                  product {
+                    id
+                    __typename
+                  }
                 }
-              }
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              product {
-                id
-                __typename
               }
             }
           },

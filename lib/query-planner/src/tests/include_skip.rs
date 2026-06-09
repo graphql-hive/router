@@ -1465,10 +1465,7 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
                   }
                 } =>
                 {
-                  ... on Book {
-                    reviewsCount
-                  }
-                  ... on Magazine {
+                  ... on Product {
                     reviewsCount
                   }
                 }
@@ -1561,11 +1558,7 @@ fn qp_abstract_interface_shared_condition_can_skip_remote_fetch() -> Result<(), 
                 }
               } =>
               {
-                ... on Book {
-                  reviewsCount
-                  reviewsScore
-                }
-                ... on Magazine {
+                ... on Product {
                   reviewsCount
                   reviewsScore
                 }
