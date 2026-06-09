@@ -74,7 +74,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             changed |= StepConverter {
                 root_type_name,
                 supergraph,
-                subgraph: &subgraph,
+                subgraph: subgraph,
             }
             .rewrite_step(step)?;
         }
@@ -177,7 +177,7 @@ impl<'a> StepConverter<'a> {
         let mut changed = false;
 
         for (definition_name, selection_set) in step.output.iter_selections_mut() {
-            changed |= self.rewrite_selection_set(&definition_name, selection_set)?;
+            changed |= self.rewrite_selection_set(definition_name, selection_set)?;
         }
 
         Ok(changed)

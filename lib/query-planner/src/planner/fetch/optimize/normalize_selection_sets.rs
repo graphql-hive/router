@@ -40,7 +40,7 @@ impl SelectionSetNormalizer<'_> {
         step: &mut FetchStepData<MultiTypeFetchStep>,
     ) -> Result<(), FetchGraphError> {
         for (definition_name, selection_set) in step.output.iter_selections_mut() {
-            self.normalize_selection_set(&definition_name, selection_set)?;
+            self.normalize_selection_set(definition_name, selection_set)?;
         }
 
         Ok(())
