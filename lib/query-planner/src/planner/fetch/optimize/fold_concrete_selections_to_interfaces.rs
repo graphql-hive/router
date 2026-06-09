@@ -524,7 +524,7 @@ impl MergePath {
     /// we look up:
     ///   1. `Query.user` -> return type `User`
     ///   2. `User.friends` -> return type `[User]`, inner type `User`
-    /// Returns `User`.
+    ///   3. Returns `User`.
     fn resolve_type_name<'a>(
         &'a self,
         root_type_name: &'a str,
