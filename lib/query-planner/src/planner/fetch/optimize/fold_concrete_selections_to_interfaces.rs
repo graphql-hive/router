@@ -174,20 +174,9 @@ impl<'a> StepConverter<'a> {
         &self,
         step: &mut FetchStepData<MultiTypeFetchStep>,
     ) -> Result<bool, FetchGraphError> {
-        let definition_names = step
-            .output
-            .iter_selections()
-            .map(|(definition_name, _)| definition_name.clone())
-            .collect::<Vec<_>>();
-
         let mut changed = false;
 
-        for definition_name in definition_names {
-            let Some(selection_set) = step.output.selections_for_definition_mut(&definition_name)
-            else {
-                continue;
-            };
-
+        for (definition_name, selection_set) in step.output.iter_selections_mut() {
             changed |= self.rewrite_selection_set(&definition_name, selection_set)?;
         }
 
@@ -204,8 +193,15 @@ impl<'a> StepConverter<'a> {
         for item in &mut selection_set.items {
             match item {
                 SelectionItem::Field(field) => {
-                    let child_type_name =
-                        self.field_return_type_name(current_type_name, field.name.as_str())?;
+                    let child_type_name = self
+                        .supergraph
+                        .field_return_type_name(current_type_name, field.name.as_str())
+                        .ok_or_else(|| {
+                            FetchGraphError::Internal(format!(
+                                "No field found for name '{}' in type '{}'",
+                                field.name, current_type_name
+                            ))
+                        })?;
                     changed |=
                         self.rewrite_selection_set(child_type_name, &mut field.selections)?;
                 }
@@ -323,20 +319,6 @@ impl<'a> StepConverter<'a> {
                 return Ok(None);
             }
 
-            if !self.selected_fields_exist_on_interface(
-                branch.type_name,
-                branch.selection_set,
-                interface.fields,
-            ) {
-                // The selected fields do not exist on the interface
-                return Ok(None);
-            }
-
-            if !self.selection_set_is_valid_for_type(interface_name, branch.selection_set)? {
-                // The selection set (fields and fragments) is not valid for the interface
-                return Ok(None);
-            }
-
             concrete_types.insert(branch.type_name);
         }
 
@@ -353,6 +335,20 @@ impl<'a> StepConverter<'a> {
             // All must branches ask for the same fields
             .all(|branch| selection_set.semantic_eq(branch.selection_set))
         {
+            return Ok(None);
+        }
+
+        if !self.selected_fields_exist_on_interface(
+            first_branch.type_name,
+            selection_set,
+            interface.fields,
+        ) {
+            // The selected fields do not exist on the interface
+            return Ok(None);
+        }
+
+        if !self.selection_set_is_valid_for_type(interface_name, selection_set)? {
+            // The selection set (fields and fragments) is not valid for the interface
             return Ok(None);
         }
 
@@ -519,35 +515,6 @@ impl<'a> StepConverter<'a> {
             .get(type_name)
             .is_some_and(|definition| definition.is_object_type())
     }
-
-    fn field_return_type_name(
-        &self,
-        parent_type_name: &str,
-        field_name: &str,
-    ) -> Result<&str, FetchGraphError> {
-        if field_name == "__typename" {
-            return Ok("String");
-        }
-
-        let definition = self
-            .supergraph
-            .definitions
-            .get(parent_type_name)
-            .ok_or_else(|| {
-                FetchGraphError::Internal(format!(
-                    "No definition found for type: {parent_type_name}"
-                ))
-            })?;
-
-        let field_definition = definition.fields().get(field_name).ok_or_else(|| {
-            FetchGraphError::Internal(format!(
-                "No field found for name '{}' in type '{}'",
-                field_name, parent_type_name
-            ))
-        })?;
-
-        Ok(field_definition.field_type.inner_type())
-    }
 }
 
 impl MergePath {
@@ -573,15 +540,16 @@ impl MergePath {
                             "Type definition for {type_name} not found"
                         ))
                     })?;
-                    let field = definition
-                        .fields()
-                        .get(field_seg.field_name())
-                        .ok_or_else(|| {
-                            FetchGraphError::Internal(format!(
-                                "Field {} not found in type {type_name}",
-                                field_seg.field_name()
-                            ))
-                        })?;
+                    let field =
+                        definition
+                            .fields()
+                            .get(field_seg.field_name())
+                            .ok_or_else(|| {
+                                FetchGraphError::Internal(format!(
+                                    "Field {} not found in type {type_name}",
+                                    field_seg.field_name()
+                                ))
+                            })?;
 
                     type_name = field.field_type.inner_type();
                 }

@@ -3,7 +3,7 @@ use tracing::instrument;
 use crate::{
     ast::{
         selection_item::SelectionItem,
-        selection_set::{FieldSelection, SelectionSet},
+        selection_set::{merge_selection_set, SelectionSet},
     },
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
@@ -39,18 +39,7 @@ impl SelectionSetNormalizer<'_> {
         &self,
         step: &mut FetchStepData<MultiTypeFetchStep>,
     ) -> Result<(), FetchGraphError> {
-        let definition_names = step
-            .output
-            .iter_selections()
-            .map(|(definition_name, _)| definition_name.clone())
-            .collect::<Vec<_>>();
-
-        for definition_name in definition_names {
-            let Some(selection_set) = step.output.selections_for_definition_mut(&definition_name)
-            else {
-                continue;
-            };
-
+        for (definition_name, selection_set) in step.output.iter_selections_mut() {
             self.normalize_selection_set(&definition_name, selection_set)?;
         }
 
@@ -67,7 +56,15 @@ impl SelectionSetNormalizer<'_> {
         for item in std::mem::take(&mut selection_set.items) {
             match item {
                 SelectionItem::Field(mut field) => {
-                    let child_type_name = self.field_return_type_name(current_type_name, &field)?;
+                    let child_type_name = self
+                        .supergraph
+                        .field_return_type_name(current_type_name, field.name.as_str())
+                        .ok_or_else(|| {
+                            FetchGraphError::Internal(format!(
+                                "No field found for name '{}' in type '{}'",
+                                field.name, current_type_name
+                            ))
+                        })?;
                     self.normalize_selection_set(child_type_name, &mut field.selections)?;
                     normalized_items.push(SelectionItem::Field(field));
                 }
@@ -81,7 +78,12 @@ impl SelectionSetNormalizer<'_> {
                         && fragment.skip_if.is_none()
                         && fragment.include_if.is_none()
                     {
-                        normalized_items.extend(fragment.selections.items);
+                        // normalized_items.extend(fragment.selections.items);
+                        let mut merged = SelectionSet {
+                            items: std::mem::take(&mut normalized_items),
+                        };
+                        merge_selection_set(&mut merged, &fragment.selections, false);
+                        normalized_items = merged.items;
                     } else {
                         normalized_items.push(SelectionItem::InlineFragment(fragment));
                     }
@@ -99,33 +101,45 @@ impl SelectionSetNormalizer<'_> {
 
         Ok(())
     }
+}
 
-    fn field_return_type_name(
-        &self,
-        parent_type_name: &str,
-        field: &FieldSelection,
-    ) -> Result<&str, FetchGraphError> {
-        if field.name == "__typename" {
-            return Ok("String");
-        }
+#[cfg(test)]
+mod tests {
+    use graphql_tools::parser::query::{Definition, OperationDefinition};
 
-        let definition = self
-            .supergraph
-            .definitions
-            .get(parent_type_name)
-            .ok_or_else(|| {
-                FetchGraphError::Internal(format!(
-                    "No definition found for type: {parent_type_name}"
-                ))
-            })?;
+    use crate::{
+        state::supergraph_state::SupergraphState,
+        utils::parsing::{parse_operation, parse_schema},
+    };
 
-        let field_definition = definition.fields().get(&field.name).ok_or_else(|| {
-            FetchGraphError::Internal(format!(
-                "No field found for name '{}' in type '{}'",
-                field.name, parent_type_name
-            ))
-        })?;
+    use super::SelectionSetNormalizer;
 
-        Ok(field_definition.field_type.inner_type())
+    #[test]
+    fn ensure_deduplication() {
+        let schema = parse_schema(
+            r#"
+            directive @join__type(graph: join__Graph!, key: join__FieldSet) repeatable on OBJECT
+            scalar join__FieldSet
+            enum join__Graph { A @join__graph(name: "a", url: "") }
+            type Query @join__type(graph: A) { user: User }
+            type User @join__type(graph: A) { id: ID! name: String! }
+          "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+        let normalizer = SelectionSetNormalizer {
+            supergraph: &supergraph,
+        };
+
+        let op = parse_operation("{ id ... on User { id } }");
+        let mut selection_set = match op.definitions.first() {
+            Some(Definition::Operation(OperationDefinition::SelectionSet(s))) => s.clone().into(),
+            _ => panic!("expected top-level selection set"),
+        };
+
+        normalizer
+            .normalize_selection_set("User", &mut selection_set)
+            .unwrap();
+
+        insta::assert_snapshot!(&selection_set.to_string(), @"{id}");
     }
 }

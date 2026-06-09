@@ -308,6 +308,12 @@ impl<State> FetchStepSelections<State> {
         usages
     }
 
+    pub fn iter_selections_mut(&mut self) -> impl Iterator<Item = (&str, &mut SelectionSet)> {
+        self.selections
+            .iter_mut()
+            .map(|(name, selection_set)| (name.as_str(), selection_set))
+    }
+
     pub fn selections_for_definition_mut(
         &mut self,
         definition_name: &str,

@@ -243,6 +243,16 @@ impl SupergraphState {
         self.interface_to_object_types.get(interface_name)
     }
 
+    pub fn field_return_type_name(&self, type_name: &str, field_name: &str) -> Option<&str> {
+        if field_name == "__typename" {
+            return Some("String");
+        }
+
+        let definition = self.definitions.get(type_name)?;
+        let field_definition = definition.fields().get(field_name)?;
+        Some(field_definition.field_type.inner_type())
+    }
+
     fn create_interface_object_in_subgraph(
         definitions: &DefinitionMap,
     ) -> InterfaceObjectToSubgraphsMap {
