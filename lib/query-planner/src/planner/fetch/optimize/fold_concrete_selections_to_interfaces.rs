@@ -74,7 +74,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             changed |= StepConverter {
                 root_type_name,
                 supergraph,
-                subgraph: subgraph,
+                subgraph,
             }
             .rewrite_step(step)?;
         }
