@@ -258,7 +258,7 @@ fn extract_payload(
             .map(Some)
         }
         Err(e) => Err(ParseError::InvalidSubgraphResponse(
-            SubgraphExecutorError::ResponseDeserializationFailure(e),
+            SubgraphExecutorError::ResponseDeserializationFailure(e, None),
         )),
     }
 }

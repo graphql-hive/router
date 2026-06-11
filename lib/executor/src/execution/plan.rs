@@ -47,12 +47,12 @@ use crate::{
     headers::{
         plan::HeaderRulesPlan,
         request::modify_subgraph_request_headers,
-        response::{apply_subgraph_response_headers, ResponseHeaderAggregator},
+        response::{apply_subgraph_response_headers, ResponseHeaderAggregator, ResponseHeaderSink},
     },
     hooks::{
         on_execute::{
             DemandControlCost, DemandControlEstimatedCost, OnExecuteEndHookPayload,
-            OnExecuteStartHookPayload,
+            OnExecuteResponse, OnExecuteStartHookPayload,
         },
         on_graphql_error::handle_graphql_errors_with_plugins,
     },
@@ -61,7 +61,7 @@ use crate::{
         schema::SchemaMetadata,
     },
     plugin_context::PluginRequestState,
-    plugin_trait::{EndControlFlow, StartControlFlow},
+    plugin_trait::{EarlyHTTPResponse, EndControlFlow, StartControlFlow},
     plugins::hooks,
     projection::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
@@ -129,11 +129,11 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub span: GraphQLOperationSpan,
     pub plugin_req_state: Option<PluginRequestState<'exec>>,
     pub operation_name_factory: OperationNameFactory,
+    pub response_header_sink: ResponseHeaderSink,
 }
 
 pub struct PlanSubscriptionOutput {
     pub body: BoxStream<'static, Vec<u8>>,
-    pub response_headers_aggregator: Option<ResponseHeaderAggregator>,
     pub error_count: usize,
 }
 
@@ -145,7 +145,6 @@ pub enum QueryPlanExecutionResult {
 #[derive(Default)]
 pub struct PlanExecutionOutput {
     pub body: Vec<u8>,
-    pub response_headers_aggregator: Option<ResponseHeaderAggregator>,
     pub error_count: usize,
     pub status_code: StatusCode,
 }
@@ -168,6 +167,23 @@ impl FailedExecutionResult {
             })
             .unwrap()
         })
+    }
+}
+
+fn early_http_response_into_execution_output(
+    response: EarlyHTTPResponse,
+    response_header_sink: &ResponseHeaderSink,
+) -> PlanExecutionOutput {
+    if !response.headers.is_empty() {
+        response_header_sink.store(ResponseHeaderAggregator::from_http_headers(
+            &response.headers,
+        ));
+    }
+
+    PlanExecutionOutput {
+        body: response.body,
+        error_count: 0,
+        status_code: response.status_code,
     }
 }
 
@@ -293,6 +309,7 @@ pub async fn execute_query_plan<'exec>(
         let client_operation_kind = opts.client_request.operation.kind;
         let client_jwt = opts.client_request.jwt.clone();
         let client_path_params = opts.client_request.path_params.into_owned();
+        let response_header_sink = opts.response_header_sink.clone();
 
         let operation_name_factory = opts.operation_name_factory.clone();
 
@@ -356,6 +373,7 @@ pub async fn execute_query_plan<'exec>(
                     graphql_error_recorder: None,
                     operation_name_factory: operation_name_factory.clone(),
                     demand_control_context: opts.demand_control_context.clone(),
+                    response_header_sink: response_header_sink.clone(),
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
@@ -372,7 +390,6 @@ pub async fn execute_query_plan<'exec>(
 
         return Ok(QueryPlanExecutionResult::Stream(PlanSubscriptionOutput {
             body: body_stream,
-            response_headers_aggregator: None,
             error_count: 0, // NOTE: errors can only happen before streaming started
         }));
     }
@@ -431,9 +448,15 @@ async fn execute_query_plan_with_data<'exec>(
             start_payload = result.payload;
             match result.control_flow {
                 StartControlFlow::Proceed => { /* continue to next plugin */ }
-                StartControlFlow::EndWithResponse(response) => {
-                    return Ok(response);
-                }
+                StartControlFlow::EndWithResponse(response) => match response {
+                    OnExecuteResponse::Output(response) => return Ok(response),
+                    OnExecuteResponse::EarlyResponse(response) => {
+                        return Ok(early_http_response_into_execution_output(
+                            response,
+                            &opts.response_header_sink,
+                        ));
+                    }
+                },
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
                 }
@@ -464,6 +487,9 @@ async fn execute_query_plan_with_data<'exec>(
 
     if let Some(node) = &opts.query_plan.node {
         executor.execute_plan_node(&mut exec_ctx, node).await;
+
+        opts.response_header_sink
+            .store(std::mem::take(&mut exec_ctx.response_headers_aggregator));
     }
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
@@ -539,9 +565,15 @@ async fn execute_query_plan_with_data<'exec>(
             end_payload = result.payload;
             match result.control_flow {
                 EndControlFlow::Proceed => { /* continue to next callback */ }
-                EndControlFlow::EndWithResponse(response) => {
-                    return Ok(response);
-                }
+                EndControlFlow::EndWithResponse(response) => match response {
+                    OnExecuteResponse::Output(response) => return Ok(response),
+                    OnExecuteResponse::EarlyResponse(response) => {
+                        return Ok(early_http_response_into_execution_output(
+                            response,
+                            &opts.response_header_sink,
+                        ));
+                    }
+                },
             }
         }
 
@@ -586,7 +618,6 @@ async fn execute_query_plan_with_data<'exec>(
 
     Ok(PlanExecutionOutput {
         body,
-        response_headers_aggregator: exec_ctx.response_headers_aggregator.none_if_empty(),
         error_count,
         status_code,
     })
@@ -944,6 +975,26 @@ impl<'exec> Executor<'exec> {
     ) {
         match job {
             Err(ref err) => {
+                if let (Some(subgraph_name), Some(subgraph_headers)) = (
+                    err.subgraph_name().as_deref(),
+                    err.subgraph_response_headers(),
+                ) {
+                    if let Err(ref propagation_err) = apply_subgraph_response_headers(
+                        self.headers_plan,
+                        subgraph_name,
+                        subgraph_headers,
+                        self.client_request,
+                        &mut ctx.response_headers_aggregator,
+                    )
+                    .with_plan_context(LazyPlanContext {
+                        subgraph_name: || Some(subgraph_name.to_string()),
+                        affected_path: || err.affected_path().clone(),
+                    }) {
+                        self.log_error(propagation_err);
+                        ctx.errors.push(propagation_err.into());
+                    }
+                }
+
                 self.log_error(err);
                 ctx.errors.push(err.into());
             }

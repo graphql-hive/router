@@ -15,6 +15,7 @@ use ahash::HashMap;
 use hive_router_internal::expressions::ExecutableProgram;
 use ntex::http::HeaderMap as NtexHeaderMap;
 use std::iter::once;
+use std::sync::{Arc, Mutex};
 
 use super::sanitizer::is_never_join_header;
 use http::{header::InvalidHeaderValue, HeaderMap, HeaderName, HeaderValue};
@@ -247,7 +248,7 @@ impl ResponseHeaderAggregator {
     #[inline]
     pub fn modify_client_response_headers(
         self,
-        out: &mut ntex::http::ResponseBuilder,
+        headers: &mut ntex::http::HeaderMap,
     ) -> Result<(), HeaderRuleRuntimeError> {
         for (name, (agg_strategy, mut values)) in self.entries {
             if values.is_empty() {
@@ -257,20 +258,20 @@ impl ResponseHeaderAggregator {
             if is_never_join_header(&name) {
                 // never-join headers must be emitted as multiple header fields
                 for value in values {
-                    out.header(&name, value);
+                    headers.append(name.clone(), value.into());
                 }
                 continue;
             }
 
             if values.len() == 1 {
-                out.set_header(name, values.pop().unwrap());
+                headers.insert(name, values.pop().unwrap().into());
                 continue;
             }
 
             if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
                 let joined = join_with_comma(&values)
                     .map_err(|_| HeaderRuleRuntimeError::BadHeaderValue(name.to_string()))?;
-                out.set_header(name, joined);
+                headers.insert(name, joined.into());
             }
         }
 
@@ -303,18 +304,36 @@ fn join_with_comma(values: &[HeaderValue]) -> Result<HeaderValue, InvalidHeaderV
 
 type AggregatedHeader = (HeaderAggregationStrategy, Vec<HeaderValue>);
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ResponseHeaderAggregator {
     pub entries: HashMap<HeaderName, AggregatedHeader>,
 }
 
-impl ResponseHeaderAggregator {
-    pub fn none_if_empty(self) -> Option<Self> {
-        if self.entries.is_empty() {
-            None
-        } else {
-            Some(self)
+#[derive(Clone, Default, Debug)]
+pub struct ResponseHeaderSink(Arc<Mutex<ResponseHeaderAggregator>>);
+
+impl ResponseHeaderSink {
+    pub fn store(&self, aggregator: ResponseHeaderAggregator) {
+        match self.0.lock() {
+            Ok(mut sink) => sink.replace_with(aggregator),
+            Err(poisoned) => poisoned.into_inner().replace_with(aggregator),
         }
+    }
+
+    pub fn take(&self) -> ResponseHeaderAggregator {
+        match self.0.lock() {
+            Ok(mut sink) => std::mem::take(&mut *sink),
+            Err(poisoned) => {
+                let mut sink = poisoned.into_inner();
+                std::mem::take(&mut *sink)
+            }
+        }
+    }
+}
+
+impl ResponseHeaderAggregator {
+    pub fn replace_with(&mut self, other: Self) {
+        self.entries = other.entries
     }
 
     /// Write a header to the aggregator according to the specified strategy.
@@ -372,6 +391,16 @@ impl ResponseHeaderAggregator {
                 // it's handled already by ntex's HeaderMap.
                 HeaderAggregationStrategy::Last,
             );
+        }
+        aggregator
+    }
+
+    pub fn from_http_headers(headers: &HeaderMap) -> Self {
+        let mut aggregator = Self::default();
+        for (name, value) in headers {
+            // Why Last and not First or Append?
+            // Check the comment in from_early_response fn
+            aggregator.write(name, value, HeaderAggregationStrategy::Append);
         }
         aggregator
     }

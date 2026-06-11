@@ -257,20 +257,22 @@ async fn send_request<'a>(
         );
 
         let (parts, body) = res.into_parts();
-        let body = body
-            .collect()
-            .await
-            .map_err(|err| {
-                SubgraphExecutorError::ResponseBodyReadFailure(
+
+        let body = match body.collect().await {
+            Ok(body) => body.to_bytes(),
+            Err(err) => {
+                return Err(SubgraphExecutorError::ResponseBodyReadFailure(
                     endpoint.to_string(),
                     err.to_string(),
-                )
-            })?
-            .to_bytes();
+                    parts.headers.into(),
+                ));
+            }
+        };
 
         if body.is_empty() {
             return Err(SubgraphExecutorError::EmptyResponseBody(
                 subgraph_name.to_string(),
+                parts.headers.into(),
             ));
         }
 
@@ -674,13 +676,18 @@ impl SubgraphHttpResponse {
         self,
         custom_scalar_paths: Option<&CustomScalarPaths>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
-        SubgraphResponse::deserialize_from_bytes(self.body, custom_scalar_paths).map(
-            |mut resp: SubgraphResponse| {
-                resp.headers = Some(self.headers);
+        SubgraphResponse::deserialize_from_bytes(self.body, custom_scalar_paths)
+            .map(|mut resp: SubgraphResponse| {
+                resp.headers = Some(self.headers.clone());
                 resp.status = Some(self.status);
                 resp
-            },
-        )
+            })
+            .map_err(|e| match e {
+                SubgraphExecutorError::ResponseDeserializationFailure(err, _) => {
+                    SubgraphExecutorError::ResponseDeserializationFailure(err, Some(self.headers))
+                }
+                other => other,
+            })
     }
 }
 

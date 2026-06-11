@@ -13,7 +13,7 @@ use hive_router_plan_executor::{
         },
         plan::{CoerceVariablesPayload, PlanExecutionOutput, QueryPlanExecutionResult},
     },
-    headers::response::ResponseHeaderAggregator,
+    headers::response::{ResponseHeaderAggregator, ResponseHeaderSink},
     hooks::{on_graphql_params::GraphQLParams, on_supergraph_load::SupergraphData},
     plugin_context::{PluginContext, PluginRequestState},
     request_context::{RequestContextExt, SharedRequestContext},
@@ -110,6 +110,7 @@ pub async fn graphql_request_handler(
     schema_state: &Arc<SchemaState>,
     http_server_request_span: &HttpServerRequestSpan,
     response_mode: &mut ResponseMode,
+    response_header_sink: ResponseHeaderSink,
 ) -> Result<web::HttpResponse, PipelineError> {
     // If an early CORS response is needed, return it immediately.
     if let Some(early_response) = shared_state
@@ -381,6 +382,7 @@ pub async fn graphql_request_handler(
                 &request_context,
                 response_mode,
                 guard,
+                response_header_sink.clone(),
             )
         };
 
@@ -453,6 +455,7 @@ pub async fn execute_planned_request<'exec>(
     request_context: &SharedRequestContext,
     response_mode: &'exec ResponseMode,
     guard: Option<SharedRouterResponseGuard>,
+    response_header_sink: ResponseHeaderSink,
 ) -> Result<SharedRouterResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
@@ -503,6 +506,7 @@ pub async fn execute_planned_request<'exec>(
         operation_span,
         plugin_req_state,
         request_context,
+        response_header_sink,
     )
     .await?
     {
@@ -534,9 +538,6 @@ pub async fn execute_planned_request<'exec>(
             });
 
             let mut builder = web::HttpResponse::Ok();
-            if let Some(aggregator) = result.response_headers_aggregator {
-                aggregator.modify_client_response_headers(&mut builder)?;
-            };
             builder.content_type(stream_content_type.as_ref());
             let headers = Arc::new(builder.finish().headers().clone());
 
@@ -557,9 +558,6 @@ pub async fn execute_planned_request<'exec>(
             // drop the `guard` as soon as the response is ready
 
             let mut builder = web::HttpResponse::Ok();
-            if let Some(aggregator) = result.response_headers_aggregator {
-                aggregator.modify_client_response_headers(&mut builder)?;
-            };
             builder.content_type(single_content_type.as_ref());
             let headers = Arc::new(builder.finish().headers().clone());
 
@@ -586,6 +584,7 @@ pub async fn execute_pipeline<'exec>(
     operation_span: GraphQLOperationSpan,
     plugin_req_state: Option<PluginRequestState<'exec>>,
     request_context: &SharedRequestContext,
+    response_header_sink: ResponseHeaderSink,
 ) -> Result<QueryPlanExecutionResult, PipelineError> {
     if normalize_payload.operation_for_introspection.is_some() {
         handle_introspection_policy(&shared_state.introspection_policy, &client_request_details)?;
@@ -634,14 +633,17 @@ pub async fn execute_pipeline<'exec>(
                     _ => Vec::new(),
                 };
 
-                return Ok(QueryPlanExecutionResult::Single(PlanExecutionOutput {
-                    body,
+                if !response.headers().is_empty() {
                     // It's an early return, so the headers from the coprocessor response
                     // should all be applied to the final response.
                     // No header propagation rules should be applied.
-                    response_headers_aggregator: Some(
-                        ResponseHeaderAggregator::from_early_response(response.headers()),
-                    ),
+                    response_header_sink.store(ResponseHeaderAggregator::from_early_response(
+                        response.headers(),
+                    ));
+                }
+
+                return Ok(QueryPlanExecutionResult::Single(PlanExecutionOutput {
+                    body,
                     error_count: 0,
                     status_code: response.status(),
                 }));
@@ -698,7 +700,14 @@ pub async fn execute_pipeline<'exec>(
         plugin_req_state,
     };
 
-    execute_plan(supergraph, shared_state, planned_request, operation_span).await
+    execute_plan(
+        supergraph,
+        shared_state,
+        planned_request,
+        operation_span,
+        response_header_sink,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]

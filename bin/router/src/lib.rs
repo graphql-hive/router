@@ -14,6 +14,7 @@ mod utils;
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
+use tracing::error;
 
 use crate::{
     consts::ROUTER_VERSION,
@@ -70,6 +71,7 @@ use hive_router_internal::{
 };
 pub use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 pub use hive_router_plan_executor::executors::http::SubgraphHttpResponse;
+use hive_router_plan_executor::headers::response::ResponseHeaderSink;
 pub use hive_router_plan_executor::response::graphql_error::GraphQLError;
 pub use hive_router_query_planner as query_planner;
 pub use http;
@@ -168,6 +170,8 @@ async fn graphql_endpoint_dispatch(
     );
     let _ = root_http_request_span.set_parent(parent_ctx);
 
+    let response_header_sink = ResponseHeaderSink::default();
+
     async {
         // Set it to the default value in case of the negotiation failing,
         // so that we can still generate an error response in the correct format.
@@ -182,6 +186,7 @@ async fn graphql_endpoint_dispatch(
             schema_state.get_ref(),
             &root_http_request_span,
             &mut response_mode,
+            response_header_sink.clone(),
         );
 
         // Handle the request with a timeout. If the timeout is reached, a timeout error response will be generated.
@@ -194,6 +199,13 @@ async fn graphql_endpoint_dispatch(
                 handle_pipeline_error(err, request, &app_state, &response_mode)
             }
         };
+
+        if let Err(err) = response_header_sink
+            .take()
+            .modify_client_response_headers(response.headers_mut())
+        {
+            error!(error = %err, "Failed to apply response header rules to the outgoing client response");
+        }
 
         // Apply CORS headers to the final response if CORS is configured.
         if let Some(cors) = app_state.cors_runtime.as_ref() {
