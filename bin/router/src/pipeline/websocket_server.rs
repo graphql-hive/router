@@ -41,6 +41,7 @@ use crate::pipeline::{
     normalize::normalize_request_with_cache, parser::parse_operation_with_cache, usage_reporting,
     validation::validate_operation_with_cache,
 };
+use crate::schema_selection::RequestSchema;
 use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 
@@ -51,8 +52,8 @@ pub async fn ws_index(
     schema_state: web::types::State<Arc<SchemaState>>,
     shared_state: web::types::State<Arc<RouterSharedState>>,
 ) -> Result<HttpResponse, Error> {
-    let schema_state = schema_state.get_ref().clone();
-    let shared_state = shared_state.get_ref().clone();
+    let mut schema_state = schema_state.get_ref().clone();
+    let mut shared_state = shared_state.get_ref().clone();
 
     let accepted_subprotocol = ws::subprotocols(&req)
         .find(|p| *p == WS_SUBPROTOCOL)
@@ -63,6 +64,27 @@ pub async fn ws_index(
         Ok(ctx) => ctx,
         Err(_) => return Ok(HttpResponse::BadRequest().finish()),
     };
+
+    // Resolve the per-request schema as the HTTP path does, so subscriptions use
+    // the caller's schema rather than the default. May also short-circuit.
+    if let (Some(plugins), Some(context)) = (shared_state.plugins.as_ref(), plugin_context.as_ref())
+    {
+        let router_http_request = RouterHttpRequest::from(&req);
+        if let Some(early_response) =
+            crate::run_schema_resolve_hooks(&router_http_request, plugins, context).await
+        {
+            return Ok(early_response);
+        }
+    }
+    if let Some(selected) = plugin_context
+        .as_ref()
+        .and_then(|context| context.get_ref::<RequestSchema>())
+    {
+        schema_state = selected.schema_state.clone();
+        if let Some(shared) = selected.shared_state.clone() {
+            shared_state = shared;
+        }
+    }
 
     ws::start(
         req,

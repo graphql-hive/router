@@ -5,6 +5,7 @@ mod http_utils;
 mod jwt;
 pub mod pipeline;
 pub mod plugins;
+pub mod schema_selection;
 mod schema_state;
 mod shared_state;
 mod storage;
@@ -47,9 +48,15 @@ use crate::{
     storage::StorageManager,
     telemetry::{HeaderExtractor, PrometheusAttached},
 };
+use hive_router_plan_executor::{
+    hooks::on_schema_resolve::{OnSchemaResolveHookPayload, SchemaResolveControlFlow},
+    plugin_context::{PluginContext, RouterHttpRequest},
+    plugin_trait::RouterPluginBoxed,
+};
 
 use crate::cache_state::{register_cache_size_observers, CacheState};
 pub use crate::plugins::registry::PluginRegistry;
+pub use crate::schema_selection::RequestSchema;
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 pub use arc_swap::ArcSwap;
 pub use async_trait::async_trait;
@@ -119,6 +126,7 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
+    // Capture up front so every path is counted, including a plugin short-circuit.
     let http_request_capture = app_state
         .telemetry_context
         .metrics
@@ -126,7 +134,7 @@ async fn graphql_endpoint_handler(
         .capture_request(&request);
 
     let response =
-        graphql_endpoint_dispatch(&mut request, body_stream, schema_state, app_state.clone()).await;
+        resolve_schema_and_dispatch(&mut request, body_stream, &schema_state, &app_state).await;
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -149,11 +157,76 @@ async fn graphql_endpoint_handler(
     response
 }
 
+/// Run `on_schema_resolve`, then dispatch against the selected schema (and
+/// optional shared state), or the app-state defaults if no plugin selected. A
+/// plugin may short-circuit with a response. The `PluginContext` exists only when
+/// plugins are configured, so with none this is just a dispatch.
+async fn resolve_schema_and_dispatch(
+    request: &mut HttpRequest,
+    body_stream: web::types::Payload,
+    schema_state: &Arc<SchemaState>,
+    app_state: &Arc<RouterSharedState>,
+) -> web::HttpResponse {
+    let plugin_context = request.extensions().get::<Arc<PluginContext>>().cloned();
+
+    if let (Some(plugins), Some(context)) = (app_state.plugins.as_ref(), plugin_context.as_ref()) {
+        let router_http_request = RouterHttpRequest::from(&*request);
+        if let Some(early_response) =
+            run_schema_resolve_hooks(&router_http_request, plugins, context).await
+        {
+            return early_response;
+        }
+    }
+
+    let selection = plugin_context.as_ref().and_then(|context| {
+        context
+            .get_ref::<RequestSchema>()
+            .map(|selected| (selected.schema_state.clone(), selected.shared_state.clone()))
+    });
+    let (effective_schema_state, effective_shared_state) = match selection {
+        Some((selected_schema, selected_shared)) => (
+            selected_schema,
+            selected_shared.unwrap_or_else(|| Arc::clone(app_state)),
+        ),
+        None => (Arc::clone(schema_state), Arc::clone(app_state)),
+    };
+
+    graphql_endpoint_dispatch(
+        request,
+        body_stream,
+        &effective_schema_state,
+        &effective_shared_state,
+    )
+    .await
+}
+
+/// Run each plugin's `on_schema_resolve` in registration order; returns
+/// `Some(response)` if one short-circuited, else `None` (a selection, if any, was
+/// inserted into `context`). Shared by the HTTP and WebSocket handlers.
+pub(crate) async fn run_schema_resolve_hooks(
+    router_http_request: &RouterHttpRequest<'_>,
+    plugins: &Arc<Vec<RouterPluginBoxed>>,
+    context: &PluginContext,
+) -> Option<web::HttpResponse> {
+    for plugin in plugins.as_ref() {
+        let payload = OnSchemaResolveHookPayload {
+            router_http_request,
+            context,
+        };
+        match plugin.on_schema_resolve(payload).await.control_flow {
+            SchemaResolveControlFlow::Proceed => {}
+            SchemaResolveControlFlow::EndWithResponse(response) => return Some(response),
+        }
+    }
+
+    None
+}
+
 async fn graphql_endpoint_dispatch(
     request: &mut HttpRequest,
     body_stream: web::types::Payload,
-    schema_state: web::types::State<Arc<SchemaState>>,
-    app_state: web::types::State<Arc<RouterSharedState>>,
+    schema_state: &Arc<SchemaState>,
+    app_state: &Arc<RouterSharedState>,
 ) -> web::HttpResponse {
     let parent_ctx = app_state
         .telemetry_context
@@ -178,20 +251,20 @@ async fn graphql_endpoint_dispatch(
         let req_handler_fut = graphql_request_handler(
             request,
             body_stream,
-            app_state.get_ref(),
-            schema_state.get_ref(),
+            app_state,
+            schema_state,
             &root_http_request_span,
             &mut response_mode,
         );
 
         // Handle the request with a timeout. If the timeout is reached, a timeout error response will be generated.
-        let result = handle_timeout(req_handler_fut, &app_state).await;
+        let result = handle_timeout(req_handler_fut, app_state).await;
         let mut response = match result {
             Ok(response) => response,
             // If the request handler returns an error, convert it to an HTTP response.
             Err(err) => {
                 write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                handle_pipeline_error(err, request, &app_state, &response_mode)
+                handle_pipeline_error(err, request, app_state, &response_mode)
             }
         };
 
@@ -217,7 +290,7 @@ async fn graphql_endpoint_dispatch(
                 Err(error) => {
                     warn!(%error, "coprocessor graphql.response stage failed");
                     write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                    handle_pipeline_error(error.into(), request, &app_state, &response_mode)
+                    handle_pipeline_error(error.into(), request, app_state, &response_mode)
                 }
             };
         }

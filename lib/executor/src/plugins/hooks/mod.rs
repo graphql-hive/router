@@ -6,6 +6,7 @@ pub mod on_graphql_validation;
 pub mod on_http_request;
 pub mod on_plugin_init;
 pub mod on_query_plan;
+pub mod on_schema_resolve;
 pub mod on_subgraph_execute;
 pub mod on_subgraph_http_request;
 pub mod on_supergraph_load;

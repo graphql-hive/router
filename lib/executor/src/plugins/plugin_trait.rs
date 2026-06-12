@@ -13,6 +13,7 @@ use crate::{
         on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
         on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
         on_query_plan::{OnQueryPlanStartHookPayload, OnQueryPlanStartHookResult},
+        on_schema_resolve::{OnSchemaResolveHookPayload, OnSchemaResolveHookResult},
         on_subgraph_execute::{
             OnSubgraphExecuteStartHookPayload, OnSubgraphExecuteStartHookResult,
         },
@@ -393,6 +394,17 @@ pub trait RouterPlugin: Send + Sync + 'static {
     ) -> OnHttpRequestHookResult<'req> {
         start_payload.proceed()
     }
+    /// Runs once per GraphQL request, before the pipeline, to select the schema it
+    /// is validated and planned against — for routers serving more than one schema.
+    /// Insert the router's schema type into `payload.context` to select; the default
+    /// (`proceed()`) keeps the single schema. See [`OnSchemaResolveHookPayload`].
+    #[inline]
+    async fn on_schema_resolve<'exec>(
+        &'exec self,
+        payload: OnSchemaResolveHookPayload<'exec>,
+    ) -> OnSchemaResolveHookResult {
+        payload.proceed()
+    }
     #[inline]
     async fn on_graphql_params<'exec>(
         &'exec self,
@@ -466,6 +478,10 @@ pub trait DynRouterPlugin: Send + Sync + 'static {
         &'req self,
         start_payload: OnHttpRequestHookPayload<'req>,
     ) -> OnHttpRequestHookResult<'req>;
+    async fn on_schema_resolve<'exec>(
+        &'exec self,
+        payload: OnSchemaResolveHookPayload<'exec>,
+    ) -> OnSchemaResolveHookResult;
     async fn on_graphql_params<'exec>(
         &'exec self,
         start_payload: OnGraphQLParamsStartHookPayload<'exec>,
@@ -516,6 +532,13 @@ where
         start_payload: OnHttpRequestHookPayload<'req>,
     ) -> OnHttpRequestHookResult<'req> {
         RouterPlugin::on_http_request(self, start_payload)
+    }
+    #[inline]
+    async fn on_schema_resolve<'exec>(
+        &'exec self,
+        payload: OnSchemaResolveHookPayload<'exec>,
+    ) -> OnSchemaResolveHookResult {
+        RouterPlugin::on_schema_resolve(self, payload).await
     }
     #[inline]
     async fn on_graphql_params<'exec>(
