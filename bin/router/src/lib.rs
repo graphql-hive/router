@@ -167,35 +167,40 @@ async fn resolve_schema_and_dispatch(
     schema_state: &Arc<SchemaState>,
     app_state: &Arc<RouterSharedState>,
 ) -> web::HttpResponse {
+    // `.cloned()` only bumps a refcount when a `PluginContext` is present (i.e.
+    // plugins are configured); it can't be a borrow because the `extensions()`
+    // guard can't be held across the hooks' `.await` or the `&mut` dispatch.
     let plugin_context = request.extensions().get::<Arc<PluginContext>>().cloned();
 
-    if let (Some(plugins), Some(context)) = (app_state.plugins.as_ref(), plugin_context.as_ref()) {
-        let router_http_request = RouterHttpRequest::from(&*request);
-        if let Some(early_response) =
-            run_schema_resolve_hooks(&router_http_request, plugins, context).await
-        {
-            return early_response;
+    if let Some(plugins) = app_state.plugins.as_ref() {
+        if let Some(context) = plugin_context.as_ref() {
+            let router_http_request = RouterHttpRequest::from(&*request);
+            if let Some(early_response) =
+                run_schema_resolve_hooks(&router_http_request, plugins, context).await
+            {
+                return early_response;
+            }
         }
     }
 
-    let selection = plugin_context.as_ref().and_then(|context| {
-        context
-            .get_ref::<RequestSchema>()
-            .map(|selected| (selected.schema_state.clone(), selected.shared_state.clone()))
-    });
-    let (effective_schema_state, effective_shared_state) = match selection {
-        Some((selected_schema, selected_shared)) => (
-            selected_schema,
-            selected_shared.unwrap_or_else(|| Arc::clone(app_state)),
-        ),
-        None => (Arc::clone(schema_state), Arc::clone(app_state)),
+    // Clone the selected Arcs out (which drops the context guard before dispatch);
+    // the common no-selection path borrows the defaults without an Arc clone.
+    let selection = plugin_context
+        .as_ref()
+        .and_then(|context| context.get_ref::<RequestSchema>())
+        .map(|selected| (selected.schema_state.clone(), selected.shared_state.clone()));
+    let (effective_schema_state, effective_shared_state) = match &selection {
+        Some((schema_state, shared_state)) => {
+            (schema_state, shared_state.as_ref().unwrap_or(app_state))
+        }
+        None => (schema_state, app_state),
     };
 
     graphql_endpoint_dispatch(
         request,
         body_stream,
-        &effective_schema_state,
-        &effective_shared_state,
+        effective_schema_state,
+        effective_shared_state,
     )
     .await
 }

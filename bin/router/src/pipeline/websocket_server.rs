@@ -52,9 +52,6 @@ pub async fn ws_index(
     schema_state: web::types::State<Arc<SchemaState>>,
     shared_state: web::types::State<Arc<RouterSharedState>>,
 ) -> Result<HttpResponse, Error> {
-    let mut schema_state = schema_state.get_ref().clone();
-    let mut shared_state = shared_state.get_ref().clone();
-
     let accepted_subprotocol = ws::subprotocols(&req)
         .find(|p| *p == WS_SUBPROTOCOL)
         .map(|_| WS_SUBPROTOCOL);
@@ -67,24 +64,33 @@ pub async fn ws_index(
 
     // Resolve the per-request schema as the HTTP path does, so subscriptions use
     // the caller's schema rather than the default. May also short-circuit.
-    if let (Some(plugins), Some(context)) = (shared_state.plugins.as_ref(), plugin_context.as_ref())
-    {
-        let router_http_request = RouterHttpRequest::from(&req);
-        if let Some(early_response) =
-            crate::run_schema_resolve_hooks(&router_http_request, plugins, context).await
-        {
-            return Ok(early_response);
+    if let Some(plugins) = shared_state.get_ref().plugins.as_ref() {
+        if let Some(context) = plugin_context.as_ref() {
+            let router_http_request = RouterHttpRequest::from(&req);
+            if let Some(early_response) =
+                crate::run_schema_resolve_hooks(&router_http_request, plugins, context).await
+            {
+                return Ok(early_response);
+            }
         }
     }
-    if let Some(selected) = plugin_context
+
+    // Defer cloning until here so each Arc is cloned once — the override if a
+    // plugin selected one, else the default.
+    let selection = plugin_context
         .as_ref()
         .and_then(|context| context.get_ref::<RequestSchema>())
-    {
-        schema_state = selected.schema_state.clone();
-        if let Some(shared) = selected.shared_state.clone() {
-            shared_state = shared;
-        }
-    }
+        .map(|selected| (selected.schema_state.clone(), selected.shared_state.clone()));
+    let (schema_state, shared_state) = match selection {
+        Some((schema, shared)) => (
+            schema,
+            shared.unwrap_or_else(|| shared_state.get_ref().clone()),
+        ),
+        None => (
+            schema_state.get_ref().clone(),
+            shared_state.get_ref().clone(),
+        ),
+    };
 
     ws::start(
         req,
