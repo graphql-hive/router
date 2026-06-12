@@ -1,4 +1,3 @@
-use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
@@ -617,7 +616,7 @@ pub enum ExecutionJob<'exec> {
         operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         flatten_node_path: &'exec FlattenNodePath,
-        representation_hashes: Vec<u64>,
+        representation_hashes: Vec<Option<u64>>,
         representation_hash_to_index: AHashMap<u64, usize>,
         output_rewrites: Option<&'exec [FetchRewrite]>,
     },
@@ -637,7 +636,7 @@ pub struct AliasBatchState<'exec> {
 
 struct AliasPathState<'exec> {
     merge_path: &'exec FlattenNodePath,
-    representation_hashes: Arc<Vec<u64>>,
+    representation_hashes: Arc<Vec<Option<u64>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -839,7 +838,7 @@ impl<'exec> Executor<'exec> {
                 let mut filtered_representations = Vec::new();
                 filtered_representations.put(OPEN_BRACKET);
                 let possible_types = &self.schema_metadata.possible_types;
-                let mut representation_hashes: Vec<u64> = Vec::new();
+                let mut representation_hashes: Vec<Option<u64>> = Vec::new();
                 let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
                 let arena = bumpalo::Bump::new();
 
@@ -848,17 +847,19 @@ impl<'exec> Executor<'exec> {
                     normalized_path,
                     &self.schema_metadata.possible_types,
                     &mut |entity| {
-                        let hash = entity.to_hash(&requires_nodes.items, possible_types);
+                        if entity.is_null() {
+                            representation_hashes.push(None);
+                            return;
+                        }
 
-                        if !entity.is_null() {
-                            representation_hashes.push(hash);
+                        let hash = entity.to_hash(&requires_nodes.items, possible_types);
+                        representation_hashes.push(Some(hash));
+
+                        if representation_hash_to_index.contains_key(&hash) {
+                            return;
                         }
 
                         let is_first_representation = representation_hash_to_index.is_empty();
-                        let vacant_entry = match representation_hash_to_index.entry(hash) {
-                            Entry::Occupied(_) => return,
-                            Entry::Vacant(vacant_entry) => vacant_entry,
-                        };
 
                         let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
                             let new_entity = arena.alloc(entity.clone());
@@ -881,7 +882,7 @@ impl<'exec> Executor<'exec> {
                         );
 
                         if is_projected {
-                            vacant_entry.insert(index);
+                            representation_hash_to_index.insert(hash, index);
                         }
 
                         index += 1;
@@ -1034,7 +1035,13 @@ impl<'exec> Executor<'exec> {
                                 self.schema_metadata,
                                 initial_error_path,
                                 &mut |target, error_path| {
-                                    let hash = representation_hashes[index];
+                                    let hash = representation_hashes.get(index).copied();
+                                    index += 1;
+
+                                    let Some(Some(hash)) = hash else {
+                                        return;
+                                    };
+
                                     if let Some(entity_index) =
                                         representation_hash_to_index.get(&hash)
                                     {
@@ -1055,7 +1062,6 @@ impl<'exec> Executor<'exec> {
                                             deep_merge(target, new_val);
                                         }
                                     }
-                                    index += 1;
                                 },
                             );
 
@@ -1267,7 +1273,13 @@ impl<'exec> Executor<'exec> {
                 self.schema_metadata,
                 initial_error_path,
                 &mut |target_data, error_path| {
-                    let hash = path_state.representation_hashes[index];
+                    let hash = path_state.representation_hashes.get(index).copied();
+                    index += 1;
+
+                    let Some(Some(hash)) = hash else {
+                        return;
+                    };
+
                     // Find matching entity index from hash->index map
                     if let Some(entity_index) = alias_state.representation_hash_to_index.get(&hash)
                     {
@@ -1288,8 +1300,6 @@ impl<'exec> Executor<'exec> {
                             deep_merge(target_data, new_val);
                         }
                     }
-
-                    index += 1;
                 },
             );
         }
@@ -1319,7 +1329,7 @@ impl<'exec> Executor<'exec> {
             filtered_representations.put(OPEN_BRACKET);
             let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
             let arena = bumpalo::Bump::new();
-            let mut path_hashes_by_index: Vec<Option<Arc<Vec<u64>>>> =
+            let mut path_hashes_by_index: Vec<Option<Arc<Vec<Option<u64>>>>> =
                 vec![None; alias_spec.merge_paths.len()];
 
             let mut path_groups: Vec<(&FlattenNodePath, Vec<usize>)> =
@@ -1335,20 +1345,22 @@ impl<'exec> Executor<'exec> {
             }
 
             for (merge_path, grouped_target_indices) in path_groups {
-                let mut representation_hashes: Vec<u64> = Vec::new();
+                let mut representation_hashes: Vec<Option<u64>> = Vec::new();
 
                 traverse_and_callback(data, merge_path.as_slice(), possible_types, &mut |entity| {
-                    let hash = entity.to_hash(&alias_spec.requires.items, possible_types);
+                    if entity.is_null() {
+                        representation_hashes.push(None);
+                        return;
+                    }
 
-                    if !entity.is_null() {
-                        representation_hashes.push(hash);
+                    let hash = entity.to_hash(&alias_spec.requires.items, possible_types);
+                    representation_hashes.push(Some(hash));
+
+                    if representation_hash_to_index.contains_key(&hash) {
+                        return;
                     }
 
                     let is_first_representation = representation_hash_to_index.is_empty();
-                    let vacant_entry = match representation_hash_to_index.entry(hash) {
-                        Entry::Occupied(_) => return,
-                        Entry::Vacant(vacant_entry) => vacant_entry,
-                    };
 
                     let entity = if let Some(input_rewrites) = &alias_spec.input_rewrites {
                         let new_entity = arena.alloc(entity.clone());
@@ -1370,7 +1382,7 @@ impl<'exec> Executor<'exec> {
                     );
 
                     if is_projected {
-                        vacant_entry.insert(index);
+                        representation_hash_to_index.insert(hash, index);
                     }
 
                     index += 1;
