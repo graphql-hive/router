@@ -967,7 +967,7 @@ mod issues_e2e_tests {
             .mock("POST", "/products")
             .match_request(|r| {
                 let body = r.body().unwrap();
-                let body_str = String::from_utf8(body.clone()).unwrap();
+                let body_str = std::str::from_utf8(&body).unwrap();
 
                 body_str.contains("products") && body_str.contains("topProducts")
             })
@@ -996,7 +996,7 @@ mod issues_e2e_tests {
             .mock("POST", "/inventory")
             .match_request(|r| {
                 let body = r.body().unwrap();
-                let body_str = String::from_utf8(body.clone()).unwrap();
+                let body_str = std::str::from_utf8(&body).unwrap();
 
                 body_str.contains("_entities")
                     && body_str.contains("_e0")
