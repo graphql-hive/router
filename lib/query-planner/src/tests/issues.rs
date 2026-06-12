@@ -260,6 +260,39 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn issue_interface_object_typename_prefers_direct_leaf_path() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        {
+          me {
+            __typename
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/issues/infinite-typename-interfaceobject.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "s3") {
+        {
+          me {
+            __typename
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
 fn issue_939_test() -> Result<(), Box<dyn Error>> {
     init_logger();
 
