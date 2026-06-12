@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
@@ -854,12 +855,11 @@ impl<'exec> Executor<'exec> {
 
                         let hash = entity.to_hash(&requires_nodes.items, possible_types);
                         representation_hashes.push(Some(hash));
-
-                        if representation_hash_to_index.contains_key(&hash) {
-                            return;
-                        }
-
                         let is_first_representation = representation_hash_to_index.is_empty();
+                        let vacant_entry = match representation_hash_to_index.entry(hash) {
+                            Entry::Occupied(_) => return,
+                            Entry::Vacant(vacant_entry) => vacant_entry,
+                        };
 
                         let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
                             let new_entity = arena.alloc(entity.clone());
@@ -882,10 +882,9 @@ impl<'exec> Executor<'exec> {
                         );
 
                         if is_projected {
-                            representation_hash_to_index.insert(hash, index);
+                            vacant_entry.insert(index);
+                            index += 1;
                         }
-
-                        index += 1;
                     },
                 );
 
@@ -1355,12 +1354,11 @@ impl<'exec> Executor<'exec> {
 
                     let hash = entity.to_hash(&alias_spec.requires.items, possible_types);
                     representation_hashes.push(Some(hash));
-
-                    if representation_hash_to_index.contains_key(&hash) {
-                        return;
-                    }
-
                     let is_first_representation = representation_hash_to_index.is_empty();
+                    let vacant_entry = match representation_hash_to_index.entry(hash) {
+                        Entry::Occupied(_) => return,
+                        Entry::Vacant(vacant_entry) => vacant_entry,
+                    };
 
                     let entity = if let Some(input_rewrites) = &alias_spec.input_rewrites {
                         let new_entity = arena.alloc(entity.clone());
@@ -1382,10 +1380,9 @@ impl<'exec> Executor<'exec> {
                     );
 
                     if is_projected {
-                        representation_hash_to_index.insert(hash, index);
+                        vacant_entry.insert(index);
+                        index += 1;
                     }
-
-                    index += 1;
                 });
 
                 let representation_hashes = Arc::new(representation_hashes);
