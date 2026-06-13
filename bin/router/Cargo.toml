@@ -49,6 +49,7 @@ xxhash-rust = { workspace = true }
 rand = { workspace = true }
 ntex = { workspace = true }
 ntex-http = { workspace = true }
+ntex-bytes = { workspace = true }
 ntex-io = { workspace = true }
 ntex-net = { workspace = true }
 ntex-codec = { workspace = true }
