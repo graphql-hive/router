@@ -308,6 +308,12 @@ impl<State> FetchStepSelections<State> {
         usages
     }
 
+    pub fn iter_selections_mut(&mut self) -> impl Iterator<Item = (&str, &mut SelectionSet)> {
+        self.selections
+            .iter_mut()
+            .map(|(name, selection_set)| (name.as_str(), selection_set))
+    }
+
     pub fn selections_for_definition_mut(
         &mut self,
         definition_name: &str,
@@ -432,6 +438,16 @@ impl FetchStepSelections<MultiTypeFetchStep> {
     /// Calling this method is crucial if you wish to create multi-type steps.
     pub fn declare_known_type(&mut self, def_name: &str) {
         self.selections.entry(def_name.to_string()).or_default();
+    }
+
+    pub fn replace_definitions_with_abstract(
+        &mut self,
+        abstract_type: &str,
+        selection_set: SelectionSet,
+    ) {
+        self.selections.clear();
+        self.selections
+            .insert(abstract_type.to_string(), selection_set);
     }
 
     pub fn migrate_from_another(

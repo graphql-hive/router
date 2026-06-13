@@ -9,6 +9,7 @@ use hive_router_query_planner::planner::best::find_best_combination;
 use hive_router_query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use hive_router_query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
 use hive_router_query_planner::planner::walker::walk_operation;
+use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::state::supergraph_state::SupergraphState;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use hive_router_query_planner::utils::parsing::{parse_operation, parse_schema};
@@ -47,6 +48,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
         b.iter(|| {
             let bb_graph = black_box(&graph);
             let bb_operation = black_box(&operation);
+            let bb_kind = black_box(OperationKind::Query);
             let bb_supergraph_state = black_box(&supergraph_state);
             let bb_override_context = black_box(&override_context);
 
@@ -65,6 +67,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_supergraph_state,
                 bb_override_context,
                 query_tree,
+                bb_kind,
                 &cancellation_token,
             )
             .unwrap();
@@ -95,6 +98,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
         b.iter(|| {
             let bb_graph = black_box(&graph);
             let bb_operation = black_box(&operation);
+            let bb_kind = black_box(OperationKind::Query);
             let bb_supergraph_state = black_box(&supergraph_state);
             let bb_override_context = black_box(&override_context);
 
@@ -113,6 +117,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_supergraph_state,
                 bb_override_context,
                 query_tree,
+                bb_kind,
                 &cancellation_token,
             )
             .unwrap();

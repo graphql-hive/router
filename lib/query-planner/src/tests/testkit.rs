@@ -17,7 +17,7 @@ use crate::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use crate::planner::plan_nodes::QueryPlan;
 use crate::planner::query_plan::build_query_plan_from_fetch_graph;
 use crate::planner::walker::walk_operation;
-use crate::state::supergraph_state::SupergraphState;
+use crate::state::supergraph_state::{OperationKind, SupergraphState};
 use crate::utils::cancellation::CancellationToken;
 use crate::utils::parsing::parse_schema;
 
@@ -78,6 +78,10 @@ pub fn build_query_plan_with_context(
         &supergraph_state,
         &override_context,
         query_tree,
+        operation
+            .operation_kind
+            .clone()
+            .unwrap_or(OperationKind::Query),
         &cancellation_token,
     )?;
     add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)?;

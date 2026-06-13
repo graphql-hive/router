@@ -348,14 +348,8 @@ fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
             ... on Book {
               animals {
                 __typename
-                ... on Cat {
-                  id
-                  name
-                }
-                ... on Dog {
-                  id
-                  name
-                }
+                id
+                name
               }
             }
             id

@@ -56,7 +56,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             for (root_def_name, mismatch_path) in mismatches_paths {
                 let mut merger = SafeSelectionSetMerger::default();
 
-                if let Some(Segment::Field(field_lookup, args_hash_lookup, condition)) =
+                if let Some(Segment::Field(field_seg, args_hash_lookup, condition)) =
                     mismatch_path.last()
                 {
                     // TODO: We can avoid this cut and slice thing, if we return "SelectionItem" instead of "SelectionSet" inside "find_selection_set_by_path_mut".
@@ -73,7 +73,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                         let item = selection_set
                           .items
                           .iter_mut()
-                          .find(|v| matches!(v, SelectionItem::Field(field) if field.selection_identifier() == *field_lookup && field.arguments_hash() == *args_hash_lookup && field_condition_equal(condition, field)));
+                          .find(|v| matches!(v, SelectionItem::Field(field) if field.selection_identifier() == field_seg.response_key() && field.arguments_hash() == *args_hash_lookup && field_condition_equal(condition, field)));
 
                         if let Some(SelectionItem::Field(field_to_alias)) = item {
                             let original_response_key =

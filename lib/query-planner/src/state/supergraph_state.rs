@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fmt::{Debug, Display},
 };
 
@@ -53,6 +53,7 @@ pub struct ProgressiveOverrides {
 }
 
 type InterfaceObjectToSubgraphsMap = HashMap<String, HashSet<String>>;
+type InterfaceToObjectTypesMap = HashMap<String, BTreeSet<String>>;
 type DefinitionMap = HashMap<String, SupergraphDefinition>;
 
 /// Information about linked specifications used in the supergraph
@@ -159,6 +160,8 @@ pub struct SupergraphState {
     /// Holds a map of interface names to a set of subgraph ids
     /// that hold the @interfaceObject
     pub interface_object_types_in_subgraphs: InterfaceObjectToSubgraphsMap,
+    /// Holds a map of interface names to all object types implementing them.
+    pub interface_to_object_types: InterfaceToObjectTypesMap,
     /// A pre-computed set of all progressive override labels in the supergraph
     pub progressive_overrides: ProgressiveOverrides,
 }
@@ -172,11 +175,13 @@ impl SupergraphState {
         let definitions = Self::build_map(schema, linked_specs);
         let interface_object_types_in_subgraphs =
             Self::create_interface_object_in_subgraph(&definitions);
+        let interface_to_object_types = Self::create_interface_to_object_types(&definitions);
         let progressive_overrides = Self::extract_progressive_overrides(&definitions);
 
         let mut instance = Self {
             definitions,
             interface_object_types_in_subgraphs,
+            interface_to_object_types,
             progressive_overrides,
             known_subgraphs,
             subgraph_endpoint_map,
@@ -234,6 +239,20 @@ impl SupergraphState {
             .is_some_and(|subgraph_ids| subgraph_ids.contains(graph_id))
     }
 
+    pub fn interface_members(&self, interface_name: &str) -> Option<&BTreeSet<String>> {
+        self.interface_to_object_types.get(interface_name)
+    }
+
+    pub fn field_return_type_name(&self, type_name: &str, field_name: &str) -> Option<&str> {
+        if field_name == "__typename" {
+            return Some("String");
+        }
+
+        let definition = self.definitions.get(type_name)?;
+        let field_definition = definition.fields().get(field_name)?;
+        Some(field_definition.field_type.inner_type())
+    }
+
     fn create_interface_object_in_subgraph(
         definitions: &DefinitionMap,
     ) -> InterfaceObjectToSubgraphsMap {
@@ -258,6 +277,25 @@ impl SupergraphState {
         }
 
         interface_object_types_in_subgraphs
+    }
+
+    fn create_interface_to_object_types(definitions: &DefinitionMap) -> InterfaceToObjectTypesMap {
+        let mut interface_to_object_types = InterfaceToObjectTypesMap::new();
+
+        for definition in definitions.values() {
+            let SupergraphDefinition::Object(object_type) = definition else {
+                continue;
+            };
+
+            for join_implements in &object_type.join_implements {
+                interface_to_object_types
+                    .entry(join_implements.interface.clone())
+                    .or_default()
+                    .insert(object_type.name.clone());
+            }
+        }
+
+        interface_to_object_types
     }
 
     fn extract_progressive_overrides(definitions: &DefinitionMap) -> ProgressiveOverrides {

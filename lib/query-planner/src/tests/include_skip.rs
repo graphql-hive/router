@@ -1446,16 +1446,7 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
             products {
               id
               __typename
-              ... on Book {
-                __typename
-                sku @skip(if: $hideSku)
-                id
-              }
-              ... on Magazine {
-                __typename
-                sku @skip(if: $hideSku)
-                id
-              }
+              sku @skip(if: $hideSku)
             }
           }
         },
@@ -1475,14 +1466,10 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
                 } =>
                 {
                   ... on Book {
-                    ... on Book {
-                      reviewsCount
-                    }
+                    reviewsCount
                   }
                   ... on Magazine {
-                    ... on Magazine {
-                      reviewsCount
-                    }
+                    reviewsCount
                   }
                 }
               },
@@ -1557,14 +1544,6 @@ fn qp_abstract_interface_shared_condition_can_skip_remote_fetch() -> Result<(), 
             products {
               id
               __typename
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
             }
           }
         },
@@ -1583,16 +1562,12 @@ fn qp_abstract_interface_shared_condition_can_skip_remote_fetch() -> Result<(), 
               } =>
               {
                 ... on Book {
-                  ... on Book {
-                    reviewsCount
-                    reviewsScore
-                  }
+                  reviewsCount
+                  reviewsScore
                 }
                 ... on Magazine {
-                  ... on Magazine {
-                    reviewsCount
-                    reviewsScore
-                  }
+                  reviewsCount
+                  reviewsScore
                 }
               }
             },

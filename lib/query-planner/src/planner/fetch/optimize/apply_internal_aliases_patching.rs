@@ -65,7 +65,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                             let relative_path =
                                 decendent.response_path.slice_from(alias_path.len());
 
-                            if let Some(Segment::Field(field_name, args_hash, condition)) =
+                            if let Some(Segment::Field(field_seg, args_hash, condition)) =
                                 maybe_patched_field
                             {
                                 // TODO: Avoid "except" here of course.
@@ -89,7 +89,7 @@ impl FetchGraph<MultiTypeFetchStep> {
 
                                 trace!(
                               "field '{}' was aliased, relative selection path: '{}', checking if need to patch selection '{}'",
-                              field_name,
+                              field_seg.field_name(),
                               relative_path,
                               selection
                           );
@@ -99,7 +99,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                                     find_selection_set_by_path_mut(selection, &relative_path)
                                 {
                                     trace!("found selection to patch: {}", selection);
-                                    let item_to_patch = selection.items.iter_mut().find(|item| matches!(item, SelectionItem::Field(field) if field.name == *field_name && field.arguments_hash() == *args_hash));
+                                    let item_to_patch = selection.items.iter_mut().find(|item| matches!(item, SelectionItem::Field(field) if field.name == field_seg.field_name() && field.arguments_hash() == *args_hash));
 
                                     if let Some(SelectionItem::Field(field_to_patch)) =
                                         item_to_patch
@@ -128,7 +128,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                               .iter()
                               .enumerate()
                               .find_map(|(idx, part)| {
-                                  if matches!(part, Segment::Field(f, a, c) if f == field_name && a == args_hash && c == condition) {
+                                  if matches!(part, Segment::Field(ref f, a, c) if f.field_name() == field_seg.field_name() && a == args_hash && c == condition) {
                                       Some(idx)
                                   } else {
                                       None
@@ -139,17 +139,17 @@ impl FetchGraph<MultiTypeFetchStep> {
                                     trace!(
                                 "Node [{}] is using aliased field {} in response_path (segment idx: {}, alias: {:?})",
                                 decendent_idx.index(),
-                                field_name,
+                                field_seg.field_name(),
                                 segment_idx_to_patch,
                                 alias_path
                             );
 
                                     let mut new_path = (*decendent.response_path.inner).to_vec();
 
-                                    if let Some(Segment::Field(name, _, _)) =
+                                    if let Some(Segment::Field(ref mut seg, _, _)) =
                                         new_path.get_mut(segment_idx_to_patch)
                                     {
-                                        *name = new_name.clone();
+                                        seg.field_name = new_name.clone();
                                         decendent.response_path = MergePath::new(new_path);
                                     }
                                 }

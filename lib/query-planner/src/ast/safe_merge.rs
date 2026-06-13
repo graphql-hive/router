@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use tracing::trace;
 
 use crate::ast::{
-    merge_path::{MergePath, Segment},
+    merge_path::{FieldPathSegment, MergePath, Segment},
     selection_item::SelectionItem,
     selection_set::SelectionSet,
 };
@@ -108,7 +108,7 @@ impl SafeSelectionSetMerger {
                             decision = ConflictsLookupResult::Merged;
 
                             let next_path = response_path.push(Segment::Field(
-                                source_field.name.clone(),
+                                FieldPathSegment::named(source_field.name.clone()),
                                 source_field.arguments_hash(),
                                 source_field.into(),
                             ));
@@ -217,7 +217,7 @@ impl SafeSelectionSetMerger {
 
                                 let pair = (
                                     response_path.push(Segment::Field(
-                                        new_field.name.clone(),
+                                        FieldPathSegment::named(new_field.name.clone()),
                                         new_field.arguments_hash(),
                                         (&new_field).into(),
                                     )),
@@ -237,7 +237,7 @@ impl SafeSelectionSetMerger {
 
                                 let pair = (
                                     response_path.push(Segment::Field(
-                                        field_selection.name.clone(),
+                                        FieldPathSegment::named(field_selection.name.clone()),
                                         field_selection.arguments_hash(),
                                         field_selection.into(),
                                     )),
