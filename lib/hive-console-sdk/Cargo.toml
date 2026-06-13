@@ -30,7 +30,7 @@ regex-automata = { workspace = true }
 retry-policies = { workspace = true }
 recloser = { workspace = true }
 futures-util = { workspace = true }
-typify = "0.6.2"
+typify = "0.7.0"
 regress = "0.11.0"
 lazy_static = { workspace = true }
 async-dropper-simple = { version = "0.2.6", features = ["tokio", "no-default-bound"] }
