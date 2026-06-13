@@ -3143,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.3.14"
+version = "0.3.15"
 dependencies = [
  "anyhow",
  "async-dropper-simple",

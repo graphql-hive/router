@@ -94,6 +94,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.15.2 (2026-06-13)
+
+### Fixes
+
+- Version bump and update `vrl` to latest
+
+#### Fold repeated object-type selections into a single interface selection
+
+When a `Fetch` node asks for the same fields on different object types, and all
+of those types implement the same interface that matches the field's return type,
+the query planner now merges them into a single inline fragment on the interface
+instead of keeping separate branches.
+
+For example: `query { media { ... on Book { id title } ... on Movie { id title } } }` becomes
+`query { media { id title } }` when the field's return type is `Media` and both
+`Book` and `Movie` implement it in the subgraph.
+
 ## 6.15.1 (2026-06-09)
 
 ### Fixes

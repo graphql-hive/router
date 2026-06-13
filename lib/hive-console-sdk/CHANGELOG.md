@@ -1,3 +1,9 @@
+## 0.3.15 (2026-06-13)
+
+### Fixes
+
+- Version bump and update `vrl` to latest
+
 ## 0.3.14 (2026-05-27)
 
 ### Fixes
