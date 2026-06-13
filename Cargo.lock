@@ -4001,9 +4001,9 @@ dependencies = [
 
 [[package]]
 name = "ntex"
-version = "3.7.2"
+version = "3.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4735978b410d8496a1d89bac416af3277f6d36e9ae56d1e3977b96b81ab8048"
+checksum = "a32026822c6f9d55cc7888907bf40e91f66de16e78c599748c40725d258ba036"
 dependencies = [
  "base64",
  "bitflags 2.13.0",
@@ -4046,9 +4046,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-bytes"
-version = "1.5.4"
+version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11f03e42e23f0ab33b86f4af78f19c39a0cc253b20c073e5e9b92408ba0e91ff"
+checksum = "a680139128603f91e23fa9184a2ae18ad31bd28afb3d1be4975470c4011b67f0"
 dependencies = [
  "bytes",
  "serde",
@@ -4056,9 +4056,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-codec"
-version = "1.1.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f071b0c1daa379de93b4bbaf8ed822f12539901bdb15a5901cd15168f5e8eca"
+checksum = "80fb7929b59c6161a43f66e1c9ef94f87475b301bd6587a6647f9ba928df31db"
 dependencies = [
  "ntex-bytes",
 ]
@@ -4116,9 +4116,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-http"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7a02a55ca3286342030ba369d4176e280989e97958455963efce846e8abdca6"
+checksum = "034998dc254ad3283a6eee76fe89706c85e16b1e9a877e794951e75568dbc15c"
 dependencies = [
  "foldhash 0.2.0",
  "futures-core",
