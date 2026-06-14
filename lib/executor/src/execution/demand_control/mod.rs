@@ -42,6 +42,15 @@ pub struct DemandControlEvaluation {
     pub per_subgraph: Arc<BTreeMap<String, u64>>,
 }
 
+impl DemandControlEvaluation {
+    pub fn estimated_cost_for_subgraph(&self, subgraph_name: &str) -> u64 {
+        self.per_subgraph
+            .get(subgraph_name)
+            .copied()
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug)]
 pub struct DemandControlExecutionOperationContext {
     pub operation_max_cost: u64,
@@ -59,6 +68,12 @@ pub struct DemandControlExecutionSubgraphsContext {
     /// This is handed to the subgraph execution layer to determine whether
     /// execution is blocked or not.
     pub blocked_subgraphs_enforcement_mode: DemandControlMode,
+}
+
+impl DemandControlExecutionSubgraphsContext {
+    pub fn is_subgraph_blocked(&self, subgraph_name: &str) -> bool {
+        self.blocked_subgraphs.contains_key(subgraph_name)
+    }
 }
 
 #[derive(Debug)]

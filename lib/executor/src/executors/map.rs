@@ -264,18 +264,15 @@ impl SubgraphExecutorMap {
         demand_control_ctx: Option<&DemandControlExecutionContext>,
     ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
         if let Some(demand_control_opts) = demand_control_ctx {
-            let estimated_cost = demand_control_opts
-                .evaluation
-                .per_subgraph
-                .get(subgraph_name)
-                .copied()
-                .unwrap_or_default();
-
             if let Some(subgraph_max_cost) = demand_control_opts
                 .subgraphs
                 .blocked_subgraphs
                 .get(subgraph_name)
             {
+                let estimated_cost = demand_control_opts
+                    .evaluation
+                    .estimated_cost_for_subgraph(subgraph_name);
+
                 match demand_control_opts.subgraphs.enforcement_mode {
                     DemandControlMode::Enforce => {
                         tracing::warn!(
