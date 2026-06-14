@@ -8,11 +8,13 @@ mod requests_exceeding_max_are_rejected_tests {
             &fixture,
             r#"
 enabled: true
-mode: enforce
-strategy:
-  static_estimated:
-    list_size: 100
-    max: 1
+operation_cost:
+  max: 1
+  mode: enforce
+default_list_size:
+  all: 100
+subgraphs_budget:
+  mode: enforce
 "#,
         )
         .await;

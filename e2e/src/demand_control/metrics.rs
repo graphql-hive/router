@@ -25,10 +25,11 @@ mod metrics_tests {
 
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: 0
+                    operation_cost:
+                      max: 0
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
 
                 telemetry:
                     metrics:
@@ -92,11 +93,12 @@ mod metrics_tests {
 
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: 1000
-                        actual_cost_mode: by_response_shape
+                    operation_cost:
+                      max: 1000
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_response_shape
                     expose_headers:
                       estimated: true
                       actual: true
@@ -166,11 +168,12 @@ mod metrics_tests {
 
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: 1000
-                        actual_cost_mode: by_response_shape
+                    operation_cost:
+                      max: 1000
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_response_shape
                 telemetry:
                     metrics:
                         exporters:
@@ -259,12 +262,14 @@ mod metrics_tests {
 
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 0
-                        max: 3
-                        actual_cost_mode: by_subgraph
+                    operation_cost:
+                      max: 3
+                      mode: enforce
+                    default_list_size:
+                      all: 0
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_subgraph
                     expose_headers:
                       estimated: true
                       actual: true
@@ -333,12 +338,14 @@ mod metrics_tests {
 
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 10
-                        max: 1000
-                        actual_cost_mode: by_response_shape
+                    operation_cost:
+                      max: 1000
+                      mode: enforce
+                    default_list_size:
+                      all: 10
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_response_shape
                     expose_headers:
                       estimated: true
                       actual: true
@@ -410,12 +417,14 @@ mod metrics_tests {
 
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 10
-                        max: 1000
-                        actual_cost_mode: by_response_shape
+                    operation_cost:
+                      max: 1000
+                      mode: enforce
+                    default_list_size:
+                      all: 10
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_response_shape
                     expose_headers:
                       estimated: true
                       actual: true
@@ -511,10 +520,11 @@ mod metrics_tests {
 
                 demand_control:
                     enabled: false
-                    mode: enforce
-                    strategy:
-                        static_estimated:
-                            max: 100
+                    operation_cost:
+                      max: 100
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
 
                 telemetry:
                     tracing:

@@ -14,10 +14,11 @@ mod extensions_tests {
             path: supergraph.graphql
         demand_control:
             enabled: true
-            mode: enforce
-            strategy:
-              static_estimated:
-                max: 100
+            operation_cost:
+              max: 100
+              mode: enforce
+            subgraphs_budget:
+              mode: enforce
             expose_headers:
               estimated: true
               actual: true
@@ -68,10 +69,11 @@ mod extensions_tests {
 
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: 1000
+                    operation_cost:
+                      max: 1000
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
                     expose_headers:
                       estimated: true
                       actual: true
@@ -125,10 +127,11 @@ mod extensions_tests {
             path: supergraph.graphql
         demand_control:
             enabled: true
-            mode: enforce
-            strategy:
-              static_estimated:
-                max: 100
+            operation_cost:
+              max: 100
+              mode: enforce
+            subgraphs_budget:
+              mode: enforce
         "#,
             )
             .build()
@@ -159,10 +162,11 @@ mod extensions_tests {
             path: supergraph.graphql
         demand_control:
             enabled: true
-            mode: enforce
-            strategy:
-              static_estimated:
-                max: 100
+            operation_cost:
+              max: 100
+              mode: enforce
+            subgraphs_budget:
+              mode: enforce
             expose_headers:
               estimated: "X-My-Estimated"
               actual: "X-My-Actual"
@@ -197,10 +201,11 @@ mod extensions_tests {
             path: supergraph.graphql
         demand_control:
             enabled: true
-            mode: enforce
-            strategy:
-              static_estimated:
-                max: 100
+            operation_cost:
+              max: 100
+              mode: enforce
+            subgraphs_budget:
+              mode: enforce
             expose_headers:
               estimated: true
         "#,

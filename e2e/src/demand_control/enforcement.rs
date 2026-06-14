@@ -14,10 +14,11 @@ mod enforcement_tests {
             path: supergraph.graphql
         demand_control:
             enabled: true
-            mode: enforce
-            strategy:
-              static_estimated:
-                max: 0
+            operation_cost:
+              max: 0
+              mode: enforce
+            subgraphs_budget:
+              mode: enforce
         "#,
             )
             .build()
@@ -61,10 +62,11 @@ mod enforcement_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: measure
-                    strategy:
-                      static_estimated:
-                        max: 0
+                    operation_cost:
+                      max: 0
+                      mode: measure
+                    subgraphs_budget:
+                      mode: measure
                     expose_headers:
                       estimated: true
                       actual: true
@@ -108,12 +110,14 @@ mod enforcement_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: measure
-                    strategy:
-                      static_estimated:
-                        list_size: 0
-                        max: 3
-                        actual_cost_mode: by_subgraph
+                    operation_cost:
+                      max: 3
+                      mode: measure
+                    subgraphs_budget:
+                      mode: measure
+                    default_list_size:
+                      all: 0
+                    actual_cost_mode: by_subgraph
                     expose_headers:
                       estimated: true
                       actual: true
@@ -164,10 +168,11 @@ mod enforcement_tests {
                         enabled: true
                     demand_control:
                         enabled: true
-                        mode: enforce
-                        strategy:
-                          static_estimated:
-                            max: 0
+                        operation_cost:
+                          max: 0
+                          mode: enforce
+                        subgraphs_budget:
+                          mode: enforce
                 "#,
             )
             .build()

@@ -8,16 +8,18 @@ mod requests_within_max_are_accepted_tests {
             &format!(
                 r#"
 enabled: true
-mode: enforce
+operation_cost:
+  max: {max}
+  mode: enforce
+default_list_size:
+  all: 10
+subgraphs_budget:
+  mode: enforce
+actual_cost_mode: by_subgraph
 expose_headers:
   estimated: true
   actual: true
   max: true
-strategy:
-  static_estimated:
-    list_size: 10
-    actual_cost_mode: by_subgraph
-    max: {max}
 "#
             ),
         )

@@ -8,18 +8,18 @@ mod requests_exceeding_max_are_not_rejected_in_measure_mode_tests {
             &fixture,
             r#"
 enabled: true
-mode: measure
+operation_cost:
+  max: 1
+  mode: measure
+default_list_size:
+  all: 100
+subgraphs_budget:
+  mode: measure
+  all: 1
 expose_headers:
   estimated: true
   actual: true
   max: true
-strategy:
-  static_estimated:
-    list_size: 100
-    max: 1
-    subgraph:
-      all:
-        max: 1
 "#,
         )
         .await;

@@ -74,6 +74,7 @@ pub struct OperationCostConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct DemandControlExposeHeadersConfig {
     #[serde(default, deserialize_with = "deserialize_max_header")]
     pub max: Option<HttpHeaderName>,
@@ -81,16 +82,6 @@ pub struct DemandControlExposeHeadersConfig {
     pub estimated: Option<HttpHeaderName>,
     #[serde(default, deserialize_with = "deserialize_actual_header")]
     pub actual: Option<HttpHeaderName>,
-}
-
-impl Default for DemandControlExposeHeadersConfig {
-    fn default() -> Self {
-        Self {
-            max: None,
-            estimated: None,
-            actual: None,
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -175,6 +166,7 @@ pub struct SubgraphsBudgetConfig {
     /// - The router **continues** executing the rest of the query plan.
     /// - The specific subgraph fetch is skipped and a `SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE` error is added to the response.
     /// - The fetch call assumes error, and returns `null` as subgraph response.
+    ///
     /// This kind of enforcement is applied to each subgraph fetch individually, during execution,
     /// in order to prevent false-positives from exceeding the limit.
     ///
@@ -189,19 +181,11 @@ pub struct SubgraphsBudgetConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct DefaultListSizeConfig {
     /// Default list size for fields in the supergraph that have no `@listSize` directive.
     pub all: Option<usize>,
     /// Per-subgraph overrides. Keys are subgraph names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subgraphs: Option<HashMap<String, usize>>,
-}
-
-impl Default for DefaultListSizeConfig {
-    fn default() -> Self {
-        Self {
-            all: None,
-            subgraphs: None,
-        }
-    }
 }

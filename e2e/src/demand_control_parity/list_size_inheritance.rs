@@ -11,33 +11,29 @@ mod list_size_subgraph_inheritance_changes_estimates_tests {
         expected_estimated: f64,
         expected_actual: f64,
     ) {
-        let mut subgraph_block = String::new();
-        if all_list_size.is_some() || subgraph_list_size.is_some() {
-            subgraph_block.push_str("    subgraph:\n");
-            if let Some(n) = all_list_size {
-                subgraph_block.push_str(&format!("      all:\n        list_size: {n}\n"));
-            }
-            if let Some(n) = subgraph_list_size {
-                subgraph_block.push_str(&format!(
-                    "      subgraphs:\n        {subgraph}:\n          list_size: {n}\n"
-                ));
-            }
+        // The global default list size, plus an optional `subgraph.all.list_size`
+        // override, collapse into the new `default_list_size.all`: when both exist,
+        // the per-subgraph-all value takes precedence (it applied to all subgraphs).
+        let default_all = all_list_size.unwrap_or(list_size);
+        let mut default_list_size_block = format!("default_list_size:\n  all: {default_all}\n");
+        if let Some(n) = subgraph_list_size {
+            default_list_size_block.push_str(&format!("  subgraphs:\n    {subgraph}: {n}\n"));
         }
 
         let yaml = format!(
             r#"
 enabled: true
-mode: enforce
-expose_headers:
+operation_cost:
+  max: {MAX_COST}
+  mode: enforce
+subgraphs_budget:
+  mode: enforce
+actual_cost_mode: by_subgraph
+{default_list_size_block}expose_headers:
   estimated: true
   actual: true
   max: true
-strategy:
-  static_estimated:
-    list_size: {list_size}
-    actual_cost_mode: by_subgraph
-    max: {MAX_COST}
-{subgraph_block}"#
+"#
         );
 
         let outcome = run_fixture(&fixture, &yaml).await;

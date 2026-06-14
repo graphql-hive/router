@@ -14,17 +14,16 @@ mod subgraph_budgets_tests {
             path: supergraph.graphql
         demand_control:
             enabled: true
-            mode: enforce
-            strategy:
-              static_estimated:
-                max: 1000
-                subgraph:
-                  subgraphs:
-                    reviews:
-                      max: 0
-                  all:
-                    list_size: 0
-                actual_cost_mode: by_subgraph
+            operation_cost:
+              max: 1000
+              mode: enforce
+            default_list_size:
+              all: 0
+            subgraphs_budget:
+              mode: enforce
+              subgraphs:
+                reviews: 0
+            actual_cost_mode: by_subgraph
             expose_headers:
               estimated: true
               actual: true
@@ -93,15 +92,14 @@ mod subgraph_budgets_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: 10000
-                        subgraph:
-                            subgraphs: {}
-                            all:
-                                list_size: 5
-                                max: 1
+                    operation_cost:
+                      max: 10000
+                      mode: enforce
+                    default_list_size:
+                      all: 5
+                    subgraphs_budget:
+                      mode: enforce
+                      all: 1
                     expose_headers:
                       estimated: true
                       actual: true
@@ -150,17 +148,16 @@ mod subgraph_budgets_tests {
                         path: supergraph.graphql
                     demand_control:
                         enabled: true
-                        mode: enforce
-                        strategy:
-                          static_estimated:
-                            list_size: 2
-                            max: 1000
-                            subgraph:
-                                subgraphs:
-                                    accounts:
-                                        max: 100
-                                all:
-                                    max: 1
+                        operation_cost:
+                          max: 1000
+                          mode: enforce
+                        default_list_size:
+                          all: 2
+                        subgraphs_budget:
+                          mode: enforce
+                          all: 1
+                          subgraphs:
+                            accounts: 100
                         expose_headers:
                           estimated: true
                           actual: true
@@ -214,17 +211,16 @@ mod subgraph_budgets_tests {
                         path: supergraph.graphql
                     demand_control:
                         enabled: true
-                        mode: enforce
-                        strategy:
-                          static_estimated:
-                            list_size: 2
-                            max: 1000
-                            subgraph:
-                                subgraphs:
-                                    products:
-                                        max: 2
-                                all:
-                                    max: 1000
+                        operation_cost:
+                          max: 1000
+                          mode: enforce
+                        default_list_size:
+                          all: 2
+                        subgraphs_budget:
+                          mode: enforce
+                          all: 1000
+                          subgraphs:
+                            products: 2
                         expose_headers:
                           estimated: true
                           actual: true
@@ -274,19 +270,18 @@ mod subgraph_budgets_tests {
                         path: supergraph.graphql
                     demand_control:
                         enabled: true
-                        mode: enforce
-                        strategy:
-                          static_estimated:
-                            list_size: 0
-                            max: 1000
-                            subgraph:
-                                all:
-                                    list_size: 3
-                                    max: 1000
-                                subgraphs:
-                                    reviews:
-                                        list_size: 10
-                                        max: 9
+                        operation_cost:
+                          max: 1000
+                          mode: enforce
+                        default_list_size:
+                          all: 3
+                          subgraphs:
+                            reviews: 10
+                        subgraphs_budget:
+                          mode: enforce
+                          all: 1000
+                          subgraphs:
+                            reviews: 9
                         expose_headers:
                           estimated: true
                           actual: true

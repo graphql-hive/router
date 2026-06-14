@@ -44,15 +44,17 @@ mod demand_control_parity_tests {
                     path: "{schema}"
                 demand_control:
                     enabled: true
-                    mode: enforce
+                    operation_cost:
+                      max: 0
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
+                    default_list_size:
+                      all: {list_size}
                     expose_headers:
                       estimated: true
                       actual: true
                       max: true
-                    strategy:
-                      static_estimated:
-                        list_size: {list_size}
-                        max: 0
                 "#,
                 schema = schema_path.to_string_lossy(),
                 list_size = list_size,

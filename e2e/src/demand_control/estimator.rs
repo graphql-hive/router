@@ -125,10 +125,11 @@ mod estimator_tests {
                     path: supergraph_demand_control.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: 1000
+                    operation_cost:
+                      max: 1000
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
                 "#,
             )
             .build()
@@ -431,10 +432,11 @@ mod estimator_tests {
                     path: supergraph_demand_control.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: 100
+                    operation_cost:
+                      max: 100
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
                     expose_headers:
                       estimated: true
                       actual: true
@@ -534,11 +536,13 @@ mod estimator_tests {
                     path: supergraph_demand_control.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 7
-                        max: 6
+                    operation_cost:
+                      max: 6
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
+                    default_list_size:
+                      all: 7
                 "#,
             )
             .build()
@@ -706,11 +710,13 @@ mod estimator_tests {
                     path: supergraph_demand_control.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: 14
-                        list_size: 3
+                    operation_cost:
+                      max: 14
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
+                    default_list_size:
+                      all: 3
                 "#,
             )
             .build()
@@ -771,10 +777,11 @@ mod estimator_tests {
                     path: supergraph_demand_control.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: 1000
+                    operation_cost:
+                      max: 1000
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
                 "#,
             )
             .build()
@@ -896,10 +903,11 @@ mod estimator_tests {
                     path: supergraph_demand_control.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: 100
+                    operation_cost:
+                      max: 100
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
                 "#,
             )
             .build()
@@ -957,17 +965,16 @@ mod estimator_tests {
                         path: "{}"
                     demand_control:
                         enabled: true
-                        mode: enforce
-                        strategy:
-                          static_estimated:
-                            list_size: 1
-                            max: 1000
-                            subgraph:
-                                subgraphs:
-                                    products:
-                                        max: 6
-                                all:
-                                    max: 1000
+                        operation_cost:
+                          max: 1000
+                          mode: enforce
+                        default_list_size:
+                          all: 1
+                        subgraphs_budget:
+                          mode: enforce
+                          all: 1000
+                          subgraphs:
+                            products: 6
                     "#,
                 temp_supergraph.path().to_string_lossy()
             ))
@@ -1029,11 +1036,13 @@ mod estimator_tests {
                         path: "{}"
                     demand_control:
                         enabled: true
-                        mode: enforce
-                        strategy:
-                          static_estimated:
-                            list_size: 1
-                            max: 10
+                        operation_cost:
+                          max: 10
+                          mode: enforce
+                        default_list_size:
+                          all: 1
+                        subgraphs_budget:
+                          mode: enforce
                     "#,
                 temp_supergraph.path().to_string_lossy()
             ))
@@ -1102,10 +1111,11 @@ mod estimator_tests {
                         path: supergraph_demand_control.graphql
                     demand_control:
                         enabled: true
-                        mode: enforce
-                        strategy:
-                          static_estimated:
-                            max: 4
+                        operation_cost:
+                          max: 4
+                          mode: enforce
+                        subgraphs_budget:
+                          mode: enforce
                     "#,
             )
             .build()

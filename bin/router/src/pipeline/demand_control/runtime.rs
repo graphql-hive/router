@@ -203,8 +203,8 @@ impl DemandControlRuntime {
             .subgraphs
             .as_ref()
             .and_then(|subgraphs| subgraphs.get(subgraph_name))
-            .map(|v| *v)
-            .or_else(|| default_list_size_cfg.all)
+            .copied()
+            .or(default_list_size_cfg.all)
             .unwrap_or(0)
     }
 

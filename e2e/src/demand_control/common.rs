@@ -57,10 +57,11 @@ pub(super) async fn assert_estimated_too_expensive(
                     path: supergraph_demand_control.graphql
             demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        max: {}
+                    operation_cost:
+                      max: {}
+                      mode: enforce
+                    subgraphs_budget:
+                      mode: enforce
             "#,
             expected_cost.saturating_sub(1)
         ))

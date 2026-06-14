@@ -8,19 +8,19 @@ mod requests_exceeding_one_subgraph_cost_are_accepted_tests {
             &format!(
                 r#"
 enabled: true
-mode: enforce
+operation_cost:
+  max: {MAX_COST}
+  mode: enforce
+default_list_size:
+  all: 10
+subgraphs_budget:
+  mode: enforce
+  subgraphs:
+    {subgraph}: 1
 expose_headers:
   estimated: true
   actual: true
   max: true
-strategy:
-  static_estimated:
-    list_size: 10
-    max: {MAX_COST}
-    subgraph:
-      subgraphs:
-        {subgraph}:
-          max: 1
 "#
             ),
         )

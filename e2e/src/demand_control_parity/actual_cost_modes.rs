@@ -8,16 +8,18 @@ mod actual_cost_can_vary_based_on_mode_tests {
             &format!(
                 r#"
 enabled: true
-mode: enforce
+operation_cost:
+  max: {MAX_COST}
+  mode: enforce
+default_list_size:
+  all: 10
+subgraphs_budget:
+  mode: enforce
+actual_cost_mode: {mode}
 expose_headers:
   estimated: true
   actual: true
   max: true
-strategy:
-  static_estimated:
-    list_size: 10
-    actual_cost_mode: {mode}
-    max: {MAX_COST}
 "#
             ),
         )

@@ -9,14 +9,14 @@ mod requests_exceeding_max_are_rejected_regardless_of_subgraph_config_tests {
             &format!(
                 r#"
 enabled: true
-mode: enforce
-strategy:
-  static_estimated:
-    list_size: 10
-    max: 1
-    subgraph:
-      all:
-        max: {MAX_COST}
+operation_cost:
+  max: 1
+  mode: enforce
+default_list_size:
+  all: 10
+subgraphs_budget:
+  mode: enforce
+  all: {MAX_COST}
 "#
             ),
         )

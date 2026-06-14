@@ -14,12 +14,14 @@ mod actual_cost_tests {
             path: supergraph.graphql
         demand_control:
             enabled: true
-            mode: enforce
-            strategy:
-              static_estimated:
-                list_size: 10
-                max: 1000
-                actual_cost_mode: by_response_shape
+            operation_cost:
+              max: 1000
+              mode: enforce
+            default_list_size:
+              all: 10
+            subgraphs_budget:
+              mode: enforce
+            actual_cost_mode: by_response_shape
             expose_headers:
               estimated: true
               actual: true
@@ -67,12 +69,14 @@ mod actual_cost_tests {
             path: supergraph.graphql
         demand_control:
             enabled: true
-            mode: enforce
-            strategy:
-              static_estimated:
-                list_size: 10
-                max: 1000
-                actual_cost_mode: by_subgraph
+            operation_cost:
+              max: 1000
+              mode: enforce
+            default_list_size:
+              all: 10
+            subgraphs_budget:
+              mode: enforce
+            actual_cost_mode: by_subgraph
             expose_headers:
               estimated: true
               actual: true
@@ -124,12 +128,14 @@ mod actual_cost_tests {
             path: supergraph.graphql
         demand_control:
             enabled: true
-            mode: enforce
-            strategy:
-              static_estimated:
-                list_size: 0
-                max: 3
-                actual_cost_mode: by_subgraph
+            operation_cost:
+              max: 3
+              mode: enforce
+            default_list_size:
+              all: 0
+            subgraphs_budget:
+              mode: enforce
+            actual_cost_mode: by_subgraph
             expose_headers:
               estimated: true
               actual: true
@@ -202,12 +208,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 0
-                        max: 3
-                        actual_cost_mode: by_subgraph
+                    operation_cost:
+                      max: 3
+                      mode: enforce
+                    default_list_size:
+                      all: 0
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_subgraph
                     expose_headers:
                       estimated: true
                       actual: true
@@ -273,12 +281,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 10
-                        max: 1000
-                        actual_cost_mode: by_response_shape
+                    operation_cost:
+                      max: 1000
+                      mode: enforce
+                    default_list_size:
+                      all: 10
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_response_shape
                     expose_headers:
                       estimated: true
                       actual: true
@@ -331,12 +341,14 @@ mod actual_cost_tests {
                     path: supergraph_demand_control.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 0
-                        max: 1000
-                        actual_cost_mode: by_response_shape
+                    operation_cost:
+                      max: 1000
+                      mode: enforce
+                    default_list_size:
+                      all: 0
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_response_shape
                     expose_headers:
                       estimated: true
                       actual: true
@@ -392,12 +404,14 @@ mod actual_cost_tests {
                         path: supergraph_demand_control.graphql
                     demand_control:
                         enabled: true
-                        mode: enforce
-                        strategy:
-                          static_estimated:
-                            list_size: {list_size}
-                            max: 1000
-                            actual_cost_mode: by_response_shape
+                        operation_cost:
+                          max: 1000
+                          mode: enforce
+                        default_list_size:
+                          all: {list_size}
+                        subgraphs_budget:
+                          mode: enforce
+                        actual_cost_mode: by_response_shape
                         expose_headers:
                           estimated: true
                           actual: true
@@ -463,12 +477,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 10
-                        max: 1000
-                        actual_cost_mode: by_response_shape
+                    operation_cost:
+                      max: 1000
+                      mode: enforce
+                    default_list_size:
+                      all: 10
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_response_shape
                     expose_headers:
                       estimated: true
                       actual: true
@@ -537,12 +553,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 0
-                        max: 100000
-                        actual_cost_mode: by_subgraph
+                    operation_cost:
+                      max: 100000
+                      mode: enforce
+                    default_list_size:
+                      all: 0
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_subgraph
                     expose_headers:
                       estimated: true
                       actual: true
@@ -593,12 +611,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 0
-                        max: 10000
-                        actual_cost_mode: by_subgraph
+                    operation_cost:
+                      max: 10000
+                      mode: enforce
+                    default_list_size:
+                      all: 0
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_subgraph
                     expose_headers:
                       estimated: true
                       actual: true
@@ -670,12 +690,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 10
-                        max: 100000
-                        actual_cost_mode: by_subgraph
+                    operation_cost:
+                      max: 100000
+                      mode: enforce
+                    default_list_size:
+                      all: 10
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_subgraph
                     expose_headers:
                       estimated: true
                       actual: true
@@ -737,12 +759,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 0
-                        max: 100000
-                        actual_cost_mode: by_response_shape
+                    operation_cost:
+                      max: 100000
+                      mode: enforce
+                    default_list_size:
+                      all: 0
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_response_shape
                     expose_headers:
                       estimated: true
                       actual: true
@@ -828,12 +852,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 5
-                        max: 100000
-                        actual_cost_mode: by_response_shape
+                    operation_cost:
+                      max: 100000
+                      mode: enforce
+                    default_list_size:
+                      all: 5
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_response_shape
                     expose_headers:
                       estimated: true
                       actual: true
@@ -919,12 +945,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 0
-                        max: 100000
-                        actual_cost_mode: by_subgraph
+                    operation_cost:
+                      max: 100000
+                      mode: enforce
+                    default_list_size:
+                      all: 0
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_subgraph
                     expose_headers:
                       estimated: true
                       actual: true
@@ -980,12 +1008,14 @@ mod actual_cost_tests {
                                         path: supergraph.graphql
                                 demand_control:
                                         enabled: true
-                                        mode: enforce
-                                        strategy:
-                                            static_estimated:
-                                                list_size: 0
-                                                max: 100000
-                                                actual_cost_mode: by_subgraph
+                                        operation_cost:
+                                          max: 100000
+                                          mode: enforce
+                                        default_list_size:
+                                          all: 0
+                                        subgraphs_budget:
+                                          mode: enforce
+                                        actual_cost_mode: by_subgraph
                                         expose_headers:
                                           estimated: true
                                           actual: true
@@ -1048,12 +1078,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 0
-                        max: 100000
-                        actual_cost_mode: by_subgraph
+                    operation_cost:
+                      max: 100000
+                      mode: enforce
+                    default_list_size:
+                      all: 0
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_subgraph
                     expose_headers:
                       estimated: true
                       actual: true
@@ -1108,12 +1140,14 @@ mod actual_cost_tests {
                     path: supergraph.graphql
                 demand_control:
                     enabled: true
-                    mode: enforce
-                    strategy:
-                      static_estimated:
-                        list_size: 2
-                        max: 100000
-                        actual_cost_mode: by_subgraph
+                    operation_cost:
+                      max: 100000
+                      mode: enforce
+                    default_list_size:
+                      all: 2
+                    subgraphs_budget:
+                      mode: enforce
+                    actual_cost_mode: by_subgraph
                     expose_headers:
                       estimated: true
                       actual: true
