@@ -18,6 +18,7 @@ use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_query_planner::ast::operation::{OperationDefinition, SubgraphFetchOperation};
 use hive_router_query_planner::planner::plan_nodes::{PlanNode, QueryPlan};
 use hive_router_query_planner::state::supergraph_state::{OperationKind, SupergraphState};
+use http::{HeaderName, HeaderValue};
 use moka::future::Cache;
 use tracing::{debug, info, warn};
 
@@ -150,9 +151,22 @@ impl DemandControlRuntime {
                         &DemandControlResultCode::CostEstimatedTooExpensive,
                         operation_name,
                     );
+
+                    let mut err_extra_headers: Vec<(HeaderName, HeaderValue)> = vec![];
+                    if let Some(header_name) = &self.expose_headers_flags.estimated {
+                        err_extra_headers.push((
+                            header_name.get_header_ref().to_owned(),
+                            estimation.estimated_cost.into(),
+                        ));
+                    }
+
+                    if let Some(header_name) = &self.expose_headers_flags.max {
+                        err_extra_headers
+                            .push((header_name.get_header_ref().to_owned(), max_cost.into()));
+                    }
+
                     return Err(PipelineError::CostEstimatedTooExpensive {
-                        estimated_cost: estimation.estimated_cost,
-                        max_cost,
+                        response_headers: err_extra_headers,
                     });
                 }
                 DemandControlMode::Measure => {

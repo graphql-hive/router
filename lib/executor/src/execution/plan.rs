@@ -34,7 +34,6 @@ use sonic_rs::{JsonValueTrait, ValueRef};
 use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
-use crate::execution::demand_control::extensions::DemandControlCostMetadataExtensions;
 use crate::execution::demand_control::{
     calculate_actual_cost, estimate_actual_subgraph_response_cost_with_compiled_plan,
     CompiledActualCostPlan, DemandControlExecutionContext,
@@ -84,8 +83,6 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResultExtensions<'exec> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cost: Option<DemandControlCostMetadataExtensions>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub query_plan: Option<&'exec QueryPlan>,
 
     #[serde(flatten)]
@@ -94,7 +91,7 @@ pub struct ExecutionResultExtensions<'exec> {
 
 impl ExecutionResultExtensions<'_> {
     pub fn is_empty(&self) -> bool {
-        self.cost.is_none() && self.query_plan.is_none() && self.extensions.is_empty()
+        self.query_plan.is_none() && self.extensions.is_empty()
     }
 }
 

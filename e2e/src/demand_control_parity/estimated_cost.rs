@@ -45,6 +45,10 @@ mod demand_control_parity_tests {
                 demand_control:
                     enabled: true
                     mode: enforce
+                    expose_headers:
+                      estimated: true
+                      actual: true
+                      max: true
                     strategy:
                       static_estimated:
                         list_size: {list_size}
@@ -69,16 +73,20 @@ mod demand_control_parity_tests {
         let message = json["errors"][0]["message"]
             .as_str()
             .unwrap_or_else(|| panic!("missing rejection message for {query_fixture}: {json}"));
-        let actual_cost: u64 = message
-            .strip_prefix("Operation estimated cost ")
-            .and_then(|rest| rest.split_whitespace().next())
-            .and_then(|n| n.parse().ok())
-            .unwrap_or_else(|| panic!("could not parse estimated cost from message: {message}"));
+
+        assert_eq!(message, "Operation estimated cost exceeds max cost");
+
+        println!("h_v: {:?}", res.headers().get("x-cost-actual"));
+
+        let estimated_cost: u64 = res
+            .header("x-cost-estimated")
+            .and_then(|n| n.to_str().unwrap().parse().ok())
+            .unwrap_or_else(|| panic!("could not parse estimated cost from headers"));
 
         assert_eq!(
-            actual_cost, expected_cost,
+            estimated_cost, expected_cost,
             "estimated cost parity drift for {query_fixture}: \
-             expected {expected_cost}, our router reports {actual_cost}"
+             expected {expected_cost}, our router reports {estimated_cost}"
         );
     }
 

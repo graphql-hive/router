@@ -1141,7 +1141,7 @@ mod estimator_tests {
             // CostlySearchInput input object instance default 1 + @cost(weight: 5) on the
             // `query` input field = 6. (Input objects contribute a default cost of 1 per
             // instance even when no `@cost` directive is present.)
-            Some("Operation estimated cost 6 exceeds configured max cost 4")
+            Some("Operation estimated cost exceeds max cost")
         );
 
         let allowed = router

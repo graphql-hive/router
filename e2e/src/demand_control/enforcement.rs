@@ -41,7 +41,7 @@ mod enforcement_tests {
         let json = res.json_body().await;
         assert_eq!(
             json["errors"][0]["message"].as_str(),
-            Some("Operation estimated cost 1 exceeds configured max cost 0")
+            Some("Operation estimated cost exceeds max cost")
         );
         assert_eq!(
             json["errors"][0]["extensions"]["code"].as_str(),

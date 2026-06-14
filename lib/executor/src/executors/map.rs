@@ -281,10 +281,7 @@ impl SubgraphExecutorMap {
                         "skipping subgraph fetch: estimated cost exceeds subgraph budget"
                     );
 
-                    return Err(SubgraphExecutorError::CostEstimatedTooExpensive {
-                        estimated_cost,
-                        max_cost: *max_cost,
-                    });
+                    return Err(SubgraphExecutorError::CostEstimatedTooExpensive);
                 }
             }
         }

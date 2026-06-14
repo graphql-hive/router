@@ -77,14 +77,7 @@ pub(super) async fn assert_estimated_too_expensive(
     );
     assert_eq!(
         json["errors"][0]["message"].as_str(),
-        Some(
-            format!(
-                "Operation estimated cost {} exceeds configured max cost {}",
-                expected_cost,
-                expected_cost.saturating_sub(1)
-            )
-            .as_str()
-        )
+        Some("Operation estimated cost exceeds max cost")
     );
 }
 

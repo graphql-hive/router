@@ -6,8 +6,6 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 use sonic_rs::Value;
 use std::collections::{BTreeMap, HashMap};
 
-use crate::execution::demand_control::extensions::DemandControlCostMetadataExtensions;
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphQLError {
@@ -294,10 +292,6 @@ pub struct GraphQLErrorExtensions {
     /// Corresponds to a path of a Flatten(Fetch) node that caused the error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub affected_path: Option<String>,
-    /// Demand-control cost numbers attached to estimated/actual cost
-    /// rejections (both supergraph-wide and per-subgraph).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cost: Option<DemandControlCostMetadataExtensions>,
     #[serde(flatten)]
     pub extensions: BTreeMap<String, Value>,
 }
@@ -325,7 +319,6 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                 let mut code = None;
                 let mut service_name = None;
                 let mut affected_path = None;
-                let mut cost = None;
                 let mut extensions = BTreeMap::new();
 
                 while let Some(key) = map.next_key::<String>()? {
@@ -348,12 +341,6 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                             }
                             affected_path = map.next_value()?;
                         }
-                        "cost" => {
-                            if cost.is_some() {
-                                return Err(de::Error::duplicate_field("cost"));
-                            }
-                            cost = map.next_value()?;
-                        }
                         other_key => {
                             let value: Value = map.next_value()?;
                             extensions.insert(other_key.to_string(), value);
@@ -365,7 +352,6 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                     code,
                     service_name,
                     affected_path,
-                    cost,
                     extensions,
                 })
             }
@@ -381,7 +367,6 @@ impl GraphQLErrorExtensions {
             code: Some(code.into()),
             service_name: None,
             affected_path: None,
-            cost: None,
             extensions: BTreeMap::new(),
         }
     }
@@ -394,7 +379,6 @@ impl GraphQLErrorExtensions {
             code: Some(code.into()),
             service_name: Some(service_name.into()),
             affected_path: None,
-            cost: None,
             extensions: BTreeMap::new(),
         }
     }
@@ -411,7 +395,6 @@ impl GraphQLErrorExtensions {
         self.code.is_none()
             && self.service_name.is_none()
             && self.affected_path.is_none()
-            && self.cost.is_none()
             && self.extensions.is_empty()
     }
 }

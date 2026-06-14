@@ -21,7 +21,10 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{header::CONTENT_TYPE, Method};
+use http::{
+    header::{CONTENT_TYPE, RETRY_AFTER},
+    HeaderValue, Method,
+};
 use ntex::{
     http::{
         body::{Body, ResponseBody},
@@ -210,7 +213,9 @@ pub async fn graphql_request_handler(
         );
 
         let Some(ref supergraph) = **schema_state.current_supergraph() else {
-            return Err(PipelineError::NoSupergraphAvailable);
+            return Err(PipelineError::NoSupergraphAvailable {
+              response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
+            });
         };
 
         if let Some(response) = validate_operation_with_cache(

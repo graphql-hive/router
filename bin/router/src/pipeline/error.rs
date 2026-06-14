@@ -6,8 +6,7 @@ use hive_router_internal::http::ReadBodyStreamError;
 use hive_router_plan_executor::{
     coprocessor::CoprocessorError,
     execution::{
-        demand_control::extensions::DemandControlCostMetadataExtensions, error::PlanExecutionError,
-        jwt_forward::JwtForwardingError, plan::FailedExecutionResult,
+        error::PlanExecutionError, jwt_forward::JwtForwardingError, plan::FailedExecutionResult,
     },
     headers::errors::HeaderRuleRuntimeError,
     hooks::on_graphql_error::handle_graphql_errors_with_plugins,
@@ -18,8 +17,8 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
 };
-use http::header;
-use http::{header::RETRY_AFTER, HeaderName, Method, StatusCode};
+use http::{header, HeaderValue};
+use http::{HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError, HttpRequest},
@@ -39,6 +38,8 @@ use crate::{
     },
     RouterSharedState,
 };
+
+pub type PipelineErrorAdditionalHeaders = Vec<(HeaderName, HeaderValue)>;
 
 #[derive(Debug, thiserror::Error, IntoStaticStr)]
 pub enum PipelineError {
@@ -164,12 +165,16 @@ pub enum PipelineError {
 
     #[error("No supergraph available yet, unable to process request")]
     #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
-    NoSupergraphAvailable,
+    NoSupergraphAvailable {
+        response_headers: PipelineErrorAdditionalHeaders,
+    },
 
     // Demand Control
-    #[error("Operation estimated cost {estimated_cost} exceeds configured max cost {max_cost}")]
+    #[error("Operation estimated cost exceeds max cost")]
     #[strum(serialize = "COST_ESTIMATED_TOO_EXPENSIVE")]
-    CostEstimatedTooExpensive { estimated_cost: u64, max_cost: u64 },
+    CostEstimatedTooExpensive {
+        response_headers: PipelineErrorAdditionalHeaders,
+    },
 
     #[error(
         "Exactly one slicing argument is required for field '{field_name}', but found {found}"
@@ -209,6 +214,14 @@ impl From<Arc<ParserCacheError>> for PipelineError {
 }
 
 impl PipelineError {
+    pub fn additional_response_headers(&self) -> Option<&Vec<(HeaderName, HeaderValue)>> {
+        match self {
+            PipelineError::CostEstimatedTooExpensive { response_headers } => Some(response_headers),
+            PipelineError::NoSupergraphAvailable { response_headers } => Some(response_headers),
+            _ => None,
+        }
+    }
+
     pub fn graphql_error_code(&self) -> &'static str {
         match self {
             Self::JwtError(err) => err.error_code(),
@@ -276,7 +289,7 @@ impl PipelineError {
             (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
-            (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
+            (Self::NoSupergraphAvailable { .. }, _) => StatusCode::SERVICE_UNAVAILABLE,
             (Self::CoprocessorError(err), _) => err.status_code(),
             (Self::RequestContextError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -301,8 +314,10 @@ pub fn handle_pipeline_error(
 
     let mut res = ResponseBuilder::new(status);
 
-    if matches!(err, PipelineError::NoSupergraphAvailable) {
-        res.header(RETRY_AFTER, "10");
+    if let Some(headers) = err.additional_response_headers() {
+        for (name, value) in headers {
+            res.header(name, value);
+        }
     }
 
     let mut errors = match err {
@@ -313,23 +328,11 @@ pub fn handle_pipeline_error(
             .iter()
             .map(|error| error.into())
             .collect(),
-        PipelineError::CostEstimatedTooExpensive {
-            ref estimated_cost,
-            ref max_cost,
-        } => {
-            // Surface the cost numbers to the client on the global
-            // estimated-cost rejection so operators can correlate them
-            // with the configured `max`.
-            let mut graphql_error = GraphQLError::from_message_and_code(
+        PipelineError::CostEstimatedTooExpensive { .. } => {
+            vec![GraphQLError::from_message_and_code(
                 err.graphql_error_message(),
                 "COST_ESTIMATED_TOO_EXPENSIVE",
-            );
-            graphql_error.extensions.cost = Some(DemandControlCostMetadataExtensions {
-                estimated: *estimated_cost,
-                max: *max_cost,
-                actual: None,
-            });
-            vec![graphql_error]
+            )]
         }
         _ => {
             let code = err.graphql_error_code();

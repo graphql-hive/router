@@ -1,7 +1,6 @@
 use strum::IntoStaticStr;
 
 use crate::{
-    execution::demand_control::extensions::DemandControlCostMetadataExtensions,
     executors::error::SubgraphExecutorError, headers::errors::HeaderRuleRuntimeError,
     projection::error::ProjectionError, response::graphql_error::GraphQLError,
 };
@@ -88,20 +87,6 @@ impl PlanExecutionError {
 impl From<&PlanExecutionError> for GraphQLError {
     fn from(val: &PlanExecutionError) -> Self {
         let mut error = GraphQLError::from_message_and_code(val.to_string(), val.error_code());
-
-        if let PlanExecutionErrorKind::SubgraphExecutor(
-            SubgraphExecutorError::CostEstimatedTooExpensive {
-                estimated_cost,
-                max_cost,
-            },
-        ) = &val.kind
-        {
-            error.extensions.cost = Some(DemandControlCostMetadataExtensions {
-                estimated: *estimated_cost,
-                max: *max_cost,
-                actual: None,
-            });
-        }
 
         // We destructure the context to take ownership of the Option<String> values.
         // Then we move owned Strings directly into builder methods.
