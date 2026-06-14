@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use ahash::{HashMap as AHashMap, HashSet as AHashSet};
+use ahash::{HashMap as AHashMap, HashMapExt, HashSet as AHashSet};
 use hive_router_config::demand_control::{
     DemandControlActualCostMode, DemandControlExposeHeadersConfig, DemandControlMode,
 };
@@ -21,6 +21,8 @@ use http::HeaderValue;
 use sonic_rs::JsonValueTrait;
 
 use crate::{
+    execution::plan::{ExecutionJob, VariablesMap},
+    execution_context::ExecutionContext,
     headers::{plan::HeaderAggregationStrategy, response::ResponseHeaderAggregator},
     response::value::Value,
 };
@@ -51,6 +53,39 @@ pub struct DemandControlExecutionContext {
 }
 
 impl DemandControlExecutionContext {
+    #[inline]
+    pub fn record_subgraph_response_cost<'exec>(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        job: &ExecutionJob<'exec>,
+        variables_map: &'exec Option<VariablesMap>,
+    ) {
+        if let CompiledActualCostPlan::BySubgraph(actual_subgraph_plans_by_fetch_hash) =
+            self.actual_cost_plan.as_ref()
+        {
+            let subgraph_name = job.subgraph_name();
+            let fetch_step_hash = job.operation().hash;
+            let response_ref = job.response_ref();
+
+            let subgraph_actual = actual_subgraph_plans_by_fetch_hash
+                .get(&fetch_step_hash)
+                .map(|plan| {
+                    estimate_actual_subgraph_response_cost_with_compiled_plan(
+                        plan,
+                        &response_ref.data,
+                        variables_map,
+                    )
+                })
+                .unwrap_or(0);
+
+            ctx.actual_cost_by_subgraph
+                .get_or_insert_with(AHashMap::new)
+                .entry(subgraph_name)
+                .and_modify(|cost| *cost = cost.saturating_add(subgraph_actual))
+                .or_insert(subgraph_actual);
+        }
+    }
+
     #[inline]
     pub fn apply_expose_headers(
         &self,

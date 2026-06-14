@@ -34,10 +34,7 @@ use sonic_rs::{JsonValueTrait, ValueRef};
 use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
-use crate::execution::demand_control::{
-    calculate_actual_cost, estimate_actual_subgraph_response_cost_with_compiled_plan,
-    CompiledActualCostPlan, DemandControlExecutionContext,
-};
+use crate::execution::demand_control::{calculate_actual_cost, DemandControlExecutionContext};
 use crate::execution::operation_name::OperationNameFactory;
 use crate::{
     execution::{
@@ -79,6 +76,8 @@ use crate::{
     },
 };
 
+pub type VariablesMap = HashMap<String, sonic_rs::Value>;
+
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResultExtensions<'exec> {
@@ -97,7 +96,7 @@ impl ExecutionResultExtensions<'_> {
 
 #[derive(Clone, Debug, Default)]
 pub struct CoerceVariablesPayload {
-    pub variables_map: Option<HashMap<String, sonic_rs::Value>>,
+    pub variables_map: Option<VariablesMap>,
 }
 
 impl CoerceVariablesPayload {
@@ -123,7 +122,7 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub executors: Arc<SubgraphExecutorMap>,
     pub jwt_auth_forwarding: Option<Arc<JwtAuthForwardingPlan>>,
     pub graphql_error_recorder: Option<GraphQLErrorMetricsRecorder>,
-    pub demand_control: Option<Arc<DemandControlExecutionContext>>,
+    pub demand_control_context: Option<Arc<DemandControlExecutionContext>>,
     pub initial_errors: Vec<GraphQLError>,
     pub span: GraphQLOperationSpan,
     pub plugin_req_state: Option<PluginRequestState<'exec>>,
@@ -354,7 +353,7 @@ pub async fn execute_query_plan<'exec>(
                     plugin_req_state: None,
                     graphql_error_recorder: None,
                     operation_name_factory: operation_name_factory.clone(),
-                    demand_control: opts.demand_control.clone(),
+                    demand_control_context: opts.demand_control_context.clone(),
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
@@ -450,7 +449,7 @@ async fn execute_query_plan_with_data<'exec>(
         headers_plan: &opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
-        demand_control: opts.demand_control.clone(),
+        demand_control_context: opts.demand_control_context.clone(),
         plugin_req_state: opts.plugin_req_state.as_ref(),
         operation_name_factory: &opts.operation_name_factory,
     };
@@ -480,7 +479,7 @@ async fn execute_query_plan_with_data<'exec>(
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
-    if let Some(demand_control) = executor.demand_control {
+    if let Some(demand_control) = executor.demand_control_context {
         let actual = calculate_actual_cost(
             &demand_control,
             &data,
@@ -594,19 +593,19 @@ async fn execute_query_plan_with_data<'exec>(
 }
 
 pub struct Executor<'exec> {
-    pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+    pub variable_values: &'exec Option<VariablesMap>,
     pub schema_metadata: &'exec SchemaMetadata,
     pub executors: &'exec SubgraphExecutorMap,
     pub client_request: &'exec ClientRequestDetails<'exec>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub jwt_forwarding_plan: Option<Arc<JwtAuthForwardingPlan>>,
     pub dedupe_subgraph_requests: bool,
-    pub demand_control: Option<Arc<DemandControlExecutionContext>>,
+    pub demand_control_context: Option<Arc<DemandControlExecutionContext>>,
     pub plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
     pub operation_name_factory: &'exec OperationNameFactory,
 }
 
-enum ExecutionJob<'exec> {
+pub enum ExecutionJob<'exec> {
     Fetch {
         subgraph_name: &'exec str,
         operation: &'exec SubgraphFetchOperation,
@@ -630,7 +629,7 @@ enum ExecutionJob<'exec> {
     },
 }
 
-struct AliasBatchState<'exec> {
+pub struct AliasBatchState<'exec> {
     alias_spec: &'exec EntityBatchAlias,
     representation_hash_to_index: AHashMap<u64, usize>,
     paths: Vec<AliasPathState<'exec>>,
@@ -658,14 +657,16 @@ impl<'exec> ExecutionJob<'exec> {
             ExecutionJob::BatchFetch { response, .. } => response,
         }
     }
-    fn response_ref(&self) -> &SubgraphResponse<'exec> {
+
+    pub fn response_ref(&self) -> &SubgraphResponse<'exec> {
         match self {
             ExecutionJob::Fetch { response, .. } => response,
             ExecutionJob::FlattenFetch { response, .. } => response,
             ExecutionJob::BatchFetch { response, .. } => response,
         }
     }
-    fn subgraph_name(&self) -> &'exec str {
+
+    pub fn subgraph_name(&self) -> &'exec str {
         match self {
             ExecutionJob::Fetch { subgraph_name, .. } => subgraph_name,
             ExecutionJob::FlattenFetch { subgraph_name, .. } => subgraph_name,
@@ -673,13 +674,14 @@ impl<'exec> ExecutionJob<'exec> {
         }
     }
 
-    fn operation(&self) -> &'exec SubgraphFetchOperation {
+    pub fn operation(&self) -> &'exec SubgraphFetchOperation {
         match self {
             ExecutionJob::Fetch { operation, .. } => operation,
             ExecutionJob::FlattenFetch { operation, .. } => operation,
             ExecutionJob::BatchFetch { operation, .. } => operation,
         }
     }
+
     fn affected_path(&self) -> Option<&'exec FlattenNodePath> {
         match self {
             ExecutionJob::Fetch { .. } => None,
@@ -949,26 +951,8 @@ impl<'exec> Executor<'exec> {
                 let subgraph_name = job.subgraph_name();
                 let affected_path = job.affected_path();
 
-                if let Some(demand_control) = &self.demand_control {
-                    if let CompiledActualCostPlan::BySubgraph(actual_subgraph_plans_by_fetch_hash) =
-                        demand_control.actual_cost_plan.as_ref()
-                    {
-                        let actual_for_response = actual_subgraph_plans_by_fetch_hash
-                            .get(&job.operation().hash)
-                            .map(|plan| {
-                                estimate_actual_subgraph_response_cost_with_compiled_plan(
-                                    plan,
-                                    &job.response_ref().data,
-                                    self.variable_values,
-                                )
-                            })
-                            .unwrap_or(0);
-                        ctx.actual_cost_by_subgraph
-                            .get_or_insert_with(AHashMap::new)
-                            .entry(subgraph_name)
-                            .and_modify(|cost| *cost = cost.saturating_add(actual_for_response))
-                            .or_insert(actual_for_response);
-                    }
+                if let Some(demand_control) = &self.demand_control_context {
+                    demand_control.record_subgraph_response_cost(ctx, &job, self.variable_values);
                 }
 
                 if let Some(ref subgraph_headers) = job.response_ref().headers {
@@ -1484,7 +1468,7 @@ impl<'exec> Executor<'exec> {
                     subgraph_request,
                     self.client_request,
                     self.plugin_req_state,
-                    self.demand_control.as_deref(),
+                    self.demand_control_context.as_deref(),
                 )
                 .await
                 .with_plan_context(LazyPlanContext {
@@ -1519,7 +1503,7 @@ impl<'exec> Executor<'exec> {
 
 fn condition_node_by_variables<'a>(
     condition_node: &'a ConditionNode,
-    variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
+    variable_values: &'a Option<VariablesMap>,
 ) -> Option<&'a PlanNode> {
     let vars = variable_values.as_ref()?;
     let value = vars.get(&condition_node.condition)?;
@@ -1533,7 +1517,7 @@ fn condition_node_by_variables<'a>(
 }
 
 fn select_fetch_variables<'a>(
-    variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
+    variable_values: &'a Option<VariablesMap>,
     variable_usages: Option<&BTreeSet<String>>,
 ) -> Option<HashMap<&'a str, &'a sonic_rs::Value>> {
     let values = variable_values.as_ref()?;
@@ -1763,7 +1747,7 @@ mod tests {
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
-            demand_control: None,
+            demand_control_context: None,
             plugin_req_state: None,
             operation_name_factory: &OperationNameFactory::default(),
         };
@@ -1878,7 +1862,7 @@ mod tests {
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
-            demand_control: None,
+            demand_control_context: None,
             plugin_req_state: None,
             operation_name_factory: &OperationNameFactory::default(),
         };
