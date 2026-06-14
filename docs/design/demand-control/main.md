@@ -56,15 +56,17 @@ At request time it only replays that formula against the request's variables —
 
 ## Modes and enforcement
 
-Two modes:
+Enforcement happens at two **independent** levels, each with its own `measure`/`enforce` mode:
 
-* **`measure`** — costs are computed, recorded, and exposed, but nothing is ever rejected. This is the safe way to roll the feature out: watch the real cost distribution in production before turning on enforcement.
-* **`enforce`** — over-budget operations are rejected.
-
-Enforcement happens at two levels:
-
-* **Supergraph budget** — if the estimated cost of the whole operation exceeds the configured `max`, the request is rejected outright, before execution.
+* **Operation budget** — if the estimated cost of the whole operation exceeds the configured `max`, the request is rejected outright, before execution.
 * **Per-subgraph budget** — a subgraph can be given its own, tighter budget. If the part of the plan that targets that subgraph is too expensive, only that subgraph's fetch is skipped; the rest of the plan still runs and the response comes back partial, with an error describing the skipped subgraph. **This leads to partial GraphQL responses**.
+
+Each level's mode decides what happens when its budget is exceeded:
+
+* **`measure`** — the cost is computed, recorded, and exposed, but nothing is rejected. This is the safe way to roll the feature out: watch the real cost distribution in production before turning on enforcement.
+* **`enforce`** — over-budget operations (or subgraph fetches) are rejected.
+
+Because the two modes are set separately, you can — for example — enforce per-subgraph budgets while still only measuring the operation-wide budget, or the other way around.
 
 Actual cost is **not** enforced — exceeding the budget after execution is recorded but never turned into a rejection (you can't un-execute a request).
 
@@ -103,6 +105,8 @@ They are also labelled by operation name, which is the highest-cardinality dimen
 **Tracing** — the same estimated/actual/delta/result values are attached as attributes on the GraphQL operation span.
 
 **Logs** — a one-line summary of the effective configuration at startup; warnings for configuration that is likely a mistake (enforce mode with a zero budget, or no default list size); warnings when an operation is rejected; and, at debug level, the symbolic cost formula behind a rejection, so an operator can see *why* the estimate came out the way it did.
+
+**Plugins** — cost is also handed to the plugin system through the execution hook: the estimated and max cost are available *before* execution, and the estimated/max/actual triple *after* execution. A plugin can use these to drive its own logic — custom headers, billing, or bespoke logging — without recomputing anything.
 
 ## Relationship to persisted documents
 
