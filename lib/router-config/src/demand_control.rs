@@ -143,30 +143,22 @@ pub struct StaticEstimatedConfig {
     /// Supergraph-wide cost ceiling (in cost units).
     ///
     /// In `mode: enforce`, when the *estimated* cost of an operation exceeds
-    /// this value, the request is rejected before any subgraph is contacted
-    /// (`COST_ESTIMATED_TOO_EXPENSIVE`). When the *actual* cost (post-execution)
-    /// exceeds this value, a `COST_ACTUAL_TOO_EXPENSIVE` error is appended to
-    /// the response while `data` is still returned.
+    /// this value.
     ///
-    /// In `mode: measure`, `max` still determines the `result` code in
-    /// `extensions.cost` but does not cause rejection.
+    /// When the *actual* cost (post-execution) exceeds this value, an error is loggned and reported to telemetry/metrics.
     pub max: u64,
 
     /// Default assumed list size for fields that have no `@listSize` directive.
     /// Per-subgraph overrides take precedence when configured.
     pub list_size: Option<usize>,
 
-    /// How actual cost is computed after execution. Actual cost is always
-    /// computed regardless of this setting; only the computation method differs.
-    /// `extensions.cost` will always include `actual`, `delta` and (in
-    /// `by_subgraph` mode) `actualBySubgraph`.
+    /// How actual cost is computed after execution.
     ///
     /// - `by_subgraph` (default): sum the cost computed per individual subgraph
-    ///   fetch response. Enables the `actualBySubgraph` extension field and more
-    ///   closely mirrors the estimation strategy.
+    ///   fetch responsews.
     /// - `by_response_shape`: walk the merged supergraph response and reapply
     ///   the static cost rules. Does not account for intermediate subgraph
-    ///   work. This was the only option prior to `by_subgraph`.
+    ///   work.
     #[serde(default)]
     pub actual_cost_mode: DemandControlActualCostMode,
 
