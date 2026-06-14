@@ -47,14 +47,14 @@ mod demand_control_parity_tests {
                     operation_cost:
                       max: 0
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     subgraphs_budget:
                       mode: enforce
                     default_list_size:
                       all: {list_size}
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
                 schema = schema_path.to_string_lossy(),
                 list_size = list_size,

@@ -435,12 +435,12 @@ mod estimator_tests {
                     operation_cost:
                       max: 100
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     subgraphs_budget:
                       mode: enforce
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()

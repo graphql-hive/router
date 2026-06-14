@@ -65,12 +65,12 @@ mod enforcement_tests {
                     operation_cost:
                       max: 0
                       mode: measure
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     subgraphs_budget:
                       mode: measure
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -113,15 +113,15 @@ mod enforcement_tests {
                     operation_cost:
                       max: 3
                       mode: measure
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     subgraphs_budget:
                       mode: measure
                     default_list_size:
                       all: 0
                     actual_cost_mode: by_subgraph
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()

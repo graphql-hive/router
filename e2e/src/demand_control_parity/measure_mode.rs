@@ -11,15 +11,15 @@ enabled: true
 operation_cost:
   max: 1
   mode: measure
+  expose_headers:
+    estimated: true
+    actual: true
+    max: true
 default_list_size:
   all: 100
 subgraphs_budget:
   mode: measure
   all: 1
-expose_headers:
-  estimated: true
-  actual: true
-  max: true
 "#,
         )
         .await;

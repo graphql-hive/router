@@ -17,12 +17,12 @@ mod extensions_tests {
             operation_cost:
               max: 100
               mode: enforce
+              expose_headers:
+                estimated: true
+                actual: true
+                max: true
             subgraphs_budget:
               mode: enforce
-            expose_headers:
-              estimated: true
-              actual: true
-              max: true
         "#,
             )
             .build()
@@ -72,12 +72,12 @@ mod extensions_tests {
                     operation_cost:
                       max: 1000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     subgraphs_budget:
                       mode: enforce
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -165,11 +165,11 @@ mod extensions_tests {
             operation_cost:
               max: 100
               mode: enforce
+              expose_headers:
+                estimated: "X-My-Estimated"
+                actual: "X-My-Actual"
             subgraphs_budget:
               mode: enforce
-            expose_headers:
-              estimated: "X-My-Estimated"
-              actual: "X-My-Actual"
         "#,
             )
             .build()
@@ -204,10 +204,10 @@ mod extensions_tests {
             operation_cost:
               max: 100
               mode: enforce
+              expose_headers:
+                estimated: true
             subgraphs_budget:
               mode: enforce
-            expose_headers:
-              estimated: true
         "#,
             )
             .build()

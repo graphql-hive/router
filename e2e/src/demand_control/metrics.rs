@@ -96,13 +96,13 @@ mod metrics_tests {
                     operation_cost:
                       max: 1000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_response_shape
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 telemetry:
                     metrics:
                         exporters:
@@ -265,15 +265,15 @@ mod metrics_tests {
                     operation_cost:
                       max: 3
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 0
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_subgraph
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 telemetry:
                     metrics:
                         exporters:
@@ -341,15 +341,15 @@ mod metrics_tests {
                     operation_cost:
                       max: 1000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 10
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_response_shape
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 telemetry:
                     metrics:
                         exporters:
@@ -420,15 +420,15 @@ mod metrics_tests {
                     operation_cost:
                       max: 1000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 10
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_response_shape
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 telemetry:
                     tracing:
                       exporters:

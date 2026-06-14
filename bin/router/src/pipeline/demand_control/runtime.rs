@@ -75,7 +75,7 @@ impl DemandControlRuntime {
         }
 
         Some(Self {
-            expose_headers_flags: Arc::new(config.expose_headers.clone()),
+            expose_headers_flags: Arc::new(config.operation_cost.expose_headers.clone()),
             config: config.clone(),
             metrics,
             formula_cache: Cache::new(1000),

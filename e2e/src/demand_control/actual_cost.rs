@@ -17,15 +17,15 @@ mod actual_cost_tests {
             operation_cost:
               max: 1000
               mode: enforce
+              expose_headers:
+                estimated: true
+                actual: true
+                max: true
             default_list_size:
               all: 10
             subgraphs_budget:
               mode: enforce
             actual_cost_mode: by_response_shape
-            expose_headers:
-              estimated: true
-              actual: true
-              max: true
         "#,
             )
             .build()
@@ -72,15 +72,15 @@ mod actual_cost_tests {
             operation_cost:
               max: 1000
               mode: enforce
+              expose_headers:
+                estimated: true
+                actual: true
+                max: true
             default_list_size:
               all: 10
             subgraphs_budget:
               mode: enforce
             actual_cost_mode: by_subgraph
-            expose_headers:
-              estimated: true
-              actual: true
-              max: true
         "#,
             )
             .build()
@@ -131,15 +131,15 @@ mod actual_cost_tests {
             operation_cost:
               max: 3
               mode: enforce
+              expose_headers:
+                estimated: true
+                actual: true
+                max: true
             default_list_size:
               all: 0
             subgraphs_budget:
               mode: enforce
             actual_cost_mode: by_subgraph
-            expose_headers:
-              estimated: true
-              actual: true
-              max: true
         "#,
             )
             .build()
@@ -211,15 +211,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 3
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 0
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_subgraph
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -284,15 +284,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 1000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 10
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_response_shape
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -344,15 +344,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 1000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 0
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_response_shape
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -407,15 +407,15 @@ mod actual_cost_tests {
                         operation_cost:
                           max: 1000
                           mode: enforce
+                          expose_headers:
+                            estimated: true
+                            actual: true
+                            max: true
                         default_list_size:
                           all: {list_size}
                         subgraphs_budget:
                           mode: enforce
                         actual_cost_mode: by_response_shape
-                        expose_headers:
-                          estimated: true
-                          actual: true
-                          max: true
                     "#,
                 ))
                 .build()
@@ -480,15 +480,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 1000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 10
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_response_shape
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -556,15 +556,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 100000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 0
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_subgraph
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -614,15 +614,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 10000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 0
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_subgraph
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -693,15 +693,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 100000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 10
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_subgraph
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -762,15 +762,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 100000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 0
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_response_shape
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -855,15 +855,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 100000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 5
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_response_shape
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -948,15 +948,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 100000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 0
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_subgraph
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -1011,15 +1011,15 @@ mod actual_cost_tests {
                                         operation_cost:
                                           max: 100000
                                           mode: enforce
+                                          expose_headers:
+                                            estimated: true
+                                            actual: true
+                                            max: true
                                         default_list_size:
                                           all: 0
                                         subgraphs_budget:
                                           mode: enforce
                                         actual_cost_mode: by_subgraph
-                                        expose_headers:
-                                          estimated: true
-                                          actual: true
-                                          max: true
                                 "#,
             )
             .build()
@@ -1081,15 +1081,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 100000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 0
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_subgraph
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -1143,15 +1143,15 @@ mod actual_cost_tests {
                     operation_cost:
                       max: 100000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 2
                     subgraphs_budget:
                       mode: enforce
                     actual_cost_mode: by_subgraph
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()

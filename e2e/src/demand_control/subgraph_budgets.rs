@@ -17,6 +17,10 @@ mod subgraph_budgets_tests {
             operation_cost:
               max: 1000
               mode: enforce
+              expose_headers:
+                estimated: true
+                actual: true
+                max: true
             default_list_size:
               all: 0
             subgraphs_budget:
@@ -24,10 +28,6 @@ mod subgraph_budgets_tests {
               subgraphs:
                 reviews: 0
             actual_cost_mode: by_subgraph
-            expose_headers:
-              estimated: true
-              actual: true
-              max: true
         "#,
             )
             .build()
@@ -95,15 +95,15 @@ mod subgraph_budgets_tests {
                     operation_cost:
                       max: 10000
                       mode: enforce
+                      expose_headers:
+                        estimated: true
+                        actual: true
+                        max: true
                     default_list_size:
                       all: 5
                     subgraphs_budget:
                       mode: enforce
                       all: 1
-                    expose_headers:
-                      estimated: true
-                      actual: true
-                      max: true
                 "#,
             )
             .build()
@@ -151,6 +151,10 @@ mod subgraph_budgets_tests {
                         operation_cost:
                           max: 1000
                           mode: enforce
+                          expose_headers:
+                            estimated: true
+                            actual: true
+                            max: true
                         default_list_size:
                           all: 2
                         subgraphs_budget:
@@ -158,10 +162,6 @@ mod subgraph_budgets_tests {
                           all: 1
                           subgraphs:
                             accounts: 100
-                        expose_headers:
-                          estimated: true
-                          actual: true
-                          max: true
                     "#,
             )
             .build()
@@ -214,6 +214,10 @@ mod subgraph_budgets_tests {
                         operation_cost:
                           max: 1000
                           mode: enforce
+                          expose_headers:
+                            estimated: true
+                            actual: true
+                            max: true
                         default_list_size:
                           all: 2
                         subgraphs_budget:
@@ -221,10 +225,6 @@ mod subgraph_budgets_tests {
                           all: 1000
                           subgraphs:
                             products: 2
-                        expose_headers:
-                          estimated: true
-                          actual: true
-                          max: true
                     "#,
             )
             .build()
@@ -273,6 +273,10 @@ mod subgraph_budgets_tests {
                         operation_cost:
                           max: 1000
                           mode: enforce
+                          expose_headers:
+                            estimated: true
+                            actual: true
+                            max: true
                         default_list_size:
                           all: 3
                           subgraphs:
@@ -282,10 +286,6 @@ mod subgraph_budgets_tests {
                           all: 1000
                           subgraphs:
                             reviews: 9
-                        expose_headers:
-                          estimated: true
-                          actual: true
-                          max: true
                     "#,
             )
             .build()

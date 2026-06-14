@@ -12,13 +12,6 @@ pub struct DemandControlConfig {
     /// enforcement or telemetry to take effect.
     pub enabled: bool,
 
-    /// The headers to expose in the response.
-    /// Headers are exposed in the response, in both cases when the request is rejected or when it is allowed to proceed.
-    ///
-    /// Defaults to none.
-    #[serde(default = "DemandControlExposeHeadersConfig::default")]
-    pub expose_headers: DemandControlExposeHeadersConfig,
-
     /// Configuration for operation cost limits.
     ///
     /// This controls the maximum cost allowed for a single operation executed against the Router, based on the estimated value.
@@ -70,6 +63,13 @@ pub struct OperationCostConfig {
     ///   blocked. Useful for shadowing a limit in production before switching
     ///   to `enforce`.
     pub mode: DemandControlMode,
+
+    /// The headers to expose in the response.
+    /// Headers are exposed in the response, in both cases when the request is rejected or when it is allowed to proceed.
+    ///
+    /// Defaults to none.
+    #[serde(default = "DemandControlExposeHeadersConfig::default")]
+    pub expose_headers: DemandControlExposeHeadersConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq, Eq)]

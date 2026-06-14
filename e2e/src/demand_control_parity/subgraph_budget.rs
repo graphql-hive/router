@@ -11,16 +11,16 @@ enabled: true
 operation_cost:
   max: {MAX_COST}
   mode: enforce
+  expose_headers:
+    estimated: true
+    actual: true
+    max: true
 default_list_size:
   all: 10
 subgraphs_budget:
   mode: enforce
   subgraphs:
     {subgraph}: 1
-expose_headers:
-  estimated: true
-  actual: true
-  max: true
 "#
             ),
         )

@@ -26,14 +26,14 @@ enabled: true
 operation_cost:
   max: {MAX_COST}
   mode: enforce
+  expose_headers:
+    estimated: true
+    actual: true
+    max: true
 subgraphs_budget:
   mode: enforce
 actual_cost_mode: by_subgraph
-{default_list_size_block}expose_headers:
-  estimated: true
-  actual: true
-  max: true
-"#
+{default_list_size_block}"#
         );
 
         let outcome = run_fixture(&fixture, &yaml).await;
