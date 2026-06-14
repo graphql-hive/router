@@ -50,7 +50,10 @@ use crate::{
         response::{apply_subgraph_response_headers, ResponseHeaderAggregator},
     },
     hooks::{
-        on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
+        on_execute::{
+            DemandControlCost, DemandControlEstimatedCost, OnExecuteEndHookPayload,
+            OnExecuteStartHookPayload,
+        },
         on_graphql_error::handle_graphql_errors_with_plugins,
     },
     introspection::{
@@ -415,6 +418,12 @@ async fn execute_query_plan_with_data<'exec>(
             extensions: opts.extensions.extensions,
             variable_values: &opts.variable_values.variables_map,
             dedupe_subgraph_requests,
+            demand_control_estimate: opts.demand_control_context.as_ref().map(|dc| {
+                DemandControlEstimatedCost {
+                    estimated: dc.evaluation.estimated_cost,
+                    max: dc.operation.operation_max_cost,
+                }
+            }),
         };
 
         for plugin in plugin_req_state.plugins.as_ref() {
@@ -478,12 +487,19 @@ async fn execute_query_plan_with_data<'exec>(
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
+    let mut demand_control_cost = None;
     if let Some(demand_control) = executor.demand_control_context {
         let actual = demand_control.calculate_actual_cost(
             &data,
             &opts.variable_values.variables_map,
             &exec_ctx.subgraph_response_cost_tracker,
         );
+
+        demand_control_cost = Some(DemandControlCost {
+            estimated: demand_control.evaluation.estimated_cost,
+            max: demand_control.operation.operation_max_cost,
+            actual,
+        });
 
         if actual > demand_control.operation.operation_max_cost {
             tracing::info!(
@@ -515,6 +531,7 @@ async fn execute_query_plan_with_data<'exec>(
                 .as_ref()
                 .map(|state| state.request_context.for_plugin::<hooks::OnExecute>())
                 .expect("plugin state not available, but on_end_callbacks are present"),
+            demand_control_cost,
         };
 
         for callback in on_end_callbacks {
