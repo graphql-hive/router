@@ -36,27 +36,44 @@ use crate::{
 
 #[derive(Debug)]
 pub struct DemandControlEvaluation {
+    /// Total estimation of the cost of the operation, across all subgraphs.
     pub estimated_cost: u64,
+    /// Estimated cost per subgraph.
     pub per_subgraph: Arc<BTreeMap<String, u64>>,
 }
 
 #[derive(Debug)]
-pub struct DemandControlExecutionContext {
-    pub mode: DemandControlMode,
-    pub max_cost: u64,
-    pub evaluation: DemandControlEvaluation,
+pub struct DemandControlExecutionOperationContext {
+    pub operation_max_cost: u64,
+    pub expose_headers_flags: Arc<DemandControlExposeHeadersConfig>,
+}
+
+#[derive(Debug)]
+pub struct DemandControlExecutionSubgraphsContext {
+    pub enforcement_mode: DemandControlMode,
     /// Subgraphs whose estimated cost exceeded their per-subgraph max. The
     /// map value is the configured per-subgraph max (used when synthesising
-    /// the rejection error). Whether execution is actually blocked for these
-    /// subgraphs is determined by `mode`: in `Enforce` mode the call is
-    /// short-circuited with `CostEstimatedTooExpensive`, in `Measure` mode
-    /// the request still runs but the per-subgraph result code is recorded
-    /// in the response extension.
-    pub subgraphs_over_limit: BTreeMap<String, u64>,
+    /// the rejection error).
+    pub blocked_subgraphs: BTreeMap<String, u64>,
+    /// How to handle subgraphs whose estimated cost exceeds their per-subgraph max.
+    /// This is handed to the subgraph execution layer to determine whether
+    /// execution is blocked or not.
+    pub blocked_subgraphs_enforcement_mode: DemandControlMode,
+}
+
+#[derive(Debug)]
+pub struct DemandControlExecutionActualCostContext {
+    pub cost_mode: DemandControlActualCostMode,
+    pub cost_plan: Arc<CompiledActualCostPlan>,
+}
+
+#[derive(Debug)]
+pub struct DemandControlExecutionContext {
+    pub evaluation: DemandControlEvaluation,
     pub metrics_recorder: Option<DemandControlMetricsRecorder>,
-    pub expose_headers_flags: Arc<DemandControlExposeHeadersConfig>,
-    pub actual_cost_mode: DemandControlActualCostMode,
-    pub actual_cost_plan: Arc<CompiledActualCostPlan>,
+    pub operation: DemandControlExecutionOperationContext,
+    pub subgraphs: DemandControlExecutionSubgraphsContext,
+    pub actual: DemandControlExecutionActualCostContext,
 }
 
 impl DemandControlExecutionContext {
@@ -70,7 +87,7 @@ impl DemandControlExecutionContext {
         let delta = actual as i128 - self.evaluation.estimated_cost as i128;
         let delta_i64 = delta.max(i64::MIN as i128).min(i64::MAX as i128) as i64;
         let result_code = DemandControlResultCode::from_artifacts(
-            self.max_cost,
+            self.operation.operation_max_cost,
             self.evaluation.estimated_cost,
             actual,
         );
@@ -95,7 +112,7 @@ impl DemandControlExecutionContext {
         variable_values: &Option<HashMap<String, sonic_rs::Value>>,
         subgraph_response_cost_tracker: &SubgraphResponseCostTracker,
     ) -> u64 {
-        match self.actual_cost_plan.as_ref() {
+        match self.actual.cost_plan.as_ref() {
             CompiledActualCostPlan::BySubgraph(_) => subgraph_response_cost_tracker.total(),
             CompiledActualCostPlan::ByResponseShape(actual_response_shape_plan) => {
                 estimate_actual_response_shape_cost_with_compiled_plan(
@@ -115,7 +132,7 @@ impl DemandControlExecutionContext {
         variables_map: &'exec Option<VariablesMap>,
     ) {
         if let CompiledActualCostPlan::BySubgraph(actual_subgraph_plans_by_fetch_hash) =
-            self.actual_cost_plan.as_ref()
+            self.actual.cost_plan.as_ref()
         {
             let fetch_step_hash = job.operation().hash;
             let response_ref = job.response_ref();
@@ -145,7 +162,7 @@ impl DemandControlExecutionContext {
         response_header_aggregator: &mut ResponseHeaderAggregator,
         actual_cost: u64,
     ) {
-        if let Some(header_name) = &self.expose_headers_flags.actual {
+        if let Some(header_name) = &self.operation.expose_headers_flags.actual {
             response_header_aggregator.write(
                 header_name.get_header_ref(),
                 &HeaderValue::from(actual_cost),
@@ -153,7 +170,7 @@ impl DemandControlExecutionContext {
             );
         }
 
-        if let Some(header_name) = &self.expose_headers_flags.estimated {
+        if let Some(header_name) = &self.operation.expose_headers_flags.estimated {
             response_header_aggregator.write(
                 header_name.get_header_ref(),
                 &HeaderValue::from(self.evaluation.estimated_cost),
@@ -161,10 +178,10 @@ impl DemandControlExecutionContext {
             );
         }
 
-        if let Some(header_name) = &self.expose_headers_flags.max {
+        if let Some(header_name) = &self.operation.expose_headers_flags.max {
             response_header_aggregator.write(
                 header_name.get_header_ref(),
-                &HeaderValue::from(self.max_cost),
+                &HeaderValue::from(self.operation.operation_max_cost),
                 HeaderAggregationStrategy::Last,
             );
         }

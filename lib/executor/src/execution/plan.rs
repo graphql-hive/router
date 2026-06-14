@@ -485,12 +485,12 @@ async fn execute_query_plan_with_data<'exec>(
             &exec_ctx.subgraph_response_cost_tracker,
         );
 
-        if actual > demand_control.max_cost {
+        if actual > demand_control.operation.operation_max_cost {
             tracing::info!(
                 operation_name = ?opts.operation_for_plan.name.as_deref(),
                 actual_cost = actual,
                 estimated_cost = demand_control.evaluation.estimated_cost,
-                max_cost = demand_control.max_cost,
+                max_cost = demand_control.operation.operation_max_cost,
                 "actual cost exceeds max cost (not enforced)"
             );
         }

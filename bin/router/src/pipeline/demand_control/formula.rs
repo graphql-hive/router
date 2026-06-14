@@ -173,7 +173,8 @@ pub(crate) fn evaluate_formula_plan(
     variable_payload: &CoerceVariablesPayload,
 ) -> Result<DemandControlEvaluation, PipelineError> {
     let mut per_subgraph = BTreeMap::new();
-    let mut estimation = 0u64;
+    let mut estimation = 0;
+
     evaluate_formula_plan_node(
         &formula_plan.root,
         supergraph_state,
@@ -181,6 +182,7 @@ pub(crate) fn evaluate_formula_plan(
         &mut per_subgraph,
         &mut estimation,
     )?;
+
     Ok(DemandControlEvaluation {
         estimated_cost: estimation,
         per_subgraph: Arc::new(per_subgraph),

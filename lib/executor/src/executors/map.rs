@@ -264,27 +264,41 @@ impl SubgraphExecutorMap {
         demand_control_ctx: Option<&DemandControlExecutionContext>,
     ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
         if let Some(demand_control_opts) = demand_control_ctx {
-            if demand_control_opts.mode == DemandControlMode::Enforce {
-                if let Some(max_cost) = demand_control_opts.subgraphs_over_limit.get(subgraph_name)
-                {
-                    let estimated_cost = demand_control_opts
-                        .evaluation
-                        .per_subgraph
-                        .get(subgraph_name)
-                        .copied()
-                        .unwrap_or_default();
+            let estimated_cost = demand_control_opts
+                .evaluation
+                .per_subgraph
+                .get(subgraph_name)
+                .copied()
+                .unwrap_or_default();
 
-                    tracing::warn!(
-                        subgraph_name,
-                        estimated_cost,
-                        subgraph_max_cost = *max_cost,
-                        "skipping subgraph fetch: estimated cost exceeds subgraph budget"
-                    );
+            if let Some(subgraph_max_cost) = demand_control_opts
+                .subgraphs
+                .blocked_subgraphs
+                .get(subgraph_name)
+            {
+                match demand_control_opts.subgraphs.enforcement_mode {
+                    DemandControlMode::Enforce => {
+                        tracing::warn!(
+                            subgraph_name,
+                            estimated_cost,
+                            subgraph_max_cost = *subgraph_max_cost,
+                            "skipping subgraph fetch: estimated cost exceeds subgraph budget"
+                        );
 
-                    return Err(SubgraphExecutorError::CostEstimatedTooExpensive);
+                        return Err(SubgraphExecutorError::CostEstimatedTooExpensive);
+                    }
+                    DemandControlMode::Measure => {
+                        tracing::info!(
+                            subgraph_name,
+                            estimated_cost,
+                            subgraph_max_cost = *subgraph_max_cost,
+                            "subgraph budget exceeded: estimated cost exceeds subgraph budget (not enforced)"
+                        );
+                    }
                 }
             }
         }
+
         let mut executor = self.get_or_create_http_executor(subgraph_name, client_request)?;
 
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;

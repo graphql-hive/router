@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ahash::{HashMap as AHashMap, HashMapExt};
@@ -11,7 +12,8 @@ use hive_router_internal::telemetry::traces::spans::graphql::GraphQLSpanOperatio
 use hive_router_plan_executor::execution::demand_control::{
     compile_actual_response_shape_cost_plan, compile_actual_subgraph_cost_plan,
     CompiledActualCostPlan, CompiledSubgraphActualCostPlan, DemandControlEvaluation,
-    DemandControlExecutionContext,
+    DemandControlExecutionActualCostContext, DemandControlExecutionContext,
+    DemandControlExecutionOperationContext, DemandControlExecutionSubgraphsContext,
 };
 use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
@@ -47,22 +49,25 @@ impl DemandControlRuntime {
             return None;
         }
 
-        let static_estimated = config.strategy.static_estimated();
         info!(
-            mode = ?config.mode,
-            max_cost = static_estimated.max,
-            default_list_size = ?static_estimated.list_size,
-            actual_cost_mode = ?static_estimated.actual_cost_mode,
+            operation_mode = ?config.operation_cost.mode,
+            operation_max_cost = config.operation_cost.max,
+            subgraph_budget_mode = ?config.subgraphs_budget.mode,
+            default_list_size = ?&config.default_list_size,
+            actual_cost_mode = ?config.actual_cost_mode,
             "demand control enabled"
         );
 
-        if config.mode == DemandControlMode::Enforce {
-            if static_estimated.max == 0 {
+        if config.operation_cost.mode == DemandControlMode::Enforce {
+            if config.operation_cost.max == 0 {
                 warn!(
                     "demand control is in enforce mode with a max cost of 0; all operations with non-zero cost will be rejected"
                 );
             }
-            if static_estimated.list_size.is_none() {
+
+            if config.default_list_size.all.is_none()
+                && config.default_list_size.subgraphs.is_none()
+            {
                 warn!(
                     "demand control is in enforce mode without a default list_size; list fields without an @listSize directive are estimated as 0 and may be under-counted"
                 );
@@ -99,7 +104,6 @@ impl DemandControlRuntime {
         operation_identity: GraphQLSpanOperationIdentity<'exec>,
     ) -> Result<DemandControlExecutionContext, PipelineError> {
         let operation_name = operation_identity.name;
-
         let compiled_plan = self
             .formula_cache
             .entry(normalized_operation_hash)
@@ -114,18 +118,17 @@ impl DemandControlRuntime {
             .await
             .into_value();
 
-        let estimation = evaluate_formula_plan(
+        let evaluation = evaluate_formula_plan(
             compiled_plan.as_ref(),
             &supergraph.planner.supergraph,
             variable_payload,
         )?;
 
-        let max_cost = self.config.strategy.static_estimated().max;
-        let estimated_exceeds_max = estimation.estimated_cost > max_cost;
-        let subgraphs_exceed_limits = self.subgraphs_over_limit(&estimation);
+        let max_cost = self.config.operation_cost.max;
+        let estimated_exceeds_max = evaluation.estimated_cost > max_cost;
 
         self.metrics.demand_control.record_estimated_cost(
-            estimation.estimated_cost,
+            evaluation.estimated_cost,
             &if estimated_exceeds_max {
                 DemandControlResultCode::CostEstimatedTooExpensive
             } else {
@@ -135,11 +138,11 @@ impl DemandControlRuntime {
         );
 
         if estimated_exceeds_max {
-            match self.config.mode {
+            match self.config.operation_cost.mode {
                 DemandControlMode::Enforce => {
                     warn!(
                         operation_name = ?operation_name,
-                        estimated_cost = estimation.estimated_cost,
+                        estimated_cost = evaluation.estimated_cost,
                         max_cost,
                         "rejecting operation: estimated cost exceeds configured max cost"
                     );
@@ -148,7 +151,7 @@ impl DemandControlRuntime {
                     if let Some(header_name) = &self.expose_headers_flags.estimated {
                         err_extra_headers.push((
                             header_name.get_header_ref().to_owned(),
-                            estimation.estimated_cost.into(),
+                            evaluation.estimated_cost.into(),
                         ));
                     }
 
@@ -162,9 +165,9 @@ impl DemandControlRuntime {
                     });
                 }
                 DemandControlMode::Measure => {
-                    debug!(
+                    info!(
                         operation_name = ?operation_name,
-                        estimated_cost = estimation.estimated_cost,
+                        estimated_cost = evaluation.estimated_cost,
                         max_cost,
                         "measure mode: operation would be rejected in enforce mode"
                     );
@@ -173,51 +176,63 @@ impl DemandControlRuntime {
         }
 
         Ok(DemandControlExecutionContext {
-            mode: self.config.mode,
-            max_cost,
-            evaluation: estimation,
-            subgraphs_over_limit: subgraphs_exceed_limits,
-            actual_cost_mode: self.config.strategy.static_estimated().actual_cost_mode,
             metrics_recorder: self.metrics.demand_control.recorder(),
-            expose_headers_flags: self.expose_headers_flags.clone(),
-            actual_cost_plan: compiled_plan.actual_cost_plan.clone(),
+            actual: DemandControlExecutionActualCostContext {
+                cost_mode: self.config.actual_cost_mode,
+                cost_plan: compiled_plan.actual_cost_plan.clone(),
+            },
+            operation: DemandControlExecutionOperationContext {
+                operation_max_cost: max_cost,
+                expose_headers_flags: self.expose_headers_flags.clone(),
+            },
+            subgraphs: DemandControlExecutionSubgraphsContext {
+                enforcement_mode: self.config.subgraphs_budget.mode,
+                blocked_subgraphs: self.list_blocked_subgraphs(&evaluation),
+                blocked_subgraphs_enforcement_mode: self.config.subgraphs_budget.mode,
+            },
+            evaluation,
         })
     }
 }
 
 impl DemandControlRuntime {
     fn default_list_size_for_subgraph(&self, subgraph_name: &str) -> usize {
-        let se = self.config.strategy.static_estimated();
-        se.subgraph
+        let default_list_size_cfg = &self.config.default_list_size;
+
+        default_list_size_cfg
             .subgraphs
             .as_ref()
             .and_then(|subgraphs| subgraphs.get(subgraph_name))
-            .and_then(|cfg| cfg.list_size)
-            .or_else(|| se.subgraph.all.as_ref().and_then(|cfg| cfg.list_size))
-            .or(se.list_size)
+            .map(|v| *v)
+            .or_else(|| default_list_size_cfg.all)
             .unwrap_or(0)
     }
 
-    fn subgraphs_over_limit(
+    /// Returns a list of subgraphs that have exceeded their list size limit, based on static estimation.
+    /// This will later be used in order to block subgraphs from being executed, during execution.
+    ///
+    /// Key is the subgraph name, value is the limit that was exceeded (max).
+    #[inline]
+    fn list_blocked_subgraphs(
         &self,
         evaluation: &DemandControlEvaluation,
-    ) -> std::collections::BTreeMap<String, u64> {
-        let mut over_limit = std::collections::BTreeMap::new();
-        let subgraph_config = &self.config.strategy.static_estimated().subgraph;
-
-        let inherited_max = subgraph_config.all.as_ref().and_then(|cfg| cfg.max);
+    ) -> BTreeMap<String, u64> {
+        let mut over_limit = BTreeMap::new();
+        let subgraph_config = &self.config.subgraphs_budget;
+        let default_subgraph_max = subgraph_config.all.as_ref();
+        let subgraphs_overrides = subgraph_config.subgraphs.as_ref();
 
         for (subgraph, estimated_cost) in evaluation.per_subgraph.as_ref() {
-            let specific_max = subgraph_config
-                .subgraphs
-                .as_ref()
-                .and_then(|subgraphs| subgraphs.get(subgraph.as_str()))
-                .and_then(|cfg| cfg.max);
-            let max = specific_max.or(inherited_max);
+            let subgraph_override_max =
+                subgraphs_overrides.and_then(|subgraphs| subgraphs.get(subgraph.as_str()));
+            let maybe_subgraph_max = subgraph_override_max
+                .or(default_subgraph_max)
+                .map(|cfg| *cfg as u64);
 
-            if let Some(limit) = max {
-                if *estimated_cost > limit {
-                    over_limit.insert(subgraph.clone(), limit);
+            if let Some(subgraph_max) = maybe_subgraph_max {
+                if *estimated_cost > subgraph_max {
+                    debug!(subgraph_name = subgraph.as_str(), estimated_cost, subgraph_max, "subgraph call will be blocked dueing execution due to estimated cost exceeding limit");
+                    over_limit.insert(subgraph.clone(), subgraph_max);
                 }
             }
         }
@@ -233,9 +248,7 @@ impl DemandControlRuntime {
         supergraph_state: &SupergraphState,
     ) -> DemandControlFormulaPlan {
         let mut actual_plans_by_fetch_hash =
-            if self.config.strategy.static_estimated().actual_cost_mode
-                == DemandControlActualCostMode::BySubgraph
-            {
+            if self.config.actual_cost_mode == DemandControlActualCostMode::BySubgraph {
                 Some(AHashMap::new())
             } else {
                 None
@@ -253,20 +266,19 @@ impl DemandControlRuntime {
             })
             .unwrap_or(FormulaPlanNode::Aggregate(vec![]));
 
-        let actual_cost_plan = if self.config.strategy.static_estimated().actual_cost_mode
-            == DemandControlActualCostMode::BySubgraph
-        {
-            CompiledActualCostPlan::BySubgraph(
-                // Safe to unwrap because we set this up as Some if the mode is WithCompiledPlan
-                actual_plans_by_fetch_hash.unwrap(),
-            )
-        } else {
-            CompiledActualCostPlan::ByResponseShape(compile_actual_response_shape_cost_plan(
-                operation_for_plan,
-                root_type_name,
-                supergraph_state,
-            ))
-        };
+        let actual_cost_plan =
+            if self.config.actual_cost_mode == DemandControlActualCostMode::BySubgraph {
+                CompiledActualCostPlan::BySubgraph(
+                    // Safe to unwrap because we set this up as Some if the mode is WithCompiledPlan
+                    actual_plans_by_fetch_hash.unwrap(),
+                )
+            } else {
+                CompiledActualCostPlan::ByResponseShape(compile_actual_response_shape_cost_plan(
+                    operation_for_plan,
+                    root_type_name,
+                    supergraph_state,
+                ))
+            };
 
         DemandControlFormulaPlan {
             root,
