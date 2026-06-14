@@ -124,6 +124,16 @@ impl DemandControlRuntime {
         let estimated_exceeds_max = estimation.estimated_cost > max_cost;
         let subgraphs_exceed_limits = self.subgraphs_over_limit(&estimation);
 
+        self.metrics.demand_control.record_estimated_cost(
+            estimation.estimated_cost,
+            &if estimated_exceeds_max {
+                DemandControlResultCode::CostEstimatedTooExpensive
+            } else {
+                DemandControlResultCode::CostOk
+            },
+            operation_name,
+        );
+
         if estimated_exceeds_max {
             match self.config.mode {
                 DemandControlMode::Enforce => {
@@ -132,12 +142,6 @@ impl DemandControlRuntime {
                         estimated_cost = estimation.estimated_cost,
                         max_cost,
                         "rejecting operation: estimated cost exceeds configured max cost"
-                    );
-
-                    self.metrics.demand_control.record_estimated_cost(
-                        estimation.estimated_cost,
-                        &DemandControlResultCode::CostEstimatedTooExpensive,
-                        operation_name,
                     );
 
                     let mut err_extra_headers: Vec<(HeaderName, HeaderValue)> = vec![];
@@ -167,16 +171,6 @@ impl DemandControlRuntime {
                 }
             }
         }
-
-        self.metrics.demand_control.record_estimated_cost(
-            estimation.estimated_cost,
-            &if estimated_exceeds_max {
-                DemandControlResultCode::CostEstimatedTooExpensive
-            } else {
-                DemandControlResultCode::CostOk
-            },
-            operation_name,
-        );
 
         Ok(DemandControlExecutionContext {
             mode: self.config.mode,
