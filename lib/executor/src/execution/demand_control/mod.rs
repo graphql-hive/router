@@ -7,7 +7,10 @@ use ahash::{HashMap as AHashMap, HashMapExt, HashSet as AHashSet};
 use hive_router_config::demand_control::{
     DemandControlActualCostMode, DemandControlExposeHeadersConfig, DemandControlMode,
 };
-use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandControlMetricsRecorder;
+use hive_router_internal::telemetry::{
+    metrics::demand_control_metrics::{DemandControlMetricsRecorder, DemandControlResultCode},
+    traces::spans::graphql::GraphQLOperationSpan,
+};
 use hive_router_query_planner::{
     ast::{
         operation::{OperationDefinition, SubgraphFetchOperation},
@@ -53,6 +56,63 @@ pub struct DemandControlExecutionContext {
 }
 
 impl DemandControlExecutionContext {
+    #[inline]
+    pub fn report_telemetry(
+        &self,
+        actual: u64,
+        operation_name: Option<&str>,
+        operation_span: &GraphQLOperationSpan,
+    ) {
+        let delta = actual as i128 - self.evaluation.estimated_cost as i128;
+        let delta_i64 = delta.max(i64::MIN as i128).min(i64::MAX as i128) as i64;
+        let result_code = DemandControlResultCode::from_artifacts(
+            self.max_cost,
+            self.evaluation.estimated_cost,
+            actual,
+        );
+
+        operation_span.record_demand_control(
+            self.evaluation.estimated_cost,
+            Some(actual),
+            Some(delta_i64),
+            &result_code,
+        );
+
+        if let Some(metrics_recorder) = &self.metrics_recorder {
+            metrics_recorder.record_actual_cost(actual, &result_code, operation_name);
+            metrics_recorder.record_delta(delta as f64, &result_code, operation_name);
+        }
+    }
+
+    #[inline]
+    pub fn calculate_actual_cost(
+        &self,
+        data: &Value<'_>,
+        variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+        actual_cost_by_subgraph_from_responses: &Option<ahash::HashMap<&str, u64>>,
+    ) -> u64 {
+        match self.actual_cost_plan.as_ref() {
+            CompiledActualCostPlan::BySubgraph(_) => {
+                if let Some(actual_cost_by_subgraph_from_responses) =
+                    actual_cost_by_subgraph_from_responses
+                {
+                    actual_cost_by_subgraph_from_responses
+                        .values()
+                        .fold(0u64, |acc, cost| acc.saturating_add(*cost))
+                } else {
+                    0
+                }
+            }
+            CompiledActualCostPlan::ByResponseShape(actual_response_shape_plan) => {
+                estimate_actual_response_shape_cost_with_compiled_plan(
+                    actual_response_shape_plan,
+                    data,
+                    variable_values,
+                )
+            }
+        }
+    }
+
     #[inline]
     pub fn record_subgraph_response_cost<'exec>(
         &self,
@@ -555,35 +615,6 @@ fn evaluate_field_actual_cost_plan(
         .field_base_cost
         .saturating_add(field.return_type_cost)
         .saturating_add(child)
-}
-
-#[inline]
-pub fn calculate_actual_cost(
-    demand_control: &DemandControlExecutionContext,
-    data: &Value<'_>,
-    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    actual_cost_by_subgraph_from_responses: &Option<ahash::HashMap<&str, u64>>,
-) -> u64 {
-    match demand_control.actual_cost_plan.as_ref() {
-        CompiledActualCostPlan::BySubgraph(_) => {
-            if let Some(actual_cost_by_subgraph_from_responses) =
-                actual_cost_by_subgraph_from_responses
-            {
-                actual_cost_by_subgraph_from_responses
-                    .values()
-                    .fold(0u64, |acc, cost| acc.saturating_add(*cost))
-            } else {
-                0
-            }
-        }
-        CompiledActualCostPlan::ByResponseShape(actual_response_shape_plan) => {
-            estimate_actual_response_shape_cost_with_compiled_plan(
-                actual_response_shape_plan,
-                data,
-                variable_values,
-            )
-        }
-    }
 }
 
 fn should_skip_inline_fragment(
