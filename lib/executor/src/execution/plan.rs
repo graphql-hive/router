@@ -482,7 +482,7 @@ async fn execute_query_plan_with_data<'exec>(
         let actual = demand_control.calculate_actual_cost(
             &data,
             &opts.variable_values.variables_map,
-            &exec_ctx.actual_cost_by_subgraph,
+            &exec_ctx.subgraph_response_cost_tracker,
         );
 
         if actual > demand_control.max_cost {
@@ -935,7 +935,11 @@ impl<'exec> Executor<'exec> {
                 let affected_path = job.affected_path();
 
                 if let Some(demand_control) = &self.demand_control_context {
-                    demand_control.record_subgraph_response_cost(ctx, &job, self.variable_values);
+                    demand_control.record_subgraph_response_cost(
+                        &mut ctx.subgraph_response_cost_tracker,
+                        &job,
+                        self.variable_values,
+                    );
                 }
 
                 if let Some(ref subgraph_headers) = job.response_ref().headers {

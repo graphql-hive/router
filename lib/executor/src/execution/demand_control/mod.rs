@@ -1,9 +1,11 @@
+pub mod subgraph_response_tracker;
+
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 
-use ahash::{HashMap as AHashMap, HashMapExt, HashSet as AHashSet};
+use ahash::{HashMap as AHashMap, HashSet as AHashSet};
 use hive_router_config::demand_control::{
     DemandControlActualCostMode, DemandControlExposeHeadersConfig, DemandControlMode,
 };
@@ -24,8 +26,10 @@ use http::HeaderValue;
 use sonic_rs::JsonValueTrait;
 
 use crate::{
-    execution::plan::{ExecutionJob, VariablesMap},
-    execution_context::ExecutionContext,
+    execution::{
+        demand_control::subgraph_response_tracker::SubgraphResponseCostTracker,
+        plan::{ExecutionJob, VariablesMap},
+    },
     headers::{plan::HeaderAggregationStrategy, response::ResponseHeaderAggregator},
     response::value::Value,
 };
@@ -89,20 +93,10 @@ impl DemandControlExecutionContext {
         &self,
         data: &Value<'_>,
         variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-        actual_cost_by_subgraph_from_responses: &Option<ahash::HashMap<&str, u64>>,
+        subgraph_response_cost_tracker: &SubgraphResponseCostTracker,
     ) -> u64 {
         match self.actual_cost_plan.as_ref() {
-            CompiledActualCostPlan::BySubgraph(_) => {
-                if let Some(actual_cost_by_subgraph_from_responses) =
-                    actual_cost_by_subgraph_from_responses
-                {
-                    actual_cost_by_subgraph_from_responses
-                        .values()
-                        .fold(0u64, |acc, cost| acc.saturating_add(*cost))
-                } else {
-                    0
-                }
-            }
+            CompiledActualCostPlan::BySubgraph(_) => subgraph_response_cost_tracker.total(),
             CompiledActualCostPlan::ByResponseShape(actual_response_shape_plan) => {
                 estimate_actual_response_shape_cost_with_compiled_plan(
                     actual_response_shape_plan,
@@ -116,18 +110,17 @@ impl DemandControlExecutionContext {
     #[inline]
     pub fn record_subgraph_response_cost<'exec>(
         &self,
-        ctx: &mut ExecutionContext<'exec>,
+        subgraph_response_tracker: &mut SubgraphResponseCostTracker<'exec>,
         job: &ExecutionJob<'exec>,
         variables_map: &'exec Option<VariablesMap>,
     ) {
         if let CompiledActualCostPlan::BySubgraph(actual_subgraph_plans_by_fetch_hash) =
             self.actual_cost_plan.as_ref()
         {
-            let subgraph_name = job.subgraph_name();
             let fetch_step_hash = job.operation().hash;
             let response_ref = job.response_ref();
 
-            let subgraph_actual = actual_subgraph_plans_by_fetch_hash
+            let fetch_step_cost_actual = actual_subgraph_plans_by_fetch_hash
                 .get(&fetch_step_hash)
                 .map(|plan| {
                     estimate_actual_subgraph_response_cost_with_compiled_plan(
@@ -138,11 +131,11 @@ impl DemandControlExecutionContext {
                 })
                 .unwrap_or(0);
 
-            ctx.actual_cost_by_subgraph
-                .get_or_insert_with(AHashMap::new)
-                .entry(subgraph_name)
-                .and_modify(|cost| *cost = cost.saturating_add(subgraph_actual))
-                .or_insert(subgraph_actual);
+            subgraph_response_tracker.track(
+                job.subgraph_name(),
+                fetch_step_hash,
+                fetch_step_cost_actual,
+            );
         }
     }
 

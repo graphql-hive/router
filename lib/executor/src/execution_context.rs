@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use hive_router_query_planner::planner::plan_nodes::FlattenNodePath;
 
 use crate::{
+    execution::demand_control::subgraph_response_tracker::SubgraphResponseCostTracker,
     headers::response::ResponseHeaderAggregator,
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath},
@@ -16,7 +17,7 @@ pub struct ExecutionContext<'a> {
     pub data: Value<'a>,
     pub errors: Vec<GraphQLError>,
     pub response_headers_aggregator: ResponseHeaderAggregator,
-    pub actual_cost_by_subgraph: Option<ahash::HashMap<&'a str, u64>>,
+    pub subgraph_response_cost_tracker: SubgraphResponseCostTracker<'a>,
 }
 
 impl<'a> Default for ExecutionContext<'a> {
@@ -26,7 +27,7 @@ impl<'a> Default for ExecutionContext<'a> {
             errors: Vec::new(),
             data: Value::Null,
             response_headers_aggregator: Default::default(),
-            actual_cost_by_subgraph: None,
+            subgraph_response_cost_tracker: SubgraphResponseCostTracker::new(),
         }
     }
 }
