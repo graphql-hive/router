@@ -25,8 +25,8 @@ use tracing::{debug, info, warn};
 use crate::pipeline::error::PipelineError;
 
 use super::formula::{
-    collect_estimated_formulas, compile_cost_expr_for_operation, evaluate_formula_plan,
-    DemandControlFormulaPlan, FormulaFetchNode, FormulaPlanNode,
+    compile_cost_expr_for_operation, evaluate_formula_plan, DemandControlFormulaPlan,
+    FormulaFetchNode, FormulaPlanNode,
 };
 
 pub struct DemandControlRuntime {
@@ -133,18 +133,6 @@ impl DemandControlRuntime {
                         max_cost,
                         "rejecting operation: estimated cost exceeds configured max cost"
                     );
-
-                    let mut formulas = AHashMap::new();
-                    collect_estimated_formulas(&compiled_plan.root, &mut formulas);
-
-                    for (subgraph, formula) in &formulas {
-                        debug!(
-                            operation_name = ?operation_name,
-                            subgraph = subgraph.as_str(),
-                            %formula,
-                            "demand control cost formula for rejected operation"
-                        );
-                    }
 
                     self.metrics.demand_control.record_estimated_cost(
                         estimation.estimated_cost,

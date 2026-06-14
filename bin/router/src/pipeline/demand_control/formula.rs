@@ -164,41 +164,7 @@ pub(crate) enum FormulaPlanNode {
 
 pub(crate) struct FormulaFetchNode {
     pub(crate) service_name: String,
-    /// Mathematical formula: pure arithmetic on variable lookups.
     pub(crate) estimated_expr: CostExpr,
-}
-
-pub(crate) fn collect_estimated_formulas(
-    node: &FormulaPlanNode,
-    formulas: &mut AHashMap<String, CostExpr>,
-) {
-    match node {
-        FormulaPlanNode::Fetch(fetch) => {
-            formulas
-                .entry(fetch.service_name.clone())
-                .and_modify(|expr| {
-                    *expr = CostExpr::add_nonzero(vec![expr.clone(), fetch.estimated_expr.clone()]);
-                })
-                .or_insert_with(|| fetch.estimated_expr.clone());
-        }
-        FormulaPlanNode::Aggregate(nodes) => {
-            for child in nodes {
-                collect_estimated_formulas(child, formulas);
-            }
-        }
-        FormulaPlanNode::Condition {
-            if_clause,
-            else_clause,
-            ..
-        } => {
-            if let Some(c) = if_clause.as_deref() {
-                collect_estimated_formulas(c, formulas);
-            }
-            if let Some(c) = else_clause.as_deref() {
-                collect_estimated_formulas(c, formulas);
-            }
-        }
-    }
 }
 
 pub(crate) fn evaluate_formula_plan(
@@ -279,8 +245,6 @@ fn evaluate_formula_plan_node(
     Ok(())
 }
 
-/// Evaluate a CostExpr to a u64 cost.
-/// Pure arithmetic + variable lookups only, so zero schema traversal at request time.
 fn eval_cost_expr(
     expr: &CostExpr,
     supergraph_state: &SupergraphState,
