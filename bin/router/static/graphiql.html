@@ -67,10 +67,37 @@
     </script>
     <script src="https://unpkg.com/@graphql-yoga/graphiql/dist/yoga-graphiql.umd.js"></script>
     <script>
-      prepareWorkers().finally(() => {
-        YogaGraphiQL.renderYogaGraphiQL(root, {
+      function parseInitialVariables() {
+        const rawVariables = new URLSearchParams(location.search).get(
+          "variables",
+        );
+
+        if (rawVariables === null) {
+          return undefined;
+        }
+
+        try {
+          return JSON.stringify(JSON.parse(rawVariables), null, 2);
+        } catch (_error) {
+          return rawVariables;
+        }
+      }
+
+      function createGraphiQLOptions() {
+        const variables = parseInitialVariables();
+        const options = {
           title: "Hive Router GraphiQL",
-        });
+        };
+
+        if (variables !== undefined) {
+          options.variables = variables;
+        }
+
+        return options;
+      }
+
+      prepareWorkers().finally(() => {
+        YogaGraphiQL.renderYogaGraphiQL(root, createGraphiQLOptions());
       });
     </script>
   </body>
