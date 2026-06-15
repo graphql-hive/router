@@ -8,6 +8,7 @@
 |[**coprocessor**](#coprocessor)|`object`, `null`|Configuration for coprocessor.<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
+|[**demand\_control**](#demand_control)|`object`, `null`||yes|
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
@@ -862,6 +863,134 @@ A valid HTTP header name, according to RFC 7230.
 
 **Item Type:** `string`  
 **Item Pattern:** `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`  
+<a name="demand_control"></a>
+## demand\_control: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**actual\_cost\_mode**||How actual cost is computed after execution.<br/><br/>- `by_subgraph` (default): sum the cost computed per individual subgraph<br/>  fetch responses.<br/>- `by_response_shape`: walk the merged supergraph response and reapply<br/>  the static cost rules. Does not account for intermediate subgraph<br/>  work.<br/><br/>Note: the "actual" value calculated in any mode is not used for enforcment.<br/>Default: `"by_subgraph"`<br/>|no|
+|[**default\_list\_size**](#demand_controldefault_list_size)|`object`|The default list size to use when `@listSize` is not specified in the schema.<br/>Default: `{"all":null}`<br/>|no|
+|**enabled**|`boolean`|Enable demand control processing. Must be `true` for any cost estimation,<br/>enforcement or telemetry to take effect.<br/>|yes|
+|[**operation\_cost**](#demand_controloperation_cost)|`object`|Configuration for operation cost limits.<br/>|yes|
+|[**subgraphs\_budget**](#demand_controlsubgraphs_budget)|`object`|Subgraph cost limit configuration, including the mode to use for subgraph budget enforcement.<br/>|yes|
+
+**Additional Properties:** not allowed  
+<a name="demand_controldefault_list_size"></a>
+### demand\_control\.default\_list\_size: object
+
+The default list size to use when `@listSize` is not specified in the schema.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**all**|`integer`, `null`|Default list size for fields in the supergraph that have no `@listSize` directive.<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|[**subgraphs**](#demand_controldefault_list_sizesubgraphs)|`object`, `null`|Per-subgraph overrides. Keys are subgraph names.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+all: null
+
+```
+
+<a name="demand_controldefault_list_sizesubgraphs"></a>
+#### demand\_control\.default\_list\_size\.subgraphs: object,null
+
+Per-subgraph overrides. Keys are subgraph names.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**|`integer`|Format: `"uint"`<br/>Minimum: `0`<br/>||
+
+<a name="demand_controloperation_cost"></a>
+### demand\_control\.operation\_cost: object
+
+Configuration for operation cost limits.
+
+This controls the maximum cost allowed for a single operation executed against the Router, based on the estimated value.
+When the estimated cost exceeds this value, the request is rejected before any subgraph is contacted.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**expose\_headers**](#demand_controloperation_costexpose_headers)|`object`|The headers to expose in the response.<br/>Default: `{"actual":null,"estimated":null,"max":null}`<br/>|no|
+|**max**|`integer`|The maximum cost allowed for a single operation, based on the estimated value.<br/><br/>When the estimated cost exceeds this value, the request is rejected before any subgraph is contacted.<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
+|**mode**|`string`|- `enforce`: reject the incoming request when a limit is breached.<br/>- `measure`: never reject. Cost is still computed, result codes are<br/>  recorded in telemetry (trace, logs, metrics), but no request is<br/>  blocked. Useful for shadowing a limit in production before switching<br/>  to `enforce`.<br/>Enum: `"enforce"`, `"measure"`<br/>|yes|
+
+**Example**
+
+```yaml
+expose_headers:
+  actual: null
+  estimated: null
+  max: null
+
+```
+
+<a name="demand_controloperation_costexpose_headers"></a>
+#### demand\_control\.operation\_cost\.expose\_headers: object
+
+The headers to expose in the response.
+Headers are exposed in the response, in both cases when the request is rejected or when it is allowed to proceed.
+
+Defaults to none.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**actual**|`string`, `null`|A valid HTTP header name, according to RFC 7230.<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
+|**estimated**|`string`, `null`|A valid HTTP header name, according to RFC 7230.<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
+|**max**|`string`, `null`|A valid HTTP header name, according to RFC 7230.<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+actual: null
+estimated: null
+max: null
+
+```
+
+<a name="demand_controlsubgraphs_budget"></a>
+### demand\_control\.subgraphs\_budget: object
+
+Subgraph cost limit configuration, including the mode to use for subgraph budget enforcement.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**all**|`integer`, `null`|Default limit configuration applied to every subgraph unless overridden.<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|no|
+|**mode**|`string`|The mode to use for subgraph budget enforcement.<br/><br/>In `mode: enforce`, when a subgraph limit is exceeded:<br/>- The router **continues** executing the rest of the query plan.<br/>- The specific subgraph fetch is skipped and a `SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE` error is added to the response.<br/>- The fetch call assumes error, and returns `null` as subgraph response.<br/><br/>This kind of enforcement is applied to each subgraph fetch individually, during execution,<br/>in order to prevent false-positives from exceeding the limit.<br/><br/>In `mode: measure`, subgraph limits are never enforced.<br/>Enum: `"enforce"`, `"measure"`<br/>|yes|
+|[**subgraphs**](#demand_controlsubgraphs_budgetsubgraphs)|`object`, `null`|Per-subgraph overrides. Keys are subgraph names.<br/>|no|
+
+**Additional Properties:** not allowed  
+<a name="demand_controlsubgraphs_budgetsubgraphs"></a>
+#### demand\_control\.subgraphs\_budget\.subgraphs: object,null
+
+Per-subgraph overrides. Keys are subgraph names.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**|`integer`|Format: `"uint"`<br/>Minimum: `0`<br/>||
+
 <a name="headers"></a>
 ## headers: object
 

@@ -29,10 +29,11 @@ use hive_router_query_planner::{
 };
 use http::{HeaderMap, StatusCode};
 use serde::Serialize;
-use sonic_rs::ValueRef;
+use sonic_rs::{JsonValueTrait, ValueRef};
 use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
+use crate::execution::demand_control::DemandControlExecutionContext;
 use crate::execution::operation_name::OperationNameFactory;
 use crate::{
     execution::{
@@ -49,7 +50,10 @@ use crate::{
         response::{apply_subgraph_response_headers, ResponseHeaderAggregator},
     },
     hooks::{
-        on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
+        on_execute::{
+            DemandControlCost, DemandControlEstimatedCost, OnExecuteEndHookPayload,
+            OnExecuteStartHookPayload,
+        },
         on_graphql_error::handle_graphql_errors_with_plugins,
     },
     introspection::{
@@ -74,19 +78,53 @@ use crate::{
     },
 };
 
+pub type VariablesMap = HashMap<String, sonic_rs::Value>;
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionResultExtensions<'exec> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_plan: Option<&'exec QueryPlan>,
+
+    #[serde(flatten)]
+    pub extensions: HashMap<String, sonic_rs::Value>,
+}
+
+impl ExecutionResultExtensions<'_> {
+    pub fn is_empty(&self) -> bool {
+        self.query_plan.is_none() && self.extensions.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CoerceVariablesPayload {
+    pub variables_map: Option<VariablesMap>,
+}
+
+impl CoerceVariablesPayload {
+    pub fn variable_equals_true(&self, name: &str) -> bool {
+        self.variables_map
+            .as_ref()
+            .and_then(|vars| vars.get(name))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    }
+}
+
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub operation_for_plan: Arc<OperationDefinition>,
     pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
     pub headers_plan: Arc<HeaderRulesPlan>,
-    pub variable_values: Arc<Option<HashMap<String, sonic_rs::Value>>>,
-    pub extensions: HashMap<String, sonic_rs::Value>,
+    pub variable_values: Arc<CoerceVariablesPayload>,
+    pub extensions: ExecutionResultExtensions<'exec>,
     pub client_request: Arc<ClientRequestDetails<'exec>>,
     pub introspection_context: Arc<IntrospectionContext>,
     pub operation_type_name: &'static str,
     pub executors: Arc<SubgraphExecutorMap>,
     pub jwt_auth_forwarding: Option<Arc<JwtAuthForwardingPlan>>,
     pub graphql_error_recorder: Option<GraphQLErrorMetricsRecorder>,
+    pub demand_control_context: Option<Arc<DemandControlExecutionContext>>,
     pub initial_errors: Vec<GraphQLError>,
     pub span: GraphQLOperationSpan,
     pub plugin_req_state: Option<PluginRequestState<'exec>>,
@@ -191,8 +229,10 @@ pub async fn execute_query_plan<'exec>(
             subgraph_name: || Some(fetch_node.service_name.to_string()),
             affected_path: || None,
         })?;
-        let variable_refs =
-            select_fetch_variables(&opts.variable_values, fetch_node.variable_usages.as_ref());
+        let variable_refs = select_fetch_variables(
+            &opts.variable_values.variables_map,
+            fetch_node.variable_usages.as_ref(),
+        );
 
         let mut subgraph_request = SubgraphExecutionRequest {
             query: fetch_node.operation.document_str.as_str(),
@@ -292,7 +332,7 @@ pub async fn execute_query_plan<'exec>(
                     projection_plan: opts.projection_plan.clone(),
                     headers_plan: opts.headers_plan.clone(),
                     variable_values: opts.variable_values.clone(),
-                    extensions: opts.extensions.clone(),
+                    extensions: ExecutionResultExtensions::default(),
                     client_request: ClientRequestDetails {
                         method: &client_method,
                         url: &client_url,
@@ -315,6 +355,7 @@ pub async fn execute_query_plan<'exec>(
                     plugin_req_state: None,
                     graphql_error_recorder: None,
                     operation_name_factory: operation_name_factory.clone(),
+                    demand_control_context: opts.demand_control_context.clone(),
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
@@ -354,11 +395,9 @@ pub async fn execute_query_plan<'exec>(
 
 async fn execute_query_plan_with_data<'exec>(
     mut data: Value<'exec>,
-    opts: QueryPlanExecutionOpts<'exec>,
+    mut opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let mut errors = opts.initial_errors;
-
-    let mut extensions = opts.extensions;
 
     let dedupe_subgraph_requests = opts.operation_type_name == "Query";
 
@@ -376,9 +415,15 @@ async fn execute_query_plan_with_data<'exec>(
             operation_for_plan: &opts.operation_for_plan,
             data,
             errors,
-            extensions,
-            variable_values: &opts.variable_values,
+            extensions: opts.extensions.extensions,
+            variable_values: &opts.variable_values.variables_map,
             dedupe_subgraph_requests,
+            demand_control_estimate: opts.demand_control_context.as_ref().map(|dc| {
+                DemandControlEstimatedCost {
+                    estimated: dc.evaluation.estimated_cost,
+                    max: dc.operation.operation_max_cost,
+                }
+            }),
         };
 
         for plugin in plugin_req_state.plugins.as_ref() {
@@ -398,20 +443,21 @@ async fn execute_query_plan_with_data<'exec>(
         // Give the ownership back to variables
         data = start_payload.data;
         errors = start_payload.errors;
-        extensions = start_payload.extensions;
+        opts.extensions.extensions = start_payload.extensions;
     }
 
     let mut exec_ctx = ExecutionContext::new(data, errors);
     // No need for `new`, it has too many parameters
     // We can directly create `Executor` instance here
     let executor = Executor {
-        variable_values: &opts.variable_values,
+        variable_values: &opts.variable_values.variables_map,
         schema_metadata: &opts.introspection_context.metadata,
         executors: &opts.executors,
         client_request: &opts.client_request,
         headers_plan: &opts.headers_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
+        demand_control_context: opts.demand_control_context.clone(),
         plugin_req_state: opts.plugin_req_state.as_ref(),
         operation_name_factory: &opts.operation_name_factory,
     };
@@ -441,18 +487,51 @@ async fn execute_query_plan_with_data<'exec>(
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
+    let mut demand_control_cost = None;
+    if let Some(demand_control) = executor.demand_control_context {
+        let actual = demand_control.calculate_actual_cost(
+            &data,
+            &opts.variable_values.variables_map,
+            &exec_ctx.subgraph_response_cost_tracker,
+        );
+
+        demand_control_cost = Some(DemandControlCost {
+            estimated: demand_control.evaluation.estimated_cost,
+            max: demand_control.operation.operation_max_cost,
+            actual,
+        });
+
+        if actual > demand_control.operation.operation_max_cost {
+            tracing::info!(
+                operation_name = ?opts.operation_for_plan.name.as_deref(),
+                actual_cost = actual,
+                estimated_cost = demand_control.evaluation.estimated_cost,
+                max_cost = demand_control.operation.operation_max_cost,
+                "actual cost exceeds max cost (not enforced)"
+            );
+        }
+
+        demand_control.report_telemetry(
+            actual,
+            opts.operation_for_plan.name.as_deref(),
+            &opts.span,
+        );
+        demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
+    }
+
     // TODO: coprocessor.on_execution_response
     if !on_end_callbacks.is_empty() {
         let mut end_payload = OnExecuteEndHookPayload {
             data,
             errors,
-            extensions,
+            extensions: opts.extensions.extensions,
             response_size_estimate,
             request_context: opts
                 .plugin_req_state
                 .as_ref()
                 .map(|state| state.request_context.for_plugin::<hooks::OnExecute>())
                 .expect("plugin state not available, but on_end_callbacks are present"),
+            demand_control_cost,
         };
 
         for callback in on_end_callbacks {
@@ -469,7 +548,7 @@ async fn execute_query_plan_with_data<'exec>(
         // Give the ownership back to variables
         data = end_payload.data;
         errors = end_payload.errors;
-        extensions = end_payload.extensions;
+        opts.extensions.extensions = end_payload.extensions;
         response_size_estimate = end_payload.response_size_estimate;
     }
 
@@ -493,10 +572,10 @@ async fn execute_query_plan_with_data<'exec>(
     let body = project_by_operation(
         &data,
         errors,
-        &extensions,
+        &opts.extensions,
         opts.operation_type_name,
         &opts.projection_plan,
-        &opts.variable_values,
+        &opts.variable_values.variables_map,
         response_size_estimate,
         &opts.introspection_context.metadata,
     )
@@ -514,25 +593,28 @@ async fn execute_query_plan_with_data<'exec>(
 }
 
 pub struct Executor<'exec> {
-    pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+    pub variable_values: &'exec Option<VariablesMap>,
     pub schema_metadata: &'exec SchemaMetadata,
     pub executors: &'exec SubgraphExecutorMap,
     pub client_request: &'exec ClientRequestDetails<'exec>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub jwt_forwarding_plan: Option<Arc<JwtAuthForwardingPlan>>,
     pub dedupe_subgraph_requests: bool,
+    pub demand_control_context: Option<Arc<DemandControlExecutionContext>>,
     pub plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
     pub operation_name_factory: &'exec OperationNameFactory,
 }
 
-enum ExecutionJob<'exec> {
+pub enum ExecutionJob<'exec> {
     Fetch {
         subgraph_name: &'exec str,
+        operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         output_rewrites: Option<&'exec [FetchRewrite]>,
     },
     FlattenFetch {
         subgraph_name: &'exec str,
+        operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         flatten_node_path: &'exec FlattenNodePath,
         representation_hashes: Vec<u64>,
@@ -541,12 +623,13 @@ enum ExecutionJob<'exec> {
     },
     BatchFetch {
         subgraph_name: &'exec str,
+        operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         aliases: Vec<AliasBatchState<'exec>>,
     },
 }
 
-struct AliasBatchState<'exec> {
+pub struct AliasBatchState<'exec> {
     alias_spec: &'exec EntityBatchAlias,
     representation_hash_to_index: AHashMap<u64, usize>,
     paths: Vec<AliasPathState<'exec>>,
@@ -574,20 +657,31 @@ impl<'exec> ExecutionJob<'exec> {
             ExecutionJob::BatchFetch { response, .. } => response,
         }
     }
-    fn response_ref(&self) -> &SubgraphResponse<'exec> {
+
+    pub fn response_ref(&self) -> &SubgraphResponse<'exec> {
         match self {
             ExecutionJob::Fetch { response, .. } => response,
             ExecutionJob::FlattenFetch { response, .. } => response,
             ExecutionJob::BatchFetch { response, .. } => response,
         }
     }
-    fn subgraph_name(&self) -> &'exec str {
+
+    pub fn subgraph_name(&self) -> &'exec str {
         match self {
             ExecutionJob::Fetch { subgraph_name, .. } => subgraph_name,
             ExecutionJob::FlattenFetch { subgraph_name, .. } => subgraph_name,
             ExecutionJob::BatchFetch { subgraph_name, .. } => subgraph_name,
         }
     }
+
+    pub fn operation(&self) -> &'exec SubgraphFetchOperation {
+        match self {
+            ExecutionJob::Fetch { operation, .. } => operation,
+            ExecutionJob::FlattenFetch { operation, .. } => operation,
+            ExecutionJob::BatchFetch { operation, .. } => operation,
+        }
+    }
+
     fn affected_path(&self) -> Option<&'exec FlattenNodePath> {
         match self {
             ExecutionJob::Fetch { .. } => None,
@@ -725,6 +819,7 @@ impl<'exec> Executor<'exec> {
                         affected_path: None,
                     })
                     .map_ok(|fetch_job| ExecutionJob::BatchFetch {
+                        operation: fetch_job.operation(),
                         subgraph_name: fetch_job.subgraph_name(),
                         response: fetch_job.response(),
                         aliases,
@@ -818,6 +913,7 @@ impl<'exec> Executor<'exec> {
                         affected_path: Some(&flatten_node.path),
                     })
                     .map_ok(|fetch_job| ExecutionJob::FlattenFetch {
+                        operation: fetch_job.operation(),
                         flatten_node_path: &flatten_node.path,
                         response: fetch_job.response(),
                         subgraph_name: fetch_node.service_name.as_str(),
@@ -854,6 +950,15 @@ impl<'exec> Executor<'exec> {
             Ok(job) => {
                 let subgraph_name = job.subgraph_name();
                 let affected_path = job.affected_path();
+
+                if let Some(demand_control) = &self.demand_control_context {
+                    demand_control.record_subgraph_response_cost(
+                        &mut ctx.subgraph_response_cost_tracker,
+                        &job,
+                        self.variable_values,
+                    );
+                }
+
                 if let Some(ref subgraph_headers) = job.response_ref().headers {
                     if let Err(ref err) = apply_subgraph_response_headers(
                         self.headers_plan,
@@ -1367,6 +1472,7 @@ impl<'exec> Executor<'exec> {
                     subgraph_request,
                     self.client_request,
                     self.plugin_req_state,
+                    self.demand_control_context.as_deref(),
                 )
                 .await
                 .with_plan_context(LazyPlanContext {
@@ -1384,6 +1490,7 @@ impl<'exec> Executor<'exec> {
 
             Ok(ExecutionJob::Fetch {
                 subgraph_name: opts.subgraph_name,
+                operation: opts.operation,
                 response,
                 output_rewrites: opts.output_rewrites,
             })
@@ -1400,7 +1507,7 @@ impl<'exec> Executor<'exec> {
 
 fn condition_node_by_variables<'a>(
     condition_node: &'a ConditionNode,
-    variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
+    variable_values: &'a Option<VariablesMap>,
 ) -> Option<&'a PlanNode> {
     let vars = variable_values.as_ref()?;
     let value = vars.get(&condition_node.condition)?;
@@ -1414,7 +1521,7 @@ fn condition_node_by_variables<'a>(
 }
 
 fn select_fetch_variables<'a>(
-    variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
+    variable_values: &'a Option<VariablesMap>,
     variable_usages: Option<&BTreeSet<String>>,
 ) -> Option<HashMap<&'a str, &'a sonic_rs::Value>> {
     let values = variable_values.as_ref()?;
@@ -1644,6 +1751,7 @@ mod tests {
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
+            demand_control_context: None,
             plugin_req_state: None,
             operation_name_factory: &OperationNameFactory::default(),
         };
@@ -1758,6 +1866,7 @@ mod tests {
             headers_plan: &HeaderRulesPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
+            demand_control_context: None,
             plugin_req_state: None,
             operation_name_factory: &OperationNameFactory::default(),
         };

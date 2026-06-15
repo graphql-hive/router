@@ -17,6 +17,31 @@ use crate::response::value::Value;
 
 type RequestContextApi = RequestContextPluginApi<super::OnExecute>;
 
+/// Demand-control cost estimate available *before* execution.
+///
+/// Present on [`OnExecuteStartHookPayload`] when demand control is enabled.
+/// The `actual` cost is not known at this stage — see [`DemandControlCost`].
+#[derive(Debug, Clone, Copy)]
+pub struct DemandControlEstimatedCost {
+    /// The pre-execution estimated cost of the operation.
+    pub estimated: u64,
+    /// The configured supergraph-wide maximum cost.
+    pub max: u64,
+}
+
+/// Demand-control cost available *after* execution.
+///
+/// Present on [`OnExecuteEndHookPayload`] when demand control is enabled.
+#[derive(Debug, Clone, Copy)]
+pub struct DemandControlCost {
+    /// The pre-execution estimated cost of the operation.
+    pub estimated: u64,
+    /// The configured supergraph-wide maximum cost.
+    pub max: u64,
+    /// The post-execution actual cost, computed from the real response.
+    pub actual: u64,
+}
+
 pub struct OnExecuteStartHookPayload<'exec> {
     /// The incoming HTTP request to the router for which the GraphQL execution is happening.
     /// It includes all the details of the request such as headers, body, etc.
@@ -57,6 +82,11 @@ pub struct OnExecuteStartHookPayload<'exec> {
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
 
     pub dedupe_subgraph_requests: bool,
+
+    /// The demand-control cost estimate for this operation, computed before execution.
+    /// `None` when demand control is disabled. The `actual` cost is not available
+    /// here — see [`OnExecuteEndHookPayload::demand_control_cost`].
+    pub demand_control_estimate: Option<DemandControlEstimatedCost>,
 }
 
 impl<'exec> OnExecuteStartHookPayload<'exec> {
@@ -147,6 +177,10 @@ pub struct OnExecuteEndHookPayload<'exec> {
     /// An estimate of the response size in bytes.
     /// This is calculated based on the subgraph responses
     pub response_size_estimate: usize,
+
+    /// The demand-control cost for this operation, including the post-execution
+    /// `actual` cost. `None` when demand control is disabled.
+    pub demand_control_cost: Option<DemandControlCost>,
 }
 
 impl<'exec> OnExecuteEndHookPayload<'exec> {

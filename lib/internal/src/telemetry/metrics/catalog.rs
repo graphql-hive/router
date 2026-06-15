@@ -114,13 +114,23 @@ pub mod labels {
     pub const GRAPHQL_OPERATION_TYPE: &str = "graphql.operation.type";
     pub const GRAPHQL_OPERATION_NAME: &str = "graphql.operation.name";
     pub const GRAPHQL_RESPONSE_STATUS: &str = "graphql.response.status";
+    pub const COST_RESULT: &str = "cost.result";
     pub const COPROCESSOR_STAGE: &str = "coprocessor.stage";
     pub const CIRCUIT_BREAKER_FROM_STATE: &str = "circuit_breaker.from_state";
     pub const CIRCUIT_BREAKER_TO_STATE: &str = "circuit_breaker.to_state";
 }
 
+pub mod units {
+    pub const DEMAND_CONTROL_COST_UNIT: &str = "{cost}";
+    pub const BYTES: &str = "By";
+    pub const SECONDS: &str = "s";
+}
+
 pub mod names {
     pub const GRAPHQL_ERRORS_TOTAL: &str = "hive.router.graphql.errors_total";
+    pub const COST_ESTIMATED: &str = "cost.estimated";
+    pub const COST_ACTUAL: &str = "cost.actual";
+    pub const COST_DELTA: &str = "cost.delta";
     pub const SUPERGRAPH_POLL_TOTAL: &str = "hive.router.supergraph.poll.total";
     pub const SUPERGRAPH_POLL_DURATION: &str = "hive.router.supergraph.poll.duration";
     pub const SUPERGRAPH_PROCESS_DURATION: &str = "hive.router.supergraph.process.duration";
@@ -161,6 +171,18 @@ pub mod names {
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (names::GRAPHQL_ERRORS_TOTAL, &[labels::CODE]),
+    (
+        names::COST_ESTIMATED,
+        &[labels::COST_RESULT, labels::GRAPHQL_OPERATION_NAME],
+    ),
+    (
+        names::COST_ACTUAL,
+        &[labels::COST_RESULT, labels::GRAPHQL_OPERATION_NAME],
+    ),
+    (
+        names::COST_DELTA,
+        &[labels::COST_RESULT, labels::GRAPHQL_OPERATION_NAME],
+    ),
     (
         names::HTTP_SERVER_REQUEST_DURATION,
         &[

@@ -1,4 +1,5 @@
 pub mod coprocessor;
+pub mod mock_subgraphs;
 pub mod otel;
 pub mod s3_mock;
 
@@ -360,11 +361,16 @@ async fn handle_on_request(
 ) -> impl axum::response::IntoResponse {
     let path = request.uri().path().to_string();
     let (parts, body) = request.into_parts();
+    let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
 
     let req = RequestLike {
         path: path.clone(),
         headers: parts.headers.clone(),
-        body: None, // TODO: do we really care about the body?
+        body: if body_bytes.is_empty() {
+            None
+        } else {
+            Some(body_bytes.clone())
+        },
         http_version: parts.version,
     };
 
@@ -382,7 +388,8 @@ async fn handle_on_request(
         return response;
     }
 
-    let request = axum::extract::Request::from_parts(parts, body);
+    let rebuilt_body = axum::body::Body::from(body_bytes);
+    let request = axum::extract::Request::from_parts(parts, rebuilt_body);
     next.run(request).await
 }
 
@@ -1040,9 +1047,19 @@ pub trait ClientResponseExt {
     /// The difference from [`json_body_string_pretty`] is that this method uses a stable
     /// pretty-printer that does not depend on the order of fields in the JSON object.
     fn json_body_string_pretty_stable(&self) -> impl Future<Output = String>;
+    /// Reads a response header and parses it as a `u64`. Used for the
+    /// demand-control `X-Cost-*` headers. Header lookup is case-insensitive.
+    fn cost_header(&self, name: &str) -> Option<u64>;
 }
 
 impl ClientResponseExt for ClientResponse {
+    fn cost_header(&self, name: &str) -> Option<u64> {
+        self.headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+    }
+
     async fn string_body(&self) -> String {
         let body = self.body().await.expect("failed to read request body");
         std::str::from_utf8(&body)

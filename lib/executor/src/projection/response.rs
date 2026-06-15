@@ -1,3 +1,4 @@
+use crate::execution::plan::ExecutionResultExtensions;
 use crate::projection::error::ProjectionError;
 use crate::projection::plan::{
     FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
@@ -80,7 +81,7 @@ impl<'a> TypeName<'a> {
 pub fn project_by_operation(
     data: &Value,
     errors: Vec<GraphQLError>,
-    extensions: &HashMap<String, sonic_rs::Value>,
+    extensions: &ExecutionResultExtensions<'_>,
     operation_type_name: &str,
     selections: &[FieldProjectionPlan],
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
@@ -539,8 +540,6 @@ fn resolve_type_name<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use graphql_tools::parser::query::Definition;
     use hive_router_query_planner::{
         ast::{document::NormalizedDocument, normalization::create_normalized_document},
@@ -626,7 +625,7 @@ mod tests {
         let projection = project_by_operation(
             &data,
             vec![],
-            &HashMap::new(),
+            &Default::default(),
             operation_type_name,
             &selections,
             &None,
@@ -736,7 +735,7 @@ mod tests {
         let projection = project_by_operation(
             &data,
             vec![],
-            &HashMap::new(),
+            &Default::default(),
             operation_type_name,
             &selections,
             &None,

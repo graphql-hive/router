@@ -4,7 +4,7 @@ use graphql_tools::validation::utils::ValidationError;
 use hive_router_internal::graphql::{ObservedError, PathSegment};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use sonic_rs::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -103,7 +103,7 @@ impl GraphQLError {
     ///     code: Some("SOME_ERROR_CODE".to_string()),
     ///     service_name: None,
     ///     affected_path: None,
-    ///     extensions: std::collections::HashMap::new(),
+    ///     extensions: std::collections::BTreeMap::new(),
     /// };
     ///
     /// let error = GraphQLError::from_message_and_extensions("An error occurred", extensions);
@@ -293,7 +293,7 @@ pub struct GraphQLErrorExtensions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub affected_path: Option<String>,
     #[serde(flatten)]
-    pub extensions: HashMap<String, Value>,
+    pub extensions: BTreeMap<String, Value>,
 }
 
 // Workaround for https://github.com/cloudwego/sonic-rs/issues/114
@@ -319,7 +319,7 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                 let mut code = None;
                 let mut service_name = None;
                 let mut affected_path = None;
-                let mut extensions = HashMap::new();
+                let mut extensions = BTreeMap::new();
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
@@ -367,7 +367,7 @@ impl GraphQLErrorExtensions {
             code: Some(code.into()),
             service_name: None,
             affected_path: None,
-            extensions: HashMap::new(),
+            extensions: BTreeMap::new(),
         }
     }
 
@@ -379,7 +379,7 @@ impl GraphQLErrorExtensions {
             code: Some(code.into()),
             service_name: Some(service_name.into()),
             affected_path: None,
-            extensions: HashMap::new(),
+            extensions: BTreeMap::new(),
         }
     }
 

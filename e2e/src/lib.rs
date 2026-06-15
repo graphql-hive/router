@@ -11,6 +11,10 @@ mod conditional_directives;
 #[cfg(test)]
 mod coprocessor;
 #[cfg(test)]
+mod demand_control;
+#[cfg(test)]
+mod demand_control_parity;
+#[cfg(test)]
 mod disable_introspection;
 #[cfg(test)]
 mod entity_batching;

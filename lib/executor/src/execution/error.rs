@@ -88,8 +88,9 @@ impl From<&PlanExecutionError> for GraphQLError {
     fn from(val: &PlanExecutionError) -> Self {
         let mut error = GraphQLError::from_message_and_code(val.to_string(), val.error_code());
 
-        // We borrow the context fields and pass them into the builder methods.
-        // The helpers accept Into<String>, so an implicit clone occurs when &String is passed.
+        // We destructure the context to take ownership of the Option<String> values.
+        // Then we move owned Strings directly into builder methods.
+        // This way we avoid cloning through Into<String> in those methods.
 
         if let Some(subgraph_name) = &val.context.subgraph_name {
             error = error.add_subgraph_name(subgraph_name);

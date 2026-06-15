@@ -4,15 +4,18 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     graphql::ObservedError,
-    telemetry::traces::{
-        disabled_span, is_level_enabled,
-        spans::{
-            attributes::{
-                self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
-                HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND,
+    telemetry::{
+        metrics::demand_control_metrics::DemandControlResultCode,
+        traces::{
+            disabled_span, is_level_enabled,
+            spans::{
+                attributes::{
+                    self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
+                    HIVE_ERROR_SUBGRAPH_NAME, HIVE_KIND,
+                },
+                kind::{HiveEventKind, HiveSpanKind},
+                TARGET_NAME,
             },
-            kind::{HiveEventKind, HiveSpanKind},
-            TARGET_NAME,
         },
     },
 };
@@ -343,11 +346,16 @@ impl GraphQLOperationSpan {
             "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
             "graphql.document" = Empty,
+            "cost.estimated" = Empty,
+            "cost.actual" = Empty,
+            "cost.delta" = Empty,
+            "cost.result" = Empty,
             "hive.graphql.error.count" = Empty,
             "hive.graphql.error.codes" = Empty,
             "hive.graphql.operation.hash" = Empty,
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
+            "cost.formula_cache_hit" = Empty,
         );
         GraphQLOperationSpan { span }
     }
@@ -389,6 +397,30 @@ impl GraphQLOperationSpan {
             "hive.client.name" = client_name,
             "hive.client.version" = client_version,
         );
+    }
+
+    pub fn record_demand_control(
+        &self,
+        estimated: u64,
+        actual: Option<u64>,
+        delta: Option<i64>,
+        result: &DemandControlResultCode,
+    ) {
+        if self.span.is_disabled() {
+            return;
+        }
+
+        self.span.record(attributes::COST_ESTIMATED, estimated);
+
+        if let Some(actual) = actual {
+            self.span.record(attributes::COST_ACTUAL, actual);
+        }
+
+        if let Some(delta) = delta {
+            self.span.record(attributes::COST_DELTA, delta);
+        }
+
+        self.span.record(attributes::COST_RESULT, result.as_str());
     }
 }
 

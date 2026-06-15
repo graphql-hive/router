@@ -17,8 +17,8 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
 };
-use http::header;
-use http::{header::RETRY_AFTER, HeaderName, Method, StatusCode};
+use http::{header, HeaderValue};
+use http::{HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError, HttpRequest},
@@ -38,6 +38,8 @@ use crate::{
     },
     RouterSharedState,
 };
+
+pub type PipelineErrorAdditionalHeaders = Vec<(HeaderName, HeaderValue)>;
 
 #[derive(Debug, thiserror::Error, IntoStaticStr)]
 pub enum PipelineError {
@@ -163,7 +165,22 @@ pub enum PipelineError {
 
     #[error("No supergraph available yet, unable to process request")]
     #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
-    NoSupergraphAvailable,
+    NoSupergraphAvailable {
+        response_headers: PipelineErrorAdditionalHeaders,
+    },
+
+    // Demand Control
+    #[error("Operation estimated cost exceeds max cost")]
+    #[strum(serialize = "COST_ESTIMATED_TOO_EXPENSIVE")]
+    CostEstimatedTooExpensive {
+        response_headers: PipelineErrorAdditionalHeaders,
+    },
+
+    #[error(
+        "Exactly one slicing argument is required for field '{field_name}', but found {found}"
+    )]
+    #[strum(serialize = "COST_INVALID_SLICING_ARGUMENTS")]
+    CostInvalidSlicingArguments { field_name: String, found: usize },
 
     #[error(transparent)]
     CoprocessorError(#[from] CoprocessorError),
@@ -197,6 +214,14 @@ impl From<Arc<ParserCacheError>> for PipelineError {
 }
 
 impl PipelineError {
+    pub fn additional_response_headers(&self) -> Option<&Vec<(HeaderName, HeaderValue)>> {
+        match self {
+            PipelineError::CostEstimatedTooExpensive { response_headers } => Some(response_headers),
+            PipelineError::NoSupergraphAvailable { response_headers } => Some(response_headers),
+            _ => None,
+        }
+    }
+
     pub fn graphql_error_code(&self) -> &'static str {
         match self {
             Self::JwtError(err) => err.error_code(),
@@ -245,6 +270,10 @@ impl PipelineError {
             (Self::MutationNotAllowedOverHttpGet, _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::ValidationErrors(_), true) => StatusCode::OK,
             (Self::ValidationErrors(_), false) => StatusCode::BAD_REQUEST,
+            (Self::CostEstimatedTooExpensive { .. }, true) => StatusCode::OK,
+            (Self::CostEstimatedTooExpensive { .. }, false) => StatusCode::BAD_REQUEST,
+            (Self::CostInvalidSlicingArguments { .. }, true) => StatusCode::OK,
+            (Self::CostInvalidSlicingArguments { .. }, false) => StatusCode::BAD_REQUEST,
             (Self::AuthorizationFailed(_), _) => StatusCode::FORBIDDEN,
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -260,7 +289,7 @@ impl PipelineError {
             (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
-            (Self::NoSupergraphAvailable, _) => StatusCode::SERVICE_UNAVAILABLE,
+            (Self::NoSupergraphAvailable { .. }, _) => StatusCode::SERVICE_UNAVAILABLE,
             (Self::CoprocessorError(err), _) => err.status_code(),
             (Self::RequestContextError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -285,8 +314,10 @@ pub fn handle_pipeline_error(
 
     let mut res = ResponseBuilder::new(status);
 
-    if matches!(err, PipelineError::NoSupergraphAvailable) {
-        res.header(RETRY_AFTER, "10");
+    if let Some(headers) = err.additional_response_headers() {
+        for (name, value) in headers {
+            res.header(name, value);
+        }
     }
 
     let mut errors = match err {
@@ -297,6 +328,12 @@ pub fn handle_pipeline_error(
             .iter()
             .map(|error| error.into())
             .collect(),
+        PipelineError::CostEstimatedTooExpensive { .. } => {
+            vec![GraphQLError::from_message_and_code(
+                err.graphql_error_message(),
+                "COST_ESTIMATED_TOO_EXPENSIVE",
+            )]
+        }
         _ => {
             let code = err.graphql_error_code();
             let message = err.graphql_error_message();

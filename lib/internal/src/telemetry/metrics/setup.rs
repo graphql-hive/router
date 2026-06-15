@@ -33,7 +33,10 @@ use crate::{
     http::normalize_route_path,
     telemetry::{
         error::TelemetryError,
-        metrics::catalog::{all_metric_names, labels_for},
+        metrics::catalog::{
+            all_metric_names, labels_for,
+            units::{BYTES, DEMAND_CONTROL_COST_UNIT, SECONDS},
+        },
         resolve_string_map,
         utils::{build_metadata, build_tls_config, resolve_value_or_expression},
     },
@@ -254,6 +257,9 @@ fn validate_explicit_histogram_buckets(
     Ok(())
 }
 
+/// Cost-shaped histogram buckets for demand-control cost metrics
+const DEMAND_CONTROL_COST_BUCKETS: &[f64] = &[0.0, 10.0, 50.0, 200.0, 1000.0, 5000.0, 10000.0];
+
 fn histogram_aggregation_for_unit(
     histogram_config: &MetricsHistogramConfig,
     instrument_name: &str,
@@ -270,28 +276,28 @@ fn histogram_aggregation_for_unit(
             record_min_max: *record_min_max,
         }),
         MetricsHistogramConfig::Explicit { seconds, bytes } => {
-            let buckets = match instrument_unit {
-                "s" => seconds
-                    .resolve_seconds_buckets()
-                    .map_err(TelemetryError::MetricsExporterSetup)?,
-                "By" => bytes
-                    .resolve_bytes_buckets()
-                    .map_err(TelemetryError::MetricsExporterSetup)?,
+            let (buckets, record_min_max) = match instrument_unit {
+                SECONDS => (
+                    seconds
+                        .resolve_seconds_buckets()
+                        .map_err(TelemetryError::MetricsExporterSetup)?,
+                    seconds.record_min_max,
+                ),
+                BYTES => (
+                    bytes
+                        .resolve_bytes_buckets()
+                        .map_err(TelemetryError::MetricsExporterSetup)?,
+                    bytes.record_min_max,
+                ),
+                DEMAND_CONTROL_COST_UNIT => (DEMAND_CONTROL_COST_BUCKETS.to_vec(), false),
                 _ => {
                     return Err(TelemetryError::MetricsExporterSetup(format!(
-                        "Unsupported histogram unit '{instrument_unit}' for instrument '{instrument_name}' in explicit histogram aggregation. Supported units: s, By"
+                        "Unsupported histogram unit '{instrument_unit}' for instrument '{instrument_name}' in explicit histogram aggregation. Supported units: s, By, {{cost}}"
                     )));
                 }
             };
 
-            Ok(explicit_histogram_aggregation(
-                buckets,
-                match instrument_unit {
-                    "s" => seconds.record_min_max,
-                    "By" => bytes.record_min_max,
-                    _ => unreachable!("unsupported instrument unit already handled"),
-                },
-            ))
+            Ok(explicit_histogram_aggregation(buckets, record_min_max))
         }
     }
 }

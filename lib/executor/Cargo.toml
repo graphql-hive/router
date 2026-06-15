@@ -78,5 +78,9 @@ name = "executor_benches"
 harness = false
 
 [[bench]]
+name = "demand_control_benches"
+harness = false
+
+[[bench]]
 name = "coprocessor_benches"
 harness = false

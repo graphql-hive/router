@@ -9,7 +9,6 @@ use moka::Entry;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::parser::ParseCacheEntry;
 
-#[derive(Clone)]
 pub struct CacheState {
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
@@ -108,4 +107,8 @@ pub fn register_cache_size_observers(
     metrics
         .plan
         .observe_size_with(move || plan_cache.plan_cache.entry_count());
+
+    // The demand-control formula cache is owned by `DemandControlRuntime` (it is
+    // schema-scoped), so its size observer is registered in
+    // `SchemaState::new_from_config` instead.
 }

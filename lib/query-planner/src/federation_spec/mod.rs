@@ -1,7 +1,7 @@
 use directives::JoinFieldDirective;
 use graphql_tools::parser::{
     parse_query,
-    query::{Definition, OperationDefinition, SelectionSet},
+    query::{Definition, OperationDefinition, Selection, SelectionSet},
 };
 
 use crate::{
@@ -16,6 +16,7 @@ pub(crate) mod definitions;
 pub(crate) mod directives;
 
 pub mod authorization;
+pub mod demand_control;
 pub(crate) mod directive_trait;
 pub(crate) mod inacessible;
 pub(crate) mod join_directive;
@@ -66,6 +67,35 @@ fn normalize_fields_argument_value_mut(
     }
 }
 
+/// Walks a `sizedFields` selection set top-down, enforcing exactly one field per
+/// level and rejecting fragments, appending each field name to `path`.
+fn collect_sized_field_path(
+    selection_set: &SelectionSet<'_, String>,
+    original: &str,
+    path: &mut Vec<String>,
+) -> Result<(), String> {
+    if selection_set.items.is_empty() {
+        return Ok(());
+    }
+
+    if selection_set.items.len() != 1 {
+        return Err(format!(
+            "'sizedFields' entry '{original}' must select exactly one field per level, found {}",
+            selection_set.items.len()
+        ));
+    }
+
+    match &selection_set.items[0] {
+        Selection::Field(field) => {
+            path.push(field.name.clone());
+            collect_sized_field_path(&field.selection_set, original, path)
+        }
+        Selection::FragmentSpread(_) | Selection::InlineFragment(_) => Err(format!(
+            "'sizedFields' entry '{original}' must only contain fields, not fragments"
+        )),
+    }
+}
+
 pub struct FederationRules;
 
 impl FederationRules {
@@ -108,6 +138,32 @@ impl FederationRules {
         requires: &String,
     ) -> SelectionSet<'static, String> {
         normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, requires)
+    }
+
+    /// Parses a single `@listSize(sizedFields: [...])` entry, written in
+    /// selection-set form, into the flat field path it points at:
+    ///
+    /// - `"field"` → `["field"]`
+    /// - `"field { nested }"` → `["field", "nested"]`
+    pub fn parse_list_size_sized_fields(
+        sized_fields_selection: &str,
+    ) -> Result<Vec<String>, String> {
+        let selection_set_str = format!("{{{sized_fields_selection}}}");
+        let parsed = parse_query::<String>(&selection_set_str).map_err(|err| {
+            format!("invalid 'sizedFields' entry '{sized_fields_selection}': {err}")
+        })?;
+
+        let Some(Definition::Operation(OperationDefinition::SelectionSet(selection_set))) =
+            parsed.definitions.into_iter().next()
+        else {
+            return Err(format!(
+                "'sizedFields' entry '{sized_fields_selection}' is not a valid field selection"
+            ));
+        };
+
+        let mut path = Vec::new();
+        collect_sized_field_path(&selection_set, sized_fields_selection, &mut path)?;
+        Ok(path)
     }
 
     pub fn check_field_subgraph_availability<'a>(
