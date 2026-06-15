@@ -66,6 +66,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.1.1 (2026-06-15)
+
+### Features
+
+#### Add at-least-once sampling for Usage Reporting
+
+Hive Router now supports at-least-once sampling for Usage Reporting.
+
+This feature is useful when you want to keep a low sampling rate, but still make sure all operations are visible in Hive at least once.
+
+The first request for each unique key is always reported. Later requests for the same key follow the configured sampling `rate`.
+
+Example configuration:
+
+```yaml
+telemetry:
+  hive:
+    usage_reporting:
+      enabled: true
+      sampling:
+        rate: "10%" # 10% of operations will be reported
+        at_least_once:
+          key: # the combination of operation's name and body makes the request unique
+            - operation_name
+            - operation_body
+          max_distinct_keys: 12000 # how many keys to track and hold in memory
+```
+
+Keys are tracked in memory, up to `max_distinct_keys` (default: `100_000`). Every key takes approximately 16 bytes of memory.
+
+#### Demand Control with `@cost` and `@listSize` directives
+
+Add support for the [Demand Control specification](https://ibm.github.io/graphql-specs/cost-spec.html), allowing operators to limit the cost of incoming GraphQL operations using the `@cost` and `@listSize` directives.
+
+The router now calculates the cost of incoming operations based on directive-driven type, field, and argument costs (with list-size estimation) and can reject operations that exceed a configured maximum. Both static (request) and actual (response) cost can be measured, and the behavior is configurable via the new `demand_control` section in the router configuration.
+
+Telemetry is included: new metrics under `demand_control_metrics` and additional span attributes expose estimated/actual cost and rejection reasons for observability.
+
+[Documentation for the feature is available here](https://the-guild.dev/graphql/hive/docs/router/security/demand-control)
+
+#### Move `sample_rate` into `sampling.rate`
+
+**Breaking change** The sampling configuration of Usage Reporting has been reorganized.
+
+```diff
+telemetry:
+  hive:
+    usage_reporting:
+-      sample_rate: "10%"
++      sampling:
++        rate: "10%"
+```
+
+
+The old top-level `sample_rate` field has been replaced by `sampling.rate`.
+
 ## 0.1.0 (2026-06-03)
 
 ### Breaking Changes
