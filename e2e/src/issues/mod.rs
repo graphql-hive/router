@@ -939,6 +939,132 @@ mod issues_e2e_tests {
     }
 
     #[ntex::test]
+    // Reproduces a bug where batched entity fetches were built from nullable list
+    // items without filtering out `null` values.
+    async fn batch_fetch_skips_null_source_entities() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.batch-null-entity.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      inventory:
+                        url: "http://{host}/inventory"
+                      products:
+                        url: "http://{host}/products"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let products_mock = server
+            .mock("POST", "/products")
+            .match_request(|r| {
+                let body = r.body().unwrap();
+                let body_str = std::str::from_utf8(&body).unwrap();
+
+                body_str.contains("products") && body_str.contains("topProducts")
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "data": {
+                    "products": [
+                      { "__typename": "Product", "upc": "1", "price": 100, "weight": 1 },
+                      { "__typename": "Product", "upc": "2", "price": 200, "weight": 2 },
+                      null
+                    ],
+                    "topProducts": [
+                      { "__typename": "Product", "upc": "3" }
+                    ]
+                  }
+                }
+                "#,
+            )
+            .create();
+
+        let inventory_mock = server
+            .mock("POST", "/inventory")
+            .match_request(|r| {
+                let body = r.body().unwrap();
+                let body_str = std::str::from_utf8(&body).unwrap();
+
+                body_str.contains("_entities")
+                    && body_str.contains("_e0")
+                    && body_str.contains("_e1")
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "data": {
+                    "_e0": [
+                      { "shippingEstimate": 10 },
+                      { "shippingEstimate": 20 }
+                    ],
+                    "_e1": [
+                      { "inStock": true }
+                    ]
+                  }
+                }
+                "#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                {
+                  products {
+                    shippingEstimate
+                  }
+                  topProducts {
+                    inStock
+                  }
+                }
+                "#,
+                None,
+                None,
+            )
+            .await;
+
+        products_mock.assert();
+        inventory_mock.assert();
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "products": [
+              {
+                "shippingEstimate": 10
+              },
+              {
+                "shippingEstimate": 20
+              },
+              null
+            ],
+            "topProducts": [
+              {
+                "inStock": true
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
     /// https://github.com/graphql-hive/router/issues/1099
     ///
     /// When an entity's `@key` is set to only `__typename` (use case is singleton that lives on another subgraph),
