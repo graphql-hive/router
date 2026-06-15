@@ -873,7 +873,6 @@ A valid HTTP header name, according to RFC 7230.
 |**actual\_cost\_mode**||How actual cost is computed after execution.<br/><br/>- `by_subgraph` (default): sum the cost computed per individual subgraph<br/>  fetch responses.<br/>- `by_response_shape`: walk the merged supergraph response and reapply<br/>  the static cost rules. Does not account for intermediate subgraph<br/>  work.<br/><br/>Note: the "actual" value calculated in any mode is not used for enforcment.<br/>Default: `"by_subgraph"`<br/>|no|
 |[**default\_list\_size**](#demand_controldefault_list_size)|`object`|The default list size to use when `@listSize` is not specified in the schema.<br/>Default: `{"all":null}`<br/>|no|
 |**enabled**|`boolean`|Enable demand control processing. Must be `true` for any cost estimation,<br/>enforcement or telemetry to take effect.<br/>|yes|
-|[**expose\_headers**](#demand_controlexpose_headers)|`object`|The headers to expose in the response.<br/>Default: `{"actual":null,"estimated":null,"max":null}`<br/>|no|
 |[**operation\_cost**](#demand_controloperation_cost)|`object`|Configuration for operation cost limits.<br/>|yes|
 |[**subgraphs\_budget**](#demand_controlsubgraphs_budget)|`object`|Subgraph cost limit configuration, including the mode to use for subgraph budget enforcement.<br/>|yes|
 
@@ -911,8 +910,35 @@ Per-subgraph overrides. Keys are subgraph names.
 |----|----|-----------|--------|
 |**Additional Properties**|`integer`|Format: `"uint"`<br/>Minimum: `0`<br/>||
 
-<a name="demand_controlexpose_headers"></a>
-### demand\_control\.expose\_headers: object
+<a name="demand_controloperation_cost"></a>
+### demand\_control\.operation\_cost: object
+
+Configuration for operation cost limits.
+
+This controls the maximum cost allowed for a single operation executed against the Router, based on the estimated value.
+When the estimated cost exceeds this value, the request is rejected before any subgraph is contacted.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**expose\_headers**](#demand_controloperation_costexpose_headers)|`object`|The headers to expose in the response.<br/>Default: `{"actual":null,"estimated":null,"max":null}`<br/>|no|
+|**max**|`integer`|The maximum cost allowed for a single operation, based on the estimated value.<br/><br/>When the estimated cost exceeds this value, the request is rejected before any subgraph is contacted.<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
+|**mode**|`string`|- `enforce`: reject the incoming request when a limit is breached.<br/>- `measure`: never reject. Cost is still computed, result codes are<br/>  recorded in telemetry (trace, logs, metrics), but no request is<br/>  blocked. Useful for shadowing a limit in production before switching<br/>  to `enforce`.<br/>Enum: `"enforce"`, `"measure"`<br/>|yes|
+
+**Example**
+
+```yaml
+expose_headers:
+  actual: null
+  estimated: null
+  max: null
+
+```
+
+<a name="demand_controloperation_costexpose_headers"></a>
+#### demand\_control\.operation\_cost\.expose\_headers: object
 
 The headers to expose in the response.
 Headers are exposed in the response, in both cases when the request is rejected or when it is allowed to proceed.
@@ -937,22 +963,6 @@ estimated: null
 max: null
 
 ```
-
-<a name="demand_controloperation_cost"></a>
-### demand\_control\.operation\_cost: object
-
-Configuration for operation cost limits.
-
-This controls the maximum cost allowed for a single operation executed against the Router, based on the estimated value.
-When the estimated cost exceeds this value, the request is rejected before any subgraph is contacted.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**max**|`integer`|The maximum cost allowed for a single operation, based on the estimated value.<br/><br/>When the estimated cost exceeds this value, the request is rejected before any subgraph is contacted.<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
-|**mode**|`string`|- `enforce`: reject the incoming request when a limit is breached.<br/>- `measure`: never reject. Cost is still computed, result codes are<br/>  recorded in telemetry (trace, logs, metrics), but no request is<br/>  blocked. Useful for shadowing a limit in production before switching<br/>  to `enforce`.<br/>Enum: `"enforce"`, `"measure"`<br/>|yes|
 
 <a name="demand_controlsubgraphs_budget"></a>
 ### demand\_control\.subgraphs\_budget: object
