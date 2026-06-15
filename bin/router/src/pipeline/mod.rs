@@ -506,7 +506,7 @@ pub async fn execute_planned_request<'exec>(
         operation_span,
         plugin_req_state,
         request_context,
-        response_header_sink,
+        response_header_sink.clone(),
     )
     .await?
     {
@@ -537,9 +537,10 @@ pub async fn execute_planned_request<'exec>(
                 // dropping producer_handle closes the broadcast channel
             });
 
-            let mut builder = web::HttpResponse::Ok();
-            builder.content_type(stream_content_type.as_ref());
-            let headers = Arc::new(builder.finish().headers().clone());
+            let headers = materialize_shared_response_headers(
+                stream_content_type.as_ref(),
+                &response_header_sink,
+            );
 
             Ok(SharedRouterResponse::Stream(SharedRouterStreamResponse {
                 body: sender,
@@ -557,9 +558,10 @@ pub async fn execute_planned_request<'exec>(
 
             // drop the `guard` as soon as the response is ready
 
-            let mut builder = web::HttpResponse::Ok();
-            builder.content_type(single_content_type.as_ref());
-            let headers = Arc::new(builder.finish().headers().clone());
+            let headers = materialize_shared_response_headers(
+                single_content_type.as_ref(),
+                &response_header_sink,
+            );
 
             Ok(SharedRouterResponse::Single(SharedRouterSingleResponse {
                 body: ntex::util::Bytes::from(result.body),
@@ -569,6 +571,26 @@ pub async fn execute_planned_request<'exec>(
             }))
         }
     }
+}
+
+fn materialize_shared_response_headers(
+    content_type: &str,
+    response_header_sink: &ResponseHeaderSink,
+) -> Arc<HeaderMap> {
+    let mut builder = web::HttpResponse::Ok();
+    builder.content_type(content_type);
+    let mut response = builder.finish();
+
+    // Deduped requests reuse this shared response, but header sinks are per-request,
+    // so propagated headers must be finalized here instead of relying on each sink.
+    if let Err(err) = response_header_sink
+        .take()
+        .modify_client_response_headers(response.headers_mut())
+    {
+        error!(error = %err, "Failed to apply response header rules to client response");
+    }
+
+    Arc::new(response.headers().clone())
 }
 
 #[inline]

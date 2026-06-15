@@ -8,7 +8,6 @@ use crate::{
             ResponseInsertExpression, ResponseInsertStatic, ResponsePropagateNamed,
             ResponsePropagateRegex, ResponseRemoveNamed, ResponseRemoveRegex,
         },
-        sanitizer::is_denied_header,
     },
 };
 use ahash::HashMap;
@@ -17,7 +16,7 @@ use ntex::http::HeaderMap as NtexHeaderMap;
 use std::iter::once;
 use std::sync::{Arc, Mutex};
 
-use super::sanitizer::is_never_join_header;
+use super::sanitizer::{is_denied_response_header, is_never_join_header};
 use http::{header::InvalidHeaderValue, HeaderMap, HeaderName, HeaderValue};
 
 pub fn apply_subgraph_response_headers(
@@ -92,7 +91,7 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
         let mut matched = false;
 
         for header_name in &self.names {
-            if is_denied_header(header_name) {
+            if is_denied_response_header(header_name) {
                 continue;
             }
 
@@ -110,7 +109,7 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
             if let (Some(default_value), Some(first_name)) = (&self.default, self.names.first()) {
                 let destination_name = self.rename.as_ref().unwrap_or(first_name);
 
-                if is_denied_header(destination_name) {
+                if is_denied_response_header(destination_name) {
                     return Ok(());
                 }
 
@@ -129,7 +128,7 @@ impl ApplyResponseHeader for ResponsePropagateRegex {
         accumulator: &mut ResponseHeaderAggregator,
     ) -> Result<(), HeaderRuleRuntimeError> {
         for (header_name, header_value) in ctx.subgraph_headers {
-            if is_denied_header(header_name) {
+            if is_denied_response_header(header_name) {
                 continue;
             }
 
@@ -164,7 +163,7 @@ impl ApplyResponseHeader for ResponseInsertStatic {
         _ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     ) -> Result<(), HeaderRuleRuntimeError> {
-        if is_denied_header(&self.name) {
+        if is_denied_response_header(&self.name) {
             return Ok(());
         }
 
@@ -186,7 +185,7 @@ impl ApplyResponseHeader for ResponseInsertExpression {
         ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     ) -> Result<(), HeaderRuleRuntimeError> {
-        if is_denied_header(&self.name) {
+        if is_denied_response_header(&self.name) {
             return Ok(());
         }
         let value = self.expression.execute(ctx.into()).map_err(|err| {
@@ -213,7 +212,7 @@ impl ApplyResponseHeader for ResponseRemoveNamed {
         accumulator: &mut ResponseHeaderAggregator,
     ) -> Result<(), HeaderRuleRuntimeError> {
         for header_name in &self.names {
-            if is_denied_header(header_name) {
+            if is_denied_response_header(header_name) {
                 continue;
             }
             accumulator.entries.remove(header_name);
@@ -230,7 +229,7 @@ impl ApplyResponseHeader for ResponseRemoveRegex {
         accumulator: &mut ResponseHeaderAggregator,
     ) -> Result<(), HeaderRuleRuntimeError> {
         accumulator.entries.retain(|name, _| {
-            if is_denied_header(name) {
+            if is_denied_response_header(name) {
                 // Denied headers (hop-by–hop) are never inserted in the first place
                 // and should not be removed here.
                 return true;

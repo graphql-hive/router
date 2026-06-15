@@ -487,9 +487,6 @@ async fn execute_query_plan_with_data<'exec>(
 
     if let Some(node) = &opts.query_plan.node {
         executor.execute_plan_node(&mut exec_ctx, node).await;
-
-        opts.response_header_sink
-            .store(std::mem::take(&mut exec_ctx.response_headers_aggregator));
     }
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
@@ -544,6 +541,9 @@ async fn execute_query_plan_with_data<'exec>(
         );
         demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
     }
+
+    opts.response_header_sink
+        .store(std::mem::take(&mut exec_ctx.response_headers_aggregator));
 
     // TODO: coprocessor.on_execution_response
     if !on_end_callbacks.is_empty() {
