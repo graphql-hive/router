@@ -1,3 +1,37 @@
+## 0.3.16 (2026-06-15)
+
+### Features
+
+#### Add at-least-once sampling for Usage Reporting
+
+Hive Router now supports at-least-once sampling for Usage Reporting.
+
+This feature is useful when you want to keep a low sampling rate, but still make sure all operations are visible in Hive at least once.
+
+The first request for each unique key is always reported. Later requests for the same key follow the configured sampling `rate`.
+
+Example configuration:
+
+```yaml
+telemetry:
+  hive:
+    usage_reporting:
+      enabled: true
+      sampling:
+        rate: "10%" # 10% of operations will be reported
+        at_least_once:
+          key: # the combination of operation's name and body makes the request unique
+            - operation_name
+            - operation_body
+          max_distinct_keys: 12000 # how many keys to track and hold in memory
+```
+
+Keys are tracked in memory, up to `max_distinct_keys` (default: `100_000`). Every key takes approximately 16 bytes of memory.
+
+#### Apply usage-reporting excludes before sampling
+
+Exclusion of Usage Reports is now evaluated before sampling. Excluded operations are dropped immediately and sampling is not affected.
+
 ## 0.3.15 (2026-06-13)
 
 ### Fixes
