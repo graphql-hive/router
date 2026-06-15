@@ -1,5 +1,8 @@
 ---
 hive-router-query-planner: patch
+hive-router-plan-executor: patch
+hive-router: patch
+node-addon: patch
 ---
 
 # Fix union list FieldMove creation
