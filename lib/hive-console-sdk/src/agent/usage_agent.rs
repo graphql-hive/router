@@ -1,9 +1,11 @@
 use async_dropper_simple::{AsyncDrop, AsyncDropper};
 use graphql_tools::parser::schema::Document;
+use rand::prelude::*;
 use recloser::AsyncRecloser;
 use reqwest_middleware::ClientWithMiddleware;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
+    hash::{Hash, Hasher},
     sync::Arc,
     time::Duration,
 };
@@ -14,12 +16,14 @@ use crate::expressions::lib::FromVrlValue;
 use crate::{
     agent::{buffer::AddStatus, utils::OperationProcessor},
     expressions::ExecutableProgram,
+    helpers::SharedFifoSet,
 };
 use crate::{
     agent::{buffer::Buffer, builder::UsageAgentBuilder},
     expressions::values::boolean::BooleanConversionError,
 };
 use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue, value::KeyString};
+use xxhash_rust::xxh3::Xxh3;
 
 #[derive(Debug, Clone, Default)]
 pub enum OperationType {
@@ -53,7 +57,27 @@ pub struct UsageAgentInner {
     pub(crate) client: ClientWithMiddleware,
     pub(crate) flush_interval: Duration,
     pub(crate) circuit_breaker: AsyncRecloser,
-    pub(crate) exclude_expression: Option<VrlProgram>,
+    pub(crate) exclude: Option<Exclude>,
+    pub(crate) sample_rate: f64,
+    pub(crate) at_least_once: Option<AtLeastOnceSampling>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Exclude {
+    OperationNames(Vec<String>),
+    Expression(Box<VrlProgram>),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SamplingKey {
+    OperationName,
+    OperationType,
+    OperationBody,
+}
+
+pub struct AtLeastOnceSampling {
+    pub(crate) key: Vec<SamplingKey>,
+    pub(crate) seen_hashes: SharedFifoSet,
 }
 
 pub fn non_empty_string(value: Option<String>) -> Option<String> {
@@ -120,6 +144,36 @@ pub trait UsageAgentExt {
 }
 
 impl UsageAgentInner {
+    fn should_exclude(
+        &self,
+        execution_report: &ExecutionReport,
+        request: Option<&RequestDetails>,
+    ) -> Result<bool, AgentError> {
+        self.exclude.as_ref().map_or(Ok(false), |exclude| {
+            exclude.should_exclude(execution_report, request)
+        })
+    }
+
+    fn should_sample(&self, execution_report: &ExecutionReport) -> bool {
+        if let Some(at_least_once) = &self.at_least_once {
+            let key_hash = at_least_once.resolve_key_hash(execution_report);
+            // Every first distinct report should be sampled
+            if at_least_once.mark_seen(key_hash) {
+                return true;
+            }
+        }
+
+        let sample_rate = self.sample_rate;
+        if sample_rate >= 1.0 {
+            return true;
+        }
+        if sample_rate <= 0.0 {
+            return false;
+        }
+
+        rand::rng().random_bool(sample_rate)
+    }
+
     fn produce_report(&self, reports: Vec<ExecutionReport>) -> Result<Report, AgentError> {
         let mut report = Report {
             size: 0,
@@ -252,6 +306,30 @@ impl UsageAgentInner {
     }
 }
 
+impl Exclude {
+    fn should_exclude(
+        &self,
+        execution_report: &ExecutionReport,
+        request: Option<&RequestDetails>,
+    ) -> Result<bool, AgentError> {
+        match self {
+            Exclude::OperationNames(operation_names) => Ok(execution_report
+                .operation_name
+                .as_deref()
+                .is_some_and(|operation_name| {
+                    operation_names.iter().any(|name| name == operation_name)
+                })),
+            Exclude::Expression(program) => {
+                let result = program.execute(get_vrl_value_from_execution_report_and_request(
+                    execution_report,
+                    request.cloned(),
+                ))?;
+                bool::from_vrl_value(result).map_err(AgentError::from)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestDetails {
     pub method: http::Method,
@@ -285,22 +363,26 @@ impl UsageAgentExt for UsageAgent {
     ) -> Result<(), AgentError> {
         let inner = self.inner();
 
-        if let Some(exclude_program) = &inner.exclude_expression {
-            let result = exclude_program.execute(
-                get_vrl_value_from_execution_report_and_request(&execution_report, request),
-            )?;
-            let result_bool = bool::from_vrl_value(result)?;
-            if result_bool {
-                tracing::debug!(
-                    "Excluding report for operation \"{}\" based on exclude expression evaluation",
-                    execution_report
-                        .operation_name
-                        .clone()
-                        .or_else(|| Some("anonymous".to_string()))
-                        .unwrap()
-                );
-                return Ok(());
-            }
+        if inner.should_exclude(&execution_report, request.as_ref())? {
+            tracing::debug!(
+                "Excluding report for operation \"{}\" based on exclude expression evaluation",
+                execution_report
+                    .operation_name
+                    .as_deref()
+                    .unwrap_or("anonymous")
+            );
+            return Ok(());
+        }
+
+        if !inner.should_sample(&execution_report) {
+            tracing::debug!(
+                "Sampling dropped report for operation \"{}\"",
+                execution_report
+                    .operation_name
+                    .as_deref()
+                    .unwrap_or("anonymous")
+            );
+            return Ok(());
         }
 
         if let AddStatus::Full { drained } = inner.buffer.add(execution_report).await {
@@ -369,6 +451,35 @@ impl From<RequestDetails> for VrlValue {
             ("headers".into(), headers_value),
             ("url".into(), url_value),
         ]))
+    }
+}
+
+impl AtLeastOnceSampling {
+    fn resolve_key_hash(&self, report: &ExecutionReport) -> u64 {
+        let mut hasher = Xxh3::new();
+
+        for key in &self.key {
+            let value = match key {
+                SamplingKey::OperationName => {
+                    report.operation_name.as_deref().unwrap_or("anonymous")
+                }
+                SamplingKey::OperationType => match report.operation_type.as_ref() {
+                    None | Some(OperationType::Query) => "query",
+                    Some(OperationType::Mutation) => "mutation",
+                    Some(OperationType::Subscription) => "subscription",
+                },
+                SamplingKey::OperationBody => report.operation_body.as_str(),
+            };
+            value.hash(&mut hasher);
+            0u8.hash(&mut hasher);
+        }
+
+        hasher.finish()
+    }
+
+    /// Marks the given key hash as seen, returning true if it was not already seen.
+    fn mark_seen(&self, key_hash: u64) -> bool {
+        self.seen_hashes.insert(key_hash)
     }
 }
 

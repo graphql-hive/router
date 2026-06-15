@@ -24,6 +24,7 @@ tokio = { workspace = true, features = ["full"] }
 md5 = "0.8.0"
 serde_json = { workspace = true }
 moka = { workspace = true }
+rand = { workspace = true }
 sha2 = { version = "0.10.8", features = ["std"] }
 tokio-util = { workspace = true }
 regex-automata = { workspace = true }
@@ -40,6 +41,8 @@ bytes ={ workspace = true }
 sonic-rs = { workspace = true }
 humantime = { workspace = true }
 http-serde = "2.1.1"
+xxhash-rust = { workspace = true }
+ahash = { workspace = true }
 
 [dev-dependencies]
 mockito = { workspace = true }

@@ -8,10 +8,14 @@ use reqwest_retry::RetryTransientMiddleware;
 use std::sync::LazyLock;
 
 use crate::agent::buffer::Buffer;
-use crate::agent::usage_agent::{non_empty_string, AgentError, UsageAgent, UsageAgentInner};
+use crate::agent::usage_agent::{
+    non_empty_string, AgentError, AtLeastOnceSampling, Exclude, SamplingKey, UsageAgent,
+    UsageAgentInner,
+};
 use crate::agent::utils::OperationProcessor;
 use crate::circuit_breaker;
 use crate::expressions::CompileExpression;
+use crate::helpers::SharedFifoSet;
 use retry_policies::policies::ExponentialBackoff;
 
 pub struct UsageAgentBuilder {
@@ -26,8 +30,24 @@ pub struct UsageAgentBuilder {
     retry_policy: ExponentialBackoff,
     user_agent: Option<String>,
     circuit_breaker: Option<AsyncRecloser>,
-    exclude_expression: Option<String>,
+    exclude: Option<BuilderExclude>,
+    sample_rate: f64,
+    at_least_once: Option<AtLeastOnceSamplingConfig>,
 }
+
+#[derive(Clone)]
+enum BuilderExclude {
+    OperationNames(Vec<String>),
+    Expression(String),
+}
+
+#[derive(Clone)]
+pub struct AtLeastOnceSamplingConfig {
+    key: AtLeastOnceSamplingKey,
+    max_distinct_keys: u64,
+}
+
+pub type AtLeastOnceSamplingKey = Vec<SamplingKey>;
 
 pub static DEFAULT_HIVE_USAGE_ENDPOINT: &str = "https://app.graphql-hive.com/usage";
 
@@ -45,7 +65,9 @@ impl Default for UsageAgentBuilder {
             retry_policy: ExponentialBackoff::builder().build_with_max_retries(3),
             user_agent: None,
             circuit_breaker: None,
-            exclude_expression: None,
+            exclude: None,
+            sample_rate: 1.0,
+            at_least_once: None,
         }
     }
 }
@@ -125,6 +147,27 @@ impl UsageAgentBuilder {
         self.retry_policy = ExponentialBackoff::builder().build_with_max_retries(max_retries);
         self
     }
+    pub fn sample_rate(mut self, sample_rate: f64) -> Self {
+        self.sample_rate = sample_rate.clamp(0.0, 1.0);
+        self
+    }
+    pub fn exclude_operation_names(mut self, operation_names: Vec<String>) -> Self {
+        if !operation_names.is_empty() {
+            self.exclude = Some(BuilderExclude::OperationNames(operation_names));
+        }
+        self
+    }
+    pub fn at_least_once_sampling(
+        mut self,
+        key: AtLeastOnceSamplingKey,
+        max_distinct_keys: u64,
+    ) -> Self {
+        self.at_least_once = Some(AtLeastOnceSamplingConfig {
+            key,
+            max_distinct_keys,
+        });
+        self
+    }
     pub(crate) fn build_agent(self) -> Result<UsageAgentInner, AgentError> {
         let mut default_headers = HeaderMap::new();
 
@@ -186,8 +229,21 @@ impl UsageAgentBuilder {
 
         let buffer = Buffer::new(self.buffer_size);
 
-        let exclude = if let Some(expr) = self.exclude_expression {
-            expr.compile_expression(None)?.into()
+        let exclude = match self.exclude {
+            None => None,
+            Some(BuilderExclude::OperationNames(operation_names)) => {
+                Some(Exclude::OperationNames(operation_names))
+            }
+            Some(BuilderExclude::Expression(expression)) => Some(Exclude::Expression(Box::new(
+                expression.compile_expression(None)?,
+            ))),
+        };
+
+        let at_least_once = if let Some(config) = self.at_least_once {
+            Some(AtLeastOnceSampling {
+                key: config.key,
+                seen_hashes: SharedFifoSet::new(config.max_distinct_keys.max(1) as usize),
+            })
         } else {
             None
         };
@@ -199,12 +255,14 @@ impl UsageAgentBuilder {
             client,
             flush_interval: self.flush_interval,
             circuit_breaker,
-            exclude_expression: exclude,
+            exclude,
+            sample_rate: self.sample_rate,
+            at_least_once,
         })
     }
     pub fn exclude_expression(mut self, expression: String) -> Self {
         if let Some(expression) = non_empty_string(Some(expression)) {
-            self.exclude_expression = Some(expression);
+            self.exclude = Some(BuilderExclude::Expression(expression));
         }
         self
     }

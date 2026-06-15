@@ -6,16 +6,17 @@ use std::{
 use async_trait::async_trait;
 use graphql_tools::parser::schema::Document;
 use hive_console_sdk::agent::usage_agent::{
-    AgentError, ExecutionReport, OperationType, RequestDetails, UsageAgent, UsageAgentExt,
+    AgentError, ExecutionReport, OperationType, RequestDetails, SamplingKey, UsageAgent,
+    UsageAgentExt,
 };
 use hive_router_config::{
+    headers::OneOrMany,
     telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
-    usage_reporting::{UsageReportingConfig, UsageReportingExclude},
+    usage_reporting::{UsageReportingExclude, UsageReportingSamplingKeyKind},
 };
 use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
 use hive_router_query_planner::state::supergraph_state::OperationKind;
-use rand::prelude::*;
 use tokio_util::sync::CancellationToken;
 
 use crate::consts::ROUTER_VERSION;
@@ -65,6 +66,7 @@ pub fn init_hive_usage_agent(
         .user_agent(user_agent)
         .endpoint(usage_config.endpoint.clone())
         .token(access_token)
+        .sample_rate(usage_config.sampling.rate.as_f64())
         .buffer_size(usage_config.buffer_size)
         .connect_timeout(usage_config.connect_timeout)
         .request_timeout(usage_config.request_timeout)
@@ -77,6 +79,20 @@ pub fn init_hive_usage_agent(
 
     if let Some(UsageReportingExclude::Expression { expression }) = &usage_config.exclude {
         agent_builder = agent_builder.exclude_expression(expression.clone());
+    }
+
+    if let Some(UsageReportingExclude::OperationNames(operation_names)) = &usage_config.exclude {
+        agent_builder = agent_builder.exclude_operation_names(operation_names.clone());
+    }
+
+    if let Some(at_least_once) = &usage_config.sampling.at_least_once {
+        agent_builder = agent_builder.at_least_once_sampling(
+            match &at_least_once.key {
+                OneOrMany::One(kind) => vec![map_sampling_key_to_sdk(kind)],
+                OneOrMany::Many(kinds) => kinds.iter().map(map_sampling_key_to_sdk).collect(),
+            },
+            at_least_once.max_distinct_keys,
+        );
     }
 
     let agent = agent_builder.build()?;
@@ -97,21 +113,9 @@ pub async fn collect_usage_report<'a>(
     operation_kind: Option<&'a OperationKind>,
     operation_body: &'a str,
     hive_usage_agent: &UsageAgent,
-    usage_config: &UsageReportingConfig,
     error_count: usize,
     request_details: Option<RequestDetails>,
 ) {
-    let sample_rate = usage_config.sample_rate.as_f64();
-    if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
-        return;
-    }
-    if let Some(operation_name) = operation_name {
-        if let Some(UsageReportingExclude::OperationNames(excluded_names)) = &usage_config.exclude {
-            if excluded_names.iter().any(|name| name == operation_name) {
-                return;
-            }
-        }
-    }
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -139,6 +143,14 @@ pub async fn collect_usage_report<'a>(
         .await
     {
         tracing::error!("Failed to send usage report: {}", err);
+    }
+}
+
+fn map_sampling_key_to_sdk(kind: &UsageReportingSamplingKeyKind) -> SamplingKey {
+    match kind {
+        UsageReportingSamplingKeyKind::OperationName => SamplingKey::OperationName,
+        UsageReportingSamplingKeyKind::OperationType => SamplingKey::OperationType,
+        UsageReportingSamplingKeyKind::OperationBody => SamplingKey::OperationBody,
     }
 }
 

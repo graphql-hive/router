@@ -145,8 +145,6 @@ async fn usage_reporting_sends_reports_without_exclude() {
         first_report.get("operations").is_some(),
         "Report should contain operations"
     );
-
-    drop(router);
 }
 
 /// Test that an exclude expression matching the operation name prevents the report from being sent.
@@ -193,8 +191,6 @@ async fn usage_reporting_excludes_by_operation_name() {
 
     // Wait a reasonable time to ensure no reports arrive
     mock.assert_no_reports(Duration::from_secs(2)).await;
-
-    drop(router);
 }
 
 /// Test that an exclude expression does NOT exclude non-matching operations.
@@ -246,8 +242,6 @@ async fn usage_reporting_does_not_exclude_non_matching_operations() {
         !reports.is_empty(),
         "Expected report for non-excluded operation"
     );
-
-    drop(router);
 }
 
 /// Test that an exclude expression can filter by request header.
@@ -301,8 +295,6 @@ async fn usage_reporting_excludes_by_header() {
     assert!(res.status().is_success());
 
     mock.assert_no_reports(Duration::from_secs(2)).await;
-
-    drop(router);
 }
 
 /// Test that requests without the excluded header still get reported.
@@ -354,8 +346,6 @@ async fn usage_reporting_sends_when_header_not_matching() {
         !reports.is_empty(),
         "Expected report when header does not match"
     );
-
-    drop(router);
 }
 
 /// Test a complex exclude expression using if/else to exclude introspection AND mutations.
@@ -435,8 +425,6 @@ async fn usage_reporting_complex_exclude_expression() {
         total_ops >= 1,
         "Expected at least one operation in reports for non-excluded query"
     );
-
-    drop(router);
 }
 
 /// Test backward compatibility with legacy operation-name list in usage_reporting.exclude.
@@ -481,8 +469,6 @@ async fn usage_reporting_legacy_exclude_list_still_excludes() {
     assert!(res.status().is_success());
 
     mock.assert_no_reports(Duration::from_secs(2)).await;
-
-    drop(router);
 }
 
 /// Test backward compatibility with legacy list while allowing non-matching operations.
@@ -527,8 +513,6 @@ async fn usage_reporting_legacy_exclude_list_allows_non_matching_operation() {
     assert!(res.status().is_success());
 
     mock.wait_for_reports(1).await;
-
-    drop(router);
 }
 
 /// Test explicit expression object format for usage_reporting.exclude.
@@ -575,4 +559,336 @@ async fn usage_reporting_exclude_expression_object_excludes() {
     mock.assert_no_reports(Duration::from_secs(2)).await;
 
     drop(router);
+}
+
+#[ntex::test]
+async fn usage_reporting_at_least_once_keeps_first_occurrence_at_zero_rate() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  sampling:
+                    rate: "0%"
+                    at_least_once:
+                      key: operation_name
+                  buffer_size: 1
+                  flush_interval: 100ms
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_graphql_request("query GetUsers { users { id } }", None, None)
+        .await;
+    assert!(res.status().is_success());
+
+    let res = router
+        .send_graphql_request("query GetUsers { users { id } }", None, None)
+        .await;
+    assert!(res.status().is_success());
+
+    mock.wait_for_reports(1).await;
+    let total_ops = mock.total_operations_count().await;
+    assert_eq!(
+        total_ops, 1,
+        "expected only the first occurrence to be reported"
+    );
+}
+
+#[ntex::test]
+async fn at_least_once_operation_name_different_body() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  sampling:
+                    rate: "0%"
+                    at_least_once:
+                      key: operation_name
+                  buffer_size: 1
+                  flush_interval: 100ms
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    assert!(router
+        .send_graphql_request("query foo { users { id } }", None, None)
+        .await
+        .status()
+        .is_success());
+    assert!(router
+        .send_graphql_request("query foo { users { username } }", None, None)
+        .await
+        .status()
+        .is_success());
+
+    mock.wait_for_reports(1).await;
+    let total_ops = mock.total_operations_count().await;
+    // We expect only one operation, as we group by operation name,
+    // even though the body is different..
+    assert_eq!(total_ops, 1);
+}
+
+#[ntex::test]
+async fn at_least_once_operation_body() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  sampling:
+                    rate: "0%"
+                    at_least_once:
+                      key: operation_body
+                  buffer_size: 1
+                  flush_interval: 100ms
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let op1 = "{ users { id } }";
+    let op2 = "{ users { username } }";
+
+    assert!(router
+        .send_graphql_request(op1, None, None)
+        .await
+        .status()
+        .is_success());
+    assert!(router
+        .send_graphql_request(op2, None, None)
+        .await
+        .status()
+        .is_success());
+
+    mock.wait_for_reports(1).await;
+    let total_ops = mock.total_operations_count().await;
+    assert_eq!(total_ops, 2);
+
+    // Repeat the requests and send one more
+    assert!(router
+        .send_graphql_request(op1, None, None)
+        .await
+        .status()
+        .is_success());
+    assert!(router
+        .send_graphql_request(op2, None, None)
+        .await
+        .status()
+        .is_success());
+    assert!(router
+        .send_graphql_request("{ users { id username } }", None, None)
+        .await
+        .status()
+        .is_success());
+
+    mock.wait_for_reports(2).await;
+    let total_ops = mock.total_operations_count().await;
+    // We expect to get only the new operation
+    assert_eq!(total_ops, 3);
+}
+
+#[ntex::test]
+async fn at_least_once_many_key_type_and_name() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  sampling:
+                    rate: "0%"
+                    at_least_once:
+                      key:
+                        - operation_name
+                        - operation_type
+                  buffer_size: 1
+                  flush_interval: 100ms
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    assert!(router
+        .send_graphql_request("query SharedName { users { id } }", None, None)
+        .await
+        .status()
+        .is_success());
+    assert!(router
+        .send_graphql_request("query SharedName { users { name } }", None, None)
+        .await
+        .status()
+        .is_success());
+    assert!(router
+        .send_graphql_request("mutation SharedName { upload }", None, None)
+        .await
+        .status()
+        .is_success());
+
+    mock.wait_for_reports(1).await;
+    let total_ops = mock.total_operations_count().await;
+    // We expect query+SharedName (deduplicated) and mutation+SharedName only.
+    assert_eq!(total_ops, 2);
+}
+
+#[ntex::test]
+async fn usage_reporting_exclude_runs_before_at_least_once() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  exclude:
+                    expression: '.request.headers."x-skip" == "true"'
+                  sampling:
+                    rate: "0%"
+                    at_least_once:
+                      key:
+                        - operation_name
+                  buffer_size: 1
+                  flush_interval: 100ms
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let op = "query GetUsers { users { id } }";
+
+    // Excluded
+    assert!(router
+        .send_graphql_request(
+            op,
+            None,
+            Some({
+                let mut headers = http::HeaderMap::new();
+                headers.insert("x-skip", "true".parse().unwrap());
+                headers
+            }),
+        )
+        .await
+        .status()
+        .is_success());
+    // Included
+    assert!(router
+        .send_graphql_request("query FetchUsers { users { id name } }", None, None,)
+        .await
+        .status()
+        .is_success());
+
+    mock.wait_for_reports(1).await;
+    let total_ops = mock.total_operations_count().await;
+    assert_eq!(total_ops, 1);
+
+    assert!(router
+        .send_graphql_request(op, None, None)
+        .await
+        .status()
+        .is_success());
+    assert!(router
+        .send_graphql_request(op, None, None)
+        .await
+        .status()
+        .is_success());
+
+    mock.wait_for_reports(2).await;
+    let total_ops = mock.total_operations_count().await;
+    assert_eq!(total_ops, 2);
 }

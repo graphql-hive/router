@@ -3,6 +3,7 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::headers::OneOrMany;
 use crate::primitives::percentage::Percentage;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -10,6 +11,73 @@ use crate::primitives::percentage::Percentage;
 pub enum UsageReportingExclude {
     Expression { expression: String },
     OperationNames(Vec<String>),
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageReportingSamplingKeyKind {
+    #[default]
+    OperationName,
+    OperationType,
+    OperationBody,
+}
+
+pub type UsageReportingSamplingKey = OneOrMany<UsageReportingSamplingKeyKind>;
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AtLeastOnceSamplingConfig {
+    /// The key used for at-least-once sampling, to determine unique operations.
+    ///
+    /// Possible values:
+    ///  - `operation_name`: the name of the GraphQL operation
+    ///  - `operation_type`: the type
+    ///  - `operation_body`: the body
+    ///
+    ///
+    /// You can also provide multiple values. In that case, the router combines them
+    /// into one key.
+    ///
+    /// No default value.
+    pub key: UsageReportingSamplingKey,
+
+    #[serde(default = "default_max_distinct_keys")]
+    /// Maximum number of unique keys kept in memory for at-least-once sampling.
+    /// When the limit is reached, older keys may be removed.
+    ///
+    /// Every key consumes 16 bytes of memory.
+    ///
+    /// Defaults to 100k.
+    pub max_distinct_keys: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct UsageReportingSamplingConfig {
+    #[serde(default = "default_sample_rate")]
+    #[schemars(with = "String")]
+    pub rate: Percentage,
+
+    #[serde(default)]
+    /// At-least-once sampling configuration.
+    ///
+    /// Used together with `rate`.
+    /// The first request for each unique key is always sampled.
+    /// Later requests for the same key are sampled using the configured rate.
+    ///
+    /// The distinct key is built from the `key` field.
+    ///
+    /// Disabled by default.
+    pub at_least_once: Option<AtLeastOnceSamplingConfig>,
+}
+
+impl Default for UsageReportingSamplingConfig {
+    fn default() -> Self {
+        Self {
+            rate: default_sample_rate(),
+            at_least_once: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -27,9 +95,8 @@ pub struct UsageReportingConfig {
     /// 50% = half of the requests being sent
     /// 100% = always being sent
     /// Default: 100%
-    #[serde(default = "default_sample_rate")]
-    #[schemars(with = "String")]
-    pub sample_rate: Percentage,
+    #[serde(default)]
+    pub sampling: UsageReportingSamplingConfig,
 
     /// An expression in VRL to exclude certain operations from being sent to Hive Console.
     /// Returning `true` from this expression will exclude the operation, while `false` will include it.
@@ -92,13 +159,14 @@ pub struct UsageReportingConfig {
 #[cfg(test)]
 mod tests {
     use super::UsageReportingConfig;
+    use crate::usage_reporting::UsageReportingExclude;
 
     #[test]
     fn exclude_supports_expression_object() {
         let config: UsageReportingConfig = serde_json::from_str(
             r#"{
                 "enabled": true,
-                "sample_rate": "100%",
+                "sampling": { "rate": "100%" },
                 "exclude": { "expression": ".request.operation.name == \"Health\"" }
             }"#,
         )
@@ -106,11 +174,8 @@ mod tests {
 
         let exclude = config.exclude.expect("exclude should be present");
 
-        assert!(matches!(
-            exclude,
-            super::UsageReportingExclude::Expression { .. }
-        ));
-        if let super::UsageReportingExclude::Expression { expression } = exclude {
+        assert!(matches!(exclude, UsageReportingExclude::Expression { .. }));
+        if let UsageReportingExclude::Expression { expression } = exclude {
             assert_eq!(
                 expression, ".request.operation.name == \"Health\"",
                 "expression should match the input"
@@ -123,24 +188,39 @@ mod tests {
         let config: UsageReportingConfig = serde_json::from_str(
             r#"{
                 "enabled": true,
-                "sample_rate": "100%",
+                "sampling": { "rate": "100%" },
                 "exclude": ["IntrospectionQuery", "HealthCheck"]
             }"#,
         )
         .expect("config with legacy operation list should deserialize");
 
         let exclude = config.exclude.expect("exclude should be present");
-        assert!(matches!(
-            exclude,
-            super::UsageReportingExclude::OperationNames(_)
-        ));
-        if let super::UsageReportingExclude::OperationNames(names) = exclude {
+        assert!(matches!(exclude, UsageReportingExclude::OperationNames(_)));
+        if let UsageReportingExclude::OperationNames(names) = exclude {
             assert_eq!(
                 names,
                 vec!["IntrospectionQuery".to_string(), "HealthCheck".to_string()],
                 "operation names should match the input"
             );
         }
+    }
+
+    #[test]
+    fn at_least_once_no_default() {
+        let config = serde_json::from_str::<UsageReportingConfig>(
+            r#"{
+                "enabled": true,
+                "sampling": {
+                    "rate": "10%",
+                    "at_least_once": {}
+                }
+            }"#,
+        );
+
+        assert!(
+            config.is_err(),
+            "config with no key should fail to deserialize"
+        );
     }
 }
 
@@ -149,7 +229,7 @@ impl Default for UsageReportingConfig {
         Self {
             enabled: default_enabled(),
             endpoint: default_endpoint(),
-            sample_rate: default_sample_rate(),
+            sampling: Default::default(),
             exclude: None,
             buffer_size: default_buffer_size(),
             accept_invalid_certs: default_accept_invalid_certs(),
@@ -170,6 +250,10 @@ fn default_endpoint() -> String {
 
 fn default_sample_rate() -> Percentage {
     Percentage::from_f64(1.0).unwrap()
+}
+
+fn default_max_distinct_keys() -> u64 {
+    100_000
 }
 
 fn default_buffer_size() -> usize {

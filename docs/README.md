@@ -2895,7 +2895,7 @@ version_header: graphql-client-version
 |**target**||A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
 |**token**||Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
 |[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":false,"endpoint":"https://api.graphql-hive.com/otel/v1/traces"}`<br/>||
-|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":null,"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%"}`<br/>||
+|[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":null,"flush_interval":"5s","request_timeout":"15s","sampling":{"at_least_once":null,"rate":"100%"}}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2977,7 +2977,7 @@ scheduled_delay: 5s
 |**exclude**||An expression in VRL to exclude certain operations from being sent to Hive Console.<br/>Returning `true` from this expression will exclude the operation, while `false` will include it.<br/>This expression is a VRL expression that has access to the request and operation details;<br/><br/>```vrl<br/> if (.request.operation.name == "ExcludeMe") {<br/>   true<br/> } else {<br/>   false<br/> }<br/>```<br/>Backward compatible with both:<br/>- an expression object: `{ expression: "..." }`<br/>- a list of operation names<br/>||
 |**flush\_interval**|`string`|Frequency of flushing the buffer to the server<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
 |**request\_timeout**|`string`|A timeout for the entire request to Hive Console<br/>Default: 15 seconds<br/>Default: `"15s"`<br/>||
-|**sample\_rate**|`string`|Sample rate to determine sampling.<br/>0% = never being sent<br/>50% = half of the requests being sent<br/>100% = always being sent<br/>Default: 100%<br/>Default: `"100%"`<br/>||
+|[**sampling**](#telemetryhiveusage_reportingsampling)|`object`|Sample rate to determine sampling.<br/>Default: `{"at_least_once":null,"rate":"100%"}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -2991,7 +2991,64 @@ endpoint: https://app.graphql-hive.com/usage
 exclude: null
 flush_interval: 5s
 request_timeout: 15s
-sample_rate: 100%
+sampling:
+  at_least_once: null
+  rate: 100%
+
+```
+
+<a name="telemetryhiveusage_reportingsampling"></a>
+##### telemetry\.hive\.usage\_reporting\.sampling: object
+
+Sample rate to determine sampling.
+0% = never being sent
+50% = half of the requests being sent
+100% = always being sent
+Default: 100%
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**at\_least\_once**](#telemetryhiveusage_reportingsamplingat_least_once)|`object`, `null`|At-least-once sampling configuration.<br/>|yes|
+|**rate**|`string`|Default: `"100%"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+at_least_once: null
+rate: 100%
+
+```
+
+<a name="telemetryhiveusage_reportingsamplingat_least_once"></a>
+###### telemetry\.hive\.usage\_reporting\.sampling\.at\_least\_once: object,null
+
+At-least-once sampling configuration.
+
+Used together with `rate`.
+The first request for each unique key is always sampled.
+Later requests for the same key are sampled using the configured rate.
+
+The distinct key is built from the `key` field.
+
+Disabled by default.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**key**||The key used for at-least-once sampling, to determine unique operations.<br/><br/>Possible values:<br/> - `operation_name`: the name of the GraphQL operation<br/> - `operation_type`: the type<br/> - `operation_body`: the body<br/><br/><br/>You can also provide multiple values. In that case, the router combines them<br/>into one key.<br/><br/>No default value.<br/>|yes|
+|**max\_distinct\_keys**|`integer`|Maximum number of unique keys kept in memory for at-least-once sampling.<br/>When the limit is reached, older keys may be removed.<br/><br/>Every key consumes 16 bytes of memory.<br/><br/>Defaults to 100k.<br/>Default: `100000`<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
 
 ```
 
