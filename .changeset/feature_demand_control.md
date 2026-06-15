@@ -4,6 +4,7 @@ hive-router-query-planner: minor
 hive-router-plan-executor: minor
 hive-router-config: minor
 hive-router-internal: minor
+node-addon: patch
 ---
 
 # Demand Control with `@cost` and `@listSize` directives
