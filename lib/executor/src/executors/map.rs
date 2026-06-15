@@ -400,16 +400,29 @@ impl SubgraphExecutorMap {
 
     pub async fn subscribe<'exec>(
         &self,
-        subgraph_name: &str,
+        subgraph_name: &'exec str,
         execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec>,
+        plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
     ) -> Result<
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
         let executor = self.get_or_create_subscription_executor(subgraph_name, client_request)?;
-
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
+
+        // Invoke `on_subgraph_execute` so plugins can mutate the registration
+        // request (e.g. inject auth headers). See `run_subscribe_plugins` for
+        // the subscribe-path control-flow contract. Skip the helper entirely
+        // when no plugins are registered to avoid the payload construction and
+        // async state-machine overhead on the hot path.
+        let (executor, execution_request) = match plugin_req_state {
+            Some(plugin_req_state) if !plugin_req_state.plugins.is_empty() => {
+                run_subscribe_plugins(subgraph_name, executor, execution_request, plugin_req_state)
+                    .await?
+            }
+            _ => (executor, execution_request),
+        };
 
         let subscribe_fut = executor.subscribe(execution_request, timeout);
 
@@ -916,6 +929,49 @@ impl SubgraphExecutorMap {
 
         Ok(())
     }
+}
+
+/// Drives the `on_subgraph_execute` hook for the subscribe path.
+///
+/// Control-flow contract on the subscribe path (also documented on
+/// [`OnSubgraphExecuteStartHookPayload`]):
+///
+/// * `Proceed` — fully supported, mirrors the execute path.
+/// * `EndWithResponse` — returns
+///   [`SubgraphExecutorError::SubscribePluginHookUnsupported`]; materialising a
+///   `SubgraphResponse<'exec>` into the `'static` stream needs a dedicated
+///   solution and is intentionally deferred.
+/// * `OnEnd` — the plugin's request mutations are preserved, but the
+///   end-of-stream callback is **not invoked** (there is no symmetric
+///   end-of-stream point yet). Plugins that need end-of-stream behaviour for
+///   subscriptions should not register an `on_end` callback here today.
+async fn run_subscribe_plugins<'exec>(
+    subgraph_name: &'exec str,
+    executor: SubgraphExecutorBoxedArc,
+    execution_request: SubgraphExecutionRequest<'exec>,
+    plugin_req_state: &'exec PluginRequestState<'exec>,
+) -> Result<(SubgraphExecutorBoxedArc, SubgraphExecutionRequest<'exec>), SubgraphExecutorError> {
+    let mut start_payload = OnSubgraphExecuteStartHookPayload {
+        router_http_request: &plugin_req_state.router_http_request,
+        context: &plugin_req_state.context,
+        request_context: plugin_req_state
+            .request_context
+            .for_plugin::<hooks::OnSubgraphExecute>(),
+        subgraph_name,
+        executor,
+        execution_request,
+    };
+    for plugin in plugin_req_state.plugins.as_ref() {
+        let result = plugin.on_subgraph_execute(start_payload).await;
+        start_payload = result.payload;
+        match result.control_flow {
+            StartControlFlow::Proceed | StartControlFlow::OnEnd(_) => {}
+            StartControlFlow::EndWithResponse(_) => {
+                return Err(SubgraphExecutorError::SubscribePluginHookUnsupported);
+            }
+        }
+    }
+    Ok((start_payload.executor, start_payload.execution_request))
 }
 
 /// Resolves a timeout DurationOrProgram to a concrete Duration.

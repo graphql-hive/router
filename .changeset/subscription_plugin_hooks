@@ -1,0 +1,20 @@
+---
+hive-router-plan-executor: minor
+hive-router: patch
+---
+
+## Invoke `on_subgraph_execute` plugin hook on the subscribe path.
+
+`on_subgraph_execute` previously fired only for queries and mutations; subscription registration bypassed all subgraph plugin hooks. Plugins that mutate `execution_request.headers` had no way of affecting the subscription registration request. For example, a plugin that injects an `Authorization` header from a refreshed JWT cookie (like `plugin_examples/jwt_cookie`) now applies the same header injection when registering subscriptions with upstream subgraphs.
+
+The control-flow contract on the subscribe path is documented on `OnSubgraphExecuteStartHookPayload`:
+
+- `Proceed` — fully supported, mirrors the execute path.
+- `EndWithResponse` — returns `SUBGRAPH_SUBSCRIBE_PLUGIN_HOOK_UNSUPPORTED`. Materialising a `SubgraphResponse<'exec>` into the `'static` stream returned by `subscribe` needs a dedicated solution; short-circuit from an earlier hook (`on_http_request`, `on_graphql_params`, `on_query_plan`) instead.
+- `OnEnd` — the plugin's request-payload mutations are preserved, but the end-of-stream callback is not invoked (no symmetric end-of-stream point yet).
+
+Tracked in [#922](https://github.com/graphql-hive/router/issues/922).
+
+### Breaking change
+
+`SubgraphExecutorMap::subscribe` now takes `subgraph_name: &'exec str` (was `&str`) and an additional `plugin_req_state: Option<&'exec PluginRequestState<'exec>>` argument, matching the surface of `SubgraphExecutorMap::execute`. Callers outside the router binary need to thread `plugin_req_state` through (or pass `None`).

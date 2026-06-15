@@ -236,6 +236,7 @@ pub async fn execute_query_plan<'exec>(
                 &fetch_node.service_name,
                 subgraph_request,
                 &opts.client_request,
+                opts.plugin_req_state.as_ref(),
             )
             .await
             .with_plan_context(LazyPlanContext {
