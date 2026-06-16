@@ -1,4 +1,12 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.32 (2026-06-16)
+
+### Fixes
+
+#### Fix union list FieldMove creation
+
+In some cases union list was treated as single union field in graph.
+
 ## 0.0.31 (2026-06-15)
 
 ### Fixes
