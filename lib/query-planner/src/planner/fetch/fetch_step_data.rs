@@ -48,7 +48,7 @@ pub struct FetchStepData<State> {
     pub internal_aliases_locations: Vec<(String, AliasesRecords)>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FetchStepKind {
     Entity,
     Root,

@@ -77,7 +77,10 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
 
 #[derive(Debug)]
 pub enum NavigationTarget<'op> {
-    Field(&'op FieldSelection),
+    Field {
+        field: &'op FieldSelection,
+        target_subgraph_ids: Option<&'op HashSet<String>>,
+    },
     ConcreteType(&'op str, Option<Condition>),
 }
 
@@ -90,7 +93,7 @@ enum NavigationTargetKey<'op> {
 impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
     fn from(target: &'op NavigationTarget<'op>) -> Self {
         match target {
-            NavigationTarget::Field(field) => NavigationTargetKey::Field(&field.name),
+            NavigationTarget::Field { field, .. } => NavigationTargetKey::Field(&field.name),
             NavigationTarget::ConcreteType(type_name, _) => {
                 NavigationTargetKey::ConcreteType(type_name)
             }
@@ -192,6 +195,17 @@ impl<'graph> PathSearch<'graph> {
 
                 let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
 
+                if let NavigationTarget::Field {
+                    target_subgraph_ids: Some(target_subgraph_names),
+                    ..
+                } = target
+                {
+                    if !target_subgraph_names.contains(edge_tail_graph_id) {
+                        trace!("Ignoring. Target field is not resolvable in this graph");
+                        continue;
+                    }
+                }
+
                 if visited_graphs.contains(edge_tail_graph_id) {
                     trace!(
                     "Ignoring, graph is excluded and already visited (current: {}, visited: {:?})",
@@ -201,7 +215,6 @@ impl<'graph> PathSearch<'graph> {
                     continue;
                 }
 
-                let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
                 let edge = edge_ref.weight();
 
                 if edge_tail_graph_id == source_graph_id
@@ -422,7 +435,7 @@ impl<'graph> PathSearch<'graph> {
         }
 
         let edges_iter: Box<dyn Iterator<Item = _>> = match target {
-            NavigationTarget::Field(field) => {
+            NavigationTarget::Field { field, .. } => {
                 Box::new(graph.edges_from(path_tail_index).filter(
                     move |e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name),
                 ))
@@ -451,6 +464,61 @@ impl<'graph> PathSearch<'graph> {
 
         Ok(result)
     }
+
+    fn find_direct_path(
+        &mut self,
+        path: &OperationPath<'graph>,
+        target: &NavigationTarget<'_>,
+    ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
+        let graph = self.graph;
+        let path_tail_index = path.tail();
+
+        // Respect the path's current union scope when targeting a concrete type.
+        if let NavigationTarget::ConcreteType(type_name, _) = target {
+            if !path.can_resolve_union_member(type_name) {
+                return Ok(None);
+            }
+        }
+
+        let edges_iter: Box<dyn Iterator<Item = _>> = match target {
+            NavigationTarget::Field { field, .. } => {
+                Box::new(graph.edges_from(path_tail_index).filter(
+                    move |e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name),
+                ))
+            }
+            NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
+                graph
+                    .edges_from(path_tail_index)
+                    .filter(move |e| match e.weight() {
+                        Edge::AbstractMove(t) => t == type_name,
+                        Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
+                        _ => false,
+                    }),
+            ),
+        };
+
+        for edge_ref in edges_iter {
+            if let Some(new_path) = self.try_advance_direct_path(path, &edge_ref, target)? {
+                return Ok(Some(new_path));
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+#[instrument(level = "trace", skip_all, fields(
+    path = path.pretty_print(graph),
+    current_cost = path.cost,
+))]
+pub fn find_direct_path<'graph>(
+    graph: &'graph Graph,
+    override_context: &'graph PlannerOverrideContext,
+    path: &OperationPath<'graph>,
+    target: &NavigationTarget<'_>,
+    cancellation_token: &'graph CancellationToken,
+) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
+    PathSearch::new(graph, override_context, cancellation_token).find_direct_path(path, target)
 }
 
 #[instrument(level = "trace", skip_all, fields(
@@ -644,40 +712,31 @@ impl<'graph> PathSearch<'graph> {
         excluded: &ExcludedFromLookup<'graph>,
         use_only_direct_edges: bool,
     ) -> Result<FieldRequirementsResult<'graph>, WalkOperationError> {
-        let mut direct_path_results: Vec<Vec<OperationPath<'graph>>> =
-            Vec::with_capacity(move_requirement.paths.len());
-        let mut indirect_path_results: Vec<Vec<OperationPath<'graph>>> =
-            Vec::with_capacity(move_requirement.paths.len());
+        let mut next_paths: Vec<OperationPath<'graph>> = Vec::new();
 
         for path in move_requirement.paths.iter() {
-            let direct_paths = self.find_direct_paths(path, &NavigationTarget::Field(field))?;
+            let direct_paths = self.find_direct_paths(
+                path,
+                &NavigationTarget::Field {
+                    field,
+                    target_subgraph_ids: None,
+                },
+            )?;
             // Skip looking for indirect paths if we already found direct paths to a leaf
             let found_direct_paths_to_leaf = !direct_paths.is_empty() && field.is_leaf();
-            direct_path_results.push(direct_paths);
+            next_paths.extend(direct_paths);
 
             let needs_indirect = !use_only_direct_edges && !found_direct_paths_to_leaf;
-            let indirect_paths = if needs_indirect {
-                self.find_indirect_paths(path, &NavigationTarget::Field(field), excluded)?
-            } else {
-                Vec::new()
-            };
-
-            indirect_path_results.push(indirect_paths);
-        }
-
-        // sum of direct and indirect
-        let total_capacity: usize = direct_path_results.iter().map(|v| v.len()).sum::<usize>()
-            + indirect_path_results.iter().map(|v| v.len()).sum::<usize>();
-
-        let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(total_capacity);
-
-        // These extend calls should not reallocate `next_paths`.
-        for paths_vec in direct_path_results {
-            next_paths.extend(paths_vec);
-        }
-        // No need to check use_only_direct_edges again, indirect_path_results_vecs will be empty if not used.
-        for paths_vec in indirect_path_results {
-            next_paths.extend(paths_vec);
+            if needs_indirect {
+                next_paths.extend(self.find_indirect_paths(
+                    path,
+                    &NavigationTarget::Field {
+                        field,
+                        target_subgraph_ids: None,
+                    },
+                    excluded,
+                )?);
+            }
         }
 
         if next_paths.is_empty() {
@@ -719,43 +778,23 @@ impl<'graph> PathSearch<'graph> {
         excluded: &ExcludedFromLookup<'graph>,
     ) -> Result<FragmentRequirementsResult<'graph>, WalkOperationError> {
         let type_name = &fragment_selection.type_condition;
-        // Collect all Vec<OperationPath<'graph>> results from find_direct_paths
-        let mut direct_path_results: Vec<Vec<OperationPath<'graph>>> =
-            Vec::with_capacity(requirement.paths.len());
+        let mut next_paths: Vec<OperationPath<'graph>> = Vec::new();
+
         for path in requirement.paths.iter() {
-            direct_path_results.push(self.find_direct_paths(
+            next_paths.extend(self.find_direct_paths(
                 path,
                 // @skip/@include can't be used in @requires and @provides,
                 // that's why we pass no condition
                 &NavigationTarget::ConcreteType(type_name, None),
             )?);
-        }
 
-        // Collect all Vec<OperationPath<'graph>> results from find_indirect_paths
-        let mut indirect_path_results: Vec<Vec<OperationPath<'graph>>> =
-            Vec::with_capacity(requirement.paths.len());
-        for path_from_rc in requirement.paths.iter() {
-            indirect_path_results.push(self.find_indirect_paths(
-                path_from_rc,
+            next_paths.extend(self.find_indirect_paths(
+                path,
                 // @skip/@include can't be used in @requires and @provides,
                 // that's why we pass no condition
                 &NavigationTarget::ConcreteType(type_name, None),
                 excluded,
             )?);
-        }
-
-        // sum of direct and indirect
-        let total_capacity: usize = direct_path_results.iter().map(|v| v.len()).sum::<usize>()
-            + indirect_path_results.iter().map(|v| v.len()).sum::<usize>();
-
-        let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(total_capacity);
-
-        // These extend calls should not reallocate `next_paths`.
-        for paths_vec in direct_path_results {
-            next_paths.extend(paths_vec);
-        }
-        for paths_vec in indirect_path_results {
-            next_paths.extend(paths_vec);
         }
 
         if next_paths.is_empty() {
