@@ -437,14 +437,16 @@ fn process_field<'a>(
         )?;
         trace!("Direct paths found: {}", direct_paths.len());
 
+        let found_direct_paths_to_leaf = !direct_paths.is_empty() && field.is_leaf();
+
         if !direct_paths.is_empty() {
             advanced = true;
-            for direct_path in direct_paths {
-                tracker.add(&direct_path)?;
+            for direct_path in &direct_paths {
+                tracker.add(direct_path)?;
             }
         }
 
-        if !fields_to_resolve_locally.contains(&field.name) {
+        if !fields_to_resolve_locally.contains(&field.name) && !found_direct_paths_to_leaf {
             let indirect_paths = find_indirect_paths(
                 graph,
                 override_context,
