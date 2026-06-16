@@ -12,6 +12,7 @@ use mockito::Mock;
 use ntex::{
     client::ClientResponse,
     io::Sealed,
+    time::Seconds,
     web::{self, test},
     ws::WsConnection,
 };
@@ -834,7 +835,17 @@ impl TestRouter<Built> {
         let serv_paths = paths.clone();
         let serv_prometheus = prometheus.clone();
         let long_lived_limit = LongLivedClientLimitService::new(&shared_state.router_config);
-        let mut serv_config = test::config().listener(serv_listener);
+        let mut serv_config = test::config()
+            .client_timeout(Seconds(
+                shared_state
+                    .router_config
+                    .traffic_shaping
+                    .router
+                    .request_timeout
+                    .as_secs() as u16
+                    + 1,
+            ))
+            .listener(serv_listener);
         if let Some(tls_config) = serv_shared_state
             .router_config
             .traffic_shaping
@@ -846,6 +857,7 @@ impl TestRouter<Built> {
                 .expect("failed to build rustls config for test router");
             serv_config = serv_config.rustls(rustls_config);
         }
+
         let serv = test::server_with(serv_config, move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();

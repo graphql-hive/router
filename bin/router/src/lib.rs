@@ -76,7 +76,12 @@ pub use http;
 pub use mimalloc::MiMalloc as RouterGlobalAllocator;
 pub use ntex;
 pub use ntex::main;
-use ntex::web::{self, HttpRequest};
+use ntex::{
+    http::HttpServiceConfig,
+    time::Seconds,
+    web::{self, HttpRequest},
+    SharedCfg,
+};
 pub use sonic_rs;
 pub use tokio;
 pub use tracing;
@@ -335,10 +340,25 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
                 landing_page_handler(landing_page_path.clone())
             }))
     });
+
     if let Some(workers) = workers {
         info!("configuring HTTP server with {} worker(s)", workers);
         server = server.workers(workers.get());
     }
+
+    let ntex_timeout = shared_state_clone
+        .router_config
+        .traffic_shaping
+        .router
+        .request_timeout
+        .as_secs() as u16
+        + 1;
+    let http_cfg = HttpServiceConfig::new()
+        // ntex HTTP timeout is set as a safe-guard on top of Hive Router's timeout
+        .set_client_timeout(Seconds(ntex_timeout));
+    let cfg = SharedCfg::new("HIVE_ROUTER").add(http_cfg);
+
+    server = server.config(cfg);
 
     let tls_config = shared_state_clone
         .router_config
