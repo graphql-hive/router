@@ -96,6 +96,12 @@ pub enum SubgraphExecutorError {
     #[error("Subgraph HTTP callback responded with a not-OK status code '{0}'")]
     #[strum(serialize = "SUBGRAPH_HTTP_CALLBACK_STATUS_CODE_NOT_OK")]
     HttpCallbackStatusCodeNotOk(StatusCode),
+    #[error("Failed to parse callback.public_url \"{0}\" as URI: {1}")]
+    #[strum(serialize = "SUBGRAPH_HTTP_CALLBACK_PUBLIC_URL_PARSE_FAILURE`")]
+    CallbackPublicUrlParseFailure(String, InvalidUri),
+    #[error("callback.public_url \"{0}\" must be an absolute URL with both a scheme and a host")]
+    #[strum(serialize = "SUBGRAPH_HTTP_CALLBACK_PUBLIC_URL_NOT_ABSOLUTE")]
+    CallbackPublicUrlNotAbsolute(String),
     #[error("HTTP Callback protocol does not support single-shot execution, use it only for subscriptions")]
     #[strum(serialize = "SUBGRAPH_HTTP_CALLBACK_NO_SINGLE")]
     HttpCallbackNoSingle,
