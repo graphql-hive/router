@@ -245,7 +245,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "media|[Movie]") {
+        Flatten(path: "media.@|[Movie]") {
           Fetch(service: "c") {
             {
               ... on Movie {
@@ -281,6 +281,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "media"
               },
+              "@",
               {
                 "TypeCondition": [
                   "Movie"

@@ -833,7 +833,7 @@ impl Graph {
                                     field_name.clone(),
                                     def_name.clone(),
                                     state.is_scalar_type(target_type),
-                                    false,
+                                    field_definition.field_type.is_list(),
                                     None,
                                     requirements.clone(),
                                     overridden_by.clone(),
