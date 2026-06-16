@@ -231,8 +231,8 @@ impl<'a> StepConverter<'a> {
         current_type_name: &str,
         selection_set: &mut SelectionSet,
     ) -> Result<bool, FetchGraphError> {
-        let candidate = {
-            let branches = selection_set
+        let (candidate, union_interface_name) = {
+            let branches: Vec<ObjectTypeBranch<'_>> = selection_set
                 .items
                 .iter()
                 .enumerate()
@@ -245,9 +245,41 @@ impl<'a> StepConverter<'a> {
                     }),
                     _ => None,
                 })
-                .collect::<Vec<_>>();
+                .collect();
 
-            self.try_fold_into_interface(current_type_name, branches)?
+            let result = self.try_fold_into_interface(current_type_name, branches)?;
+            if result.is_some() {
+                (result, None)
+            } else {
+                // When `current_type_name` is a union, `try_fold_into_interface`
+                // returns `None` because `local_interface()` rejects non-interface
+                // types. If the union's concrete-type branches all implement a
+                // common interface with identical selections, we can still fold
+                // them into a single `... on Interface { ... }` fragment.
+                let branches2: Vec<ObjectTypeBranch<'_>> = selection_set
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, item)| match item {
+                        SelectionItem::InlineFragment(fragment) => Some(ObjectTypeBranch {
+                            type_name: fragment.type_condition.as_str(),
+                            selection_set: &fragment.selections,
+                            condition: Option::<Condition>::from(fragment),
+                            remove_index: Some(index),
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+
+                if let Some(iface) =
+                    self.find_common_interface_for_union(current_type_name, &branches2)
+                {
+                    let r = self.try_fold_into_interface(&iface, branches2)?;
+                    (r, Some(iface))
+                } else {
+                    (None, None)
+                }
+            }
         };
 
         let Some(candidate) = candidate else {
@@ -268,7 +300,21 @@ impl<'a> StepConverter<'a> {
             })
             .collect();
 
-        if let Some(condition) = candidate.condition {
+        if let Some(ref iface_name) = union_interface_name {
+            // Union case: emit `... on InterfaceName { ... }` so the subgraph
+            // receives the original interface fragment instead of N concrete ones.
+            selection_set
+                .items
+                .push(SelectionItem::InlineFragment(InlineFragmentSelection {
+                    type_condition: iface_name.clone(),
+                    selections: candidate.selection_set,
+                    skip_if: candidate.condition.as_ref().and_then(|c| c.to_skip_if()),
+                    include_if: candidate
+                        .condition
+                        .as_ref()
+                        .and_then(|c| c.to_include_if()),
+                }));
+        } else if let Some(condition) = candidate.condition {
             // If the original branches had @skip/@include
             selection_set
                 .items
@@ -284,6 +330,56 @@ impl<'a> StepConverter<'a> {
         }
 
         Ok(true)
+    }
+
+    /// When `type_name` is a union in the supergraph, find a common interface
+    /// that every concrete-type branch implements in this subgraph.
+    ///
+    /// Returns `None` when `type_name` is not a union, when no branches are
+    /// present, or when no single interface is shared by all branch types.
+    fn find_common_interface_for_union(
+        &self,
+        type_name: &str,
+        branches: &[ObjectTypeBranch<'_>],
+    ) -> Option<String> {
+        let supergraph_def = self.supergraph.definitions.get(type_name)?;
+        if !matches!(supergraph_def, SupergraphDefinition::Union(_)) {
+            return None;
+        }
+
+        if branches.is_empty() {
+            return None;
+        }
+
+        let first_interfaces = self.interfaces_of_object_type(branches[0].type_name)?;
+
+        let common: BTreeSet<&str> = first_interfaces
+            .iter()
+            .copied()
+            .filter(|iface| {
+                branches[1..].iter().all(|branch| {
+                    self.interfaces_of_object_type(branch.type_name)
+                        .map_or(false, |ifaces| ifaces.contains(iface))
+                })
+            })
+            .collect();
+
+        common.into_iter().next().map(|s| s.to_string())
+    }
+
+    /// Return the interfaces that `type_name` implements in this subgraph.
+    fn interfaces_of_object_type(&self, type_name: &str) -> Option<Vec<&str>> {
+        if let SupergraphDefinition::Object(obj) = self.supergraph.definitions.get(type_name)? {
+            Some(
+                obj.join_implements
+                    .iter()
+                    .filter(|ji| ji.graph_id == self.subgraph.graph_id)
+                    .map(|ji| ji.interface.as_str())
+                    .collect(),
+            )
+        } else {
+            None
+        }
     }
 
     fn try_fold_into_interface(
