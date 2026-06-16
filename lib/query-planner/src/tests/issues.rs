@@ -546,3 +546,36 @@ fn issue_965_mixed_nested_fragments_with_directives_test() -> Result<(), Box<dyn
 
     Ok(())
 }
+
+#[test]
+fn issue_interface_object_typename() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        {
+          me {
+            __typename
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/issues/infinite-typename-interfaceobject.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "s3") {
+        {
+          me {
+            __typename
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
