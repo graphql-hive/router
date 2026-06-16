@@ -346,13 +346,17 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         server = server.workers(workers.get());
     }
 
-    let ntex_timeout = shared_state_clone
-        .router_config
-        .traffic_shaping
-        .router
-        .request_timeout
-        .as_secs() as u16
-        + 1;
+    let ntex_timeout = u16::try_from(
+        shared_state_clone
+            .router_config
+            .traffic_shaping
+            .router
+            .request_timeout
+            .as_secs()
+            .saturating_add(1),
+    )
+    .unwrap_or(u16::MAX);
+
     let http_cfg = HttpServiceConfig::new()
         // ntex HTTP timeout is set as a safe-guard on top of Hive Router's timeout
         .set_client_timeout(Seconds(ntex_timeout));
