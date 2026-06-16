@@ -759,36 +759,13 @@ impl SubgraphExecutorMap {
 
                 let subgraph_config = self.resolve_subgraph_config(subgraph_name)?;
 
-                let public_url = match &callback_config.public_url {
-                    ValueOrExpression::Value(url) => url.clone(),
-                    ValueOrExpression::Expression { expression } => expression
-                        .compile_expression(None)
-                        .map_err(|err| {
-                            SubgraphExecutorError::EndpointExpressionBuild(
-                                "callback.public_url".to_string(),
-                                err.diagnostics,
-                            )
-                        })?
-                        .execute(VrlValue::Null)
-                        .map_err(|err| {
-                            SubgraphExecutorError::EndpointExpressionResolutionFailure(
-                                err.to_string(),
-                            )
-                        })?
-                        .as_str()
-                        .ok_or(SubgraphExecutorError::EndpointExpressionWrongType)?
-                        .to_string(),
-                };
-                // validate that the resolved value is a well-formed URL
-                public_url.parse::<Uri>().map_err(|err| {
-                    SubgraphExecutorError::EndpointParseFailure(public_url.clone(), err)
-                })?;
+                let public_url = self.resolve_public_url(&callback_config.public_url)?;
 
                 let callback_executor = HttpCallbackSubgraphExecutor::new(
                     subgraph_name.to_string(),
                     endpoint_uri,
                     subgraph_config.client,
-                    public_url,
+                    public_url.to_string(),
                     heartbeat_interval_ms,
                     self.callback_subscriptions.clone(),
                 )
@@ -802,6 +779,43 @@ impl SubgraphExecutorMap {
                 Ok(callback_executor)
             }
         }
+    }
+
+    #[inline]
+    fn resolve_public_url(
+        &self,
+        public_url: &ValueOrExpression<String>,
+    ) -> Result<Uri, SubgraphExecutorError> {
+        let raw = match public_url {
+            ValueOrExpression::Value(url) => url.clone(),
+            ValueOrExpression::Expression { expression } => expression
+                .compile_expression(None)
+                .map_err(|err| {
+                    SubgraphExecutorError::EndpointExpressionBuild(
+                        "callback.public_url".to_string(),
+                        err.diagnostics,
+                    )
+                })?
+                .execute(VrlValue::Null)
+                .map_err(|err| {
+                    SubgraphExecutorError::EndpointExpressionResolutionFailure(err.to_string())
+                })?
+                .as_str()
+                .ok_or(SubgraphExecutorError::EndpointExpressionWrongType)
+                .map(|s| s.to_string())?,
+        };
+
+        let uri = raw.parse::<Uri>().map_err(|err| {
+            SubgraphExecutorError::CallbackPublicUrlParseFailure(raw.clone(), err)
+        })?;
+
+        // Uri accepts relative paths like "foo" without a scheme or authority, so we must reejct
+        // those here because the subgraph needs a full URL to send callbacks to
+        if uri.scheme().is_none() || uri.authority().is_none() {
+            return Err(SubgraphExecutorError::CallbackPublicUrlNotAbsolute(raw));
+        }
+
+        Ok(uri)
     }
 
     /// Resolves traffic shaping configuration for a specific subgraph, applying subgraph-specific
