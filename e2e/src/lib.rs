@@ -71,6 +71,8 @@ mod timeout_per_subgraph;
 #[cfg(test)]
 mod tls;
 #[cfg(test)]
+mod traffic_shaping;
+#[cfg(test)]
 mod websocket;
 
 pub use insta;
