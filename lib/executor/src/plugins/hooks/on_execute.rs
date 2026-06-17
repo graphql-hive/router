@@ -8,8 +8,8 @@ use sonic_rs::json;
 use crate::execution::plan::PlanExecutionOutput;
 use crate::plugin_context::{PluginContext, RouterHttpRequest};
 use crate::plugin_trait::{
-    from_graphql_errors_to_bytes, EndHookPayload, EndHookResult, FromGraphQLErrorToResponse,
-    FromGraphQLErrorsToResponse, StartHookPayload, StartHookResult,
+    from_graphql_errors_to_bytes, EarlyHTTPResponse, EndHookPayload, EndHookResult,
+    FromGraphQLErrorToResponse, FromGraphQLErrorsToResponse, StartHookPayload, StartHookResult,
 };
 use crate::request_context::RequestContextPluginApi;
 use crate::response::graphql_error::GraphQLError;
@@ -40,6 +40,23 @@ pub struct DemandControlCost {
     pub max: u64,
     /// The post-execution actual cost, computed from the real response.
     pub actual: u64,
+}
+
+pub enum OnExecuteResponse {
+    Output(PlanExecutionOutput),
+    EarlyResponse(EarlyHTTPResponse),
+}
+
+impl From<PlanExecutionOutput> for OnExecuteResponse {
+    fn from(response: PlanExecutionOutput) -> Self {
+        Self::Output(response)
+    }
+}
+
+impl From<EarlyHTTPResponse> for OnExecuteResponse {
+    fn from(response: EarlyHTTPResponse) -> Self {
+        Self::EarlyResponse(response)
+    }
 }
 
 pub struct OnExecuteStartHookPayload<'exec> {
@@ -148,7 +165,7 @@ impl<'exec> OnExecuteStartHookPayload<'exec> {
     }
 }
 
-impl<'exec> StartHookPayload<OnExecuteEndHookPayload<'exec>, PlanExecutionOutput>
+impl<'exec> StartHookPayload<OnExecuteEndHookPayload<'exec>, OnExecuteResponse>
     for OnExecuteStartHookPayload<'exec>
 {
 }
@@ -157,7 +174,7 @@ pub type OnExecuteStartHookResult<'exec> = StartHookResult<
     'exec,
     OnExecuteStartHookPayload<'exec>,
     OnExecuteEndHookPayload<'exec>,
-    PlanExecutionOutput,
+    OnExecuteResponse,
 >;
 
 pub struct OnExecuteEndHookPayload<'exec> {
@@ -204,10 +221,31 @@ impl<'exec> OnExecuteEndHookPayload<'exec> {
     }
 }
 
-impl<'exec> EndHookPayload<PlanExecutionOutput> for OnExecuteEndHookPayload<'exec> {}
+impl<'exec> EndHookPayload<OnExecuteResponse> for OnExecuteEndHookPayload<'exec> {}
 
 pub type OnExecuteEndHookResult<'exec> =
-    EndHookResult<OnExecuteEndHookPayload<'exec>, PlanExecutionOutput>;
+    EndHookResult<OnExecuteEndHookPayload<'exec>, OnExecuteResponse>;
+
+impl FromGraphQLErrorToResponse for OnExecuteResponse {
+    fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self {
+        Self::Output(PlanExecutionOutput::from_graphql_error_to_response(
+            error,
+            status_code,
+        ))
+    }
+}
+
+impl FromGraphQLErrorsToResponse for OnExecuteResponse {
+    fn from_graphql_errors_to_response(
+        errors: Vec<GraphQLError>,
+        status_code: http::StatusCode,
+    ) -> Self {
+        Self::Output(PlanExecutionOutput::from_graphql_errors_to_response(
+            errors,
+            status_code,
+        ))
+    }
+}
 
 impl FromGraphQLErrorToResponse for PlanExecutionOutput {
     fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self {
@@ -224,7 +262,6 @@ impl FromGraphQLErrorsToResponse for PlanExecutionOutput {
         PlanExecutionOutput {
             body: from_graphql_errors_to_bytes(errors),
             error_count,
-            response_headers_aggregator: None,
             status_code,
         }
     }

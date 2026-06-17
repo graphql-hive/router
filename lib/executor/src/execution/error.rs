@@ -76,6 +76,15 @@ impl PlanExecutionError {
     pub fn affected_path(&self) -> &Option<String> {
         &self.context.affected_path
     }
+
+    pub fn subgraph_response_headers(&self) -> Option<&http::HeaderMap> {
+        match &self.kind {
+            PlanExecutionErrorKind::SubgraphExecutor(subgraph_error) => {
+                subgraph_error.response_headers()
+            }
+            _ => None,
+        }
+    }
 }
 
 // This is needed for individual fetch node error handling

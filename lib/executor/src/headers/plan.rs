@@ -117,7 +117,7 @@ pub struct ResponsePropagateRegex {
     pub strategy: HeaderAggregationStrategy,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum HeaderAggregationStrategy {
     First,
     Last,

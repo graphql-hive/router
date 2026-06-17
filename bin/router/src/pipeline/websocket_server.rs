@@ -1,4 +1,5 @@
 use hive_console_sdk::agent::usage_agent::RequestDetails;
+use hive_router_plan_executor::headers::response::ResponseHeaderSink;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
@@ -208,6 +209,8 @@ async fn handle_text_frame(
     ws_uri: &http::Uri,
     ws_path: &Path<http::Uri>,
 ) -> Option<ws::Message> {
+    // TODO: cover response header aggregation for WS
+    let response_header_sink = ResponseHeaderSink::default();
     let client_msg: ClientMessage = match sonic_rs::from_str(&text) {
         Ok(msg) => msg,
         Err(e) => {
@@ -479,6 +482,7 @@ async fn handle_text_frame(
                     request_context,
                     &response_mode,
                     guard,
+                    response_header_sink.clone()
                 );
 
                 let shared_response = if let Some(fp) = fingerprint {

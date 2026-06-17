@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use hive_console_sdk::circuit_breaker::CircuitBreakerError;
-use http::{uri::InvalidUri, StatusCode};
+use http::{uri::InvalidUri, HeaderMap, StatusCode};
 use rustls::server::VerifierBuilderError;
 use strum::IntoStaticStr;
 
@@ -50,13 +52,13 @@ pub enum SubgraphExecutorError {
     RequestTimeout(#[from] tokio::time::error::Elapsed),
     #[error("Failed to read response body from subgraph \"{0}\": {1}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_READ_FAILURE")]
-    ResponseBodyReadFailure(String, String),
+    ResponseBodyReadFailure(String, String, Arc<HeaderMap>),
     #[error("Received empty response body from subgraph \"{0}\"")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_EMPTY")]
-    EmptyResponseBody(String),
+    EmptyResponseBody(String, Arc<HeaderMap>),
     #[error("Failed to deserialize subgraph response: {0}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE")]
-    ResponseDeserializationFailure(sonic_rs::Error),
+    ResponseDeserializationFailure(sonic_rs::Error, Option<Arc<HeaderMap>>),
     #[error(transparent)]
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     TlsCertificatesError(#[from] TlsCertificatesError),
@@ -121,6 +123,16 @@ pub enum SubgraphExecutorError {
 impl SubgraphExecutorError {
     pub fn error_code(&self) -> &'static str {
         self.into()
+    }
+
+    pub fn response_headers(&self) -> Option<&http::HeaderMap> {
+        match self {
+            Self::InternalServerError(response) => response.headers.as_deref(),
+            Self::EmptyResponseBody(_, headers) => Some(headers.as_ref()),
+            Self::ResponseBodyReadFailure(_, _, headers) => Some(headers.as_ref()),
+            Self::ResponseDeserializationFailure(_, headers) => headers.as_deref(),
+            _ => None,
+        }
     }
 }
 

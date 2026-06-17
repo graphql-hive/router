@@ -1,7 +1,4 @@
 use crate::{
-    execution::plan::PlanExecutionOutput,
-    headers::plan::HeaderAggregationStrategy,
-    headers::response::ResponseHeaderAggregator,
     hooks::{
         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
         on_graphql_error::{OnGraphQLErrorHookPayload, OnGraphQLErrorHookResult},
@@ -23,8 +20,6 @@ use crate::{
     },
     response::graphql_error::GraphQLError,
 };
-use ahash::HashMap;
-use http::{HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use sonic_rs::json;
 
@@ -598,35 +593,4 @@ pub struct EarlyHTTPResponse {
     pub body: Vec<u8>,
     pub headers: http::HeaderMap,
     pub status_code: http::StatusCode,
-}
-
-impl From<EarlyHTTPResponse> for PlanExecutionOutput {
-    fn from(val: EarlyHTTPResponse) -> Self {
-        let response_headers_aggregator = if val.headers.is_empty() {
-            None
-        } else {
-            let mut entries: HashMap<HeaderName, (HeaderAggregationStrategy, Vec<HeaderValue>)> =
-                Default::default();
-            let mut last_name = None;
-            for (name, value) in val.headers.into_iter() {
-                if let Some(name) = name {
-                    last_name = Some(name);
-                }
-                if let Some(name) = &last_name {
-                    let aggregated_header = entries
-                        .entry(name.clone())
-                        .or_insert_with(|| (HeaderAggregationStrategy::Append, Vec::new()));
-                    aggregated_header.1.push(value);
-                }
-            }
-
-            Some(ResponseHeaderAggregator { entries })
-        };
-        PlanExecutionOutput {
-            body: val.body,
-            response_headers_aggregator,
-            error_count: 0,
-            status_code: val.status_code,
-        }
-    }
 }

@@ -8,15 +8,15 @@ use crate::{
             ResponseInsertExpression, ResponseInsertStatic, ResponsePropagateNamed,
             ResponsePropagateRegex, ResponseRemoveNamed, ResponseRemoveRegex,
         },
-        sanitizer::is_denied_header,
     },
 };
 use ahash::HashMap;
 use hive_router_internal::expressions::ExecutableProgram;
 use ntex::http::HeaderMap as NtexHeaderMap;
 use std::iter::once;
+use std::sync::{Arc, Mutex};
 
-use super::sanitizer::is_never_join_header;
+use super::sanitizer::{is_denied_response_header, is_never_join_header};
 use http::{header::InvalidHeaderValue, HeaderMap, HeaderName, HeaderValue};
 
 pub fn apply_subgraph_response_headers(
@@ -91,7 +91,7 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
         let mut matched = false;
 
         for header_name in &self.names {
-            if is_denied_header(header_name) {
+            if is_denied_response_header(header_name) {
                 continue;
             }
 
@@ -109,7 +109,7 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
             if let (Some(default_value), Some(first_name)) = (&self.default, self.names.first()) {
                 let destination_name = self.rename.as_ref().unwrap_or(first_name);
 
-                if is_denied_header(destination_name) {
+                if is_denied_response_header(destination_name) {
                     return Ok(());
                 }
 
@@ -128,7 +128,7 @@ impl ApplyResponseHeader for ResponsePropagateRegex {
         accumulator: &mut ResponseHeaderAggregator,
     ) -> Result<(), HeaderRuleRuntimeError> {
         for (header_name, header_value) in ctx.subgraph_headers {
-            if is_denied_header(header_name) {
+            if is_denied_response_header(header_name) {
                 continue;
             }
 
@@ -163,7 +163,7 @@ impl ApplyResponseHeader for ResponseInsertStatic {
         _ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     ) -> Result<(), HeaderRuleRuntimeError> {
-        if is_denied_header(&self.name) {
+        if is_denied_response_header(&self.name) {
             return Ok(());
         }
 
@@ -185,7 +185,7 @@ impl ApplyResponseHeader for ResponseInsertExpression {
         ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     ) -> Result<(), HeaderRuleRuntimeError> {
-        if is_denied_header(&self.name) {
+        if is_denied_response_header(&self.name) {
             return Ok(());
         }
         let value = self.expression.execute(ctx.into()).map_err(|err| {
@@ -212,7 +212,7 @@ impl ApplyResponseHeader for ResponseRemoveNamed {
         accumulator: &mut ResponseHeaderAggregator,
     ) -> Result<(), HeaderRuleRuntimeError> {
         for header_name in &self.names {
-            if is_denied_header(header_name) {
+            if is_denied_response_header(header_name) {
                 continue;
             }
             accumulator.entries.remove(header_name);
@@ -229,7 +229,7 @@ impl ApplyResponseHeader for ResponseRemoveRegex {
         accumulator: &mut ResponseHeaderAggregator,
     ) -> Result<(), HeaderRuleRuntimeError> {
         accumulator.entries.retain(|name, _| {
-            if is_denied_header(name) {
+            if is_denied_response_header(name) {
                 // Denied headers (hop-by–hop) are never inserted in the first place
                 // and should not be removed here.
                 return true;
@@ -247,7 +247,7 @@ impl ResponseHeaderAggregator {
     #[inline]
     pub fn modify_client_response_headers(
         self,
-        out: &mut ntex::http::ResponseBuilder,
+        headers: &mut ntex::http::HeaderMap,
     ) -> Result<(), HeaderRuleRuntimeError> {
         for (name, (agg_strategy, mut values)) in self.entries {
             if values.is_empty() {
@@ -257,20 +257,20 @@ impl ResponseHeaderAggregator {
             if is_never_join_header(&name) {
                 // never-join headers must be emitted as multiple header fields
                 for value in values {
-                    out.header(&name, value);
+                    headers.append(name.clone(), value.into());
                 }
                 continue;
             }
 
             if values.len() == 1 {
-                out.set_header(name, values.pop().unwrap());
+                headers.insert(name, values.pop().unwrap().into());
                 continue;
             }
 
             if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
                 let joined = join_with_comma(&values)
                     .map_err(|_| HeaderRuleRuntimeError::BadHeaderValue(name.to_string()))?;
-                out.set_header(name, joined);
+                headers.insert(name, joined.into());
             }
         }
 
@@ -303,18 +303,36 @@ fn join_with_comma(values: &[HeaderValue]) -> Result<HeaderValue, InvalidHeaderV
 
 type AggregatedHeader = (HeaderAggregationStrategy, Vec<HeaderValue>);
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ResponseHeaderAggregator {
     pub entries: HashMap<HeaderName, AggregatedHeader>,
 }
 
-impl ResponseHeaderAggregator {
-    pub fn none_if_empty(self) -> Option<Self> {
-        if self.entries.is_empty() {
-            None
-        } else {
-            Some(self)
+#[derive(Clone, Default, Debug)]
+pub struct ResponseHeaderSink(Arc<Mutex<ResponseHeaderAggregator>>);
+
+impl ResponseHeaderSink {
+    pub fn store(&self, aggregator: ResponseHeaderAggregator) {
+        match self.0.lock() {
+            Ok(mut sink) => sink.replace_with(aggregator),
+            Err(poisoned) => poisoned.into_inner().replace_with(aggregator),
         }
+    }
+
+    pub fn take(&self) -> ResponseHeaderAggregator {
+        match self.0.lock() {
+            Ok(mut sink) => std::mem::take(&mut *sink),
+            Err(poisoned) => {
+                let mut sink = poisoned.into_inner();
+                std::mem::take(&mut *sink)
+            }
+        }
+    }
+}
+
+impl ResponseHeaderAggregator {
+    pub fn replace_with(&mut self, other: Self) {
+        self.entries = other.entries
     }
 
     /// Write a header to the aggregator according to the specified strategy.
@@ -372,6 +390,16 @@ impl ResponseHeaderAggregator {
                 // it's handled already by ntex's HeaderMap.
                 HeaderAggregationStrategy::Last,
             );
+        }
+        aggregator
+    }
+
+    pub fn from_http_headers(headers: &HeaderMap) -> Self {
+        let mut aggregator = Self::default();
+        for (name, value) in headers {
+            // Why Last and not First or Append?
+            // Check the comment in from_early_response fn
+            aggregator.write(name, value, HeaderAggregationStrategy::Append);
         }
         aggregator
     }

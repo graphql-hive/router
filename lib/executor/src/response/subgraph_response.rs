@@ -266,11 +266,11 @@ impl<'a> SubgraphResponse<'a> {
             custom_scalar_paths: custom_scalar_paths.unwrap_or(&EMPTY_CUSTOM_SCALAR_PATHS),
         }
         .deserialize(&mut deserializer)
-        .map_err(SubgraphExecutorError::ResponseDeserializationFailure)
+        .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e, None))
         .and_then(|mut resp: SubgraphResponse<'static>| {
             deserializer
                 .end()
-                .map_err(SubgraphExecutorError::ResponseDeserializationFailure)?;
+                .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e, None))?;
             resp.bytes = Some(bytes);
             Ok(resp)
         })

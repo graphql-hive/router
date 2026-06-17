@@ -375,11 +375,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut response_builder = ntex::http::Response::Ok();
+        let mut response = ntex::http::Response::Ok().finish();
         accumulator
-            .modify_client_response_headers(&mut response_builder)
+            .modify_client_response_headers(response.headers_mut())
             .unwrap();
-        let response = response_builder.finish();
         let final_headers = response.headers();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
@@ -444,11 +443,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut response_builder = ntex::http::Response::Ok();
+        let mut response = ntex::http::Response::Ok().finish();
         accumulator
-            .modify_client_response_headers(&mut response_builder)
+            .modify_client_response_headers(response.headers_mut())
             .unwrap();
-        let response = response_builder.finish();
         let final_headers = response.headers();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
@@ -506,11 +504,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut response_builder = ntex::http::Response::Ok();
+        let mut response = ntex::http::Response::Ok().finish();
         accumulator
-            .modify_client_response_headers(&mut response_builder)
+            .modify_client_response_headers(response.headers_mut())
             .unwrap();
-        let response = response_builder.finish();
         let final_headers = response.headers();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
@@ -568,11 +565,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut response_builder = ntex::http::Response::Ok();
+        let mut response = ntex::http::Response::Ok().finish();
         accumulator
-            .modify_client_response_headers(&mut response_builder)
+            .modify_client_response_headers(response.headers_mut())
             .unwrap();
-        let response = response_builder.finish();
         let final_headers = response.headers();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
@@ -625,11 +621,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut response_builder = ntex::http::Response::Ok();
+        let mut response = ntex::http::Response::Ok().finish();
         accumulator
-            .modify_client_response_headers(&mut response_builder)
+            .modify_client_response_headers(response.headers_mut())
             .unwrap();
-        let response = response_builder.finish();
         let final_headers = response.headers();
 
         insta::assert_snapshot!(final_headers.to_string(), @r#"
