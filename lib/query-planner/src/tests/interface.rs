@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -21,7 +21,7 @@ fn node_query_with_aliases_on_interface_field() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -70,7 +70,7 @@ fn node_query_with_inline_fragments_on_object_types() -> Result<(), Box<dyn Erro
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -128,7 +128,7 @@ fn node_query_with_cross_type_inline_fragments() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -186,7 +186,7 @@ fn node_query_with_typename_and_cross_type_fragments() -> Result<(), Box<dyn Err
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -235,7 +235,7 @@ fn direct_object_query_chat_by_id() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -269,7 +269,7 @@ fn direct_object_query_account_by_id() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -307,7 +307,7 @@ fn object_query_with_nested_object_field() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -366,7 +366,7 @@ fn object_query_with_nested_list_field() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -421,7 +421,7 @@ fn node_query_with_id_on_interface_field() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     );
@@ -452,7 +452,7 @@ fn node_query_with_multiple_type_fragments() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     );
@@ -487,7 +487,7 @@ fn node_query_with_id_and_cross_type_fragment_overlap() -> Result<(), Box<dyn Er
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     );
@@ -513,7 +513,10 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
       ,
       "#,
     );
-    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/abstract-types.supergraph.graphql",
+        document,
+    )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -588,7 +591,10 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
       ,
       "#,
     );
-    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/abstract-types.supergraph.graphql",
+        document,
+    )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -691,7 +697,10 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
       ,
       "#,
     );
-    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/abstract-types.supergraph.graphql",
+        document,
+    )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -804,7 +813,10 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
       ,
       "#,
     );
-    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/abstract-types.supergraph.graphql",
+        document,
+    )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {

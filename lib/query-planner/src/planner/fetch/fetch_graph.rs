@@ -13,6 +13,7 @@ use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
 use crate::planner::walker::path::OperationPath;
 use crate::planner::walker::pathfinder::can_satisfy_edge;
+use crate::planner::QueryPlannerOptions;
 use crate::state::supergraph_state::{OperationKind, SubgraphName, SupergraphState};
 use crate::utils::cancellation::CancellationToken;
 use petgraph::algo::has_path_connecting;
@@ -1813,6 +1814,7 @@ pub fn build_fetch_graph_from_query_tree(
     override_context: &PlannerOverrideContext,
     query_tree: QueryTree,
     operation_kind: OperationKind,
+    options: &QueryPlannerOptions,
     cancellation_token: &CancellationToken,
 ) -> Result<FetchGraph<MultiTypeFetchStep>, FetchGraphError> {
     let mut fetch_graph = FetchGraph::new(operation_kind);
@@ -1850,7 +1852,7 @@ pub fn build_fetch_graph_from_query_tree(
     // fine to unwrap as we have already checked the length
     fetch_graph.root_index = Some(*root_indexes.first().unwrap());
     let mut fetch_graph = fetch_graph.to_multi_type();
-    fetch_graph.optimize(supergraph, cancellation_token)?;
+    fetch_graph.optimize(supergraph, options, cancellation_token)?;
     fetch_graph.collect_variable_usages()?;
 
     trace!("fetch graph after optimizations:");

@@ -38,6 +38,7 @@ use crate::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
         state::MultiTypeFetchStep,
     },
+    planner::QueryPlannerOptions,
     state::{
         subgraph_state::{SubgraphField, SubgraphState},
         supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState},
@@ -49,6 +50,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     pub(crate) fn fold_concrete_selections_to_interfaces(
         &mut self,
         supergraph: &SupergraphState,
+        options: &QueryPlannerOptions,
     ) -> Result<bool, FetchGraphError> {
         let root_type_name = match self.operation_kind {
             OperationKind::Query => supergraph.query_type.as_str(),
@@ -75,6 +77,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                 root_type_name,
                 supergraph,
                 subgraph,
+                options,
             }
             .rewrite_step(step)?;
         }
@@ -87,6 +90,7 @@ struct StepConverter<'a> {
     root_type_name: &'a str,
     supergraph: &'a SupergraphState,
     subgraph: &'a SubgraphState,
+    options: &'a QueryPlannerOptions,
 }
 
 struct InterfaceInSubgraph<'a> {
@@ -107,6 +111,11 @@ struct FoldedSelection {
     selection_set: SelectionSet,
     condition: Option<Condition>,
     remove_indexes: Vec<usize>,
+}
+
+struct FoldCandidate<'a> {
+    interface_name: &'a str,
+    folded: FoldedSelection,
 }
 
 impl<'a> StepConverter<'a> {
@@ -153,12 +162,14 @@ impl<'a> StepConverter<'a> {
             })
             .collect::<Vec<_>>();
 
-        let Some(folded) = self.try_fold_into_interface(interface_name, branches)? else {
+        let Some(candidate) = self.try_fold(interface_name, &branches)? else {
             return Ok(false);
         };
 
-        step.output
-            .replace_definitions_with_abstract(interface_name, folded.selection_set);
+        step.output.replace_definitions_with_abstract(
+            candidate.interface_name,
+            candidate.folded.selection_set,
+        );
 
         Ok(true)
     }
@@ -247,7 +258,7 @@ impl<'a> StepConverter<'a> {
                 })
                 .collect::<Vec<_>>();
 
-            self.try_fold_into_interface(current_type_name, branches)?
+            self.try_fold(current_type_name, &branches)?
         };
 
         let Some(candidate) = candidate else {
@@ -260,7 +271,7 @@ impl<'a> StepConverter<'a> {
             .drain(..)
             .enumerate()
             .filter_map(|(index, item)| {
-                if candidate.remove_indexes.contains(&index) {
+                if candidate.folded.remove_indexes.contains(&index) {
                     None // drop
                 } else {
                     Some(item) // keep
@@ -268,29 +279,92 @@ impl<'a> StepConverter<'a> {
             })
             .collect();
 
-        if let Some(condition) = candidate.condition {
+        if let Some(condition) = candidate.folded.condition {
             // If the original branches had @skip/@include
             selection_set
                 .items
                 .push(SelectionItem::InlineFragment(InlineFragmentSelection {
-                    type_condition: current_type_name.to_string(),
-                    selections: candidate.selection_set,
+                    type_condition: candidate.interface_name.to_string(),
+                    selections: candidate.folded.selection_set,
                     skip_if: condition.to_skip_if(),
                     include_if: condition.to_include_if(),
                 }));
+        } else if candidate.interface_name != current_type_name {
+            selection_set
+                .items
+                .push(SelectionItem::InlineFragment(InlineFragmentSelection {
+                    type_condition: candidate.interface_name.to_string(),
+                    selections: candidate.folded.selection_set,
+                    skip_if: None,
+                    include_if: None,
+                }));
         } else {
             // Otherwise merge the fields directly into the parent selection set
-            merge_selection_set(selection_set, &candidate.selection_set, false);
+            merge_selection_set(selection_set, &candidate.folded.selection_set, false);
         }
 
         Ok(true)
     }
 
-    fn try_fold_into_interface(
-        &self,
-        interface_name: &str,
-        branches: Vec<ObjectTypeBranch<'_>>,
-    ) -> Result<Option<FoldedSelection>, FetchGraphError> {
+    fn try_fold<'b>(
+        &'a self,
+        default_interface_name: &'b str,
+        branches: &[ObjectTypeBranch<'_>],
+    ) -> Result<Option<FoldCandidate<'b>>, FetchGraphError>
+    where
+        'a: 'b,
+    {
+        if self.options.experimental_abstract_type_folding {
+            self.try_fold_into_any_matching_interface(branches)
+        } else {
+            self.try_fold_into_interface(default_interface_name, branches)
+        }
+    }
+
+    fn try_fold_into_any_matching_interface<'b>(
+        &'a self,
+        branches: &[ObjectTypeBranch<'_>],
+    ) -> Result<Option<FoldCandidate<'b>>, FetchGraphError>
+    where
+        'a: 'b,
+    {
+        let Some(first_branch) = branches.first() else {
+            return Ok(None);
+        };
+
+        let Some(SupergraphDefinition::Object(object_type)) =
+            self.supergraph.definitions.get(first_branch.type_name)
+        else {
+            return Ok(None);
+        };
+
+        let mut interface_names = object_type
+            .join_implements
+            .iter()
+            .filter(|join_implements| join_implements.graph_id == self.subgraph.graph_id)
+            .map(|join_implements| join_implements.interface.as_str())
+            .collect::<Vec<_>>();
+
+        interface_names.sort_unstable();
+        interface_names.dedup();
+
+        for interface_name in interface_names {
+            if let Some(candidate) = self.try_fold_into_interface(interface_name, branches)? {
+                return Ok(Some(candidate));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn try_fold_into_interface<'b>(
+        &'a self,
+        interface_name: &'b str,
+        branches: &[ObjectTypeBranch<'_>],
+    ) -> Result<Option<FoldCandidate<'b>>, FetchGraphError>
+    where
+        'a: 'b,
+    {
         // Folding 1 branch is pointless
         if branches.len() < 2 {
             return Ok(None);
@@ -308,7 +382,7 @@ impl<'a> StepConverter<'a> {
         let shared_condition = first_branch.condition.clone();
         let mut concrete_types = BTreeSet::new();
 
-        for branch in &branches {
+        for branch in branches {
             // Every branch condition (@skip / @include) must be the same
             if branch.condition != shared_condition {
                 return Ok(None);
@@ -352,13 +426,16 @@ impl<'a> StepConverter<'a> {
             return Ok(None);
         }
 
-        Ok(Some(FoldedSelection {
-            selection_set: selection_set.clone(),
-            condition: shared_condition,
-            remove_indexes: branches
-                .iter()
-                .filter_map(|branch| branch.remove_index)
-                .collect(),
+        Ok(Some(FoldCandidate {
+            interface_name,
+            folded: FoldedSelection {
+                selection_set: selection_set.clone(),
+                condition: shared_condition,
+                remove_indexes: branches
+                    .iter()
+                    .filter_map(|branch| branch.remove_index)
+                    .collect(),
+            },
         }))
     }
 

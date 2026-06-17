@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -19,7 +19,8 @@ fn testing() -> Result<(), Box<dyn Error>> {
               }
             }"#,
     );
-    let query_plan = build_query_plan("fixture/tests/testing.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/testing.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -163,7 +164,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/parent-entity-call.supergraph.graphql",
         document,
     )?;
@@ -274,7 +275,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/parent-entity-call-complex.supergraph.graphql",
         document,
     )?;
@@ -479,7 +480,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/complex-entity-call.supergraph.graphql",
         document,
     )?;

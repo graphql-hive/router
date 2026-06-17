@@ -22,6 +22,17 @@ pub struct QueryPlannerConfig {
     )]
     #[schemars(with = "String")]
     pub timeout: Duration,
+    /// Enables an experimental feature that folds matching object-type inline fragments
+    /// into an interface fragment, even when that interface is not the field's declared return type.
+    ///
+    /// The fold is only applied when the concrete object branches select the same fields and
+    /// exactly match the interface members in the target subgraph.
+    ///
+    /// Can also be set via the `QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING` environment variable.
+    ///
+    /// Default: false.
+    #[serde(default = "default_experimental_abstract_type_folding")]
+    pub experimental_abstract_type_folding: bool,
 }
 
 impl Default for QueryPlannerConfig {
@@ -29,6 +40,7 @@ impl Default for QueryPlannerConfig {
         Self {
             allow_expose: default_query_planning_allow_expose(),
             timeout: default_query_planning_timeout(),
+            experimental_abstract_type_folding: default_experimental_abstract_type_folding(),
         }
     }
 }
@@ -39,4 +51,8 @@ fn default_query_planning_allow_expose() -> bool {
 
 fn default_query_planning_timeout() -> Duration {
     Duration::from_secs(10)
+}
+
+fn default_experimental_abstract_type_folding() -> bool {
+    false
 }

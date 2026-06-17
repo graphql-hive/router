@@ -15,6 +15,7 @@ use tracing::instrument;
 
 use crate::{
     planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
+    planner::QueryPlannerOptions,
     state::supergraph_state::SupergraphState,
     utils::cancellation::CancellationToken,
 };
@@ -24,6 +25,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     pub fn optimize(
         &mut self,
         supergraph_state: &SupergraphState,
+        options: &QueryPlannerOptions,
         cancellation_token: &CancellationToken,
     ) -> Result<(), FetchGraphError> {
         // Run optimization passes repeatedly until the graph stabilizes, as one optimization can create
@@ -41,7 +43,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             self.batch_multi_type()?;
             self.normalize_selection_sets(supergraph_state)?;
             let abstract_type_converted =
-                self.fold_concrete_selections_to_interfaces(supergraph_state)?;
+                self.fold_concrete_selections_to_interfaces(supergraph_state, options)?;
 
             let node_count_after = self.graph.node_count();
             let edge_count_after = self.graph.edge_count();

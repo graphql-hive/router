@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -30,7 +30,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/override_requires.supergraph.graphql",
         document,
     )?;
@@ -434,7 +434,7 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/override_requires.supergraph.graphql",
         document,
     )?;
@@ -578,7 +578,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/override_requires.supergraph.graphql",
         document,
     )?;
@@ -722,7 +722,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/override_requires.supergraph.graphql",
         document,
     )?;

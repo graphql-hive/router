@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -40,7 +40,7 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
         }
 "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/circular-reference-interface.supergraph.graphql",
         document,
     )?;
@@ -120,7 +120,8 @@ fn conflict_list_type_in_interface() -> Result<(), Box<dyn Error>> {
         }
 "#,
     );
-    let query_plan = build_query_plan("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
@@ -194,7 +195,8 @@ fn multiple_mismtaches_same_level() -> Result<(), Box<dyn Error>> {
         }
 "#,
     );
-    let query_plan = build_query_plan("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
@@ -284,7 +286,8 @@ fn aliasing_both_parent_and_leaf() -> Result<(), Box<dyn Error>> {
               }
             }"#,
     );
-    let query_plan = build_query_plan("fixture/tests/testing.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/testing.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -369,7 +372,7 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/child-type-mismatch.supergraph.graphql",
         document,
     )?;
@@ -546,7 +549,7 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/child-type-mismatch.supergraph.graphql",
         document,
     )?;
@@ -832,7 +835,7 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/child-type-mismatch.supergraph.graphql",
         document,
     )?;
@@ -1253,7 +1256,7 @@ fn deeply_nested_no_conflicts() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/child-type-mismatch.supergraph.graphql",
         document,
     )?;
@@ -1351,7 +1354,7 @@ fn multi_enum_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
             }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/mismatch-mix-enum-scalar.supergraph.graphql",
         document,
     )?;
@@ -1432,7 +1435,7 @@ fn multi_scalar_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
             }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/mismatch-mix-enum-scalar.supergraph.graphql",
         document,
     )?;
@@ -1500,7 +1503,8 @@ fn conflict_list_type_in_interface_preserves_client_alias() -> Result<(), Box<dy
         }
 "#,
     );
-    let query_plan = build_query_plan("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
@@ -1552,7 +1556,8 @@ fn conflict_list_type_in_interface_with_distinct_response_keys() -> Result<(), B
         }
 "#,
     );
-    let query_plan = build_query_plan("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {

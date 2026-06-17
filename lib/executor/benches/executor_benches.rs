@@ -15,8 +15,11 @@ fn project_data_by_operation_test(c: &mut Criterion) {
         .expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
     let planner = Box::leak(Box::new(
-        hive_router_query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
-            .expect("Failed to create planner from supergraph"),
+        hive_router_query_planner::planner::Planner::new_from_supergraph(
+            &parsed_schema,
+            Default::default(),
+        )
+        .expect("Failed to create planner from supergraph"),
     ));
     let parsed_document = parse_operation(
         &std::fs::read_to_string(operation_path).expect("Unable to read input file"),

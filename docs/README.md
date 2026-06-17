@@ -20,7 +20,7 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**persisted\_documents**](#persisted_documents)|`object`|Configuration for persisted documents extraction and resolution.<br/>Default: `{"enabled":false,"log_missing_id":false,"require_id":false,"selectors":null,"storage":null}`<br/>||
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
-|[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
+|[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"experimental_abstract_type_folding":false,"timeout":"10s"}`<br/>||
 |[**storages**](#storages)|`object`|Configuration for storage sources.<br/>||
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
@@ -133,6 +133,7 @@ persisted_documents:
 plugins: {}
 query_planner:
   allow_expose: false
+  experimental_abstract_type_folding: false
   timeout: 10s
 storages: {}
 subscriptions:
@@ -2526,6 +2527,7 @@ Query planning configuration.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**allow\_expose**|`boolean`|A flag to allow exposing the query plan in the response.<br/>When set to `true` and an incoming request has a `hive-expose-query-plan: true` header, the query plan will be exposed in the response, as part of `extensions`.<br/>Default: `false`<br/>||
+|**experimental\_abstract\_type\_folding**|`boolean`|Enables an experimental feature that folds matching object-type inline fragments<br/>into an interface fragment, even when that interface is not the field's declared return type.<br/><br/>The fold is only applied when the concrete object branches select the same fields and<br/>exactly match the interface members in the target subgraph.<br/><br/>Can also be set via the `QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING` environment variable.<br/><br/>Default: false.<br/>Default: `false`<br/>||
 |**timeout**|`string`|The maximum time for the query planner to create an execution plan.<br/>This acts as a safeguard against overly complex or malicious queries that could degrade server performance.<br/>When the timeout is reached, the planning process is cancelled.<br/><br/>Default: 10s.<br/>Default: `"10s"`<br/>||
 
 **Additional Properties:** not allowed  
@@ -2533,6 +2535,7 @@ Query planning configuration.
 
 ```yaml
 allow_expose: false
+experimental_abstract_type_folding: false
 timeout: 10s
 
 ```

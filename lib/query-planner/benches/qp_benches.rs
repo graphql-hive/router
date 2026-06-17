@@ -9,6 +9,7 @@ use hive_router_query_planner::planner::best::find_best_combination;
 use hive_router_query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use hive_router_query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
 use hive_router_query_planner::planner::walker::walk_operation;
+use hive_router_query_planner::planner::QueryPlannerOptions;
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::state::supergraph_state::SupergraphState;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
@@ -68,6 +69,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_override_context,
                 query_tree,
                 bb_kind,
+                &QueryPlannerOptions::default(),
                 &cancellation_token,
             )
             .unwrap();
@@ -118,6 +120,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_override_context,
                 query_tree,
                 bb_kind,
+                &QueryPlannerOptions::default(),
                 &cancellation_token,
             )
             .unwrap();

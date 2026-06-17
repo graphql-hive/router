@@ -496,7 +496,7 @@ mod tests {
             }
             "#,
         );
-        let planner = Planner::new_from_supergraph(&schema).expect("planner");
+        let planner = Planner::new_from_supergraph(&schema, Default::default()).expect("planner");
         let operation = parse_operation(
             r#"
             {
