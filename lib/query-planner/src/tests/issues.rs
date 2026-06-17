@@ -664,7 +664,7 @@ fn issue_interface_object_typename() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/issues/infinite-typename-interfaceobject.graphql",
         document,
     )?;
