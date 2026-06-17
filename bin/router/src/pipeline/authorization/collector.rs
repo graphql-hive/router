@@ -165,7 +165,7 @@ pub(super) fn collect_authorization_statuses<'op>(
                 // to trigger null bubbling behavior (which invalidates the entire response).
                 let status = if let Some(field_info) = type_fields.and_then(|f| f.get(&field.name))
                 {
-                    if field_info.is_non_null {
+                    if field_info.nullability.is_non_null() {
                         has_non_null_unauthorized = true;
                         FieldAuthStatus::UnauthorizedNonNullable
                     } else {
@@ -261,7 +261,7 @@ fn process_field_selection<'op, 'ctx>(
 
     let status = if is_authorized {
         FieldAuthStatus::Authorized
-    } else if field_info.is_non_null {
+    } else if field_info.nullability.is_non_null() {
         FieldAuthStatus::UnauthorizedNonNullable
     } else {
         FieldAuthStatus::UnauthorizedNullable

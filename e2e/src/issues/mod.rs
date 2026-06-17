@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod issues_e2e_tests {
-    use crate::testkit::{ClientResponseExt, Started, TestRouter};
+    use crate::testkit::{ClientResponseExt, Started, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     /// https://github.com/graphql-hive/federation-gateway-audit `src/test-suites/null-keys`
@@ -1267,6 +1267,606 @@ mod issues_e2e_tests {
               "id": "primary"
             }
           }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1154
+    ///
+    /// Per the GraphQL spec (Handling Field Errors), when a non-null field
+    /// errors, the `null` must bubble up to the nearest nullable ancestor. For a
+    /// non-null *root* field with no nullable ancestor, the `null` propagates all
+    /// the way to `data`, so the response must be `"data": null`.
+    async fn non_null_root_field_error_propagates_to_data() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let subgraphs_url = subgraphs.url();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.non-null-root-field.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      accounts:
+                        url: "{subgraphs_url}/accounts"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // Nullable root field that errors: `null` stays on the field, `data` is
+        // still an object.
+        let nullable_res = router
+            .send_graphql_request("{ nullableFieldThatErrors }", None, None)
+            .await;
+        assert!(nullable_res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(nullable_res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "nullableFieldThatErrors": null
+          },
+          "errors": [
+            {
+              "message": "nullableFieldThatErrors always fails",
+              "locations": [
+                {
+                  "line": 1,
+                  "column": 2
+                }
+              ],
+              "path": [
+                "nullableFieldThatErrors"
+              ],
+              "extensions": {
+                "code": "DOWNSTREAM_SERVICE_ERROR",
+                "serviceName": "accounts"
+              }
+            }
+          ]
+        }
+        "#);
+
+        // Nested nullable field that errors: `null` stays on the nested field, `data` is
+        // still an object.
+        let nullable_nested_res = router
+            .send_graphql_request("{ nullableNested { fieldThatErrors } }", None, None)
+            .await;
+        assert!(nullable_nested_res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(nullable_nested_res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "nullableNested": {
+              "fieldThatErrors": null
+            }
+          },
+          "errors": [
+            {
+              "message": "NullableNested.fieldThatErrors always fails",
+              "extensions": {
+                "code": "DOWNSTREAM_SERVICE_ERROR",
+                "serviceName": "accounts"
+              }
+            }
+          ]
+        }
+        "#);
+
+        // Non-null root field that errors: `null` must bubble all the way up to
+        // `data`, so `data` itself becomes `null`.
+        let non_null_res = router
+            .send_graphql_request("{ nonNullFieldThatErrors }", None, None)
+            .await;
+        assert!(non_null_res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(non_null_res.json_body_string_pretty().await, @r#"
+        {
+          "data": null,
+          "errors": [
+            {
+              "message": "nonNullFieldThatErrors always fails",
+              "locations": [
+                {
+                  "line": 1,
+                  "column": 2
+                }
+              ],
+              "path": [
+                "nonNullFieldThatErrors"
+              ],
+              "extensions": {
+                "code": "DOWNSTREAM_SERVICE_ERROR",
+                "serviceName": "accounts"
+              }
+            }
+          ]
+        }
+        "#);
+
+        // Non-null, nested field that errors: `null` must bubble all the way up.
+        let non_null_res = router
+            .send_graphql_request("{ nonNullNested { fieldThatErrors } }", None, None)
+            .await;
+        assert!(non_null_res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(non_null_res.json_body_string_pretty().await, @r#"
+        {
+          "data": null,
+          "errors": [
+            {
+              "message": "NonNullNested.fieldThatErrors always fails",
+              "locations": [
+                {
+                  "line": 1,
+                  "column": 16
+                }
+              ],
+              "path": [
+                "nonNullNested",
+                "fieldThatErrors"
+              ],
+              "extensions": {
+                "code": "DOWNSTREAM_SERVICE_ERROR",
+                "serviceName": "accounts"
+              }
+            }
+          ]
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// Confirms error + null propagation lands at the nearest nullable position, per the
+    /// GraphQL spec (Handling Field Errors), across three nullability chains.
+    async fn error_and_null_propagation() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.error-and-null-propagation.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      accounts:
+                        url: "http://{host}/accounts"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // Helper: a subgraph mock for one chain that returns `c: null` + a field error.
+        let mut mock_chain = |chain: &str| {
+            let chain = chain.to_string();
+            server
+                .mock("POST", "/accounts")
+                .match_request(move |r| {
+                    String::from_utf8(r.body().unwrap().clone())
+                        .unwrap()
+                        .contains(&chain)
+                })
+                .with_status(200)
+                .with_header("content-type", "application/json")
+        };
+
+        let _m1 = mock_chain("chain1")
+            .with_body(
+                r#"{"data":{"chain1":{"b":{"c":null}}},
+                    "errors":[{"message":"c failed","path":["chain1","b","c"]}]}"#,
+            )
+            .create();
+        let _m2 = mock_chain("chain2")
+            .with_body(
+                r#"{"data":{"chain2":{"b":{"c":null}}},
+                    "errors":[{"message":"c failed","path":["chain2","b","c"]}]}"#,
+            )
+            .create();
+        let _m3 = mock_chain("chain3")
+            .with_body(
+                r#"{"data":{"chain3":{"b":{"c":null}}},
+                    "errors":[{"message":"c failed","path":["chain3","b","c"]}]}"#,
+            )
+            .create();
+
+        // Chain 1: nullable -> non-null -> nullable. The leaf `c` is nullable, so its
+        // `null` stays put — nothing propagates.
+        let res1 = router
+            .send_graphql_request("{ chain1 { b { c } } }", None, None)
+            .await;
+        insta::assert_snapshot!(res1.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "chain1": {
+              "b": {
+                "c": null
+              }
+            }
+          },
+          "errors": [
+            {
+              "message": "c failed",
+              "path": [
+                "chain1",
+                "b",
+                "c"
+              ],
+              "extensions": {
+                "code": "DOWNSTREAM_SERVICE_ERROR",
+                "serviceName": "accounts"
+              }
+            }
+          ]
+        }
+        "#);
+
+        // Chain 2: non-null -> non-null -> non-null. The leaf `c` is Non-Null, so its
+        // `null` bubbles up through every non-null level, all the way to `data`.
+        let res2 = router
+            .send_graphql_request("{ chain2 { b { c } } }", None, None)
+            .await;
+        insta::assert_snapshot!(res2.json_body_string_pretty().await, @r#"
+        {
+          "data": null,
+          "errors": [
+            {
+              "message": "c failed",
+              "path": [
+                "chain2",
+                "b",
+                "c"
+              ],
+              "extensions": {
+                "code": "DOWNSTREAM_SERVICE_ERROR",
+                "serviceName": "accounts"
+              }
+            }
+          ]
+        }
+        "#);
+
+        // Chain 3: non-null -> nullable -> non-null. The leaf `c` is non-null and bubbles,
+        // but stops at the nearest nullable ancestor `b`, preserving `chain3`/`data` as-is.
+        let res3 = router
+            .send_graphql_request("{ chain3 { b { c } } }", None, None)
+            .await;
+        insta::assert_snapshot!(res3.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "chain3": {
+              "b": null
+            }
+          },
+          "errors": [
+            {
+              "message": "c failed",
+              "path": [
+                "chain3",
+                "b",
+                "c"
+              ],
+              "extensions": {
+                "code": "DOWNSTREAM_SERVICE_ERROR",
+                "serviceName": "accounts"
+              }
+            }
+          ]
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1110
+    ///
+    /// When an entity is fails to resolve, then executor must not leave Non-Null fields as `null`.
+    ///
+    /// Here, `orders` provides only `user.id`; `users` returns `null` for the entity, so
+    /// `User.email: String!` has no value.
+    ///
+    /// That `null` must go up through `user: User!` and `orders: [Order!]!`, collapsing `data` to `null`.
+    async fn issue_1110_unresolved_entity_non_null_propagation() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1110.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      orders:
+                        url: "http://{host}/orders"
+                      users:
+                        url: "http://{host}/users"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // `orders` resolves the order and provides only the user's key.
+        let _orders = server
+            .mock("POST", "/orders")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"orders":[{"id":"1","user":{"__typename":"User","id":"5"}}]}}"#)
+            .create();
+
+        // `users` cannot resolve the referenced entity, so it returns `null` for it.
+        let _users = server
+            .mock("POST", "/users")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"_entities":[null]}}"#)
+            .create();
+
+        let res = router
+            .send_graphql_request("{ orders { id user { id name email } } }", None, None)
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        // `email: String!` is `null`, so it bubbles `email -> user -> Order`, then all the way up to `data`.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": null
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// null propagation for nested lists.
+    ///
+    /// `grid: [[Int!]]` has a nullable outer
+    /// element but a Non-Null inner element.
+    ///
+    /// A `null` inside an inner list bubbles to that inner list (non-null),
+    /// but the outer list keeps it because its own element is nullable.
+    async fn nested_list_null_propagation() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "accounts": {
+                    "query": {
+                        "grid": [[1, null], [2, 3]]
+                    }
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.error-and-null-propagation.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router.send_graphql_request("{ grid }", None, None).await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        // `[1, null]`: the `null` is a Non-Null inner element -> the inner list collapses
+        // to `null`. The outer list's element is nullable, so that `null` stays in place.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "grid": [
+              null,
+              [
+                2,
+                3
+              ]
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// A field error inside a fully Non-Null nested list (`[[Int!]!]!`) bubbles up through
+    /// every level — the inner list, the outer list, and the Non-Null field — collapsing
+    /// `data` itself.
+    async fn nested_list_error_propagates_to_data() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.error-and-null-propagation.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      accounts:
+                        url: "http://{host}/accounts"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // `matrix[0][1]` is `null` at a Non-Null `Int!`, reported with a field error.
+        let _m = server
+            .mock("POST", "/accounts")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"matrix":[[1,null]]},
+                    "errors":[{"message":"matrix element failed","path":["matrix",0,1]}]}"#,
+            )
+            .create();
+
+        let res = router.send_graphql_request("{ matrix }", None, None).await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": null,
+          "errors": [
+            {
+              "message": "matrix element failed",
+              "path": [
+                "matrix",
+                0,
+                1
+              ],
+              "extensions": {
+                "code": "DOWNSTREAM_SERVICE_ERROR",
+                "serviceName": "accounts"
+              }
+            }
+          ]
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// A field typed `[[[Int]!]]`: the middle list's element is Non-Null while the outer
+    /// list's element is nullable. A `null` middle element bubbles to its middle list, but
+    /// the outer list keeps that `null` (its own element is nullable).
+    async fn triple_nested_list_null_propagation() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "accounts": {
+                    "query": {
+                        // `[[1], null]`: the `null` is a Non-Null middle element (`[Int]!`).
+                        "cube": [[[1], null], [[2]]]
+                    }
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.error-and-null-propagation.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router.send_graphql_request("{ cube }", None, None).await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        // The `null` bubbles to its middle list (`[[1], null]` -> `null`), but the outer
+        // list keeps it because the outer element is nullable.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "cube": [
+              null,
+              [
+                [
+                  2
+                ]
+              ]
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// Null propagation through a Federation `_entities` fetch. `Product.measurements`
+    /// (`[[Int!]!]!`) is resolved in the `metrics` subgraph; one entity comes back with a
+    /// `null` inner element. After the entity merge, that `null` must bubble up through the
+    /// nested Non-Null list to the whole `Product`. Because the `products` list element is
+    /// nullable, the collapsed product becomes `null` and its sibling survives.
+    async fn entity_nested_list_null_propagation() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "products": {
+                    "query": {
+                        "products": [
+                            { "__typename": "Product", "id": "1" },
+                            { "__typename": "Product", "id": "2" }
+                        ]
+                    }
+                },
+                "metrics": {
+                    "entities": [
+                        // Product 1 has a `null` at a Non-Null inner element (`Int!`).
+                        { "__typename": "Product", "id": "1", "measurements": [[1, null]] },
+                        { "__typename": "Product", "id": "2", "measurements": [[2, 3]] }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.entity-list-propagation.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ products { id measurements } }", None, None)
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        // Product 1's `null` bubbles `Int! -> inner list -> outer list -> measurements ->
+        // Product`, collapsing it to `null` (kept, since the list element is nullable).
+        // Product 2 is unaffected.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "products": [
+              null,
+              {
+                "id": "2",
+                "measurements": [
+                  [
+                    2,
+                    3
+                  ]
+                ]
+              }
+            ]
+          }
+        }
+        "#);
+
+        let res = router
+            .send_graphql_request("{ productsNoNulls { id measurements } }", None, None)
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        // Product 1's `null` bubbles `Int! -> inner list -> outer list -> measurements ->
+        // Product`, collapsing it to `null` (kept, since the list element is nullable).
+        // Product 2 is unaffected.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": null
         }
         "#);
     }

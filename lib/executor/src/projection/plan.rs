@@ -15,7 +15,10 @@ use hive_router_query_planner::{
 };
 
 use crate::projection::error::ProjectionError;
-use crate::{introspection::schema::SchemaMetadata, utils::consts::TYPENAME_FIELD_NAME};
+use crate::{
+    introspection::schema::{FieldNullability, SchemaMetadata},
+    utils::consts::TYPENAME_FIELD_NAME,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeCondition {
@@ -112,6 +115,7 @@ pub struct FieldProjectionPlan {
     pub field_name: String,
     pub response_key: String,
     pub is_typename: bool,
+    pub nullability: FieldNullability,
     /// A condition that checks the name of the parent object.
     /// This is used to ensure that fields inside a fragment (e.g., `... on User`)
     /// are only applied when the parent object's type matches the fragment's type condition.
@@ -622,8 +626,8 @@ impl FieldProjectionPlan {
         let field_name = &field.name;
         let response_key = field.alias.as_ref().unwrap_or(field_name).clone();
 
-        let field_type = if field_name == TYPENAME_FIELD_NAME {
-            "String".to_string()
+        let (field_type, nullability) = if field_name == TYPENAME_FIELD_NAME {
+            ("String".to_string(), FieldNullability::type_name())
         } else {
             let field_map = match schema_metadata.type_fields.get(parent_type_name) {
                 Some(fields) => fields,
@@ -636,7 +640,7 @@ impl FieldProjectionPlan {
                 }
             };
             match field_map.get(field_name) {
-                Some(f) => f.output_type_name.clone(),
+                Some(f) => (f.output_type_name.clone(), f.nullability.clone()),
                 None => {
                     warn!(
                         "Field `{}` not found in type `{}` in schema metadata.",
@@ -718,6 +722,7 @@ impl FieldProjectionPlan {
                 response_key,
                 parent_type_guard,
                 is_typename: field_name == TYPENAME_FIELD_NAME,
+                nullability: nullability.clone(),
                 conditions: final_conditions,
                 // We use Some(vec![]) as it means "project an object, but with no children".
                 // None would be treated as "no projection plan available".
@@ -731,6 +736,7 @@ impl FieldProjectionPlan {
                 response_key,
                 parent_type_guard,
                 is_typename: field_name == TYPENAME_FIELD_NAME,
+                nullability: nullability.clone(),
                 conditions: final_conditions,
                 value: ProjectionValueSource::ResponseData {
                     selections: Self::from_selection_set(
@@ -801,6 +807,7 @@ impl FieldProjectionPlan {
             parent_type_guard: self.parent_type_guard.clone(),
             conditions: self.conditions.clone(),
             is_typename: self.is_typename,
+            nullability: self.nullability.clone(),
             value: new_value,
         }
     }

@@ -12,12 +12,26 @@ use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::introspection::schema::SchemaMetadata;
+use crate::introspection::schema::{FieldNullability, SchemaMetadata};
 use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
 use crate::utils::consts::{
     CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET,
     QUOTE, TRUE, TYPENAME_FIELD_NAME,
 };
+
+enum NullPropagationDecision {
+    /// An indicator that the `null` value should be propagated, since the field is non-null
+    PropagateNullValue,
+    /// An indicator that the `null` value should be kept as-is, since the field is nullable.
+    KeepNullValue,
+}
+
+impl NullPropagationDecision {
+    #[inline]
+    fn should_propagate(&self) -> bool {
+        matches!(self, NullPropagationDecision::PropagateNullValue)
+    }
+}
 
 /// Represents a type's name that can be either already resolved or lazily computed.
 /// This avoids computing the type name when it's not needed, which is important for performance.
@@ -98,9 +112,10 @@ pub fn project_by_operation(
     let mut errors = errors;
 
     if let Some(data_map) = data.as_object() {
+        let null_propagation_checkpoint = buffer.len();
         // Start with first as true to add the opening brace
         let mut first = true;
-        project_selection_set_with_map(
+        let null_propagation_decision = project_selection_set_with_map(
             data_map,
             &mut errors,
             selections,
@@ -110,7 +125,11 @@ pub fn project_by_operation(
             &mut first,
             schema_metadata,
         )?;
-        if !first {
+
+        if null_propagation_decision.should_propagate() {
+            buffer.truncate(null_propagation_checkpoint);
+            buffer.put(NULL);
+        } else if !first {
             buffer.put(CLOSE_BRACE);
         } else {
             // If no selections were made, we should return an empty object
@@ -186,6 +205,7 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
     };
 }
 
+#[allow(clippy::too_many_arguments)]
 fn project_selection_set<'a>(
     data: &'a Value,
     errors: &mut Vec<GraphQLError>,
@@ -194,16 +214,20 @@ fn project_selection_set<'a>(
     buffer: &mut Vec<u8>,
     parent_type_name: TypeName<'a>,
     schema_metadata: &'a SchemaMetadata,
-) -> Result<(), ProjectionError> {
+    nullability: &'a FieldNullability,
+) -> Result<NullPropagationDecision, ProjectionError> {
     match data {
         Value::Array(arr) => {
+            let null_propagation_checkpoint = buffer.len();
+            let list_item_nullability = nullability.list_item();
+            let item_non_null = list_item_nullability.is_some_and(FieldNullability::is_non_null);
             buffer.put(OPEN_BRACKET);
             let mut first = true;
             for item in arr.iter() {
                 if !first {
                     buffer.put(COMMA);
                 }
-                project_selection_set(
+                let needs_null_propagation = project_selection_set(
                     item,
                     errors,
                     selection,
@@ -211,16 +235,28 @@ fn project_selection_set<'a>(
                     buffer,
                     parent_type_name.clone(),
                     schema_metadata,
+                    list_item_nullability.unwrap_or(nullability),
                 )?;
+
+                // A `null` at a Non-Null element of this list propagates to the list itself.
+                if needs_null_propagation.should_propagate() && item_non_null {
+                    buffer.truncate(null_propagation_checkpoint);
+                    buffer.put(NULL);
+                    return Ok(NullPropagationDecision::PropagateNullValue);
+                }
+
                 first = false;
             }
+
             buffer.put(CLOSE_BRACKET);
+            Ok(NullPropagationDecision::KeepNullValue)
         }
         Value::Object(obj) => {
             match &selection.value {
                 ProjectionValueSource::ResponseData {
                     selections: Some(selections),
                 } => {
+                    let null_propagation_checkpoint = buffer.len();
                     let mut first = true;
                     let type_name = TypeName::deferred(
                         selection,
@@ -228,7 +264,7 @@ fn project_selection_set<'a>(
                         parent_type_name,
                         schema_metadata,
                     );
-                    project_selection_set_with_map(
+                    let null_propagation_decision = project_selection_set_with_map(
                         obj,
                         errors,
                         selections,
@@ -238,29 +274,43 @@ fn project_selection_set<'a>(
                         &mut first,
                         schema_metadata,
                     )?;
+
+                    if null_propagation_decision.should_propagate() {
+                        buffer.truncate(null_propagation_checkpoint);
+                        buffer.put(NULL);
+                        return Ok(NullPropagationDecision::PropagateNullValue);
+                    }
+
                     if !first {
                         buffer.put(CLOSE_BRACE);
                     } else {
                         // If no selections were made, we should return an empty object
                         buffer.put(EMPTY_OBJECT);
                     }
+                    Ok(NullPropagationDecision::KeepNullValue)
                 }
                 ProjectionValueSource::ResponseData { selections: None } => {
                     // If the selection has no sub-selections, we serialize the whole object
                     serialize_value_to_buffer(data, buffer);
+                    Ok(NullPropagationDecision::KeepNullValue)
                 }
                 ProjectionValueSource::Null => {
                     // This should not happen as we are in an object case, but just in case
                     buffer.put(NULL);
+                    Ok(NullPropagationDecision::PropagateNullValue)
                 }
             }
+        }
+        Value::Null => {
+            buffer.put(NULL);
+            Ok(NullPropagationDecision::PropagateNullValue)
         }
         _ => {
             // If the data is not an object or array, we serialize it directly
             serialize_value_to_buffer(data, buffer);
+            Ok(NullPropagationDecision::KeepNullValue)
         }
-    };
-    Ok(())
+    }
 }
 
 // TODO: simplfy args
@@ -274,7 +324,7 @@ fn project_selection_set_with_map<'a>(
     buffer: &mut Vec<u8>,
     first: &mut bool,
     schema_metadata: &'a SchemaMetadata,
-) -> Result<(), ProjectionError> {
+) -> Result<NullPropagationDecision, ProjectionError> {
     for plan in plans {
         if let Some(guard) = &plan.parent_type_guard {
             let name = parent_type_name.get()?;
@@ -324,10 +374,10 @@ fn project_selection_set_with_map<'a>(
                 buffer.put(QUOTE);
                 buffer.put(COLON);
 
-                match &plan.value {
+                let null_propagation_decision = match &plan.value {
                     ProjectionValueSource::Null => {
                         buffer.put(NULL);
-                        continue;
+                        NullPropagationDecision::PropagateNullValue
                     }
                     ProjectionValueSource::ResponseData { .. } => {
                         if plan.is_typename {
@@ -335,6 +385,7 @@ fn project_selection_set_with_map<'a>(
                             buffer.put(QUOTE);
                             buffer.put(parent_type_name.get()?.as_bytes());
                             buffer.put(QUOTE);
+                            NullPropagationDecision::KeepNullValue
                         } else if let Some(field_val) = field_val {
                             project_selection_set(
                                 field_val,
@@ -344,12 +395,19 @@ fn project_selection_set_with_map<'a>(
                                 buffer,
                                 parent_type_name.clone(),
                                 schema_metadata,
-                            )?;
+                                &plan.nullability,
+                            )?
                         } else {
                             // If the field is not found in the object, set it to Null
                             buffer.put(NULL);
+                            NullPropagationDecision::PropagateNullValue
                         }
                     }
+                };
+
+                // A `null` value in a non-null position bubbles up
+                if null_propagation_decision.should_propagate() && plan.nullability.is_non_null() {
+                    return Ok(NullPropagationDecision::PropagateNullValue);
                 }
             }
             Err(FieldProjectionConditionError::Fatal(err)) => {
@@ -377,6 +435,9 @@ fn project_selection_set_with_map<'a>(
                 buffer.put(COLON);
                 buffer.put(NULL);
                 errors.push(GraphQLError::from("Value is not a valid enum value"));
+                if plan.nullability.is_non_null() {
+                    return Ok(NullPropagationDecision::PropagateNullValue);
+                }
             }
             Err(FieldProjectionConditionError::InvalidFieldType) => {
                 if *first {
@@ -392,10 +453,14 @@ fn project_selection_set_with_map<'a>(
                 buffer.put(QUOTE);
                 buffer.put(COLON);
                 buffer.put(NULL);
+                if plan.nullability.is_non_null() {
+                    return Ok(NullPropagationDecision::PropagateNullValue);
+                }
             }
         }
     }
-    Ok(())
+
+    Ok(NullPropagationDecision::KeepNullValue)
 }
 
 #[inline]
