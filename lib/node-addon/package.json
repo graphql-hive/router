@@ -54,7 +54,7 @@
     "test:updatesnaps": "node --test-update-snapshots tests/index.ts"
   },
   "devDependencies": {
-    "@types/node": "25.9.2",
+    "@types/node": "25.9.3",
     "@napi-rs/cli": "3.7.1"
   }
 }
