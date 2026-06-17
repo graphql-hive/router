@@ -284,7 +284,7 @@ impl HttpClientRequestSpan {
         );
     }
 
-    pub fn record_error(&self, error_type: &'static str) {
+    pub fn record_error(&self, error_type: &str) {
         if self.span.is_disabled() {
             return;
         }
