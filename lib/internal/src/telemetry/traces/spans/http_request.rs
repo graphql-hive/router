@@ -283,6 +283,18 @@ impl HttpClientRequestSpan {
             "error.type" = 500,
         );
     }
+
+    pub fn record_error(&self, error_type: &'static str) {
+        if self.span.is_disabled() {
+            return;
+        }
+
+        record_all!(
+            self.span,
+            "otel.status_code" = "Error",
+            "error.type" = error_type,
+        );
+    }
 }
 
 pub struct HttpInflightRequestSpan {
