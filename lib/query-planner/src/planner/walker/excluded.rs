@@ -13,18 +13,4 @@ impl ExcludedFromLookup {
     pub fn new() -> ExcludedFromLookup {
         Default::default()
     }
-
-    pub fn next(
-        &self,
-        graph_id: &str,
-        requirements: &HashSet<TypeAwareSelection>,
-    ) -> ExcludedFromLookup {
-        let mut graph_ids = self.graph_ids.clone();
-        graph_ids.insert(graph_id.to_string());
-
-        ExcludedFromLookup {
-            graph_ids,
-            requirement: requirements.clone(),
-        }
-    }
 }
