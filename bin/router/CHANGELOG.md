@@ -116,6 +116,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.70 (2026-06-17)
+
+### Features
+
+#### Add an experimental query planner option, `experimental_abstract_type_folding`
+
+```yaml
+query_planner:
+    experimental_abstract_type_folding: true # false by default
+```
+
+Folds matching concrete object-type fragments in subgraph calls, into a shared interface fragment even when that interface is not the field's declared return type.
+
+It's an opt-in addition to [`011be5b`](https://github.com/graphql-hive/router/commit/011be5bdbfb00bf1e415eb7a50e6be91f565ef05).
+
+```diff
+## queries `product-service` subgraph
+query {
+  products {
+-    ... on Book  { id title }
+-    ... on Movie { id title }
++    ... on Media { id title }
+  }
+}
+```
+
+The `products` field returns `Product` interface, but one object-type member of this interface called `Album` is not present in the query, therefore `... on Product {...}` is not possible to use (default behavior). With the feature flag enabled, both fragments are folded into `... on Media { ... }`, because `Book` and `Movie` are the only members of the `Media` interface in the `product-service` subgraph.
+
+### Fixes
+
+#### Fix Router's HTTP layer timeout
+
+Hive Router has it's own timeout that's being enforced, but `ntex`'s one was still effective and uses the default settings.  
+
+Instead of fully disabling the low-level timeout, this PR changes the Router implementation to configure `ntex` timeout to `router_timeout+1` so the safe guard is still in place.
+
+#### Fix response header propagation on error paths
+
+Response header rules now run consistently for successful responses, partial GraphQL error responses, deduped requests, and execution failures.
+
+#### Avoid indirect lookup for directly resolved leaf fields
+
+The planner now skips indirect path lookup when a leaf field already has a valid direct path.
+
 ## 0.0.69 (2026-06-16)
 
 ### Fixes
