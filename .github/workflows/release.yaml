@@ -52,7 +52,7 @@ jobs:
           cache: false
 
       - name: authenticate with crates.io
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@v1.0.4
         id: auth
 
       - name: publish graphql-tools lib
