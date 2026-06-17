@@ -167,6 +167,8 @@ pub mod names {
     pub const COPROCESSOR_REQUESTS_TOTAL: &str = "hive.router.coprocessor.requests_total";
     pub const COPROCESSOR_DURATION: &str = "hive.router.coprocessor.duration";
     pub const COPROCESSOR_ERRORS_TOTAL: &str = "hive.router.coprocessor.errors_total";
+    pub const SUBSCRIPTION_DROPPED_EVENTS_TOTAL: &str =
+        "hive.router.subscription.dropped_events_total";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
@@ -333,6 +335,10 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (
         names::COPROCESSOR_ERRORS_TOTAL,
         &[labels::COPROCESSOR_STAGE],
+    ),
+    (
+        names::SUBSCRIPTION_DROPPED_EVENTS_TOTAL,
+        &[labels::SUBGRAPH_NAME],
     ),
 ];
 

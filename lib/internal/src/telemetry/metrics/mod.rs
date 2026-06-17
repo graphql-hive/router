@@ -9,6 +9,7 @@ pub mod http_client_metrics;
 pub mod http_server_metrics;
 pub mod persisted_documents_metrics;
 pub mod setup;
+pub mod subscription_metrics;
 pub mod supergraph_metrics;
 pub use opentelemetry::metrics::ObservableGauge;
 pub use setup::{build_meter_provider_from_config, MetricsSetup, PrometheusRuntimeConfig};
@@ -23,6 +24,7 @@ use crate::telemetry::metrics::graphql_metrics::GraphQLMetrics;
 use crate::telemetry::metrics::http_client_metrics::HttpClientMetrics;
 use crate::telemetry::metrics::http_server_metrics::HttpServerMetrics;
 use crate::telemetry::metrics::persisted_documents_metrics::PersistedDocumentsMetrics;
+use crate::telemetry::metrics::subscription_metrics::SubscriptionMetrics;
 use crate::telemetry::metrics::supergraph_metrics::SupergraphMetrics;
 
 pub struct Metrics {
@@ -35,6 +37,7 @@ pub struct Metrics {
     pub circuit_breaker: CircuitBreakerMetrics,
     pub persisted_documents: PersistedDocumentsMetrics,
     pub coprocessor: CoprocessorMetrics,
+    pub subscription: SubscriptionMetrics,
 }
 
 impl Metrics {
@@ -49,6 +52,7 @@ impl Metrics {
             circuit_breaker: CircuitBreakerMetrics::new(meter),
             persisted_documents: PersistedDocumentsMetrics::new(meter),
             coprocessor: CoprocessorMetrics::new(meter),
+            subscription: SubscriptionMetrics::new(meter),
         }
     }
 }

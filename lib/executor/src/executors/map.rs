@@ -736,6 +736,7 @@ impl SubgraphExecutorMap {
                     // we use the new constructed ws_endpoint_uri here
                     ws_endpoint_uri,
                     ws_tls_config,
+                    self.telemetry_context.clone(),
                 )
                 .to_boxed_arc();
 
