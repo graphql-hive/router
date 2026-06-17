@@ -37,6 +37,7 @@ use tracing::{debug, trace};
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
+use crate::executors::subscription_buffer::buffered_drop_latest;
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
@@ -581,60 +582,74 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             ));
         }
 
-        if is_multipart {
-            debug!(
-                subgraph_name = self.subgraph_name,
-                "using multipart HTTP for subscription",
-            );
+        let inner: BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>> =
+            if is_multipart {
+                debug!(
+                    subgraph_name = self.subgraph_name,
+                    "using multipart HTTP for subscription",
+                );
 
-            let boundary = multipart_subscribe::parse_boundary_from_header(content_type)
-                .map_err(|e| SubgraphExecutorError::MultipartBoundaryParseFailure(e.to_string()))?;
-            let stream = multipart_subscribe::parse_to_stream(
-                boundary,
-                body_stream,
-                custom_scalar_paths.clone(),
-            );
+                let boundary = multipart_subscribe::parse_boundary_from_header(content_type)
+                    .map_err(|e| {
+                        SubgraphExecutorError::MultipartBoundaryParseFailure(e.to_string())
+                    })?;
+                let stream = multipart_subscribe::parse_to_stream(
+                    boundary,
+                    body_stream,
+                    custom_scalar_paths.clone(),
+                );
 
-            Ok(Box::pin(async_stream::stream! {
-                trace!("multipart subscription stream started");
-                for await result in stream {
-                    match result {
-                        Ok(response) => {
-                            trace!(response = ?response, "multipart subscription event received");
-                            yield Ok(response);
-                        }
-                        Err(e) => {
-                            yield Err(SubgraphExecutorError::MultipartStreamError(e.to_string()));
-                            return;
-                        }
-                    }
-                }
-            }))
-        } else {
-            debug!(
-                "using SSE for subscription connection to subgraph {} at {}",
-                self.subgraph_name,
-                self.endpoint.to_string(),
-            );
-
-            let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone());
-
-            Ok(Box::pin(async_stream::stream! {
-                trace!("SSE subscription stream started");
-                for await result in stream {
-                    match result {
-                        Ok(response) => {
-                            trace!(response = ?response, "SSE subscription event received");
-                            yield Ok(response);
-                        }
-                        Err(e) => {
-                            yield Err(SubgraphExecutorError::SseStreamError(e.to_string()));
-                            return;
+                Box::pin(async_stream::stream! {
+                    trace!("multipart subscription stream started");
+                    for await result in stream {
+                        match result {
+                            Ok(response) => {
+                                trace!(response = ?response, "multipart subscription event received");
+                                yield Ok(response);
+                            }
+                            Err(e) => {
+                                yield Err(SubgraphExecutorError::MultipartStreamError(e.to_string()));
+                                return;
+                            }
                         }
                     }
-                }
-            }))
-        }
+                })
+            } else {
+                debug!(
+                    "using SSE for subscription connection to subgraph {} at {}",
+                    self.subgraph_name,
+                    self.endpoint.to_string(),
+                );
+
+                let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone());
+
+                Box::pin(async_stream::stream! {
+                    trace!("SSE subscription stream started");
+                    for await result in stream {
+                        match result {
+                            Ok(response) => {
+                                trace!(response = ?response, "SSE subscription event received");
+                                yield Ok(response);
+                            }
+                            Err(e) => {
+                                yield Err(SubgraphExecutorError::SseStreamError(e.to_string()));
+                                return;
+                            }
+                        }
+                    }
+                })
+            };
+
+        // The router must drain the HTTP body eagerly to match WebSocket back-pressure behaviour,
+        // so wrap the parsed stream in the shared bounded buffer: when per-event plan execution
+        // falls behind, the newest event is dropped (drop-latest) and the subscription is kept
+        // alive, instead of back-pressuring (and slowing) the subgraph.
+        Ok(buffered_drop_latest(
+            inner,
+            self.config.subscriptions.subgraph_buffer_capacity,
+            self.subgraph_name.clone(),
+            self.telemetry_context.clone(),
+        ))
     }
 }
 

@@ -7,6 +7,7 @@ pub mod http_callback;
 pub mod map;
 pub mod multipart_subscribe;
 pub mod sse;
+pub mod subscription_buffer;
 pub mod tls;
 pub mod websocket;
 pub mod websocket_client;

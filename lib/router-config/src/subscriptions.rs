@@ -29,6 +29,19 @@ pub struct SubscriptionsConfig {
     /// Defaults to 32.
     #[serde(default = "default_broadcast_capacity")]
     pub broadcast_capacity: usize,
+    /// The capacity of the per-subscription buffer for events received from a subgraph before they
+    /// are executed by the router (the query plan is built once when the subscription starts and
+    /// reused for every event, so this covers per-event plan execution, not planning).
+    ///
+    /// Each active subgraph subscription (WebSocket or HTTP SSE/multipart) buffers up to this many
+    /// events. The router must read events from the subgraph as they arrive; if per-event
+    /// execution falls behind and this buffer fills, the newest event is dropped (the subscription
+    /// stays alive) and `hive.router.subscription.dropped_events_total` is incremented. This is
+    /// separate from `broadcast_capacity`, which buffers events fanned out to connected clients.
+    ///
+    /// Defaults to 1024.
+    #[serde(default = "default_subgraph_buffer_capacity")]
+    pub subgraph_buffer_capacity: usize,
     /// Configuration for subgraphs using the HTTP Callback protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callback: Option<CallbackConfig>,
@@ -84,6 +97,10 @@ pub struct CallbackConfig {
 
 fn default_broadcast_capacity() -> usize {
     32
+}
+
+fn default_subgraph_buffer_capacity() -> usize {
+    1024
 }
 
 fn default_callback_path() -> AbsolutePath {
