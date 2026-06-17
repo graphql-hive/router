@@ -328,8 +328,6 @@ impl<'a> StepConverter<'a> {
     where
         'a: 'b,
     {
-        let mut best: Option<FoldCandidate<'b>> = None;
-
         let Some(first_branch) = branches.first() else {
             return Ok(None);
         };
@@ -340,26 +338,23 @@ impl<'a> StepConverter<'a> {
             return Ok(None);
         };
 
-        for join_implements in &object_type.join_implements {
-            if join_implements.graph_id != self.subgraph.graph_id {
-                continue;
-            }
+        let mut interface_names = object_type
+            .join_implements
+            .iter()
+            .filter(|join_implements| join_implements.graph_id == self.subgraph.graph_id)
+            .map(|join_implements| join_implements.interface.as_str())
+            .collect::<Vec<_>>();
 
-            let interface_name = join_implements.interface.as_str();
+        interface_names.sort_unstable();
+        interface_names.dedup();
 
-            if best
-                .as_ref()
-                .is_some_and(|best| best.interface_name <= interface_name)
-            {
-                continue;
-            }
-
+        for interface_name in interface_names {
             if let Some(candidate) = self.try_fold_into_interface(interface_name, branches)? {
-                best = Some(candidate);
+                return Ok(Some(candidate));
             }
         }
 
-        Ok(best)
+        Ok(None)
     }
 
     fn try_fold_into_interface<'b>(
