@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -17,7 +17,7 @@ fn include_basic_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -97,7 +97,7 @@ fn include_fragment_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -173,7 +173,7 @@ fn skip_basic_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -251,7 +251,7 @@ fn skip_and_include_field_condition_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -333,7 +333,7 @@ fn skip_and_include_fragment_condition_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -411,7 +411,7 @@ fn include_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -447,7 +447,7 @@ fn include_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -483,7 +483,7 @@ fn include_interface_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -519,7 +519,7 @@ fn include_interface_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>>
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -563,7 +563,7 @@ fn include_union_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/union-overfetching.supergraph.graphql",
         document,
     )?;
@@ -672,7 +672,8 @@ fn plans_query_with_nested_directive_only_inline_fragments() -> Result<(), Box<d
         "#,
     );
 
-    let query_plan = build_query_plan("fixture/products-example.supergraph.graphql", document);
+    let query_plan =
+        build_query_plan_with_defaults("fixture/products-example.supergraph.graphql", document);
     assert!(
         query_plan.is_ok(),
         "expected query planning to succeed, got: {:?}",
@@ -748,7 +749,8 @@ fn plans_query_with_field_level_include_skip_conditions() -> Result<(), Box<dyn 
         "#,
     );
 
-    let query_plan = build_query_plan("fixture/products-example.supergraph.graphql", document);
+    let query_plan =
+        build_query_plan_with_defaults("fixture/products-example.supergraph.graphql", document);
     assert!(
         query_plan.is_ok(),
         "expected query planning to succeed, got: {:?}",
@@ -772,7 +774,7 @@ fn qp_include_field_level() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -835,7 +837,7 @@ fn qp_include_field_level_unconditional_before_conditional() -> Result<(), Box<d
       "#,
     );
 
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -899,7 +901,7 @@ fn qp_include_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn 
       "#,
     );
 
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -961,7 +963,7 @@ fn qp_skip_field_level() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -1024,7 +1026,7 @@ fn qp_skip_field_level_unconditional_before_conditional() -> Result<(), Box<dyn 
       "#,
     );
 
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -1088,7 +1090,7 @@ fn qp_skip_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn Err
       "#,
     );
 
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -1153,7 +1155,7 @@ fn qp_skip_and_include_field_level_all_merged_fields_conditional() -> Result<(),
       "#,
     );
 
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -1220,7 +1222,7 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
       "#,
     );
 
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-include-skip.supergraph.graphql",
         document,
     )?;
@@ -1304,7 +1306,8 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
       "#,
     );
 
-    let query_plan = build_query_plan("fixture/products-example.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/products-example.supergraph.graphql", document)?;
     let printed = format!("{}", query_plan);
 
     insta::assert_snapshot!(printed, @r#"
@@ -1435,7 +1438,10 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
       "#,
     );
 
-    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/abstract-types.supergraph.graphql",
+        document,
+    )?;
     let printed = format!("{}", query_plan);
 
     insta::assert_snapshot!(printed, @r#"
@@ -1533,7 +1539,10 @@ fn qp_abstract_interface_shared_condition_can_skip_remote_fetch() -> Result<(), 
       "#,
     );
 
-    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/abstract-types.supergraph.graphql",
+        document,
+    )?;
     let printed = format!("{}", query_plan);
 
     insta::assert_snapshot!(printed, @r#"
@@ -1603,7 +1612,7 @@ fn qp_abstract_union_member_conditions_stay_scoped() -> Result<(), Box<dyn Error
       "#,
     );
 
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/union-overfetching.supergraph.graphql",
         document,
     )?;

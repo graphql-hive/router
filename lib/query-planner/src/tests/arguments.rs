@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -20,7 +20,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requires-with-argument-conflict.supergraph.graphql",
         document,
     )?;
@@ -225,7 +225,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/audit-requires-arguments.supergraph.graphql",
         document,
     )?;
@@ -447,7 +447,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/audit-requires-arguments.supergraph.graphql",
         document,
     )?;
@@ -683,7 +683,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/audit-requires-arguments.supergraph.graphql",
         document,
     )?;
@@ -907,7 +907,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-requires-args.supergraph.graphql",
         document,
     )?;
@@ -1124,7 +1124,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-requires-args.supergraph.graphql",
         document,
     )?;
@@ -1342,7 +1342,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-requires-args.supergraph.graphql",
         document,
     )?;
@@ -1489,7 +1489,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-requires-args.supergraph.graphql",
         document,
     )?;
@@ -1637,7 +1637,7 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/arguments-requires.supergraph.graphql",
         document,
     )?;
@@ -1734,7 +1734,8 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
 
         }"#,
     );
-    let query_plan = build_query_plan("fixture/spotify-supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/spotify-supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -1793,7 +1794,8 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
 
         }"#,
     );
-    let query_plan = build_query_plan("fixture/spotify-supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/spotify-supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -1859,7 +1861,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/parent-entity-call-complex.supergraph.graphql",
         document,
     )?;
@@ -1990,7 +1992,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/parent-entity-call-complex.supergraph.graphql",
         document,
     )?;

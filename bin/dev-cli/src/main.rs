@@ -17,6 +17,7 @@ use hive_router_query_planner::planner::query_plan::build_query_plan_from_fetch_
 use hive_router_query_planner::planner::tree::query_tree::QueryTree;
 use hive_router_query_planner::planner::walker::walk_operation;
 use hive_router_query_planner::planner::walker::ResolvedOperation;
+use hive_router_query_planner::planner::QueryPlannerOptions;
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::state::supergraph_state::SupergraphState;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
@@ -155,6 +156,7 @@ fn process_fetch_graph(
         &override_context,
         query_tree,
         operation_kind,
+        &QueryPlannerOptions::default(),
         &cancellation_token,
     )
     .expect("failed to build fetch graph")
@@ -189,6 +191,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
             .operation_kind
             .clone()
             .unwrap_or(OperationKind::Query),
+        &QueryPlannerOptions::default(),
         &cancellation_token,
     )
     .expect("failed to build fetch graph");

@@ -21,7 +21,7 @@ mod testkit;
 mod union;
 
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 
@@ -32,7 +32,7 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
         &std::fs::read_to_string("../../bench/operation.graphql")
             .expect("Unable to read input file"),
     );
-    let query_plan = build_query_plan("../../bench/supergraph.graphql", document)?;
+    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {

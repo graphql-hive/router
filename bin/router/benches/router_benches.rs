@@ -35,7 +35,7 @@ fn authorization_benchmark(c: &mut Criterion) {
     let supergraph_sdl = get_supergraph_sdl();
     let parsed_supergraph_sdl = parse_schema(supergraph_sdl);
     let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
-    let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl).unwrap();
+    let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl, Default::default()).unwrap();
     let metadata = planner.consumer_schema.schema_metadata();
     let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata).unwrap();
 

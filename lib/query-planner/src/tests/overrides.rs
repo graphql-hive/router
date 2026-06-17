@@ -1,6 +1,6 @@
 use crate::{
     graph::PlannerOverrideContext,
-    tests::testkit::{build_query_plan, build_query_plan_with_context, init_logger},
+    tests::testkit::{build_query_plan, build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -16,7 +16,7 @@ fn single_simple_overrides() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple_overrides.supergraph.graphql",
         document,
     )?;
@@ -60,7 +60,7 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple_overrides.supergraph.graphql",
         document,
     )?;
@@ -177,7 +177,7 @@ fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Erro
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/override-type-interface.supergraph.graphql",
         document,
     )?;
@@ -233,11 +233,12 @@ fn progressive_override_percentage_test() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan_with_context(
+    let query_plan = build_query_plan(
         "fixture/tests/simple-progressive-overrides.supergraph.graphql",
         document.clone(),
         // @override(label: "percentage(75)")
         PlannerOverrideContext::from_percentage(50.0),
+        Default::default(),
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
@@ -279,11 +280,12 @@ fn progressive_override_percentage_test() -> Result<(), Box<dyn Error>> {
     },
     "#);
 
-    let query_plan = build_query_plan_with_context(
+    let query_plan = build_query_plan(
         "fixture/tests/simple-progressive-overrides.supergraph.graphql",
         document,
         // @override(label: "percentage(75)")
         PlannerOverrideContext::from_percentage(90.0),
+        Default::default(),
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
@@ -339,11 +341,12 @@ fn progressive_override_flag_test() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan_with_context(
+    let query_plan = build_query_plan(
         "fixture/tests/simple-progressive-overrides.supergraph.graphql",
         document.clone(),
         // @override(label: "feed_in_b")
         PlannerOverrideContext::from_flag("feed_in_b".into()),
+        Default::default(),
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
@@ -358,11 +361,12 @@ fn progressive_override_flag_test() -> Result<(), Box<dyn Error>> {
     },
     "#);
 
-    let query_plan = build_query_plan_with_context(
+    let query_plan = build_query_plan(
         "fixture/tests/simple-progressive-overrides.supergraph.graphql",
         document,
         // @override(label: "feed_in_b")
         PlannerOverrideContext::from_flag("different_flag".into()),
+        Default::default(),
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"

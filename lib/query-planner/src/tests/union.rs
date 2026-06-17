@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -21,7 +21,7 @@ fn union_member_resolvable() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/union-intersection.supergraph.graphql",
         document,
     )?;
@@ -59,7 +59,7 @@ fn union_member_unresolvable() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/union-intersection.supergraph.graphql",
         document,
     )?;
@@ -95,7 +95,7 @@ fn union_member_mix() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/union-intersection.supergraph.graphql",
         document,
     )?;
@@ -136,7 +136,7 @@ fn union_member_entity_call() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/union-intersection.supergraph.graphql",
         document,
     )?;
@@ -207,7 +207,7 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/union-intersection.supergraph.graphql",
         document,
     )?;
@@ -316,7 +316,7 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/union-intersection.supergraph.graphql",
         document,
     )?;
@@ -421,7 +421,7 @@ fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/union-overfetching.supergraph.graphql",
         document,
     )?;
@@ -537,7 +537,8 @@ fn union_list_test() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan("fixture/tests/union-list.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/union-list.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {

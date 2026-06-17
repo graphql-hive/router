@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -29,7 +29,7 @@ fn multiple_inline_fragments_on_same_concrete_type_within_interface_fragment(
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -71,7 +71,7 @@ fn nested_same_name_directives_on_abstract_and_concrete_fragments() -> Result<()
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -115,7 +115,7 @@ fn nested_same_directive_same_arg_on_abstract_and_concrete_fragments() -> Result
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -156,7 +156,7 @@ fn nested_different_directives_on_abstract_and_concrete_fragments() -> Result<()
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -206,7 +206,7 @@ fn parent_directive_only_on_abstract_fragment() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -248,7 +248,7 @@ fn reusable_fragment_with_mixed_include_conditions_on_concrete_parent() -> Resul
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -298,7 +298,7 @@ fn reusable_fragment_with_mixed_include_conditions_on_abstract_parent() -> Resul
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
     )?;
@@ -343,7 +343,8 @@ fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
               }
             }"#,
     );
-    let query_plan = build_query_plan("fixture/tests/testing.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/testing.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -416,7 +417,8 @@ fn fragment_spread() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan("fixture/tests/testing.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/testing.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {

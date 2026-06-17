@@ -28,10 +28,16 @@ pub mod query_plan;
 pub mod tree;
 pub mod walker;
 
+#[derive(Debug, Clone, Default)]
+pub struct QueryPlannerOptions {
+    pub experimental_abstract_type_folding: bool,
+}
+
 pub struct Planner {
     graph: Graph,
     pub supergraph: SupergraphState,
     pub consumer_schema: Arc<ConsumerSchema>,
+    options: QueryPlannerOptions,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -53,14 +59,16 @@ pub enum PlannerError {
 impl Planner {
     pub fn new_from_supergraph(
         parsed_supergraph: &schema::Document<'static, String>,
+        options: QueryPlannerOptions,
     ) -> Result<Self, PlannerError> {
         let supergraph_state = SupergraphState::new(parsed_supergraph);
-        Self::new_from_supergraph_state(supergraph_state, parsed_supergraph)
+        Self::new_from_supergraph_state(supergraph_state, parsed_supergraph, options)
     }
 
     pub fn new_from_supergraph_state(
         supergraph_state: SupergraphState,
         parsed_supergraph: &schema::Document<'static, String>,
+        options: QueryPlannerOptions,
     ) -> Result<Self, PlannerError> {
         let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
         let consumer_schema = ConsumerSchema::new_from_supergraph(parsed_supergraph);
@@ -69,6 +77,7 @@ impl Planner {
             graph,
             consumer_schema: Arc::new(consumer_schema),
             supergraph: supergraph_state,
+            options,
         })
     }
 
@@ -97,6 +106,7 @@ impl Planner {
                 .operation_kind
                 .clone()
                 .unwrap_or(OperationKind::Query),
+            &self.options,
             cancellation_token,
         )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;

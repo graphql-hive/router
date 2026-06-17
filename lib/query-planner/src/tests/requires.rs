@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -16,7 +16,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/two-same-service-calls.supergraph.graphql",
         document,
     )?;
@@ -227,7 +227,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/two-same-service-calls.supergraph.graphql",
         document,
     )?;
@@ -373,7 +373,7 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simplest-requires.supergraph.graphql",
         document,
     )?;
@@ -475,7 +475,7 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requires-local-sibling.supergraph.graphql",
         document,
     )?;
@@ -577,8 +577,10 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan =
-        build_query_plan("fixture/tests/simple-requires.supergraph.graphql", document)?;
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-requires.supergraph.graphql",
+        document,
+    )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -683,7 +685,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/two_fields_same_subgraph_same_requirement.supergraph.graphql",
         document,
     )?;
@@ -793,7 +795,7 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple_requires_with_child.supergraph.graphql",
         document,
     )?;
@@ -907,7 +909,8 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan("fixture/tests/keys-mashup.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/keys-mashup.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -1083,7 +1086,8 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan("fixture/tests/deep-requires.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/deep-requires.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {

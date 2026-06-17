@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -18,7 +18,7 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/interface-object-with-requires.supergraph.graphql",
         document,
     )?;
@@ -203,7 +203,7 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/interface-object-with-requires.supergraph.graphql",
         document,
     )?;
@@ -343,7 +343,7 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/interface-object-with-requires.supergraph.graphql",
         document,
     )?;
@@ -463,7 +463,7 @@ fn inline_fragment_on_local_type_behind_interface() -> Result<(), Box<dyn Error>
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/interface-object-with-requires.supergraph.graphql",
         document,
     )?;
@@ -517,7 +517,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/interface-object-with-requires.supergraph.graphql",
         document,
     )?;
@@ -715,7 +715,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/interface-object-with-requires.supergraph.graphql",
         document,
     )?;

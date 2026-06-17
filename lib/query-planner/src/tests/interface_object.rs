@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -30,7 +30,7 @@ fn interface_object_field_local() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -86,7 +86,7 @@ fn interface_object_field_remote() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -142,7 +142,7 @@ fn interface_object_field_local_object_type() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -206,7 +206,7 @@ fn interface_to_object_type_locally() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -248,7 +248,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field_simple
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -327,7 +327,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -530,7 +530,7 @@ fn interface_field_with_inline_fragment_resolving_remote_interface_object_field(
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -592,7 +592,7 @@ fn interface_object_field_local_direct_resolution() -> Result<(), Box<dyn Error>
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -632,7 +632,7 @@ fn interface_object_field_with_inline_fragment_requiring_typename_check(
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -707,7 +707,7 @@ fn interface_object_field_local_with_remote_typename() -> Result<(), Box<dyn Err
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -768,7 +768,7 @@ fn interface_object_inline_fragment_with_remote_typename() -> Result<(), Box<dyn
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -835,7 +835,7 @@ fn interface_object_local_id_remote_field() -> Result<(), Box<dyn Error>> {
     // but the `Account` is a fake interface, it's an object type with @interfaceObject.
     // It can resolve `id`, but `isActive` lives in some other subgraph.
     // To collect it, we perform an entity call to the interface entity.
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;
@@ -890,7 +890,7 @@ fn interface_object_local_id_remote_field_with_inline_fragment() -> Result<(), B
         }
         "#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/simple-interface-object.supergraph.graphql",
         document,
     )?;

@@ -11,12 +11,12 @@ use graphql_tools::parser::query as query_ast;
 use crate::ast::normalization::normalize_operation;
 use crate::graph::edge::PlannerOverrideContext;
 use crate::graph::Graph;
-use crate::planner::add_variables_to_fetch_steps;
 use crate::planner::best::find_best_combination;
 use crate::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use crate::planner::plan_nodes::QueryPlan;
 use crate::planner::query_plan::build_query_plan_from_fetch_graph;
 use crate::planner::walker::walk_operation;
+use crate::planner::{add_variables_to_fetch_steps, QueryPlannerOptions};
 use crate::state::supergraph_state::{OperationKind, SupergraphState};
 use crate::utils::cancellation::CancellationToken;
 use crate::utils::parsing::parse_schema;
@@ -54,10 +54,11 @@ pub fn read_supergraph(fixture_path: &str) -> String {
     std::fs::read_to_string(supergraph_path).expect("Unable to read input file")
 }
 
-pub fn build_query_plan_with_context(
+pub fn build_query_plan(
     fixture_path: &str,
     query: query_ast::Document<'static, String>,
     override_context: PlannerOverrideContext,
+    options: QueryPlannerOptions,
 ) -> Result<QueryPlan, Box<dyn Error>> {
     let cancellation_token = CancellationToken::new();
     let schema = parse_schema(&read_supergraph(fixture_path));
@@ -82,6 +83,7 @@ pub fn build_query_plan_with_context(
             .operation_kind
             .clone()
             .unwrap_or(OperationKind::Query),
+        &options,
         &cancellation_token,
     )?;
     add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)?;
@@ -92,9 +94,14 @@ pub fn build_query_plan_with_context(
     Ok(plan)
 }
 
-pub fn build_query_plan(
+pub fn build_query_plan_with_defaults(
     fixture_path: &str,
     query: query_ast::Document<'static, String>,
 ) -> Result<QueryPlan, Box<dyn Error>> {
-    build_query_plan_with_context(fixture_path, query, PlannerOverrideContext::default())
+    build_query_plan(
+        fixture_path,
+        query,
+        PlannerOverrideContext::default(),
+        Default::default(),
+    )
 }

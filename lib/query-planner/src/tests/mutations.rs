@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -21,7 +21,8 @@ fn mutations() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan("fixture/tests/mutations.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -124,7 +125,8 @@ fn many_fields_two_same_graph() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan("fixture/tests/mutations.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
@@ -163,7 +165,8 @@ fn many_fields_two_same_graph() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let query_plan = build_query_plan("fixture/tests/mutations.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {

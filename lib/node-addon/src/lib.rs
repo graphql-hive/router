@@ -30,9 +30,10 @@ impl QueryPlanner {
         let parsed_supergraph =
             safe_parse_schema(&supergraph_sdl).map_err(QueryPlanError::SchemaParse)?;
 
-        let planner = Planner::new_from_supergraph(&parsed_supergraph).map_err(|err| {
-            napi::Error::from_reason(format!("Failed to create query planner: {}", err))
-        })?;
+        let planner = Planner::new_from_supergraph(&parsed_supergraph, Default::default())
+            .map_err(|err| {
+                napi::Error::from_reason(format!("Failed to create query planner: {}", err))
+            })?;
 
         let consumer_schema = planner.consumer_schema.document.to_string();
         let override_labels = planner

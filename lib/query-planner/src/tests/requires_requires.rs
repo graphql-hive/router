@@ -1,5 +1,5 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -15,7 +15,7 @@ fn one() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requires_requires.supergraph.graphql",
         document,
     )?;
@@ -166,7 +166,7 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requires_requires.supergraph.graphql",
         document,
     )?;
@@ -318,7 +318,7 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requires_requires.supergraph.graphql",
         document,
     )?;
@@ -469,7 +469,7 @@ fn one_more() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requires_requires.supergraph.graphql",
         document,
     )?;
@@ -664,7 +664,7 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requires_requires.supergraph.graphql",
         document,
     )?;
@@ -860,7 +860,7 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requires_requires.supergraph.graphql",
         document,
     )?;
@@ -1119,7 +1119,7 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requires_requires.supergraph.graphql",
         document,
     )?;
@@ -1385,7 +1385,7 @@ fn many() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let query_plan = build_query_plan(
+    let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requires_requires.supergraph.graphql",
         document,
     )?;

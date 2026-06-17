@@ -1,5 +1,6 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    planner::QueryPlannerOptions,
+    tests::testkit::{build_query_plan, build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -31,7 +32,8 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
 
         "#,
     );
-    let query_plan = build_query_plan("fixture/issues/281.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/281.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -162,7 +164,8 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan("fixture/issues/190.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "recommender") {
@@ -201,7 +204,8 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan("fixture/issues/190.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "recommender") {
@@ -237,7 +241,8 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
         }
       "#,
     );
-    let query_plan = build_query_plan("fixture/issues/190.supergraph.graphql", document)?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "recommender") {
@@ -288,7 +293,7 @@ fn issue_939_test() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let named_fragment_plan = build_query_plan(
+    let named_fragment_plan = build_query_plan_with_defaults(
         "fixture/issues/939.supergraph.graphql",
         named_fragment_document,
     )?;
@@ -316,7 +321,7 @@ fn issue_939_test() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let inline_fragment_plan = build_query_plan(
+    let inline_fragment_plan = build_query_plan_with_defaults(
         "fixture/issues/939.supergraph.graphql",
         inline_fragment_document,
     )?;
@@ -370,6 +375,105 @@ fn issue_939_test() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn experimental_abstract_type_folding_folds_object_fragments_into_interface(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query SingleNode($id: ID!) {
+          node(id: $id) {
+            ... on MyNode {
+              content {
+                ... on TextContent {
+                  id
+                }
+                ... on TextGroupContent {
+                  id
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/939.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "content") {
+        query ($id:ID!) {
+          node(id: $id) {
+            __typename
+            ... on MyNode {
+              content {
+                __typename
+                ... on TextContent {
+                  id
+                }
+                ... on TextGroupContent {
+                  id
+                }
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let document = parse_operation(
+        r#"
+        query SingleNode($id: ID!) {
+          node(id: $id) {
+            ... on MyNode {
+              content {
+                ... on TextContent {
+                  id
+                }
+                ... on TextGroupContent {
+                  id
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/issues/939.supergraph.graphql",
+        document,
+        Default::default(),
+        QueryPlannerOptions {
+            experimental_abstract_type_folding: true,
+        },
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "content") {
+        query ($id:ID!) {
+          node(id: $id) {
+            __typename
+            ... on MyNode {
+              content {
+                __typename
+                ... on ITextContent {
+                  id
+                }
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
 fn issue_965_test() -> Result<(), Box<dyn Error>> {
     init_logger();
 
@@ -391,7 +495,7 @@ fn issue_965_test() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let abstract_named_fragment_plan = build_query_plan(
+    let abstract_named_fragment_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         abstract_named_fragment_document,
     )?;
@@ -412,7 +516,7 @@ fn issue_965_test() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let concrete_named_fragment_plan = build_query_plan(
+    let concrete_named_fragment_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         concrete_named_fragment_document,
     )?;
@@ -474,7 +578,7 @@ fn issue_965_mixed_nested_fragments_with_directives_test() -> Result<(), Box<dyn
         }
         "#,
     );
-    let abstract_named_fragment_plan = build_query_plan(
+    let abstract_named_fragment_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         abstract_named_fragment_document,
     )?;
@@ -501,7 +605,7 @@ fn issue_965_mixed_nested_fragments_with_directives_test() -> Result<(), Box<dyn
         }
         "#,
     );
-    let concrete_named_fragment_plan = build_query_plan(
+    let concrete_named_fragment_plan = build_query_plan_with_defaults(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         concrete_named_fragment_document,
     )?;
