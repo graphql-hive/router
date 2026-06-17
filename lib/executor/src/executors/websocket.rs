@@ -7,7 +7,7 @@ use futures::stream::BoxStream;
 use futures_util::StreamExt;
 use ntex::rt;
 use tokio::sync::mpsc;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
@@ -72,12 +72,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 let connection = match connect(&endpoint, tls_config).await {
                     Ok(conn) => conn,
                     Err(e) => {
-                        error!(
-                            subgraph = %subgraph_name,
-                            endpoint = %endpoint,
-                            error = %e,
-                            "Failed to connect WebSocket to subgraph",
-                        );
                         return Err(SubgraphExecutorError::WebSocketConnectFailure(
                             endpoint.to_string(),
                             e.to_string(),
@@ -88,12 +82,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 let mut client = match WsClient::init(connection, init_payload).await {
                     Ok(client) => client,
                     Err(e) => {
-                        error!(
-                            subgraph = %subgraph_name,
-                            endpoint = %endpoint,
-                            error = %e,
-                            "WebSocket protocol handshake with subgraph failed",
-                        );
                         return Err(SubgraphExecutorError::WebSocketHandshakeFailure(
                             endpoint.to_string(),
                             e.to_string(),
@@ -162,12 +150,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             let connection = match connect(&endpoint, tls_config).await {
                 Ok(conn) => conn,
                 Err(e) => {
-                    error!(
-                        subgraph = %subgraph_name,
-                        endpoint = %endpoint,
-                        error = %e,
-                        "Failed to connect WebSocket to subgraph",
-                    );
                     let _ = tx.try_send(Err(SubgraphExecutorError::WebSocketConnectFailure(
                         endpoint.to_string(),
                         e.to_string(),
@@ -179,12 +161,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             let mut client = match WsClient::init(connection, init_payload).await {
                 Ok(client) => client,
                 Err(e) => {
-                    error!(
-                        subgraph = %subgraph_name,
-                        endpoint = %endpoint,
-                        error = %e,
-                        "WebSocket protocol handshake with subgraph failed",
-                    );
                     let _ = tx.try_send(Err(SubgraphExecutorError::WebSocketHandshakeFailure(
                         endpoint.to_string(),
                         e.to_string(),

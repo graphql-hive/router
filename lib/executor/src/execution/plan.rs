@@ -187,6 +187,18 @@ fn early_http_response_into_execution_output(
     }
 }
 
+fn log_plan_execution_error(error: &PlanExecutionError) {
+    if let Some(subgraph_name) = error.subgraph_name() {
+        tracing::error!(
+            "Error executing plan with subgraph '{}': {}",
+            subgraph_name,
+            error
+        );
+    } else {
+        tracing::error!("Error executing plan: {}", error);
+    }
+}
+
 pub async fn execute_query_plan<'exec>(
     opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
@@ -333,6 +345,7 @@ pub async fn execute_query_plan<'exec>(
                         // just to be on the safe side and avoid infinite error streaming because
                         // we cannot guarantee that the subgraph will recover and clients might
                         // simply ignore errors wasting the router's resources
+                        log_plan_execution_error(err);
                         yield FailedExecutionResult {
                             errors: vec![err.into()],
                         }.serialize();
@@ -379,6 +392,7 @@ pub async fn execute_query_plan<'exec>(
                     Ok(result) => yield result.body,
                     Err(ref err) => {
                         // fatal error, stream it and stop
+                        log_plan_execution_error(err);
                         yield FailedExecutionResult {
                             errors: vec![err.into()],
                         }.serialize();
@@ -1184,15 +1198,7 @@ impl<'exec> Executor<'exec> {
     }
 
     fn log_error(&self, error: &PlanExecutionError) {
-        if let Some(subgraph_name) = error.subgraph_name() {
-            tracing::error!(
-                "Error executing plan with subgraph '{}': {}",
-                subgraph_name,
-                error
-            );
-        } else {
-            tracing::error!("Error executing plan: {}", error);
-        }
+        log_plan_execution_error(error);
     }
 
     fn partition_batch_errors_by_alias(
