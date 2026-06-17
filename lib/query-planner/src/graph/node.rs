@@ -3,13 +3,15 @@ use std::fmt::{Debug, Display};
 use crate::state::supergraph_state::SubgraphName;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct UnionSubsetData {
+pub struct UnionMembersData {
     /// Represents the type owning the field
     pub type_name: String,
     /// Represents the field resolving a union type
     pub field_name: String,
     /// Represents a union member
     pub object_type_name: String,
+    /// Represents all union members reachable for the same field in this subgraph.
+    pub possible_members: Vec<String>,
     pub provides: Option<u64>,
 }
 
@@ -17,14 +19,22 @@ pub struct UnionSubsetData {
 pub enum SubgraphTypeSpecialization {
     /// Node was created due to @provides path.
     Provides(u64),
-    /// Node is part of the union intersection.
-    /// When dealing with unions,
-    /// we need to point field-move edge's tails (union)
-    /// to a subset of object types.
-    /// We do it by creating a new Node for each edge's tail (union),
-    /// and from that tail we create an abstract-move edges to the object types.
-    /// (type_name, field_name, union_member_name)
-    UnionSubset(UnionSubsetData),
+    /// Node represents a union member tail for a specific subgraph.
+    ///
+    /// For union-returning field moves, we may need a tail that only exposes the
+    /// members reachable in the current subgraph. We model that by creating
+    /// per-member specialized nodes and then abstract-move edges from those tails
+    /// to the concrete member types.
+    UnionMembers(UnionMembersData),
+}
+
+impl SubgraphTypeSpecialization {
+    pub fn union_members_data(&self) -> Option<&UnionMembersData> {
+        match self {
+            SubgraphTypeSpecialization::UnionMembers(data) => Some(data),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -55,7 +65,7 @@ impl Node {
                     SubgraphTypeSpecialization::Provides(provides_id) => {
                         format!("{}/{}/{}", st.name, st.subgraph.0, provides_id)
                     }
-                    SubgraphTypeSpecialization::UnionSubset(u) => {
+                    SubgraphTypeSpecialization::UnionMembers(u) => {
                         // we rely on display_name when it comes to deduplicating nodes (upsert_node),
                         // that's why the string produced here should "mimic" hashing
                         format!(
@@ -120,6 +130,19 @@ impl Node {
             Node::SubscriptionRoot(_) => None,
             Node::SubgraphType(st) => Some(&st.subgraph.0),
         }
+    }
+
+    pub fn subgraph_type(&self) -> Option<&SubgraphType> {
+        match self {
+            Node::SubgraphType(st) => Some(st),
+            _ => None,
+        }
+    }
+
+    pub fn union_members_data(&self) -> Option<&UnionMembersData> {
+        self.subgraph_type()
+            .and_then(|st| st.specialization.as_ref())
+            .and_then(|s| s.union_members_data())
     }
 }
 

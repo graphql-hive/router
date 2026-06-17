@@ -26,15 +26,22 @@ use crate::{
 
 use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::OperationPath};
 
-pub type VisitedGraphs = HashSet<String>;
+pub type VisitedGraphs<'graph> = HashSet<&'graph str>;
 type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
 
-struct IndirectPathsLookupQueue {
-    queue: Vec<(VisitedGraphs, HashSet<TypeAwareSelection>, OperationPath)>,
+struct IndirectPathsLookupQueue<'graph> {
+    queue: Vec<(
+        VisitedGraphs<'graph>,
+        HashSet<TypeAwareSelection>,
+        OperationPath<'graph>,
+    )>,
 }
 
-impl IndirectPathsLookupQueue {
-    pub fn new_from_excluded(excluded: &ExcludedFromLookup, path: &OperationPath) -> Self {
+impl<'graph> IndirectPathsLookupQueue<'graph> {
+    pub fn new_from_excluded(
+        excluded: &ExcludedFromLookup<'graph>,
+        path: &OperationPath<'graph>,
+    ) -> Self {
         IndirectPathsLookupQueue {
             queue: vec![(
                 excluded.graph_ids.clone(),
@@ -50,32 +57,38 @@ impl IndirectPathsLookupQueue {
 
     pub fn add(
         &mut self,
-        visited_graphs: VisitedGraphs,
+        visited_graphs: VisitedGraphs<'graph>,
         selections: HashSet<TypeAwareSelection>,
-        path: OperationPath,
+        path: OperationPath<'graph>,
     ) {
         self.queue.push((visited_graphs, selections, path));
     }
 
-    pub fn pop(&mut self) -> Option<(VisitedGraphs, HashSet<TypeAwareSelection>, OperationPath)> {
+    pub fn pop(
+        &mut self,
+    ) -> Option<(
+        VisitedGraphs<'graph>,
+        HashSet<TypeAwareSelection>,
+        OperationPath<'graph>,
+    )> {
         self.queue.pop()
     }
 }
 
 #[derive(Debug)]
-pub enum NavigationTarget<'a> {
-    Field(&'a FieldSelection),
-    ConcreteType(&'a str, Option<Condition>),
+pub enum NavigationTarget<'op> {
+    Field(&'op FieldSelection),
+    ConcreteType(&'op str, Option<Condition>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum NavigationTargetKey<'a> {
-    Field(&'a str),
-    ConcreteType(&'a str),
+enum NavigationTargetKey<'op> {
+    Field(&'op str),
+    ConcreteType(&'op str),
 }
 
-impl<'a> From<&'a NavigationTarget<'a>> for NavigationTargetKey<'a> {
-    fn from(target: &'a NavigationTarget<'a>) -> Self {
+impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
+    fn from(target: &'op NavigationTarget<'op>) -> Self {
         match target {
             NavigationTarget::Field(field) => NavigationTargetKey::Field(&field.name),
             NavigationTarget::ConcreteType(type_name, _) => {
@@ -85,20 +98,20 @@ impl<'a> From<&'a NavigationTarget<'a>> for NavigationTargetKey<'a> {
     }
 }
 
-struct PathSearch<'a> {
-    graph: &'a Graph,
-    override_context: &'a PlannerOverrideContext,
-    cancellation_token: &'a CancellationToken,
+struct PathSearch<'graph> {
+    graph: &'graph Graph,
+    override_context: &'graph PlannerOverrideContext,
+    cancellation_token: &'graph CancellationToken,
     /// Edges currently being checked in this path search.
     /// Used to stop recursive loops when an edge depends on itself.
     active_edge_checks: ActiveEdgeChecks,
 }
 
-impl<'a> PathSearch<'a> {
+impl<'graph> PathSearch<'graph> {
     fn new(
-        graph: &'a Graph,
-        override_context: &'a PlannerOverrideContext,
-        cancellation_token: &'a CancellationToken,
+        graph: &'graph Graph,
+        override_context: &'graph PlannerOverrideContext,
+        cancellation_token: &'graph CancellationToken,
     ) -> Self {
         Self {
             graph,
@@ -113,25 +126,25 @@ impl<'a> PathSearch<'a> {
   path = path.pretty_print(graph),
   current_cost = path.cost
 ))]
-pub fn find_indirect_paths(
-    graph: &Graph,
-    override_context: &PlannerOverrideContext,
-    path: &OperationPath,
-    target: &NavigationTarget,
-    excluded: &ExcludedFromLookup,
-    cancellation_token: &CancellationToken,
-) -> Result<Vec<OperationPath>, WalkOperationError> {
+pub fn find_indirect_paths<'graph>(
+    graph: &'graph Graph,
+    override_context: &'graph PlannerOverrideContext,
+    path: &OperationPath<'graph>,
+    target: &NavigationTarget<'_>,
+    excluded: &ExcludedFromLookup<'graph>,
+    cancellation_token: &'graph CancellationToken,
+) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
     PathSearch::new(graph, override_context, cancellation_token)
         .find_indirect_paths(path, target, excluded)
 }
 
-impl PathSearch<'_> {
+impl<'graph> PathSearch<'graph> {
     fn find_indirect_paths(
         &mut self,
-        path: &OperationPath,
-        target: &NavigationTarget,
-        excluded: &ExcludedFromLookup,
-    ) -> Result<Vec<OperationPath>, WalkOperationError> {
+        path: &OperationPath<'graph>,
+        target: &NavigationTarget<'_>,
+        excluded: &ExcludedFromLookup<'graph>,
+    ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
         let graph = self.graph;
         let cancellation_token = self.cancellation_token;
         let mut tracker = BestPathTracker::new(graph);
@@ -142,6 +155,13 @@ impl PathSearch<'_> {
         let source_graph_id = tail_node
             .graph_id()
             .ok_or(WalkOperationError::TailMissingInfo(tail_node_index))?;
+
+        // Respect the path's current union scope when targeting a concrete type.
+        if let NavigationTarget::ConcreteType(type_name, _) = target {
+            if !path.can_resolve_union_member(type_name) {
+                return Ok(Vec::new());
+            }
+        }
 
         let mut queue = IndirectPathsLookupQueue::new_from_excluded(excluded, path);
 
@@ -217,7 +237,7 @@ impl PathSearch<'_> {
                 }
 
                 let mut new_excluded_graph_ids = visited_graphs.clone();
-                new_excluded_graph_ids.insert(edge_tail_graph_id.to_string());
+                new_excluded_graph_ids.insert(edge_tail_graph_id);
                 let new_excluded = ExcludedFromLookup {
                     graph_ids: new_excluded_graph_ids,
                     requirement: visited_key_fields.clone(),
@@ -238,6 +258,7 @@ impl PathSearch<'_> {
                         );
 
                         let next_resolution_path = path.advance(
+                            graph,
                             &edge_ref,
                             QueryTreeNode::from_paths(graph, &paths, None)?,
                             target,
@@ -261,7 +282,7 @@ impl PathSearch<'_> {
                             trace!("No direct paths found");
 
                             let mut new_visited_graphs = visited_graphs.clone();
-                            new_visited_graphs.insert(edge_tail_graph_id.to_string());
+                            new_visited_graphs.insert(edge_tail_graph_id);
 
                             let next_requirements = match edge.requirements() {
                                 Some(requirements) => {
@@ -295,13 +316,13 @@ impl PathSearch<'_> {
     }
 }
 
-impl PathSearch<'_> {
+impl<'graph> PathSearch<'graph> {
     fn try_advance_direct_path(
         &mut self,
-        path: &OperationPath,
-        edge_ref: &EdgeReference,
-        target: &NavigationTarget,
-    ) -> Result<Option<OperationPath>, WalkOperationError> {
+        path: &OperationPath<'graph>,
+        edge_ref: &EdgeReference<'graph>,
+        target: &NavigationTarget<'_>,
+    ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
         let graph = self.graph;
         trace!(
             "Checking edge {}",
@@ -320,6 +341,7 @@ impl PathSearch<'_> {
                 );
 
                 let next_resolution_path = path.advance(
+                    graph,
                     edge_ref,
                     QueryTreeNode::from_paths(graph, &paths, None)?,
                     target,
@@ -335,14 +357,14 @@ impl PathSearch<'_> {
     }
 }
 
-pub fn find_self_referencing_direct_path(
-    graph: &Graph,
-    override_context: &PlannerOverrideContext,
-    path: &OperationPath,
-    type_name: &str,
+pub fn find_self_referencing_direct_path<'graph>(
+    graph: &'graph Graph,
+    override_context: &'graph PlannerOverrideContext,
+    path: &OperationPath<'graph>,
+    type_name: &'graph str,
     condition: &Condition,
-    cancellation_token: &CancellationToken,
-) -> Result<OperationPath, WalkOperationError> {
+    cancellation_token: &'graph CancellationToken,
+) -> Result<OperationPath<'graph>, WalkOperationError> {
     let path_tail_index = path.tail();
     let mut path_search = PathSearch::new(graph, override_context, cancellation_token);
 
@@ -372,25 +394,32 @@ pub fn find_self_referencing_direct_path(
     path = path.pretty_print(graph),
     current_cost = path.cost,
 ))]
-pub fn find_direct_paths(
-    graph: &Graph,
-    override_context: &PlannerOverrideContext,
-    path: &OperationPath,
-    target: &NavigationTarget,
-    cancellation_token: &CancellationToken,
-) -> Result<Vec<OperationPath>, WalkOperationError> {
+pub fn find_direct_paths<'graph>(
+    graph: &'graph Graph,
+    override_context: &'graph PlannerOverrideContext,
+    path: &OperationPath<'graph>,
+    target: &NavigationTarget<'_>,
+    cancellation_token: &'graph CancellationToken,
+) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
     PathSearch::new(graph, override_context, cancellation_token).find_direct_paths(path, target)
 }
 
-impl PathSearch<'_> {
+impl<'graph> PathSearch<'graph> {
     fn find_direct_paths(
         &mut self,
-        path: &OperationPath,
-        target: &NavigationTarget,
-    ) -> Result<Vec<OperationPath>, WalkOperationError> {
+        path: &OperationPath<'graph>,
+        target: &NavigationTarget<'_>,
+    ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
         let graph = self.graph;
-        let mut result: Vec<OperationPath> = vec![];
+        let mut result: Vec<OperationPath<'graph>> = vec![];
         let path_tail_index = path.tail();
+
+        // Respect the path's current union scope when targeting a concrete type.
+        if let NavigationTarget::ConcreteType(type_name, _) = target {
+            if !path.can_resolve_union_member(type_name) {
+                return Ok(result);
+            }
+        }
 
         let edges_iter: Box<dyn Iterator<Item = _>> = match target {
             NavigationTarget::Field(field) => {
@@ -428,15 +457,15 @@ impl PathSearch<'_> {
   path = path.pretty_print(graph),
   edge = edge_ref.weight().display_name(),
 ))]
-pub fn can_satisfy_edge(
-    graph: &Graph,
-    override_context: &PlannerOverrideContext,
-    edge_ref: &EdgeReference,
-    path: &OperationPath,
-    excluded: &ExcludedFromLookup,
+pub fn can_satisfy_edge<'graph>(
+    graph: &'graph Graph,
+    override_context: &'graph PlannerOverrideContext,
+    edge_ref: &EdgeReference<'graph>,
+    path: &OperationPath<'graph>,
+    excluded: &ExcludedFromLookup<'graph>,
     use_only_direct_edges: bool,
-    cancellation_token: &CancellationToken,
-) -> Result<Option<Vec<OperationPath>>, WalkOperationError> {
+    cancellation_token: &'graph CancellationToken,
+) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
     PathSearch::new(graph, override_context, cancellation_token).can_satisfy_edge(
         edge_ref,
         path,
@@ -445,14 +474,14 @@ pub fn can_satisfy_edge(
     )
 }
 
-impl PathSearch<'_> {
+impl<'graph> PathSearch<'graph> {
     fn can_satisfy_edge(
         &mut self,
-        edge_ref: &EdgeReference,
-        path: &OperationPath,
-        excluded: &ExcludedFromLookup,
+        edge_ref: &EdgeReference<'graph>,
+        path: &OperationPath<'graph>,
+        excluded: &ExcludedFromLookup<'graph>,
         use_only_direct_edges: bool,
-    ) -> Result<Option<Vec<OperationPath>>, WalkOperationError> {
+    ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
         let graph = self.graph;
         let active_key = (path.tail(), edge_ref.id());
         if !self.active_edge_checks.insert(active_key) {
@@ -473,11 +502,11 @@ impl PathSearch<'_> {
 
     fn check_edge_requirements(
         &mut self,
-        edge_ref: &EdgeReference,
-        path: &OperationPath,
-        excluded: &ExcludedFromLookup,
+        edge_ref: &EdgeReference<'graph>,
+        path: &OperationPath<'graph>,
+        excluded: &ExcludedFromLookup<'graph>,
         use_only_direct_edges: bool,
-    ) -> Result<Option<Vec<OperationPath>>, WalkOperationError> {
+    ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
         let graph = self.graph;
         let override_context = self.override_context;
         let cancellation_token = self.cancellation_token;
@@ -501,7 +530,7 @@ impl PathSearch<'_> {
                 );
 
                 let mut requirements: VecDeque<MoveRequirement> = VecDeque::new();
-                let mut paths_to_requirements: Vec<OperationPath> = vec![];
+                let mut paths_to_requirements: Vec<OperationPath<'graph>> = vec![];
 
                 for selection in selections.selection_set.items.iter() {
                     requirements.push_front(MoveRequirement {
@@ -596,26 +625,28 @@ impl PathSearch<'_> {
 }
 
 #[derive(Debug)]
-pub struct MoveRequirement {
-    pub paths: Rc<Vec<OperationPath>>,
+pub struct MoveRequirement<'graph> {
+    pub paths: Rc<Vec<OperationPath<'graph>>>,
     pub selection: SelectionItem,
 }
 
-type FieldRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
-type FragmentRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
+type FieldRequirementsResult<'graph> =
+    Option<(Vec<OperationPath<'graph>>, Vec<MoveRequirement<'graph>>)>;
+type FragmentRequirementsResult<'graph> =
+    Option<(Vec<OperationPath<'graph>>, Vec<MoveRequirement<'graph>>)>;
 
-impl PathSearch<'_> {
+impl<'graph> PathSearch<'graph> {
     #[instrument(level = "trace", skip_all, fields(field = field.name))]
     fn validate_field_requirement(
         &mut self,
-        move_requirement: &MoveRequirement, // Contains Rc<Vec<OperationPath>>
+        move_requirement: &MoveRequirement<'graph>,
         field: &FieldSelection,
-        excluded: &ExcludedFromLookup,
+        excluded: &ExcludedFromLookup<'graph>,
         use_only_direct_edges: bool,
-    ) -> Result<FieldRequirementsResult, WalkOperationError> {
-        let mut direct_path_results: Vec<Vec<OperationPath>> =
+    ) -> Result<FieldRequirementsResult<'graph>, WalkOperationError> {
+        let mut direct_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(move_requirement.paths.len());
-        let mut indirect_path_results: Vec<Vec<OperationPath>> =
+        let mut indirect_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(move_requirement.paths.len());
 
         for path in move_requirement.paths.iter() {
@@ -638,7 +669,7 @@ impl PathSearch<'_> {
         let total_capacity: usize = direct_path_results.iter().map(|v| v.len()).sum::<usize>()
             + indirect_path_results.iter().map(|v| v.len()).sum::<usize>();
 
-        let mut next_paths: Vec<OperationPath> = Vec::with_capacity(total_capacity);
+        let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(total_capacity);
 
         // These extend calls should not reallocate `next_paths`.
         for paths_vec in direct_path_results {
@@ -664,7 +695,7 @@ impl PathSearch<'_> {
         }
 
         let shared_next_paths_for_subs = Rc::new(next_paths.clone());
-        let next_requirements: Vec<MoveRequirement> = move_requirement
+        let next_requirements: Vec<MoveRequirement<'graph>> = move_requirement
             .selection
             .selections()
             .unwrap() // Safe due to the check above
@@ -679,17 +710,17 @@ impl PathSearch<'_> {
     }
 }
 
-impl PathSearch<'_> {
+impl<'graph> PathSearch<'graph> {
     #[instrument(level = "trace", skip_all, fields(type_condition = fragment_selection.type_condition))]
     fn validate_fragment_requirement(
         &mut self,
-        requirement: &MoveRequirement,
+        requirement: &MoveRequirement<'graph>,
         fragment_selection: &InlineFragmentSelection,
-        excluded: &ExcludedFromLookup,
-    ) -> Result<FragmentRequirementsResult, WalkOperationError> {
+        excluded: &ExcludedFromLookup<'graph>,
+    ) -> Result<FragmentRequirementsResult<'graph>, WalkOperationError> {
         let type_name = &fragment_selection.type_condition;
-        // Collect all Vec<OperationPath> results from find_direct_paths
-        let mut direct_path_results: Vec<Vec<OperationPath>> =
+        // Collect all Vec<OperationPath<'graph>> results from find_direct_paths
+        let mut direct_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(requirement.paths.len());
         for path in requirement.paths.iter() {
             direct_path_results.push(self.find_direct_paths(
@@ -700,8 +731,8 @@ impl PathSearch<'_> {
             )?);
         }
 
-        // Collect all Vec<OperationPath> results from find_indirect_paths
-        let mut indirect_path_results: Vec<Vec<OperationPath>> =
+        // Collect all Vec<OperationPath<'graph>> results from find_indirect_paths
+        let mut indirect_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(requirement.paths.len());
         for path_from_rc in requirement.paths.iter() {
             indirect_path_results.push(self.find_indirect_paths(
@@ -717,7 +748,7 @@ impl PathSearch<'_> {
         let total_capacity: usize = direct_path_results.iter().map(|v| v.len()).sum::<usize>()
             + indirect_path_results.iter().map(|v| v.len()).sum::<usize>();
 
-        let mut next_paths: Vec<OperationPath> = Vec::with_capacity(total_capacity);
+        let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(total_capacity);
 
         // These extend calls should not reallocate `next_paths`.
         for paths_vec in direct_path_results {
@@ -742,7 +773,7 @@ impl PathSearch<'_> {
         }
 
         let shared_next_paths_for_subs = Rc::new(next_paths.clone());
-        let next_requirements: Vec<MoveRequirement> = requirement
+        let next_requirements: Vec<MoveRequirement<'graph>> = requirement
             .selection
             .selections()
             .unwrap() // Safe due to the check above

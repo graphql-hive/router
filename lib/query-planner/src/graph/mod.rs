@@ -10,14 +10,13 @@ mod tests;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display},
-    hash::Hash,
 };
 
 use super::ast::normalization::utils::extract_type_condition;
 use crate::{
     ast::type_aware_selection::TypeAwareSelection,
     federation_spec::FederationRules,
-    graph::node::{SubgraphTypeSpecialization, UnionSubsetData},
+    graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
         OperationKind, SupergraphDefinition, SupergraphField, SupergraphState,
     },
@@ -36,7 +35,11 @@ use super::graph::{edge::Edge, node::Node};
 
 type InnerGraph = Petgraph<Node, Edge, Directed>;
 
-type UnionRegistyHashMap<'a> = HashMap<&'a str, HashMap<&'a str, HashSet<&'a str>>>;
+type UnionTypeName<'a> = &'a str;
+type SubgraphName<'a> = &'a str;
+type UnionMemberTypes<'a> = HashSet<&'a str>;
+type UnionRegistyHashMap<'a> =
+    HashMap<UnionTypeName<'a>, HashMap<SubgraphName<'a>, UnionMemberTypes<'a>>>;
 
 #[derive(Debug, Default)]
 struct UnionDefinitions<'a> {
@@ -52,7 +55,7 @@ impl<'a> UnionDefinitions<'a> {
             .iter()
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Union(_)))
         {
-            let mut in_subgraphs: HashMap<&'a str, HashSet<&'a str>> = HashMap::new();
+            let mut in_subgraphs: HashMap<SubgraphName<'a>, UnionMemberTypes<'a>> = HashMap::new();
 
             for join_member in definition.join_union_members() {
                 in_subgraphs
@@ -61,7 +64,7 @@ impl<'a> UnionDefinitions<'a> {
                         e.insert(&join_member.member);
                     })
                     .or_insert_with(|| {
-                        let mut set: HashSet<&'a str> = HashSet::new();
+                        let mut set: UnionMemberTypes<'a> = HashSet::new();
                         set.insert(&join_member.member);
                         set
                     });
@@ -79,63 +82,37 @@ impl<'a> UnionDefinitions<'a> {
         self.registry.contains_key(type_name)
     }
 
-    fn members_in_subgraph(&self, type_name: &str, graph: &'a str) -> Option<&HashSet<&'a str>> {
+    fn members_in_subgraph(&self, type_name: &str, graph: &str) -> Option<&UnionMemberTypes<'a>> {
         self.registry.get(type_name).and_then(|r| r.get(graph))
     }
 
-    /// Produces a list of names of the object types.
-    pub fn intersections(
+    /// Produces the union members visible from a field resolved in a subgraph
+    pub fn members_for_field_in_graph(
         &self,
-        type_def: &'a SupergraphDefinition,
         field_def: &'a SupergraphField,
         field_type: &str,
-    ) -> HashSet<String> {
+        graph_id: &str,
+    ) -> UnionMemberTypes<'a> {
         // Collect subgraphs the field was defined in.
         // First, look for join__field(graph:),
         // If not defined, look at type's join__type(graph:).
-
-        let mut members_per_subgraph: HashMap<&str, HashSet<String>> = HashMap::new();
-
-        if field_def.join_field.is_empty() {
-            for join_type in type_def.join_types() {
-                let mut members_in_subgraph: HashSet<String> = HashSet::new();
-                for union_member in self
-                    .members_in_subgraph(field_type, &join_type.graph_id)
-                    .unwrap()
-                {
-                    members_in_subgraph.insert(union_member.to_string());
+        if let Some(join_field) = field_def.join_field.iter().find(|join_field| {
+            join_field
+                .graph_id
+                .as_ref()
+                .is_some_and(|field_graph_id| field_graph_id == graph_id)
+        }) {
+            if let Some(type_in_graph) = join_field.type_in_graph.as_ref().map(|t| t.inner_type()) {
+                // join__field(type:) can narrow a union-returning field to one concrete member.
+                if type_in_graph != field_type {
+                    return UnionMemberTypes::from([type_in_graph]);
                 }
-
-                members_per_subgraph.insert(&join_type.graph_id, members_in_subgraph);
             }
         }
 
-        for join_field in field_def.join_field.iter() {
-            if let Some(graph_id) = join_field.graph_id.as_ref() {
-                let mut members_in_subgraph: HashSet<String> = HashSet::new();
-
-                if let Some(type_in_graph) =
-                    join_field.type_in_graph.as_ref().map(|t| t.inner_type())
-                {
-                    // look for join__field(type:) - it could point to `Object` or `Union`
-                    if type_in_graph != field_type {
-                        // the field_type is a union, as we previously checked,
-                        // so if the type_in_graph is different,
-                        // it means it's an object type (one of the members).
-                        members_in_subgraph.insert(type_in_graph.to_string());
-                        members_per_subgraph.insert(graph_id, members_in_subgraph);
-                        continue;
-                    }
-                }
-
-                for union_member in self.members_in_subgraph(field_type, graph_id).unwrap() {
-                    members_in_subgraph.insert(union_member.to_string());
-                }
-                members_per_subgraph.insert(graph_id, members_in_subgraph);
-            }
-        }
-
-        intersections(members_per_subgraph.values().collect())
+        self.members_in_subgraph(field_type, graph_id)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -766,8 +743,18 @@ impl Graph {
                             state.is_interface_object_in_subgraph(def_name, graph_id),
                         ));
 
-                        let member_types =
-                            unions.intersections(definition, field_definition, target_type);
+                        // Build union-member edges for the current subgraph only. Doing a global
+                        // intersection here strips valid members from pinned paths such as
+                        // Query.getResponse -> Response/A -> actions, where A knows the full union.
+                        let mut member_types = unions
+                            .members_for_field_in_graph(field_definition, target_type, graph_id)
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        member_types.sort_unstable();
+                        let possible_members: Vec<String> = member_types
+                            .iter()
+                            .map(|member| member.to_string())
+                            .collect::<Vec<_>>();
 
                         trace!(
                             "Handling a field {}.{}/{} resolving a union type {}",
@@ -782,17 +769,18 @@ impl Graph {
                                 target_type,
                                 state.resolve_graph_id(graph_id)?,
                                 state.is_interface_object_in_subgraph(target_type, graph_id),
-                                SubgraphTypeSpecialization::UnionSubset(UnionSubsetData {
+                                SubgraphTypeSpecialization::UnionMembers(UnionMembersData {
                                     type_name: def_name.clone(),
                                     field_name: field_name.clone(),
-                                    object_type_name: member.clone(),
+                                    object_type_name: member.to_string(),
+                                    possible_members: possible_members.clone(),
                                     provides: None,
                                 }),
                             ));
                             let abstract_tail = self.upsert_node(Node::new_node(
-                                &member,
+                                member,
                                 state.resolve_graph_id(graph_id)?,
-                                state.is_interface_object_in_subgraph(&member, graph_id),
+                                state.is_interface_object_in_subgraph(member, graph_id),
                             ));
                             // because we duplicate tails, we need to add __typename to all of them
                             let typename_tail = self.upsert_node(Node::new_node(
@@ -847,7 +835,7 @@ impl Graph {
                             self.upsert_edge(
                                 tail,
                                 abstract_tail,
-                                Edge::AbstractMove(member.clone()),
+                                Edge::AbstractMove(member.to_string()),
                             );
                         }
 
@@ -1229,27 +1217,4 @@ impl Display for Graph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", Dot::with_config(&self.graph, &[]))
     }
-}
-
-fn intersections<T>(sets: Vec<&HashSet<T>>) -> HashSet<T>
-where
-    T: Clone + Eq + Hash,
-{
-    sets.iter()
-        .enumerate()
-        .min_by_key(|&(_, s)| s.len())
-        .map(|(smallest_set_index, _)| {
-            let (other_sets_left, [smallest_set, other_sets_right @ ..]) =
-                sets.split_at(smallest_set_index)
-            else {
-                unreachable!()
-            };
-            let other_sets = || other_sets_left.iter().chain(other_sets_right);
-            smallest_set
-                .iter()
-                .filter(|item| other_sets().all(|o| o.contains(item)))
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default()
 }

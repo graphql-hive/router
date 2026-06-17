@@ -11,7 +11,7 @@ use crate::ast::merge_path::Condition;
 use crate::planner::walker::pathfinder::NavigationTarget;
 use crate::{
     ast::arguments::ArgumentsMap,
-    graph::{edge::EdgeReference, Graph},
+    graph::{edge::Edge, edge::EdgeReference, Graph},
     planner::tree::query_tree_node::QueryTreeNode,
 };
 
@@ -40,6 +40,37 @@ pub struct PathSegment {
     pub condition: Option<Condition>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnionContext<'graph> {
+    pub parent_type_name: &'graph str,
+    pub field_name: &'graph str,
+    pub graph_id: &'graph str,
+    pub member_name: &'graph str,
+    pub possible_members: Vec<&'graph str>,
+}
+
+impl<'graph> UnionContext<'graph> {
+    fn can_resolve_member(&self, member_type_name: &str) -> bool {
+        self.possible_members
+            .iter()
+            .any(|possible_member| *possible_member == member_type_name)
+    }
+
+    pub fn eq_field(&self, other: &Self) -> bool {
+        self.parent_type_name == other.parent_type_name && self.field_name == other.field_name
+    }
+
+    fn narrow_to_member(&self, member_type_name: &'graph str) -> Self {
+        Self {
+            parent_type_name: self.parent_type_name,
+            field_name: self.field_name,
+            graph_id: self.graph_id,
+            member_name: member_type_name,
+            possible_members: vec![member_type_name],
+        }
+    }
+}
+
 impl PathSegment {
     pub fn new_root(edge: &EdgeReference) -> Self {
         Self {
@@ -55,14 +86,15 @@ impl PathSegment {
 }
 
 #[derive(Clone)]
-pub struct OperationPath {
+pub struct OperationPath<'graph> {
     pub root_node: NodeIndex,
     pub last_segment: Option<Rc<PathSegment>>,
     pub visited_edge_indices: Rc<HashSet<EdgeIndex>>,
     pub cost: u64,
+    pub union_context: Option<UnionContext<'graph>>,
 }
 
-impl Debug for OperationPath {
+impl Debug for OperationPath<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut out = f.debug_struct("");
         let mut out = out.field("cost", &self.cost);
@@ -84,7 +116,7 @@ impl Debug for OperationPath {
     }
 }
 
-impl OperationPath {
+impl<'graph> OperationPath<'graph> {
     pub fn new(
         root_node_index: NodeIndex,
         last_segment: Option<Rc<PathSegment>>,
@@ -97,6 +129,7 @@ impl OperationPath {
                 .map_or(0, |segment| segment.cumulative_cost),
             last_segment,
             visited_edge_indices,
+            union_context: None,
         }
     }
 
@@ -111,10 +144,11 @@ impl OperationPath {
 
     pub fn advance(
         &self,
-        edge_ref: &EdgeReference<'_>,
+        graph: &'graph Graph,
+        edge_ref: &EdgeReference<'graph>,
         requirement: Option<Rc<QueryTreeNode>>,
         target: &NavigationTarget,
-    ) -> OperationPath {
+    ) -> OperationPath<'graph> {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
         let new_cost = prev_cost + edge_cost;
@@ -141,7 +175,48 @@ impl OperationPath {
         };
         let new_segment = Rc::new(new_segment_data);
 
-        OperationPath::new(self.root_node, Some(new_segment), new_visited)
+        let union_context = match edge_ref.weight() {
+            Edge::FieldMove(_) => {
+                let tail = graph.node(edge_ref.target()).ok();
+                let union_data = tail.and_then(|tail| tail.union_members_data());
+                let graph_id = tail.and_then(|tail| tail.graph_id());
+
+                match (union_data, graph_id) {
+                    (Some(union_data), Some(graph_id)) => Some(UnionContext {
+                        parent_type_name: &union_data.type_name,
+                        field_name: &union_data.field_name,
+                        graph_id,
+                        member_name: &union_data.object_type_name,
+                        possible_members: union_data
+                            .possible_members
+                            .iter()
+                            .map(|member| member.as_str())
+                            .collect(),
+                    }),
+                    _ => None,
+                }
+            }
+            Edge::AbstractMove(member_type_name) => self
+                .union_context
+                .as_ref()
+                .map(|scope| scope.narrow_to_member(member_type_name)),
+            Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_) => None,
+            _ => self.union_context.clone(),
+        };
+
+        OperationPath {
+            root_node: self.root_node,
+            cost: new_cost,
+            last_segment: Some(new_segment),
+            visited_edge_indices: new_visited,
+            union_context,
+        }
+    }
+
+    pub fn can_resolve_union_member(&self, member_type_name: &str) -> bool {
+        self.union_context
+            .as_ref()
+            .is_none_or(|scope| scope.can_resolve_member(member_type_name))
     }
 
     pub fn tail(&self) -> NodeIndex {
@@ -215,7 +290,7 @@ impl OperationPath {
      * self: The original path from which the requirement check started.
      * other: The path found that satisfies (part of) the requirement.
      */
-    pub fn build_requirement_continuation_path(&self, other: &Self) -> Self {
+    pub fn build_requirement_continuation_path(&self, other: &OperationPath<'graph>) -> Self {
         let source_segments: Vec<Rc<PathSegment>> = self.get_segments();
         let target_segments: Vec<Rc<PathSegment>> = other.get_segments();
 
@@ -278,5 +353,12 @@ impl OperationPath {
             previous_new_segment,
             self.visited_edge_indices.clone(),
         )
+        // The requirement continuation reuses other's tail, so it also must reuse its union context
+        .with_union_context(other.union_context.clone())
+    }
+
+    fn with_union_context(mut self, scope: Option<UnionContext<'graph>>) -> Self {
+        self.union_context = scope;
+        self
     }
 }
