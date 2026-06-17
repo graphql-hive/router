@@ -285,7 +285,6 @@ impl SchemaState {
                 experimental_abstract_type_folding: router_config
                     .query_planner
                     .experimental_abstract_type_folding,
-                ..QueryPlannerOptions::default()
             },
         )?;
         let metadata = Arc::new(planner.consumer_schema.schema_metadata());
