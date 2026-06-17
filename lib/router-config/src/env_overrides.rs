@@ -55,6 +55,10 @@ pub struct EnvVarOverrides {
     // Tracing overrides
     #[envconfig(from = "TELEMETRY_TRACING_SAMPLING_RATE")]
     pub tracing_sampling_rate: Option<f64>,
+
+    // Query planner overrides
+    #[envconfig(from = "QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING")]
+    pub query_planner_experimental_abstract_type_folding: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -175,6 +179,19 @@ impl EnvVarOverrides {
             config = config.set_override("subscriptions.enabled", subscriptions_enabled)?;
         }
 
+        if let Some(experimental_abstract_type_folding) =
+            self.query_planner_experimental_abstract_type_folding.take()
+        {
+            debug!(
+                "[config-override] 'query_planner.experimental_abstract_type_folding' = {}",
+                experimental_abstract_type_folding
+            );
+            config = config.set_override(
+                "query_planner.experimental_abstract_type_folding",
+                experimental_abstract_type_folding,
+            )?;
+        }
+
         Ok(config)
     }
 }
@@ -229,5 +246,37 @@ telemetry:
         .unwrap();
 
         assert_eq!(config.telemetry.tracing.collect.sampling, 0.1);
+    }
+
+    #[test]
+    fn query_planner_experimental_abstract_type_folding_override_sets_config() {
+        let config = config_from_overrides(EnvVarOverrides {
+            query_planner_experimental_abstract_type_folding: Some(true),
+            ..Default::default()
+        });
+
+        assert!(config.query_planner.experimental_abstract_type_folding);
+    }
+
+    #[test]
+    fn query_planner_experimental_abstract_type_folding_override_wins_over_config_file_value() {
+        let config = EnvVarOverrides {
+            query_planner_experimental_abstract_type_folding: Some(true),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            r#"
+query_planner:
+  experimental_abstract_type_folding: false
+"#,
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        assert!(config.query_planner.experimental_abstract_type_folding);
     }
 }

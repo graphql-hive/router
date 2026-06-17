@@ -28,6 +28,8 @@ pub struct QueryPlannerConfig {
     /// The fold is only applied when the concrete object branches select the same fields and
     /// exactly match the interface members in the target subgraph.
     ///
+    /// Can also be set via the `QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING` environment variable.
+    ///
     /// Default: false.
     #[serde(default = "default_experimental_abstract_type_folding")]
     pub experimental_abstract_type_folding: bool,
