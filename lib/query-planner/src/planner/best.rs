@@ -62,9 +62,9 @@ use crate::{
     utils::cancellation::CancellationToken,
 };
 
-type PathAndPosition = (OperationPath, MutationFieldPosition);
+type PathAndPosition<'graph> = (OperationPath<'graph>, MutationFieldPosition);
 type QueryTreeResult = Result<QueryTree, GraphError>;
-type LazyQueryTree = LazyTransform<PathAndPosition, QueryTreeResult>;
+type LazyQueryTree<'graph> = LazyTransform<PathAndPosition<'graph>, QueryTreeResult>;
 
 /// The high-penalty cost for crossing a subgraph boundary or satisfying a requirement.
 /// This is the primary driver of the optimization, encouraging plans with fewer subgraphs.
@@ -74,19 +74,19 @@ const FIELD_COST: u64 = 1;
 /// A lazily-evaluated, potential piece of the final query plan.
 /// It represents one of many possible ways to resolve a part of the query.
 #[derive(Clone)]
-struct Candidate {
+struct Candidate<'graph> {
     /// The actual `QueryTree` for this candiate, computed only when first needed.
-    tree: LazyQueryTree,
+    tree: LazyQueryTree<'graph>,
     /// The cached cost of this tree, computed only once.
     cost: OnceCell<u64>,
 }
 
 /// Represents a set of alternative Candidates to satisfy a single leaf in the query.
 /// The final plan must choose exactly one fragment from each ChoiceGroup.
-type Alternatives = Vec<Candidate>;
+type Alternatives<'graph> = Vec<Candidate<'graph>>;
 
-impl Candidate {
-    fn new(path: OperationPath, mutation_pos: MutationFieldPosition) -> Self {
+impl<'graph> Candidate<'graph> {
+    fn new(path: OperationPath<'graph>, mutation_pos: MutationFieldPosition) -> Self {
         Self {
             tree: LazyTransform::new((path, mutation_pos)),
             cost: OnceCell::new(),
@@ -114,14 +114,14 @@ impl Candidate {
 }
 
 /// Each `Alternatives` group represents a set of possible ways to satisfy one leaf of the query.
-fn prepare_alternatives(operation: ResolvedOperation) -> Vec<Alternatives> {
+fn prepare_alternatives<'graph>(operation: ResolvedOperation<'graph>) -> Vec<Alternatives<'graph>> {
     let is_mutation = matches!(operation.operation_kind, OperationKind::Mutation);
-    let mut per_leaf_alternatives_asc: Vec<Alternatives> = Vec::new();
+    let mut per_leaf_alternatives_asc: Vec<Alternatives<'graph>> = Vec::new();
 
     for (index, root_field_options) in operation.root_field_groups.into_iter().enumerate() {
         let mutation_field_position: MutationFieldPosition = is_mutation.then_some(index);
 
-        let leaf_alternatives: Vec<Alternatives> = root_field_options
+        let leaf_alternatives: Vec<Alternatives<'graph>> = root_field_options
             .into_iter()
             .map(|paths_to_leaf| {
                 paths_to_leaf

@@ -398,6 +398,407 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+// Related: https://github.com/graphql-hive/router/issues/1098
+// Related: https://github.com/graphql-hive/federation-gateway-audit/pull/347
+#[test]
+fn partial_union_member_only_in_one_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query {
+          getResponse {
+            message
+            actions {
+              __typename
+              ... on Alpha {
+                id
+                value
+              }
+              ... on Beta {
+                id
+                name
+                details
+              }
+              ... on Gamma {
+                id
+                label
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/partial-union.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          getResponse {
+            message
+            actions {
+              __typename
+              ... on Alpha {
+                id
+                value
+              }
+              ... on Beta {
+                id
+                name
+                details
+              }
+              ... on Gamma {
+                id
+                label
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+// Related: https://github.com/graphql-hive/federation-gateway-audit/pull/347
+#[test]
+fn partial_union_members_missing_from_other_subgraph_only() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query {
+          getResponse {
+            actions {
+              __typename
+              ... on Beta {
+                name
+              }
+              ... on Gamma {
+                label
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/partial-union.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          getResponse {
+            actions {
+              __typename
+              ... on Beta {
+                name
+              }
+              ... on Gamma {
+                label
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn nested_partial_union_entity_representable_a_path_keeps_only_common_members(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query {
+          rootA {
+            wrapper {
+              actions {
+                __typename
+                ... on Common {
+                  label
+                }
+                ... on OnlyA {
+                  a
+                }
+                ... on OnlyB {
+                  b
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/partial-union-complex.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          rootA {
+            wrapper {
+              actions {
+                __typename
+                ... on Common {
+                  label
+                }
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn nested_partial_union_entity_representable_b_path_keeps_only_common_members(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query {
+          rootB {
+            wrapper {
+              actions {
+                __typename
+                ... on Common {
+                  label
+                }
+                ... on OnlyA {
+                  a
+                }
+                ... on OnlyB {
+                  b
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/partial-union-complex.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          rootB {
+            wrapper {
+              actions {
+                __typename
+                ... on Common {
+                  label
+                }
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn nested_partial_union_missing_member_from_pinned_path_falls_back_to_typename(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query {
+          rootA {
+            wrapper {
+              actions {
+                __typename
+                ... on OnlyB {
+                  b
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/partial-union-complex.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          rootA {
+            wrapper {
+              actions {
+                __typename
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn nested_partial_union_ambiguous_shareable_path_keeps_only_common_members(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query {
+          shared {
+            wrapper {
+              actions {
+                __typename
+                ... on Common {
+                  label
+                }
+                ... on OnlyA {
+                  a
+                }
+                ... on OnlyB {
+                  b
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/partial-union-complex.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          shared {
+            wrapper {
+              actions {
+                __typename
+                ... on Common {
+                  label
+                }
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn nested_partial_union_uses_members_from_subgraph_reached_by_entity_move(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query {
+          rootA {
+            bWrapper {
+              actions {
+                __typename
+                ... on Common {
+                  label
+                }
+                ... on OnlyA {
+                  a
+                }
+                ... on OnlyB {
+                  b
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/partial-union-complex.supergraph.graphql",
+        document,
+    )?;
+    let query_plan = format!("{}", query_plan);
+
+    // bWrapper forces an entity move from Container/a to Container/b before resolving actions,
+    // so Action must be narrowed to B's local members and keep OnlyB while dropping OnlyA.
+    assert!(query_plan.contains("... on OnlyB"));
+    assert!(!query_plan.contains("... on OnlyA"));
+
+    insta::assert_snapshot!(query_plan, @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            rootA {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "rootA") {
+          Fetch(service: "b") {
+            {
+              ... on Container {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Container {
+                bWrapper {
+                  actions {
+                    __typename
+                    ... on Common {
+                      label
+                    }
+                    ... on OnlyB {
+                      b
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
     init_logger();

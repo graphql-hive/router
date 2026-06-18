@@ -1626,6 +1626,7 @@ fn find_satisfiable_key<'a>(
                 last_segment: None,
                 visited_edge_indices: Default::default(),
                 cost: 0,
+                union_context: None,
             },
             &Default::default(),
             true,

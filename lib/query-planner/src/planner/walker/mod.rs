@@ -31,28 +31,28 @@ use pathfinder::{find_direct_paths, find_indirect_paths};
 use tracing::{instrument, span, trace, Level};
 use utils::get_entrypoints;
 
-pub struct ResolvedOperation {
+pub struct ResolvedOperation<'graph> {
     pub operation_kind: OperationKind,
-    pub root_field_groups: Vec<BestPathsPerLeaf>,
+    pub root_field_groups: Vec<BestPathsPerLeaf<'graph>>,
 }
 
 // TODO: Make a better struct
-pub type BestPathsPerLeaf = Vec<Vec<OperationPath>>;
+pub type BestPathsPerLeaf<'graph> = Vec<Vec<OperationPath<'graph>>>;
 
 // TODO: Consider to use VecDeque(fixed_size) if we can predict it?
 // TODO: Consider to drop this IR layer and just go with QTP directly.
 
-type WorkItem<'a> = (&'a SelectionItem, Vec<OperationPath>);
-type ResolutionStack<'a> = Vec<WorkItem<'a>>;
+type WorkItem<'graph, 'op> = (&'op SelectionItem, Vec<OperationPath<'graph>>);
+type ResolutionStack<'graph, 'op> = Vec<WorkItem<'graph, 'op>>;
 
 #[instrument(level = "trace", skip_all)]
-pub fn walk_operation(
-    graph: &Graph,
-    supergraph: &SupergraphState,
-    override_context: &PlannerOverrideContext,
-    operation: &OperationDefinition,
-    cancellation_token: &CancellationToken,
-) -> Result<ResolvedOperation, WalkOperationError> {
+pub fn walk_operation<'graph, 'op: 'graph>(
+    graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    operation: &'op OperationDefinition,
+    cancellation_token: &'graph CancellationToken,
+) -> Result<ResolvedOperation<'graph>, WalkOperationError> {
     let operation_kind = operation
         .operation_kind
         .clone()
@@ -61,7 +61,7 @@ pub fn walk_operation(
     trace!("operation is of type {:?}", op_type);
 
     let root_entrypoints = get_entrypoints(graph, op_type)?;
-    let initial_paths: Vec<OperationPath> = root_entrypoints
+    let initial_paths: Vec<OperationPath<'graph>> = root_entrypoints
         .iter()
         .map(|edge| OperationPath::new_entrypoint(edge))
         .collect();
@@ -75,7 +75,7 @@ pub fn walk_operation(
 
         stack_to_resolve.push_back((selection_item, initial_paths.to_vec()));
 
-        let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
+        let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
         while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
             cancellation_token.bail_if_cancelled()?;
@@ -85,7 +85,7 @@ pub fn walk_operation(
                 override_context,
                 selection_item,
                 &paths,
-                &vec![],
+                &[],
                 cancellation_token,
             )?;
 
@@ -104,17 +104,23 @@ pub fn walk_operation(
     })
 }
 
-fn process_selection<'a>(
-    graph: &'a Graph,
-    supergraph: &'a SupergraphState,
-    override_context: &'a PlannerOverrideContext,
-    selection_item: &'a SelectionItem,
-    paths: &Vec<OperationPath>,
-    fields_to_resolve_locally: &Vec<String>,
-    cancellation_token: &CancellationToken,
-) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
+fn process_selection<'graph, 'op: 'graph>(
+    graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    selection_item: &'op SelectionItem,
+    paths: &[OperationPath<'graph>],
+    fields_to_resolve_locally: &[String],
+    cancellation_token: &'graph CancellationToken,
+) -> Result<
+    (
+        ResolutionStack<'graph, 'op>,
+        Vec<Vec<OperationPath<'graph>>>,
+    ),
+    WalkOperationError,
+> {
     let mut stack_to_resolve: ResolutionStack = vec![];
-    let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
+    let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
     match selection_item {
         SelectionItem::InlineFragment(fragment) => {
@@ -152,17 +158,23 @@ fn process_selection<'a>(
 }
 
 #[instrument(level = "trace", skip_all)]
-fn process_selection_set<'a>(
-    graph: &'a Graph,
-    supergraph: &'a SupergraphState,
-    override_context: &'a PlannerOverrideContext,
-    selection_set: &'a SelectionSet,
-    paths: &Vec<OperationPath>,
-    fields_to_resolve_locally: &Vec<String>,
-    cancellation_token: &CancellationToken,
-) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
+fn process_selection_set<'graph, 'op: 'graph>(
+    graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    selection_set: &'op SelectionSet,
+    paths: &[OperationPath<'graph>],
+    fields_to_resolve_locally: &[String],
+    cancellation_token: &'graph CancellationToken,
+) -> Result<
+    (
+        ResolutionStack<'graph, 'op>,
+        Vec<Vec<OperationPath<'graph>>>,
+    ),
+    WalkOperationError,
+> {
     let mut stack_to_resolve: ResolutionStack = vec![];
-    let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
+    let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
     for item in selection_set.items.iter() {
         let (next_stack_to_resolve, new_paths_per_leaf) = process_selection(
@@ -184,15 +196,21 @@ fn process_selection_set<'a>(
 #[instrument(level = "trace", skip_all, fields(
   type_condition = fragment.type_condition,
 ))]
-fn process_inline_fragment<'a>(
-    graph: &'a Graph,
-    supergraph: &'a SupergraphState,
-    override_context: &'a PlannerOverrideContext,
-    fragment: &'a InlineFragmentSelection,
-    paths: &Vec<OperationPath>,
-    fields_to_resolve_locally: &Vec<String>,
-    cancellation_token: &CancellationToken,
-) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
+fn process_inline_fragment<'graph, 'op: 'graph>(
+    graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    fragment: &'op InlineFragmentSelection,
+    paths: &[OperationPath<'graph>],
+    fields_to_resolve_locally: &[String],
+    cancellation_token: &'graph CancellationToken,
+) -> Result<
+    (
+        ResolutionStack<'graph, 'op>,
+        Vec<Vec<OperationPath<'graph>>>,
+    ),
+    WalkOperationError,
+> {
     trace!(
         "Processing inline fragment '{}' on type '{}' (skip: {:?}, include: {:?}) through {} possible paths",
         fragment.selections,
@@ -249,7 +267,7 @@ fn process_inline_fragment<'a>(
         // and jumping straight to its selections.
         let condition: Option<Condition> = fragment.into();
 
-        let mut next_paths: Vec<OperationPath> = Vec::with_capacity(paths.len());
+        let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(paths.len());
         for path in paths {
             let path_span = span!(
                 Level::TRACE,
@@ -291,7 +309,7 @@ fn process_inline_fragment<'a>(
         paths.len()
     );
 
-    let mut next_paths: Vec<OperationPath> = Vec::with_capacity(paths.len());
+    let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(paths.len());
     for path in paths {
         let path_span = span!(
             Level::TRACE,
@@ -392,21 +410,124 @@ fn process_inline_fragment<'a>(
     )
 }
 
+/// The same union may have different members in different subgraphs.
+/// For example:
+///
+/// - graph A: Action = Common | OnlyA
+/// - graph B: Action = Common | OnlyB
+///
+/// If the planner still has valid candidate paths through both A and B,
+/// the response shape must not depend on which path wins later.
+/// In that case we keep only members that are available in every candidate graph.
+///
+/// In the example above, only `Common` is safe to keep.
+fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
+    if paths.len() <= 1 {
+        return;
+    }
+
+    let Some(union_context) = paths.first().and_then(|path| path.union_context.as_ref()) else {
+        return;
+    };
+
+    let all_same_field = paths.iter().all(|path| {
+        path.union_context
+            .as_ref()
+            .is_some_and(|ctx| ctx.eq_field(union_context))
+    });
+
+    if !all_same_field {
+        return;
+    }
+
+    // Collect the union members that each subgraph can return.
+    //
+    // All paths through the same graph share the same `possible_members` because they originate
+    // from the same `UnionMembersData` (one per graph). We only need to record each graph's member
+    // set once — no accumulation is required.
+    type GraphId<'graph> = &'graph str;
+    type MembersPerGraph<'graph> = Vec<(GraphId<'graph>, Vec<&'graph str>)>;
+    let mut members_per_graph: MembersPerGraph<'graph> = Vec::new();
+
+    for path in paths.iter() {
+        let context = path
+            .union_context
+            .as_ref()
+            // It's safe to unwrap as `all_same_field` checked that all paths have the same context
+            .expect("union member context should exist at this point");
+
+        if !members_per_graph
+            .iter()
+            .any(|(graph_id, _)| graph_id == &context.graph_id)
+        {
+            members_per_graph.push((context.graph_id, context.possible_members.clone()));
+        }
+    }
+
+    if members_per_graph.len() <= 1 {
+        return;
+    }
+
+    let (_, least_members_set) = members_per_graph
+        .iter()
+        .min_by_key(|(_, members)| members.len())
+        // It's safe as we checked that `members_per_graph` has at least two entries above
+        .expect("members_per_graph has at least two entries");
+
+    // Start from the smallest member list.
+    // Then shrink it with each graph until only shared members remain.
+    let mut shared_members: Vec<&'graph str> = least_members_set.clone();
+
+    for (_, members) in &members_per_graph {
+        shared_members.retain(|member| members.contains(member));
+
+        if shared_members.is_empty() {
+            // No union member exists in every candidate subgraph.
+            // None of these paths is safe to keep.
+            paths.clear();
+            return;
+        }
+    }
+
+    paths.retain_mut(|path| {
+        // It's safe to unwrap as we checked that `union_context` exists already
+        let context = path
+            .union_context
+            .as_mut()
+            .expect("union context should exist at this point");
+
+        // Keep only paths whose current member is shared
+        if !shared_members.contains(&context.member_name) {
+            return false;
+        }
+
+        // Update the possible members to the shared members set.
+        context.possible_members = shared_members.clone();
+        true
+    });
+}
+
 #[instrument(level = "trace", skip_all, fields(
   field_name = &field.name,
   leaf = field.is_leaf()
 ))]
-fn process_field<'a>(
-    graph: &'a Graph,
-    supergraph: &'a SupergraphState,
-    override_context: &'a PlannerOverrideContext,
-    field: &'a FieldSelection,
-    paths: &[OperationPath],
+fn process_field<'graph, 'op: 'graph>(
+    graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    field: &'op FieldSelection,
+    paths: &[OperationPath<'graph>],
     fields_to_resolve_locally: &[String],
-    cancellation_token: &CancellationToken,
-) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
+    cancellation_token: &'graph CancellationToken,
+) -> Result<
+    (
+        ResolutionStack<'graph, 'op>,
+        Vec<Vec<OperationPath<'graph>>>,
+    ),
+    WalkOperationError,
+> {
     let mut next_stack_to_resolve: ResolutionStack = vec![];
-    let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
+    let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
     let mut tracker = BestPathTracker::new(graph);
 
     trace!(
@@ -477,6 +598,7 @@ fn process_field<'a>(
     }
 
     let mut next_paths = tracker.get_best_paths();
+    narrow_partial_union_paths(&mut next_paths);
     if next_paths.is_empty() {
         return Err(WalkOperationError::NoPathsFound(field.name.to_string()));
     }
@@ -549,7 +671,8 @@ fn process_field<'a>(
             "Shareable interface detected. Validating that sub-selections can be resolved from a single path."
         );
         let _enter = path_span.enter();
-        let mut valid_paths_for_children: Vec<OperationPath> = Vec::with_capacity(next_paths.len());
+        let mut valid_paths_for_children: Vec<OperationPath<'graph>> =
+            Vec::with_capacity(next_paths.len());
         for candidate_path in &next_paths {
             let mut all_children_resolvable = true;
             // We don't need the results of the sub-walk here, only whether it was successful
@@ -559,7 +682,7 @@ fn process_field<'a>(
                     supergraph,
                     override_context,
                     child_selection,
-                    &vec![candidate_path.clone()],
+                    std::slice::from_ref(candidate_path),
                     &fields_to_resolve_locally,
                     cancellation_token,
                 );
