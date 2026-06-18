@@ -5,6 +5,7 @@ use crate::executors::dedupe::unique_leader_fingerprint;
 use crate::executors::map::InflightRequestsMap;
 use crate::executors::multipart_subscribe;
 use crate::executors::sse;
+use crate::executors::subscription_buffer;
 use crate::hooks::on_subgraph_http_request::{
     OnSubgraphHttpRequestHookPayload, OnSubgraphHttpResponseHookPayload,
 };
@@ -596,7 +597,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 custom_scalar_paths.clone(),
             );
 
-            Ok(Box::pin(async_stream::stream! {
+            let mapped = Box::pin(async_stream::stream! {
                 trace!("multipart subscription stream started");
                 for await result in stream {
                     match result {
@@ -610,7 +611,16 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                         }
                     }
                 }
-            }))
+            });
+
+            // buffer decouples the emitting subgraph from slow downstream consumers, dropping
+            // messages under backpressure instead of throttling the subgraph
+            Ok(subscription_buffer::buffered(
+                mapped,
+                1,
+                self.subgraph_name.clone(),
+                self.endpoint.to_string(),
+            ))
         } else {
             debug!(
                 "using SSE for subscription connection to subgraph {} at {}",
@@ -620,7 +630,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
             let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone());
 
-            Ok(Box::pin(async_stream::stream! {
+            let mapped = Box::pin(async_stream::stream! {
                 trace!("SSE subscription stream started");
                 for await result in stream {
                     match result {
@@ -634,7 +644,16 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                         }
                     }
                 }
-            }))
+            });
+
+            // buffer decouples the emitting subgraph from slow downstream consumers, dropping
+            // messages under backpressure instead of throttling the subgraph
+            Ok(subscription_buffer::buffered(
+                mapped,
+                1,
+                self.subgraph_name.clone(),
+                self.endpoint.to_string(),
+            ))
         }
     }
 }
