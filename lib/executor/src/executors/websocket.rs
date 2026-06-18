@@ -148,7 +148,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // and sends responses through the channel. The spawned future itself stays local
         // to ntex runtime, so it can hold non-Send websocket client state.
         // this task ends when the websocket stream completes, the client drops the receiver,
-        // or back-pressure fills the channel and we terminate the subscription.
+// this task ends when the websocket stream completes or the client drops the receiver.
+// If the channel fills due to back-pressure, the latest event is dropped (with a
+// warning log) and the subscription continues.
         drop(rt::spawn(async move {
             let connection = match connect(&endpoint, tls_config).await {
                 Ok(conn) => conn,
