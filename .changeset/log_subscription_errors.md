@@ -1,5 +1,6 @@
 ---
 hive-router-plan-executor: patch
+hive-router: patch
 ---
 
 # Log subgraph subscription failures at error level

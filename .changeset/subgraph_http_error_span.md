@@ -1,6 +1,7 @@
 ---
 hive-router-internal: patch
 hive-router-plan-executor: patch
+hive-router: patch
 ---
 
 # Mark failed subgraph HTTP requests as errors on their trace span
