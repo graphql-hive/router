@@ -48,7 +48,7 @@ pub struct SubscriptionsConfig {
     /// matter.
     ///
     /// Defaults to 1024.
-    #[serde(default = "default_executor_buffer_capacity")]
+    #[serde(default = "default_subgraph_buffer_capacity")]
     pub subgraph_buffer_capacity: usize,
     /// Configuration for subgraphs using the HTTP Callback protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -107,7 +107,7 @@ fn default_broadcast_capacity() -> usize {
     32
 }
 
-fn default_executor_buffer_capacity() -> usize {
+fn default_subgraph_buffer_capacity() -> usize {
     1024
 }
 
