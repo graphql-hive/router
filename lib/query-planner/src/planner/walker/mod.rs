@@ -467,7 +467,7 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
             .iter()
             .any(|(graph_id, _)| graph_id == &context.graph_id)
         {
-            members_per_graph.push((context.graph_id, context.possible_members.clone()));
+            members_per_graph.push((context.graph_id, context.possible_members()));
         }
     }
 
@@ -508,8 +508,9 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
             return false;
         }
 
-        // Update the possible members to the shared members set.
-        context.possible_members = shared_members.clone();
+        // At this point, the path leads to only one possible member,
+        // not need to store the shared members set.
+        context.set_possible_member(context.member_name);
         true
     });
 }
