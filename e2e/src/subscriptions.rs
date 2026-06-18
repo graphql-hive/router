@@ -1830,7 +1830,7 @@ mod subscriptions_e2e_tests {
     #[ntex::test]
     async fn backpressure_http_subgraph_drops_messages_not_subscription() {
         let subgraphs = TestSubgraphs::builder()
-            // delay will slow down the entity resolution blocking the ws producer, which will fill the
+            // delay will slow down entity resolution, which will fill the
             // mpsc buffer and trigger the backpressure handling logic because we're emitting every 10ms
             .with_delay(std::time::Duration::from_millis(30))
             .build()
