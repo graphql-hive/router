@@ -38,7 +38,7 @@ pub struct SubscriptionsConfig {
     /// emits events, this buffer absorbs the difference so the subgraph is never throttled by
     /// the router's processing speed.
     ///
-    /// When the buffer is full, the oldest event is dropped (and logged) instead of slowing
+    /// When the buffer is full, the newest event is dropped (and logged) instead of slowing
     /// down or tearing down the connection to the subgraph. The subscription stays alive and
     /// the subgraph keeps emitting unaffected.
     ///
