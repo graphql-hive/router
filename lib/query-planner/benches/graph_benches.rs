@@ -5,7 +5,7 @@ use hive_router_query_planner::utils::parsing::parse_schema;
 use std::hint::black_box;
 
 fn graph_building(c: &mut Criterion) {
-    c.bench_function("grafbase_many_plans", |b| {
+    c.bench_function("graph_grafbase_many_plans", |b| {
         let supergraph_sdl =
             std::fs::read_to_string("./fixture/grafbase-many-plans/supergraph.graphql")
                 .expect("Unable to read input file");
@@ -19,7 +19,7 @@ fn graph_building(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("query_plan_abstract_many_subgraphs", |b| {
+    c.bench_function("graph_abstract_many_subgraphs", |b| {
         let supergraph_sdl =
             std::fs::read_to_string("./fixture/abstract-many-subgraphs/supergraph.graphql")
                 .expect("Unable to read input file");
@@ -33,7 +33,7 @@ fn graph_building(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("heavy_query", |b| {
+    c.bench_function("graph_heavy_query", |b| {
         let supergraph_sdl = std::fs::read_to_string("./fixture/heavy-query/supergraph.graphql")
             .expect("Unable to read input file");
         let parsed_schema = parse_schema(&supergraph_sdl);
