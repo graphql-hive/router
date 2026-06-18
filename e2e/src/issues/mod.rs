@@ -3,6 +3,142 @@ mod issues_e2e_tests {
     use crate::testkit::{ClientResponseExt, Started, TestRouter, TestSubgraphs};
 
     #[ntex::test]
+    async fn projection_keeps_disjoint_fragment_child_selections_scoped() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.projection-disjoint-fragments.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      search:
+                        url: "http://{host}/search"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let search_mock = server
+            .mock("POST", "/search")
+            .match_request(|r| {
+                let body = String::from_utf8(r.body().unwrap().clone()).unwrap();
+
+                body.contains("search")
+                    && body.contains("Collection")
+                    && body.contains("CurrencyV2")
+                    && body.contains("Item")
+                    && body.contains("arch")
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "data": {
+                    "search": [
+                      {
+                        "__typename": "Collection",
+                        "id": "collection-1",
+                        "chain": {
+                          "__typename": "Chain",
+                          "identifier": "ethereum"
+                        }
+                      },
+                      {
+                        "__typename": "CurrencyV2",
+                        "id": "currency-1",
+                        "chain": {
+                          "__typename": "Chain",
+                          "identifier": "solana"
+                        }
+                      },
+                      {
+                        "__typename": "Item",
+                        "id": "item-1",
+                        "chain": {
+                          "__typename": "Chain",
+                          "arch": "evm"
+                        }
+                      }
+                    ]
+                  }
+                }
+                "#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                query {
+                  search {
+                    __typename
+                    ... on Collection {
+                      id
+                      chain {
+                        identifier
+                      }
+                    }
+                    ... on CurrencyV2 {
+                      id
+                      chain {
+                        identifier
+                      }
+                    }
+                    ... on Item {
+                      id
+                      chain {
+                        arch
+                      }
+                    }
+                  }
+                }
+                "#,
+                None,
+                None,
+            )
+            .await;
+
+        search_mock.assert();
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "search": [
+              {
+                "__typename": "Collection",
+                "id": "collection-1",
+                "chain": {
+                  "identifier": "ethereum"
+                }
+              },
+              {
+                "__typename": "CurrencyV2",
+                "id": "currency-1",
+                "chain": {
+                  "identifier": "solana"
+                }
+              },
+              {
+                "__typename": "Item",
+                "id": "item-1",
+                "chain": {
+                  "arch": "evm"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
     /// https://github.com/graphql-hive/federation-gateway-audit `src/test-suites/null-keys`
     async fn federation_audit_null_keys() {
         let mut server = mockito::Server::new_async().await;

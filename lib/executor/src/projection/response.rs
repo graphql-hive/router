@@ -605,6 +605,8 @@ fn resolve_type_name<'a>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use graphql_tools::parser::query::Definition;
     use hive_router_query_planner::{
         ast::{document::NormalizedDocument, normalization::create_normalized_document},
@@ -616,7 +618,10 @@ mod tests {
 
     use crate::{
         introspection::schema::SchemaWithMetadata,
-        projection::{plan::FieldProjectionPlan, response::project_by_operation},
+        projection::{
+            plan::{FieldProjectionPlan, ProjectionValueSource},
+            response::project_by_operation,
+        },
         response::value::Value,
     };
 
@@ -826,6 +831,531 @@ mod tests {
                       "id": "b_child_1"
                     }
                   ]
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[test]
+    fn projection_keeps_nested_fields_scoped_to_disjoint_parent_type_guards() {
+        let supergraph = hive_router_query_planner::utils::parsing::parse_schema(
+            r#"
+              union SearchResult = Collection | CurrencyV2 | Item
+
+              type Chain {
+                identifier: ID!
+                arch: String!
+              }
+
+              type Collection {
+                id: ID!
+                chain: Chain!
+              }
+
+              type CurrencyV2 {
+                id: ID!
+                chain: Chain!
+              }
+
+              type Item {
+                id: ID!
+                chain: Chain!
+              }
+
+              type Query {
+                search: [SearchResult!]!
+              }
+        "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+
+        let mut operation = parse_operation(
+            r#"
+              query {
+                search {
+                  __typename
+                  ... on Collection {
+                    id
+                    chain {
+                      identifier
+                    }
+                  }
+                  ... on CurrencyV2 {
+                    id
+                    chain {
+                      identifier
+                    }
+                  }
+                  ... on Item {
+                    id
+                    chain {
+                      arch
+                    }
+                  }
+                }
+              }
+            "#,
+        );
+
+        let operation_ast = operation
+            .definitions
+            .iter_mut()
+            .find_map(|def| match def {
+                Definition::Operation(op) => Some(op),
+                _ => None,
+            })
+            .unwrap();
+
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let normalized_operation: NormalizedDocument = create_normalized_document(
+            &supergraph_state,
+            operation_ast.clone(),
+            Some("SearchQuery".into()),
+        );
+        let (operation_type_name, selections) =
+            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
+
+        let data_json = json!({
+            "__typename": "Query",
+            "search": [
+                {
+                    "__typename": "Collection",
+                    "id": "collection-1",
+                    "chain": {
+                        "__typename": "Chain",
+                        "identifier": "ethereum"
+                    }
+                },
+                {
+                    "__typename": "CurrencyV2",
+                    "id": "currency-1",
+                    "chain": {
+                        "__typename": "Chain",
+                        "identifier": "solana"
+                    }
+                },
+                {
+                    "__typename": "Item",
+                    "id": "item-1",
+                    "chain": {
+                        "__typename": "Chain",
+                        "arch": "evm"
+                    }
+                }
+            ]
+        });
+        let data = Value::from(data_json.as_ref());
+        let projection = project_by_operation(
+            &data,
+            vec![],
+            &Default::default(),
+            operation_type_name,
+            &selections,
+            &None,
+            1000,
+            &schema_metadata,
+        );
+        let projected_bytes = projection.unwrap();
+        let projected_value: sonic_rs::Value = sonic_rs::from_slice(&projected_bytes).unwrap();
+        let projected_str = sonic_rs::to_string_pretty(&projected_value).unwrap();
+        insta::assert_snapshot!(projected_str, @r#"
+        {
+          "data": {
+            "search": [
+              {
+                "__typename": "Collection",
+                "id": "collection-1",
+                "chain": {
+                  "identifier": "ethereum"
+                }
+              },
+              {
+                "__typename": "CurrencyV2",
+                "id": "currency-1",
+                "chain": {
+                  "identifier": "solana"
+                }
+              },
+              {
+                "__typename": "Item",
+                "id": "item-1",
+                "chain": {
+                  "arch": "evm"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[test]
+    fn projection_splits_overlapping_interface_parent_type_guards() {
+        let supergraph = hive_router_query_planner::utils::parsing::parse_schema(
+            r#"
+              interface Node {
+                id: ID!
+                chain: Chain!
+              }
+
+              type Chain {
+                identifier: ID!
+                arch: String!
+              }
+
+              type A implements Node {
+                id: ID!
+                chain: Chain!
+              }
+
+              type B implements Node {
+                id: ID!
+                chain: Chain!
+              }
+
+              type Query {
+                nodes: [Node!]!
+              }
+        "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+
+        let mut operation = parse_operation(
+            r#"
+              query {
+                nodes {
+                  __typename
+                  ... on Node {
+                    chain {
+                      identifier
+                    }
+                  }
+                  ... on A {
+                    chain {
+                      arch
+                    }
+                  }
+                }
+              }
+            "#,
+        );
+
+        let operation_ast = operation
+            .definitions
+            .iter_mut()
+            .find_map(|def| match def {
+                Definition::Operation(op) => Some(op),
+                _ => None,
+            })
+            .unwrap();
+
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let normalized_operation: NormalizedDocument = create_normalized_document(
+            &supergraph_state,
+            operation_ast.clone(),
+            Some("SearchQuery".into()),
+        );
+        let (operation_type_name, selections) =
+            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
+
+        let data_json = json!({
+            "__typename": "Query",
+            "nodes": [
+                {
+                    "__typename": "A",
+                    "chain": {
+                        "__typename": "Chain",
+                        "identifier": "a-chain",
+                        "arch": "evm"
+                    }
+                },
+                {
+                    "__typename": "B",
+                    "chain": {
+                        "__typename": "Chain",
+                        "identifier": "b-chain"
+                    }
+                }
+            ]
+        });
+        let data = Value::from(data_json.as_ref());
+        let projection = project_by_operation(
+            &data,
+            vec![],
+            &Default::default(),
+            operation_type_name,
+            &selections,
+            &None,
+            1000,
+            &schema_metadata,
+        );
+        let projected_bytes = projection.unwrap();
+        let projected_value: sonic_rs::Value = sonic_rs::from_slice(&projected_bytes).unwrap();
+        let projected_str = sonic_rs::to_string_pretty(&projected_value).unwrap();
+        insta::assert_snapshot!(projected_str, @r#"
+        {
+          "data": {
+            "nodes": [
+              {
+                "__typename": "A",
+                "chain": {
+                  "identifier": "a-chain",
+                  "arch": "evm"
+                }
+              },
+              {
+                "__typename": "B",
+                "chain": {
+                  "identifier": "b-chain"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[test]
+    fn projection_removes_always_true_guards_under_abstract_parent() {
+        let supergraph = hive_router_query_planner::utils::parsing::parse_schema(
+            r#"
+              interface Node {
+                id: ID!
+                chain: Chain!
+              }
+
+              type Chain {
+                identifier: ID!
+              }
+
+              type A implements Node {
+                id: ID!
+                chain: Chain!
+              }
+
+              type B implements Node {
+                id: ID!
+                chain: Chain!
+              }
+
+              type Query {
+                nodes: [Node!]!
+              }
+        "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+
+        let mut operation = parse_operation(
+            r#"
+              query {
+                nodes {
+                  __typename
+                  id
+                  chain {
+                    identifier
+                  }
+                }
+              }
+            "#,
+        );
+
+        let operation_ast = operation
+            .definitions
+            .iter_mut()
+            .find_map(|def| match def {
+                Definition::Operation(op) => Some(op),
+                _ => None,
+            })
+            .unwrap();
+
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let normalized_operation: NormalizedDocument = create_normalized_document(
+            &supergraph_state,
+            operation_ast.clone(),
+            Some("SearchQuery".into()),
+        );
+        let (_, selections) =
+            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
+
+        let nodes_plan = selections
+            .iter()
+            .find(|plan| plan.response_key == "nodes")
+            .expect("nodes projection plan");
+        let ProjectionValueSource::ResponseData {
+            selections: Some(nodes_selections),
+        } = &nodes_plan.value
+        else {
+            panic!("nodes should have child selections");
+        };
+
+        for child in nodes_selections.iter() {
+            assert!(
+                child.parent_type_guard.is_none(),
+                "fragment-free abstract child selection should not keep an always-true parent guard: {child:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn projection_splits_direct_interface_field_against_fragment_guard() {
+        let supergraph = hive_router_query_planner::utils::parsing::parse_schema(
+            r#"
+              interface Node {
+                id: ID!
+                chain: Chain!
+              }
+
+              type Chain {
+                identifier: ID!
+                arch: String!
+              }
+
+              type A implements Node {
+                id: ID!
+                chain: Chain!
+              }
+
+              type B implements Node {
+                id: ID!
+                chain: Chain!
+              }
+
+              type Query {
+                nodes: [Node!]!
+              }
+        "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+
+        let mut operation = parse_operation(
+            r#"
+              query SearchQuery($includeArch: Boolean!) {
+                nodes {
+                  __typename
+                  chain {
+                    identifier
+                  }
+                  ... on A @include(if: $includeArch) {
+                    chain {
+                      arch
+                    }
+                  }
+                }
+              }
+            "#,
+        );
+
+        let operation_ast = operation
+            .definitions
+            .iter_mut()
+            .find_map(|def| match def {
+                Definition::Operation(op) => Some(op),
+                _ => None,
+            })
+            .unwrap();
+
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let normalized_operation: NormalizedDocument = create_normalized_document(
+            &supergraph_state,
+            operation_ast.clone(),
+            Some("SearchQuery".into()),
+        );
+        let (operation_type_name, selections) =
+            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
+
+        let data_json = json!({
+            "__typename": "Query",
+            "nodes": [
+                {
+                    "__typename": "A",
+                    "chain": {
+                        "__typename": "Chain",
+                        "identifier": "a-chain",
+                        "arch": "evm"
+                    }
+                },
+                {
+                    "__typename": "B",
+                    "chain": {
+                        "__typename": "Chain",
+                        "identifier": "b-chain"
+                    }
+                }
+            ]
+        });
+        let data = Value::from(data_json.as_ref());
+
+        let include_arch = Some(HashMap::from([("includeArch".to_string(), json!(true))]));
+        let projected_bytes = project_by_operation(
+            &data,
+            vec![],
+            &Default::default(),
+            operation_type_name,
+            &selections,
+            &include_arch,
+            1000,
+            &schema_metadata,
+        )
+        .unwrap();
+        let projected_value: sonic_rs::Value = sonic_rs::from_slice(&projected_bytes).unwrap();
+        let projected_str = sonic_rs::to_string_pretty(&projected_value).unwrap();
+        insta::assert_snapshot!(projected_str, @r#"
+        {
+          "data": {
+            "nodes": [
+              {
+                "__typename": "A",
+                "chain": {
+                  "identifier": "a-chain",
+                  "arch": "evm"
+                }
+              },
+              {
+                "__typename": "B",
+                "chain": {
+                  "identifier": "b-chain"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+
+        let skip_arch = Some(HashMap::from([("includeArch".to_string(), json!(false))]));
+        let projected_bytes = project_by_operation(
+            &data,
+            vec![],
+            &Default::default(),
+            operation_type_name,
+            &selections,
+            &skip_arch,
+            1000,
+            &schema_metadata,
+        )
+        .unwrap();
+        let projected_value: sonic_rs::Value = sonic_rs::from_slice(&projected_bytes).unwrap();
+        let projected_str = sonic_rs::to_string_pretty(&projected_value).unwrap();
+        insta::assert_snapshot!(projected_str, @r#"
+        {
+          "data": {
+            "nodes": [
+              {
+                "__typename": "A",
+                "chain": {
+                  "identifier": "a-chain"
+                }
+              },
+              {
+                "__typename": "B",
+                "chain": {
+                  "identifier": "b-chain"
                 }
               }
             ]

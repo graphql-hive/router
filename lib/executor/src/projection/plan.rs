@@ -220,8 +220,9 @@ impl FieldProjectionPlan {
         )
         .unwrap_or_default();
 
+        let root_parent_types = HashSet::from_iter([root_type_name.to_string()]);
         for plan in &mut plans {
-            Self::remove_redundant_child_guards(plan, schema_metadata);
+            Self::remove_redundant_child_guards(plan, schema_metadata, &root_parent_types);
         }
 
         (root_type_name, plans)
@@ -270,29 +271,90 @@ impl FieldProjectionPlan {
         }
     }
 
-    /// Extracts type names from a TypeCondition for easier comparison
-    fn type_names_from(condition: &TypeCondition) -> Vec<&str> {
-        match condition {
-            TypeCondition::Exact(ty) => vec![ty.as_str()],
-            TypeCondition::OneOf(types) => types.iter().map(|s| s.as_str()).collect(),
+    fn possible_runtime_types(
+        schema_metadata: &SchemaMetadata,
+        type_name: &str,
+    ) -> HashSet<String> {
+        if schema_metadata.is_interface_type(type_name) || schema_metadata.is_union_type(type_name)
+        {
+            schema_metadata
+                .get_possible_types(type_name)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            HashSet::from_iter([type_name.to_string()])
         }
     }
 
-    /// Recursively removes redundant type guards from child selections.
+    fn possible_field_runtime_types(
+        parent_field: &FieldProjectionPlan,
+        schema_metadata: &SchemaMetadata,
+        parent_type_names: &HashSet<String>,
+    ) -> HashSet<String> {
+        let mut field_runtime_types = HashSet::default();
+
+        for parent_type_name in parent_type_names {
+            let Some(field_info) = schema_metadata
+                .type_fields
+                .get(parent_type_name)
+                .and_then(|fields| fields.get(&parent_field.field_name))
+            else {
+                continue;
+            };
+
+            field_runtime_types.extend(Self::possible_runtime_types(
+                schema_metadata,
+                &field_info.output_type_name,
+            ));
+        }
+
+        field_runtime_types
+    }
+
+    fn guarded_parent_types(
+        parent_type_names: &HashSet<String>,
+        parent_type_guard: &Option<TypeCondition>,
+    ) -> HashSet<String> {
+        let Some(parent_type_guard) = parent_type_guard else {
+            return parent_type_names.clone();
+        };
+
+        parent_type_names
+            .iter()
+            .filter(|type_name| parent_type_guard.matches(type_name))
+            .cloned()
+            .collect()
+    }
+
+    fn type_condition_covers_types(
+        type_condition: &TypeCondition,
+        type_names: &HashSet<String>,
+    ) -> bool {
+        !type_names.is_empty()
+            && type_names
+                .iter()
+                .all(|type_name| type_condition.matches(type_name))
+    }
+
+    /// Recursively removes type guards that are always true at their response position.
     ///
-    /// A type guard is redundant when it covers exactly all possible types that can appear in that position.
-    /// For example, if a field `children` can only return types A or B (based on the parent's type guard),
-    /// and a child selection has guard `OneOf(A, B)`, then that guard is redundant since it will always match.
-    ///
-    /// Every guard has a cost during execution (computes field's output type or name of its parent),
-    /// so removing redundant guards helps optimize the response projection.
-    ///
-    /// This optimization must run after all fragment merging is complete to correctly
-    /// determine the full set of possible types.
+    /// Every guard has a runtime cost during response projection: it resolves the parent
+    /// `__typename` and checks the guard. This cleanup runs after fragment merging, when
+    /// we know the full set of possible parent types for each selection-set position.
+    /// Proper-subset guards created by splitting overlapping fragments are preserved.
     fn remove_redundant_child_guards(
         parent_field: &mut FieldProjectionPlan,
         schema_metadata: &SchemaMetadata,
+        parent_type_names: &HashSet<String>,
     ) {
+        let guarded_parent_types =
+            Self::guarded_parent_types(parent_type_names, &parent_field.parent_type_guard);
+        let possible_child_types = Self::possible_field_runtime_types(
+            parent_field,
+            schema_metadata,
+            &guarded_parent_types,
+        );
+
         let ProjectionValueSource::ResponseData { selections } = &mut parent_field.value else {
             return;
         };
@@ -303,44 +365,14 @@ impl FieldProjectionPlan {
 
         let selections_mut = Arc::make_mut(selections_arc);
 
-        // Compute possible child types only if parent has a type guard
-        let possible_child_types = parent_field.parent_type_guard.as_ref().map(|parent_guard| {
-            let parent_types = Self::type_names_from(parent_guard);
-
-            // For each parent type, lookup what type this field returns
-            HashSet::from_iter(parent_types.iter().filter_map(|parent_type| {
-                schema_metadata
-                    .type_fields
-                    .get(*parent_type)
-                    .and_then(|fields| fields.get(&parent_field.field_name))
-                    .map(|field_info| field_info.output_type_name.as_str())
-            }))
-        });
-
         for child in selections_mut {
-            // Remove redundant guard if this child's guard covers all possible types
-            if let (Some(child_guard), Some(possible_types)) =
-                (&child.parent_type_guard, &possible_child_types)
-            {
-                // Check if guard covers exactly all possible types by comparing as sets
-                let is_redundant = match child_guard {
-                    TypeCondition::Exact(ty) => {
-                        possible_types.len() == 1 && possible_types.contains(ty.as_str())
-                    }
-                    TypeCondition::OneOf(guard_types) => {
-                        guard_types.len() == possible_types.len()
-                            && guard_types
-                                .iter()
-                                .all(|t| possible_types.contains(t.as_str()))
-                    }
-                };
-
-                if is_redundant {
-                    child.parent_type_guard = None;
-                }
+            if child.parent_type_guard.as_ref().is_some_and(|child_guard| {
+                Self::type_condition_covers_types(child_guard, &possible_child_types)
+            }) {
+                child.parent_type_guard = None;
             }
 
-            Self::remove_redundant_child_guards(child, schema_metadata);
+            Self::remove_redundant_child_guards(child, schema_metadata, &possible_child_types);
         }
     }
 
@@ -482,21 +514,202 @@ impl FieldProjectionPlan {
         Self::or_optional(left, right)
     }
 
+    fn type_conditions_overlap(left: &TypeCondition, right: &TypeCondition) -> bool {
+        match (left, right) {
+            (TypeCondition::Exact(left), TypeCondition::Exact(right)) => left == right,
+            (TypeCondition::Exact(exact), TypeCondition::OneOf(types))
+            | (TypeCondition::OneOf(types), TypeCondition::Exact(exact)) => types.contains(exact),
+            (TypeCondition::OneOf(left), TypeCondition::OneOf(right)) => {
+                left.iter().any(|type_name| right.contains(type_name))
+            }
+        }
+    }
+
+    fn type_condition_from_types(types: HashSet<String>) -> Option<TypeCondition> {
+        match types.len() {
+            0 => None,
+            1 => Some(TypeCondition::Exact(
+                types.into_iter().next().expect("set has one element"),
+            )),
+            _ => Some(TypeCondition::OneOf(types)),
+        }
+    }
+
+    fn type_condition_types(condition: &TypeCondition) -> HashSet<String> {
+        match condition {
+            TypeCondition::Exact(type_name) => HashSet::from_iter([type_name.clone()]),
+            TypeCondition::OneOf(type_names) => type_names.clone(),
+        }
+    }
+
+    fn type_condition_intersection(
+        left: &TypeCondition,
+        right: &TypeCondition,
+    ) -> Option<TypeCondition> {
+        let mut left_types = Self::type_condition_types(left);
+        let right_types = Self::type_condition_types(right);
+        left_types.retain(|type_name| right_types.contains(type_name));
+        Self::type_condition_from_types(left_types)
+    }
+
+    fn type_condition_difference(
+        left: &TypeCondition,
+        right: &TypeCondition,
+    ) -> Option<TypeCondition> {
+        let mut left_types = Self::type_condition_types(left);
+        let right_types = Self::type_condition_types(right);
+        left_types.retain(|type_name| !right_types.contains(type_name));
+        Self::type_condition_from_types(left_types)
+    }
+
+    fn guards_can_overlap(left: &Option<TypeCondition>, right: &Option<TypeCondition>) -> bool {
+        match (left, right) {
+            (Some(left), Some(right)) => Self::type_conditions_overlap(left, right),
+            // `None` means the field applies to every parent type.
+            _ => true,
+        }
+    }
+
+    fn abstract_parent_type_guard(
+        schema_metadata: &SchemaMetadata,
+        parent_type_name: &str,
+    ) -> Option<TypeCondition> {
+        if schema_metadata.is_interface_type(parent_type_name)
+            || schema_metadata.is_union_type(parent_type_name)
+        {
+            Self::type_condition_from_types(Self::possible_runtime_types(
+                schema_metadata,
+                parent_type_name,
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn insert_plan(
+        field_selections: &mut IndexMap<String, FieldProjectionPlan>,
+        plan_to_insert: FieldProjectionPlan,
+    ) {
+        let response_key = plan_to_insert.response_key.clone();
+        if !field_selections.contains_key(&response_key) {
+            field_selections.insert(response_key, plan_to_insert);
+            return;
+        }
+
+        let mut index = field_selections.len();
+        loop {
+            // IndexMap keys are internal only; projection writes `response_key`.
+            // `#` is not legal in GraphQL names or aliases, so this cannot collide
+            // with a real response key.
+            let internal_key = format!("{response_key}#{index}");
+            if !field_selections.contains_key(&internal_key) {
+                field_selections.insert(internal_key, plan_to_insert);
+                return;
+            }
+            index += 1;
+        }
+    }
+
+    fn split_overlapping_guarded_plans(
+        field_selections: &mut IndexMap<String, FieldProjectionPlan>,
+        existing_index: usize,
+        plan_to_merge: FieldProjectionPlan,
+    ) {
+        let existing_guard = field_selections
+            .get_index(existing_index)
+            .and_then(|(_, plan)| plan.parent_type_guard.clone())
+            .expect("overlapping guarded plan must have an existing guard");
+        let incoming_guard = plan_to_merge
+            .parent_type_guard
+            .clone()
+            .expect("overlapping guarded plan must have an incoming guard");
+
+        let overlap = Self::type_condition_intersection(&existing_guard, &incoming_guard)
+            .expect("overlapping guarded plans must have an intersection");
+        let (_, existing_plan) = field_selections
+            .shift_remove_index(existing_index)
+            .expect("existing projection plan index must be present");
+
+        if let Some(existing_remainder_guard) =
+            Self::type_condition_difference(&existing_guard, &overlap)
+        {
+            let mut existing_remainder = existing_plan.clone();
+            existing_remainder.parent_type_guard = Some(existing_remainder_guard);
+            Self::merge_plan(field_selections, existing_remainder);
+        }
+
+        if let Some(incoming_remainder_guard) =
+            Self::type_condition_difference(&incoming_guard, &overlap)
+        {
+            let mut incoming_remainder = plan_to_merge.clone();
+            incoming_remainder.parent_type_guard = Some(incoming_remainder_guard);
+            Self::merge_plan(field_selections, incoming_remainder);
+        }
+
+        let mut overlapping_existing = existing_plan;
+        overlapping_existing.parent_type_guard = Some(overlap.clone());
+
+        let mut overlapping_incoming = plan_to_merge;
+        overlapping_incoming.parent_type_guard = Some(overlap);
+
+        Self::merge_matching_plan(&mut overlapping_existing, overlapping_incoming);
+        Self::merge_plan(field_selections, overlapping_existing);
+    }
+
     /// When the same field appears in multiple fragments,
     /// this function combines them into a single plan by:
-    /// - Unioning type guards (e.g., Book + Magazine = OneOf(Book, Magazine))
+    /// - Merging equal or unconditional type guards
+    /// - Splitting overlapping but unequal type guards before child selections are merged
     /// - OR-ing conditions while preserving guard associations
     /// - Recursively merging child selections
     fn merge_plan(
         field_selections: &mut IndexMap<String, FieldProjectionPlan>,
         plan_to_merge: FieldProjectionPlan,
     ) {
-        let Some(existing_plan) = field_selections.get_mut(&plan_to_merge.response_key) else {
-            // First time seeing this field - just insert it
-            field_selections.insert(plan_to_merge.response_key.clone(), plan_to_merge);
+        let existing_index = field_selections.iter().position(|(_, existing_plan)| {
+            existing_plan.response_key == plan_to_merge.response_key
+                && Self::guards_can_overlap(
+                    &existing_plan.parent_type_guard,
+                    &plan_to_merge.parent_type_guard,
+                )
+        });
+
+        let Some(existing_index) = existing_index else {
+            // First time seeing this response key, or the same response key belongs to a
+            // disjoint type branch. Keep disjoint branches separate so child selections from
+            // one concrete type do not leak into another concrete type's field.
+            Self::insert_plan(field_selections, plan_to_merge);
             return;
         };
 
+        let should_split =
+            field_selections
+                .get_index(existing_index)
+                .is_some_and(|(_, existing_plan)| {
+                    matches!(
+                        (&existing_plan.parent_type_guard, &plan_to_merge.parent_type_guard),
+                        (Some(existing_guard), Some(incoming_guard))
+                            if existing_guard != incoming_guard
+                                && Self::type_conditions_overlap(existing_guard, incoming_guard)
+                    )
+                });
+
+        if should_split {
+            Self::split_overlapping_guarded_plans(field_selections, existing_index, plan_to_merge);
+            return;
+        }
+
+        let (_, existing_plan) = field_selections
+            .get_index_mut(existing_index)
+            .expect("existing projection plan key must be present");
+
+        Self::merge_matching_plan(existing_plan, plan_to_merge);
+    }
+
+    fn merge_matching_plan(
+        existing_plan: &mut FieldProjectionPlan,
+        plan_to_merge: FieldProjectionPlan,
+    ) {
         // Capture guards before merging, needed for condition association
         let existing_guard = existing_plan.parent_type_guard.clone();
         let new_guard = plan_to_merge.parent_type_guard.clone();
@@ -663,7 +876,10 @@ impl FieldProjectionPlan {
             )
         };
 
-        let parent_type_guard = parent_condition.as_ref().and_then(Self::get_type_guard);
+        let parent_type_guard = parent_condition
+            .as_ref()
+            .and_then(Self::get_type_guard)
+            .or_else(|| Self::abstract_parent_type_guard(schema_metadata, parent_type_name));
         let inherited_selection_conditions = parent_condition
             .as_ref()
             .and_then(Self::conditions_for_child_selections);
