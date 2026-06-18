@@ -217,6 +217,9 @@ impl<'graph> OperationPath<'graph> {
     pub fn can_resolve_union_member(&self, member_type_name: &str) -> bool {
         self.union_context
             .as_ref()
+            // If the union context is not present, it means we're not resolving things
+            // for the field returning a union type,
+            // therefore we don't limit members.
             .is_none_or(|scope| scope.can_resolve_member(member_type_name))
     }
 
