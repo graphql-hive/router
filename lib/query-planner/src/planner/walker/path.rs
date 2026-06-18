@@ -89,6 +89,9 @@ pub struct OperationPath<'graph> {
     pub last_segment: Option<Rc<PathSegment>>,
     pub visited_edge_indices: Rc<HashSet<EdgeIndex>>,
     pub cost: u64,
+    // The union context for the current path, if any.
+    // If we hit a field returning a union, this will be set to the union context.
+    // If we hit a field returning a non-union type, this will be cleared.
     pub union_context: Option<UnionContext<'graph>>,
 }
 
