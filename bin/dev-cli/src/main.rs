@@ -207,7 +207,8 @@ fn process_merged_tree(
     supergraph_path: &str,
     operation_path: &str,
 ) -> (Graph, QueryTree, SupergraphState, OperationKind) {
-    let (graph, operation, supergraph_state) = load_graph_operation(supergraph_path, operation_path);
+    let (graph, operation, supergraph_state) =
+        load_graph_operation(supergraph_path, operation_path);
     let override_context = PlannerOverrideContext::default();
     let cancellation_token = CancellationToken::new();
     let best_paths_per_leaf = walk_operation(

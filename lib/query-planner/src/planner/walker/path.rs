@@ -51,9 +51,7 @@ pub struct UnionContext<'graph> {
 
 impl<'graph> UnionContext<'graph> {
     fn can_resolve_member(&self, member_type_name: &str) -> bool {
-        self.possible_members
-            .iter()
-            .any(|possible_member| *possible_member == member_type_name)
+        self.possible_members.contains(&member_type_name)
     }
 
     pub fn eq_field(&self, other: &Self) -> bool {
