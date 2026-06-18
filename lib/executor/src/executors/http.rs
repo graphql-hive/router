@@ -294,6 +294,7 @@ async fn send_request<'a>(
             transport_duration,
         }),
         Err(err) => {
+            http_request_span.record_error(err.error_code());
             http_request_capture.finish_error(err.error_code(), transport_duration);
             Err(err)
         }
