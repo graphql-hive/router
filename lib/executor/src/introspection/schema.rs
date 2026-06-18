@@ -6,10 +6,60 @@ use graphql_tools::parser::{
 };
 use hive_router_query_planner::consumer_schema::ConsumerSchema;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FieldTypeInfo {
     pub output_type_name: String,
-    pub is_non_null: bool,
+    pub nullability: FieldNullability,
+}
+
+/// The nullability shape of a field's type. Similar to the GraphQL type wrappers.
+#[derive(Debug, Clone)]
+pub enum FieldNullability {
+    Leaf {
+        non_null: bool,
+    },
+    List {
+        non_null: bool,
+        item: Box<FieldNullability>,
+    },
+}
+
+impl FieldNullability {
+    // __typename: String! (https://spec.graphql.org/September2025/#sec-Type-Name-Introspection)
+    #[inline]
+    pub fn type_name() -> Self {
+        FieldNullability::Leaf { non_null: true }
+    }
+
+    fn leaf(non_null: bool) -> Self {
+        FieldNullability::Leaf { non_null }
+    }
+
+    fn list(non_null: bool, item: FieldNullability) -> Self {
+        FieldNullability::List {
+            non_null,
+            item: Box::new(item),
+        }
+    }
+
+    /// Whether this position's value is Non-Null, so a `null` here must bubble to its parent.
+    #[inline]
+    pub fn is_non_null(&self) -> bool {
+        match self {
+            FieldNullability::Leaf { non_null } | FieldNullability::List { non_null, .. } => {
+                *non_null
+            }
+        }
+    }
+
+    /// The element's nullability shape, when this position is a list.
+    #[inline]
+    pub fn list_item(&self) -> Option<&FieldNullability> {
+        match self {
+            FieldNullability::List { item, .. } => Some(item),
+            FieldNullability::Leaf { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -114,7 +164,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                             field.name.to_string(),
                             FieldTypeInfo {
                                 output_type_name: field_type_name,
-                                is_non_null: field.field_type.is_non_null(),
+                                nullability: field.field_type.field_nullability(),
                             },
                         );
                     }
@@ -136,7 +186,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                             field.name.to_string(),
                             FieldTypeInfo {
                                 output_type_name: field_type_name,
-                                is_non_null: field.field_type.is_non_null(),
+                                nullability: field.field_type.field_nullability(),
                             },
                         );
                     }
@@ -196,6 +246,7 @@ impl SchemaWithMetadata for ConsumerSchema {
 
 trait TypeName {
     fn type_name(&self) -> String;
+    fn field_nullability(&self) -> FieldNullability;
 }
 
 impl TypeName for Type<'_, String> {
@@ -206,6 +257,19 @@ impl TypeName for Type<'_, String> {
                 non_null_type.type_name()
             }
             graphql_tools::parser::schema::Type::ListType(list_type) => list_type.type_name(),
+        }
+    }
+
+    fn field_nullability(&self) -> FieldNullability {
+        use graphql_tools::parser::schema::Type;
+
+        match self {
+            Type::NonNullType(inner) => match inner.as_ref() {
+                Type::ListType(item) => FieldNullability::list(true, item.field_nullability()),
+                _ => FieldNullability::leaf(true),
+            },
+            Type::ListType(item) => FieldNullability::list(false, item.field_nullability()),
+            Type::NamedType(_) => FieldNullability::leaf(false),
         }
     }
 }

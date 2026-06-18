@@ -1,0 +1,97 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+scalar join__FieldSet
+
+enum join__Graph {
+  ACCOUNTS @join__graph(name: "accounts", url: "http://0.0.0.0:4200/accounts")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
+
+type Query @join__type(graph: ACCOUNTS) {
+  # nullable -> non-null -> nullable
+  chain1: Chain1A @join__field(graph: ACCOUNTS)
+  # non-null -> non-null -> non-null
+  chain2: Chain2A! @join__field(graph: ACCOUNTS)
+  # non-null -> nullable -> non-null
+  chain3: Chain3A! @join__field(graph: ACCOUNTS)
+  # outer list element nullable, inner list element non-null (`[[Int!]]`).
+  grid: [[Int!]] @join__field(graph: ACCOUNTS)
+  # every level non-null: a null element bubbles all the way to `data` (`[[Int!]!]!`).
+  matrix: [[Int!]!]! @join__field(graph: ACCOUNTS)
+  # triple-nested list (`[[[Int]!]]`): outer element nullable, middle element non-null,
+  # inner element nullable.
+  cube: [[[Int]!]] @join__field(graph: ACCOUNTS)
+}
+
+# nullable -> non-null -> nullable
+type Chain1A @join__type(graph: ACCOUNTS) {
+  b: Chain1B! @join__field(graph: ACCOUNTS)
+}
+type Chain1B @join__type(graph: ACCOUNTS) {
+  c: String @join__field(graph: ACCOUNTS)
+}
+
+# non-null -> non-null -> non-null
+type Chain2A @join__type(graph: ACCOUNTS) {
+  b: Chain2B! @join__field(graph: ACCOUNTS)
+}
+type Chain2B @join__type(graph: ACCOUNTS) {
+  c: String! @join__field(graph: ACCOUNTS)
+}
+
+# non-null -> nullable -> non-null
+type Chain3A @join__type(graph: ACCOUNTS) {
+  b: Chain3B @join__field(graph: ACCOUNTS)
+}
+type Chain3B @join__type(graph: ACCOUNTS) {
+  c: String! @join__field(graph: ACCOUNTS)
+}

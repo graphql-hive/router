@@ -115,6 +115,34 @@ impl User {
     }
 }
 
+/// A non-null nested type whose only field errors. Used to verify that a `null`
+/// from a non-null nested field bubbles up to the (non-null) parent.
+pub struct NonNullNested;
+
+#[Object]
+impl NonNullNested {
+    async fn field_that_errors(&self) -> async_graphql::Result<String> {
+        Err(async_graphql::Error::new(
+            "NonNullNested.fieldThatErrors always fails",
+        ))
+    }
+}
+
+/// A nullable nested type whose only field errors. Here the `null` stays on the
+/// nullable field rather than bubbling up.
+pub struct NullableNested;
+
+#[Object]
+impl NullableNested {
+    async fn field_that_errors(&self, ctx: &async_graphql::Context<'_>) -> Option<String> {
+        ctx.add_error(async_graphql::ServerError::new(
+            "NullableNested.fieldThatErrors always fails",
+            None,
+        ));
+        None
+    }
+}
+
 pub struct Query;
 
 #[Object(extends = true)]
@@ -129,6 +157,34 @@ impl Query {
 
     async fn users(&self) -> Option<Vec<Option<User>>> {
         Some(USERS.iter().map(|user| Some(user.clone())).collect())
+    }
+
+    /// A nullable root field whose resolver always errors. The subgraph reports
+    /// the error and resolves the field to `null`.
+    async fn nullable_field_that_errors(&self) -> async_graphql::Result<Option<String>> {
+        Err(async_graphql::Error::new(
+            "nullableFieldThatErrors always fails",
+        ))
+    }
+
+    /// A non-null root field whose resolver always errors. Used to verify
+    /// null-propagation for non-null root fields.
+    async fn non_null_field_that_errors(&self) -> async_graphql::Result<String> {
+        Err(async_graphql::Error::new(
+            "nonNullFieldThatErrors always fails",
+        ))
+    }
+
+    /// A non-null nested object; its inner field errors, so the `null` bubbles
+    /// through `NonNullNested!` up to `data`.
+    async fn non_null_nested(&self) -> NonNullNested {
+        NonNullNested
+    }
+
+    /// A nullable nested object; its inner (nullable) field errors, so the `null`
+    /// stays on that field.
+    async fn nullable_nested(&self) -> Option<NullableNested> {
+        Some(NullableNested)
     }
 
     #[graphql(entity)]
