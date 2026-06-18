@@ -53,6 +53,13 @@ impl<'graph> PossibleUnionMembers<'graph> {
         }
     }
 
+    fn len(&self) -> usize {
+        match self {
+            Self::All(members) => members.len(),
+            Self::One(_) => 1,
+        }
+    }
+
     fn as_vec(&self) -> Vec<&'graph str> {
         match self {
             Self::All(members) => members.iter().map(|member| member.as_str()).collect(),
@@ -71,6 +78,14 @@ pub struct UnionContext<'graph> {
 
 impl<'graph> UnionContext<'graph> {
     fn can_resolve_member(&self, member_type_name: &str) -> bool {
+        self.possible_members.contains(member_type_name)
+    }
+
+    pub fn possible_members_len(&self) -> usize {
+        self.possible_members.len()
+    }
+
+    pub fn possible_members_contains(&self, member_type_name: &str) -> bool {
         self.possible_members.contains(member_type_name)
     }
 
@@ -195,6 +210,7 @@ impl<'graph> OperationPath<'graph> {
         let new_segment = Rc::new(new_segment_data);
 
         let union_context = match edge_ref.weight() {
+            Edge::FieldMove(field_move) if field_move.is_leaf => None,
             Edge::FieldMove(_) => {
                 let tail = graph.node(edge_ref.target()).ok();
                 let union_data = tail.and_then(|tail| tail.union_members_data());
