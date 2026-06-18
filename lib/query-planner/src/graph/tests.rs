@@ -315,8 +315,8 @@ mod graph_tests {
         assert_eq!(graph.root_subscription_node(), None);
 
         let (incoming, outgoing) = find_node(&graph, "Product/products");
-        assert_eq!(incoming.edges.len(), 21);
-        assert_eq!(outgoing.edges.len(), 18);
+        assert_eq!(incoming.edges.len(), 23);
+        assert_eq!(outgoing.edges.len(), 20);
 
         incoming
             .assert_key_edge("id", "Product/inventory")
