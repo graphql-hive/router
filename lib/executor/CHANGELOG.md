@@ -94,6 +94,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.18.1 (2026-06-18)
+
+### Fixes
+
+#### Fix null propagation in non-null fields
+
+This change fixes the null propagation logic in non-null fields to match the spec.
+
+From the GraphQL spec:
+
+> Since Non-Null response positions cannot be null, execution errors are propagated to be handled by the parent response position. If the parent response position may be null then it resolves to null, otherwise if it is a Non-Null type, the execution error is further propagated to its parent response position.
+> If a List type wraps a Non-Null type, and one of the response position elements of that list resolves to null, then the entire list response position must resolve to null. If the List type is also wrapped in a Non-Null, the execution error continues to propagate upwards.
+> If every response position from the root of the request to the source of the execution error has a Non-Null type, then the "data" entry in the execution result should be null.
+
+See [Handling Execution Errors](https://spec.graphql.org/September2025/#sec-Handling-Execution-Errors).
+
+Fixes https://github.com/graphql-hive/router/issues/1154
+
+Fixes https://github.com/graphql-hive/router/issues/1110
+
+#### Log subgraph subscription failures at error level
+
+Subgraph subscription failures (WebSocket handshake, HTTP-callback connect, SSE stream, etc.) are now logged at `error` level via the central `plan.rs` handler, matching how non-subscription subgraph errors are already logged. Previously these failures only reached the client; the router itself logged nothing above `debug`.
+
+#### Improve handling of unions
+
+The query planner improves handling of union types whose members vary between subgraphs. Previously, the planner always computed an intersection of union members, ignoring subgraph-specific members.
+
+Fixes [#1098](https://github.com/graphql-hive/router/issues/1098)
+
+#### Mark failed subgraph HTTP requests as errors on their trace span
+
+When an outgoing subgraph HTTP request failed at the transport level (connection error, timeout, body read failure, etc.), the `http.client` span was left with an unset `otel.status_code`, so the failure was not surfaced as an error in traces (e.g. Datadog). The error was only recorded in metrics. The span is now marked with `otel.status_code = "Error"` and the corresponding `error.type` on the failure path, matching the existing metrics behaviour.
+
 ## 6.18.0 (2026-06-17)
 
 ### Features

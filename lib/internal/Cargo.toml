@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-internal"
-version = "0.0.29"
+version = "0.0.30"
 edition = "2021"
 description = "GraphQL Hive Router internal crate"
 license = "MIT"
