@@ -450,11 +450,9 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
     let mut members_per_graph: MembersPerGraph<'graph> = Vec::new();
 
     for path in paths.iter() {
-        let context = path
-            .union_context
-            .as_ref()
-            // It's safe to unwrap as `all_same_field` checked that all paths have the same context
-            .expect("union member context should exist at this point");
+        let Some(context) = path.union_context.as_ref() else {
+            return;
+        };
 
         if !members_per_graph
             .iter()
@@ -490,19 +488,17 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
     }
 
     paths.retain_mut(|path| {
-        // It's safe to unwrap as we checked that `union_context` exists already
-        let scope = path
-            .union_context
-            .as_mut()
-            .expect("union context should exist at this point");
+        let Some(context) = path.union_context.as_mut() else {
+            return false;
+        };
 
         // Keep only paths whose current member is shared
-        if !shared_members.contains(&scope.member_name) {
+        if !shared_members.contains(&context.member_name) {
             return false;
         }
 
         // Update the possible members to the shared members set.
-        scope.possible_members = shared_members.clone();
+        context.possible_members = shared_members.clone();
         true
     });
 }
