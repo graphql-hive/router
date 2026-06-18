@@ -1845,6 +1845,7 @@ mod subscriptions_e2e_tests {
                     path: supergraph.graphql
                 subscriptions:
                     enabled: true
+                    subgraph_buffer_capacity: 1
                 "#,
             )
             .build()
@@ -1904,6 +1905,7 @@ mod subscriptions_e2e_tests {
                     path: supergraph.graphql
                 subscriptions:
                     enabled: true
+                    subgraph_buffer_capacity: 1
                     websocket:
                         subgraphs:
                             reviews:
