@@ -7,7 +7,7 @@ use futures::stream::BoxStream;
 use futures_util::StreamExt;
 use ntex::rt;
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
@@ -127,7 +127,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // so we can use a small buffer here
         // TODO: do we thererefore need to buffer at all?
         let (tx, mut rx) =
-            mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(16);
+            mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(1);
 
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
@@ -182,17 +182,14 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 match tx.try_send(Ok(response)) {
                     Ok(()) => (),
                     Err(mpsc::error::TrySendError::Full(_)) => {
-                        // if the channel is full it means the consuming client is too slow and unable to keep
-                        // up. we terminate the subscription without an error message because it anyways cant
-                        // go through
+                        // drop the message but keep the subscription alive, same as broadcast::Lagged
                         warn!(
-                            "Client for subgraph {} at {} subscriptions is too slow",
+                            "Client for subgraph {} at {} is too slow, dropping message",
                             subgraph_name, endpoint
                         );
-                        break;
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
-                        debug!(
+                        error!(
                             "Client for subgraph {} at {} dropped the receiver",
                             subgraph_name, endpoint
                         );

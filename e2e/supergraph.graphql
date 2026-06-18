@@ -104,6 +104,8 @@ type Subscription @join__type(graph: REVIEWS) {
     @join__field(graph: REVIEWS)
   reviewAddedForProduct(productUpc: String!, intervalInMs: Int = 1000): Review
     @join__field(graph: REVIEWS)
+  reviewAddedLooping(intervalInMs: Int = 10): Review
+    @join__field(graph: REVIEWS)
 }
 
 type Review @join__type(graph: REVIEWS, key: "id") {

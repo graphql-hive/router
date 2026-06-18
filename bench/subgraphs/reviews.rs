@@ -1,8 +1,17 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_graphql::{ComplexObject, EmptyMutation, Object, Schema, SimpleObject, Subscription, ID};
 use futures::stream::{self, Stream};
 use lazy_static::lazy_static;
+
+struct SubscriptionGuard(Arc<AtomicUsize>);
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 lazy_static! {
     pub static ref REVIEWS: Vec<Review> = vec![
@@ -168,7 +177,9 @@ impl Query {
     }
 }
 
-pub struct Subscription;
+pub struct Subscription {
+    active_subscriptions: Arc<AtomicUsize>,
+}
 
 #[Subscription]
 impl Subscription {
@@ -177,25 +188,54 @@ impl Subscription {
         #[graphql(default = 1)] step: usize,
         #[graphql(default = 1_000)] interval_in_ms: u64,
     ) -> impl Stream<Item = Review> {
+        self.active_subscriptions.fetch_add(1, Ordering::SeqCst);
+        let guard = SubscriptionGuard(self.active_subscriptions.clone());
         stream::unfold(
             (
                 0,
+                guard,
                 if interval_in_ms > 0 {
                     Some(tokio::time::interval(Duration::from_millis(interval_in_ms)))
                 } else {
                     None
                 },
             ),
-            move |(i, mut interval)| async move {
+            move |(i, guard, mut interval)| async move {
                 match REVIEWS.get(i) {
                     Some(review) => {
                         if let Some(int) = &mut interval {
                             int.tick().await;
                         }
-                        Some((review.clone(), (i + step, interval)))
+                        Some((review.clone(), (i + step, guard, interval)))
                     }
                     None => None,
                 }
+            },
+        )
+    }
+
+    async fn review_added_looping(
+        &self,
+        #[graphql(default = 1_000)] interval_in_ms: u64,
+    ) -> impl Stream<Item = Review> {
+        self.active_subscriptions.fetch_add(1, Ordering::SeqCst);
+        let guard = SubscriptionGuard(self.active_subscriptions.clone());
+        stream::unfold(
+            (
+                0,
+                guard,
+                if interval_in_ms > 0 {
+                    Some(tokio::time::interval(Duration::from_millis(interval_in_ms)))
+                } else {
+                    None
+                },
+            ),
+            move |(i, guard, mut interval)| async move {
+                if let Some(int) = &mut interval {
+                    int.tick().await;
+                }
+                let review = REVIEWS[i % REVIEWS.len()].clone();
+                Some((review, (i + 1, guard, interval)))
             },
         )
     }
@@ -236,8 +276,16 @@ impl Subscription {
     }
 }
 
-pub fn get_subgraph() -> Schema<Query, EmptyMutation, Subscription> {
-    Schema::build(Query, EmptyMutation, Subscription)
-        .enable_federation()
-        .finish()
+pub fn get_subgraph() -> (Schema<Query, EmptyMutation, Subscription>, Arc<AtomicUsize>) {
+    let active_subscriptions = Arc::new(AtomicUsize::new(0));
+    let schema = Schema::build(
+        Query,
+        EmptyMutation,
+        Subscription {
+            active_subscriptions: active_subscriptions.clone(),
+        },
+    )
+    .enable_federation()
+    .finish();
+    (schema, active_subscriptions)
 }

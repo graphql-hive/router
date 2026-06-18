@@ -26,7 +26,10 @@ use std::{
     marker::PhantomData,
     net::SocketAddr,
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 use tempfile::{NamedTempFile, TempPath};
@@ -307,6 +310,7 @@ struct TestSubgraphsHandle {
     server_handle: Handle<SocketAddr>,
     addr: SocketAddr,
     state: Arc<TestSubgraphsMiddlewareState>,
+    active_subscriptions: Arc<AtomicUsize>,
 }
 
 pub struct TestSubgraphs<State> {
@@ -406,7 +410,7 @@ impl TestSubgraphs<Built> {
         let addr = listener.local_addr().expect("failed to get local address");
         drop(listener); // release the listener; the axum_server will bind to the same addr
 
-        let mut app = subgraphs_app(self.subscriptions_protocol.clone());
+        let (mut app, active_subscriptions) = subgraphs_app(self.subscriptions_protocol.clone());
 
         let middleware_state = Arc::new(TestSubgraphsMiddlewareState {
             request_log: DashMap::new(),
@@ -473,6 +477,7 @@ impl TestSubgraphs<Built> {
                 server_handle,
                 addr,
                 state: middleware_state,
+                active_subscriptions,
             }),
             _state: PhantomData,
         }
@@ -489,6 +494,15 @@ impl TestSubgraphs<Started> {
             "http"
         };
         format!("{}://{}", protocol, addr)
+    }
+
+    /// Returns the number of currently active subscriptions on the reviews subgraph.
+    pub fn active_subscriptions(&self) -> usize {
+        self.handle
+            .as_ref()
+            .expect("subgraphs not started")
+            .active_subscriptions
+            .load(Ordering::SeqCst)
     }
 
     /// Returns the list of requests received on the given subgraph. Supply the subgarph name.
