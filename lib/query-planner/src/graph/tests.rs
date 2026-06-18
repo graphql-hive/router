@@ -217,7 +217,7 @@ mod graph_tests {
 
         find_node(&graph, "Product/category")
             .1
-            .assert_field_edge("id", "ID/category");
+            .assert_field_edge("id", "Product/category");
 
         Ok(())
     }
@@ -252,10 +252,10 @@ mod graph_tests {
         // Should not have nodes for types in other subgraphs.
         find_node(&graph, "User/products")
             .1
-            .assert_field_edge("totalProductsCreated", "Int/products");
+            .assert_field_edge("totalProductsCreated", "User/products");
         find_node(&graph, "User/users")
             .1
-            .assert_field_edge("totalProductsCreated", "Int/users");
+            .assert_field_edge("totalProductsCreated", "User/users");
         find_node_doesnt_exists(&graph, "User/reviews");
         find_node_doesnt_exists(&graph, "User/inventory");
         find_node_doesnt_exists(&graph, "User/PANDAS");
@@ -267,7 +267,7 @@ mod graph_tests {
             .no_field_edge("reviewsScore");
         find_node(&graph, "Product/reviews")
             .1
-            .assert_field_edge("reviewsScore", "Float/reviews");
+            .assert_field_edge("reviewsScore", "Product/reviews");
 
         // Interface
         let (incoming, outgoing) = find_node(&graph, "ProductItf/products");
@@ -276,18 +276,18 @@ mod graph_tests {
             .assert_field_edge("product", "Query/products")
             .assert_field_edge("allProducts", "Query/products");
         outgoing
-            .assert_field_edge("id", "ID/products")
+            .assert_field_edge("id", "ProductItf/products")
             .assert_field_edge("variation", "ProductVariation/products")
             .assert_field_edge("dimensions", "ProductDimension/products")
-            .assert_field_edge("hidden", "String/products")
-            .assert_field_edge("name", "String/products")
-            .assert_field_edge("oldField", "String/products")
-            .assert_field_edge("package", "String/products")
-            .assert_field_edge("sku", "String/products")
+            .assert_field_edge("hidden", "ProductItf/products")
+            .assert_field_edge("name", "ProductItf/products")
+            .assert_field_edge("oldField", "ProductItf/products")
+            .assert_field_edge("package", "ProductItf/products")
+            .assert_field_edge("sku", "ProductItf/products")
             .assert_field_edge("createdBy", "User/products")
-            .assert_field_edge("__typename", "String/products")
+            .assert_field_edge("__typename", "ProductItf/products")
             .no_field_edge("reviews");
-        assert_eq!(incoming.edges.len(), 3);
+        assert_eq!(incoming.edges.len(), 10);
         assert_eq!(outgoing.edges.len(), 12);
 
         // requires preserves selection set in the graph
@@ -315,7 +315,7 @@ mod graph_tests {
         assert_eq!(graph.root_subscription_node(), None);
 
         let (incoming, outgoing) = find_node(&graph, "Product/products");
-        assert_eq!(incoming.edges.len(), 14);
+        assert_eq!(incoming.edges.len(), 21);
         assert_eq!(outgoing.edges.len(), 18);
 
         incoming
@@ -336,16 +336,16 @@ mod graph_tests {
             .assert_key_edge("id", "Product/reviews")
             .assert_key_edge("sku package", "Product/products")
             .assert_key_edge("sku variation { id }", "Product/products")
-            .assert_field_edge("id", "ID/products")
+            .assert_field_edge("id", "Product/products")
             .assert_field_edge("variation", "ProductVariation/products")
             .assert_field_edge("dimensions", "ProductDimension/products")
-            .assert_field_edge("hidden", "String/products")
-            .assert_field_edge("name", "String/products")
-            .assert_field_edge("oldField", "String/products")
-            .assert_field_edge("package", "String/products")
-            .assert_field_edge("sku", "String/products")
+            .assert_field_edge("hidden", "Product/products")
+            .assert_field_edge("name", "Product/products")
+            .assert_field_edge("oldField", "Product/products")
+            .assert_field_edge("package", "Product/products")
+            .assert_field_edge("sku", "Product/products")
             .assert_field_edge("createdBy", "User/products")
-            .assert_field_edge("__typename", "String/products");
+            .assert_field_edge("__typename", "Product/products");
     }
 
     #[test]
@@ -368,9 +368,9 @@ mod graph_tests {
 
         // Verify that each provided path points only to the relevant, provided fields
         let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node1.display_name());
-        viewed_outgoing.assert_field_edge("id", "String/foo");
-        assert_eq!(viewed_incoming.edges.len(), 2); // +1 for Selfie
-        assert_eq!(viewed_outgoing.edges.len(), 3); // +1 for Selfie
+        viewed_outgoing.assert_field_edge("id", "User");
+        assert_eq!(viewed_incoming.edges.len(), 3); // +1 for Selfie, +1 for leaf self-loop
+        assert_eq!(viewed_outgoing.edges.len(), 3); // +1 for Selfie, +1 for leaf self-loop
 
         let (_, to) = outgoing
             .edges_field("user")
@@ -382,9 +382,9 @@ mod graph_tests {
 
         // Verify that each provided path points only to the relevant, provided fields
         let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node2.display_name());
-        viewed_outgoing.assert_field_edge("name", "String/foo");
-        assert_eq!(viewed_incoming.edges.len(), 2); // +1 for Selfie
-        assert_eq!(viewed_outgoing.edges.len(), 4); // +1 for Selfie
+        viewed_outgoing.assert_field_edge("name", "User");
+        assert_eq!(viewed_incoming.edges.len(), 3); // +1 for Selfie, +1 for leaf self-loop
+        assert_eq!(viewed_outgoing.edges.len(), 4); // +1 for Selfie, +1 for leaf self-loop
 
         let (nested_provides_id, nested_provides_node) = viewed_outgoing
             .edge_field("profile")

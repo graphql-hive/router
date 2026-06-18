@@ -493,14 +493,19 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
             .as_mut()
             .expect("union context should exist at this point");
 
-        // Keep only paths whose current member is shared
-        if !shared_members.contains(&context.member_name) {
-            return false;
+        if context.is_narrowed_to_one_member() {
+            // Keep only paths whose current member is shared.
+            if !shared_members.contains(&context.member_name) {
+                return false;
+            }
+
+            // At this point, the path leads to only one possible member,
+            // no need to store the shared members set.
+            context.set_possible_member(context.member_name);
+        } else {
+            context.set_possible_members(shared_members.clone());
         }
 
-        // At this point, the path leads to only one possible member,
-        // not need to store the shared members set.
-        context.set_possible_member(context.member_name);
         true
     });
 }

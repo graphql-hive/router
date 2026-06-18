@@ -171,12 +171,14 @@ impl FederationRules {
         current_subgraph_id: &str,
         parent_definition: &SupergraphDefinition,
     ) -> (bool, Option<&'a JoinFieldDirective>) {
-        let involved_subgraphs = parent_definition.subgraphs();
-
         // A field i available if: it has no @join__field directives at all
         if field.join_field.is_empty() {
             // AND its parent type is available in the subgraph
-            if involved_subgraphs.contains(&current_subgraph_id) {
+            if parent_definition
+                .join_types()
+                .iter()
+                .any(|join_type| join_type.graph_id == current_subgraph_id)
+            {
                 return (true, None);
             }
 

@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
 use crate::state::supergraph_state::SubgraphName;
 
@@ -8,10 +11,10 @@ pub struct UnionMembersData {
     pub type_name: String,
     /// Represents the field resolving a union type
     pub field_name: String,
-    /// Represents a union member
+    /// Representative member for compatibility with path context before an AbstractMove.
     pub object_type_name: String,
     /// Represents all union members reachable for the same field in this subgraph.
-    pub possible_members: Vec<String>,
+    pub possible_members: Arc<Vec<String>>,
     pub provides: Option<u64>,
 }
 
@@ -22,9 +25,7 @@ pub enum SubgraphTypeSpecialization {
     /// Node represents a union member tail for a specific subgraph.
     ///
     /// For union-returning field moves, we may need a tail that only exposes the
-    /// members reachable in the current subgraph. We model that by creating
-    /// per-member specialized nodes and then abstract-move edges from those tails
-    /// to the concrete member types.
+    /// members reachable in the current subgraph.
     UnionMembers(UnionMembersData),
 }
 
@@ -42,7 +43,7 @@ pub struct SubgraphType {
     pub name: String,
     pub subgraph: SubgraphName,
     pub is_interface_object: bool,
-    specialization: Option<SubgraphTypeSpecialization>,
+    pub(crate) specialization: Option<SubgraphTypeSpecialization>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -69,8 +70,8 @@ impl Node {
                         // we rely on display_name when it comes to deduplicating nodes (upsert_node),
                         // that's why the string produced here should "mimic" hashing
                         format!(
-                            "{}/{} for {}.{}:{}",
-                            st.name, st.subgraph.0, u.type_name, u.field_name, u.object_type_name
+                            "{}/{} for {}.{}:{:?}",
+                            st.name, st.subgraph.0, u.type_name, u.field_name, u.possible_members
                         )
                     }
                 },

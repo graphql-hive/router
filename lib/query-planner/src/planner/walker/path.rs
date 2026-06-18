@@ -42,6 +42,7 @@ pub struct PathSegment {
 #[derive(Clone, PartialEq, Eq)]
 enum PossibleUnionMembers<'graph> {
     All(&'graph [String]),
+    Some(Vec<&'graph str>),
     One(&'graph str),
 }
 
@@ -49,6 +50,7 @@ impl<'graph> PossibleUnionMembers<'graph> {
     fn contains(&self, member_type_name: &str) -> bool {
         match self {
             Self::All(members) => members.iter().any(|member| member == member_type_name),
+            Self::Some(members) => members.contains(&member_type_name),
             Self::One(member) => *member == member_type_name,
         }
     }
@@ -56,6 +58,7 @@ impl<'graph> PossibleUnionMembers<'graph> {
     fn len(&self) -> usize {
         match self {
             Self::All(members) => members.len(),
+            Self::Some(members) => members.len(),
             Self::One(_) => 1,
         }
     }
@@ -63,6 +66,7 @@ impl<'graph> PossibleUnionMembers<'graph> {
     fn as_vec(&self) -> Vec<&'graph str> {
         match self {
             Self::All(members) => members.iter().map(|member| member.as_str()).collect(),
+            Self::Some(members) => members.clone(),
             Self::One(member) => vec![member],
         }
     }
@@ -99,6 +103,14 @@ impl<'graph> UnionContext<'graph> {
 
     pub fn set_possible_member(&mut self, possible_member: &'graph str) {
         self.possible_members = PossibleUnionMembers::One(possible_member);
+    }
+
+    pub fn set_possible_members(&mut self, possible_members: Vec<&'graph str>) {
+        self.possible_members = PossibleUnionMembers::Some(possible_members);
+    }
+
+    pub fn is_narrowed_to_one_member(&self) -> bool {
+        matches!(self.possible_members, PossibleUnionMembers::One(_))
     }
 
     fn narrow_to_member(&self, member_type_name: &'graph str) -> Self {
@@ -221,7 +233,9 @@ impl<'graph> OperationPath<'graph> {
                         data: union_data,
                         graph_id,
                         member_name: union_data.object_type_name.as_str(),
-                        possible_members: PossibleUnionMembers::All(&union_data.possible_members),
+                        possible_members: PossibleUnionMembers::All(
+                            union_data.possible_members.as_slice(),
+                        ),
                     }),
                     _ => None,
                 }
