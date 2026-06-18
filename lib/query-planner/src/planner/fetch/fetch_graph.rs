@@ -23,9 +23,8 @@ use petgraph::visit::EdgeRef;
 use petgraph::visit::{Bfs, IntoNodeReferences};
 use petgraph::Directed;
 use petgraph::Direction;
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::fmt::{Debug, Display};
-use std::rc::Rc;
 use tracing::{instrument, trace};
 
 use super::error::FetchGraphError;
@@ -1625,7 +1624,6 @@ fn find_satisfiable_key<'a>(
             &OperationPath {
                 root_node: query_node.node_index,
                 last_segment: None,
-                visited_edge_indices: Rc::new(HashSet::new()),
                 cost: 0,
                 union_context: None,
             },

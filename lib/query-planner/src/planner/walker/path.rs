@@ -1,6 +1,5 @@
-use std::collections::VecDeque;
 use std::rc::Rc;
-use std::{cmp, collections::HashSet, fmt::Debug};
+use std::{cmp, collections::VecDeque, fmt::Debug};
 
 use petgraph::{
     graph::{EdgeIndex, NodeIndex},
@@ -87,7 +86,6 @@ impl PathSegment {
 pub struct OperationPath<'graph> {
     pub root_node: NodeIndex,
     pub last_segment: Option<Rc<PathSegment>>,
-    pub visited_edge_indices: Rc<HashSet<EdgeIndex>>,
     pub cost: u64,
     // The union context for the current path, if any.
     // If we hit a field returning a union, this will be set to the union context.
@@ -118,18 +116,13 @@ impl Debug for OperationPath<'_> {
 }
 
 impl<'graph> OperationPath<'graph> {
-    pub fn new(
-        root_node_index: NodeIndex,
-        last_segment: Option<Rc<PathSegment>>,
-        visited_edge_indices: Rc<HashSet<EdgeIndex>>,
-    ) -> Self {
+    pub fn new(root_node_index: NodeIndex, last_segment: Option<Rc<PathSegment>>) -> Self {
         Self {
             root_node: root_node_index,
             cost: last_segment
                 .as_ref()
                 .map_or(0, |segment| segment.cumulative_cost),
             last_segment,
-            visited_edge_indices,
             union_context: None,
         }
     }
@@ -138,9 +131,8 @@ impl<'graph> OperationPath<'graph> {
         // The first "segment" conceptually starts after the first edge from root
         let path_segment = PathSegment::new_root(edge);
         let arc_path_segment = Rc::new(path_segment);
-        let visited_set: Rc<HashSet<EdgeIndex>> = Rc::new([edge.id()].into_iter().collect());
 
-        OperationPath::new(edge.source(), Some(arc_path_segment), visited_set)
+        OperationPath::new(edge.source(), Some(arc_path_segment))
     }
 
     pub fn advance(
@@ -153,8 +145,6 @@ impl<'graph> OperationPath<'graph> {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
         let new_cost = prev_cost + edge_cost;
-        let mut new_visited = self.visited_edge_indices.clone();
-        Rc::make_mut(&mut new_visited).insert(edge_ref.id());
 
         let new_segment_data = PathSegment {
             prev: self.last_segment.clone(),
@@ -209,7 +199,6 @@ impl<'graph> OperationPath<'graph> {
             root_node: self.root_node,
             cost: new_cost,
             last_segment: Some(new_segment),
-            visited_edge_indices: new_visited,
             union_context,
         }
     }
@@ -227,10 +216,6 @@ impl<'graph> OperationPath<'graph> {
         self.last_segment
             .as_ref()
             .map_or(self.root_node, |segment| segment.tail_node)
-    }
-
-    pub fn has_visited_edge(&self, edge_index: &EdgeIndex) -> bool {
-        self.visited_edge_indices.contains(edge_index)
     }
 
     pub fn get_segments(&self) -> Vec<Rc<PathSegment>> {
@@ -352,13 +337,9 @@ impl<'graph> OperationPath<'graph> {
             previous_new_segment = Some(Rc::new(new_segment_data));
         }
 
-        OperationPath::new(
-            new_root_node.unwrap(),
-            previous_new_segment,
-            self.visited_edge_indices.clone(),
-        )
-        // The requirement continuation reuses other's tail, so it also must reuse its union context
-        .with_union_context(other.union_context.clone())
+        OperationPath::new(new_root_node.unwrap(), previous_new_segment)
+            // The requirement continuation reuses other's tail, so it also must reuse its union context
+            .with_union_context(other.union_context.clone())
     }
 
     fn with_union_context(mut self, scope: Option<UnionContext<'graph>>) -> Self {

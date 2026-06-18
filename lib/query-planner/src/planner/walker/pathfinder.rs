@@ -551,6 +551,18 @@ impl<'graph> PathSearch<'graph> {
         use_only_direct_edges: bool,
     ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
         let graph = self.graph;
+        let edge = edge_ref.weight();
+
+        if let Edge::FieldMove(field_move) = edge {
+            if !field_move.satisfies_override_rules(self.override_context) {
+                return Ok(None);
+            }
+        }
+
+        if edge.requirements().is_none() {
+            return Ok(Some(vec![]));
+        }
+
         let active_key = (path.tail(), edge_ref.id());
         if !self.active_edge_checks.insert(active_key) {
             trace!(
@@ -576,17 +588,8 @@ impl<'graph> PathSearch<'graph> {
         use_only_direct_edges: bool,
     ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
         let graph = self.graph;
-        let override_context = self.override_context;
         let cancellation_token = self.cancellation_token;
         let edge = edge_ref.weight();
-
-        if let Edge::FieldMove(field_move) = edge {
-            // TODO: This should be passed from the executor,
-            //       I will work on it next.
-            if !field_move.satisfies_override_rules(override_context) {
-                return Ok(None);
-            }
-        }
 
         match edge.requirements() {
             None => Ok(Some(vec![])),
