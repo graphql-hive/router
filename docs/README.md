@@ -22,7 +22,7 @@
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"experimental_abstract_type_folding":false,"timeout":"10s"}`<br/>||
 |[**storages**](#storages)|`object`|Configuration for storage sources.<br/>||
-|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false}`<br/>||
+|[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false,"subgraph_buffer_capacity":0}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"ip_header":null,"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"forward_operation_name":false,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
@@ -139,6 +139,7 @@ storages: {}
 subscriptions:
   broadcast_capacity: 0
   enabled: false
+  subgraph_buffer_capacity: 0
 supergraph: {}
 telemetry:
   client_identification:
@@ -2576,6 +2577,7 @@ Configuration for subscriptions.
 |**broadcast\_capacity**|`integer`|The capacity of the broadcast channel used to fan out subscription events to all active listeners.<br/><br/>Each active subscription has its own broadcast channel. This value controls how many events<br/>can be buffered in that channel before slow consumers start lagging. If a consumer falls too<br/>far behind and the buffer is full, it will skip the missed messages and continue from the<br/>latest available event.<br/><br/>Subscription events are typically low-frequency, so the default of 32 is sufficient for most<br/>use cases. Increase this value if you expect bursts of events or have slow consumers that<br/>need more headroom to catch up.<br/><br/>Defaults to 32.<br/>Default: `32`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |[**callback**](#subscriptionscallback)|`object`, `null`|Configuration for subgraphs using the HTTP Callback protocol.<br/>|yes|
 |**enabled**|`boolean`|Enables/disables subscriptions. By default, the subscriptions are disabled.<br/><br/>You can override this setting by setting the `SUBSCRIPTIONS_ENABLED` environment variable to `true` or `false`.<br/>Default: `false`<br/>||
+|**subgraph\_buffer\_capacity**|`integer`|The capacity of the per-subscription buffer between a subgraph and the router's<br/>processing pipeline.<br/><br/>When a subscription is established, the router reads events from the subgraph (over<br/>HTTP streaming or WebSocket) and runs each one through entity resolution before fanning<br/>it out to listeners. If that processing is slower than the rate at which the subgraph<br/>emits events, this buffer absorbs the difference so the subgraph is never throttled by<br/>the router's processing speed.<br/><br/>When the buffer is full, the oldest event is dropped (and logged) instead of slowing<br/>down or tearing down the connection to the subgraph. The subscription stays alive and<br/>the subgraph keeps emitting unaffected.<br/><br/>A larger capacity gives the router more headroom to catch up during bursts at the cost<br/>of memory and potentially staler events under sustained backpressure. A smaller capacity<br/>keeps memory minimal and drops eagerly, which is appropriate when only the latest events<br/>matter.<br/><br/>Defaults to 1024.<br/>Default: `1024`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |[**websocket**](#subscriptionswebsocket)|`object`, `null`|Configuration for subgraphs using WebSocket protocol.<br/>||
 
 **Additional Properties:** not allowed  
@@ -2584,6 +2586,7 @@ Configuration for subscriptions.
 ```yaml
 broadcast_capacity: 0
 enabled: false
+subgraph_buffer_capacity: 0
 
 ```
 
