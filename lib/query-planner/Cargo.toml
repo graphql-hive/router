@@ -35,3 +35,7 @@ lazy_static = { workspace = true }
 [[bench]]
 name = "qp_benches"
 harness = false
+
+[[bench]]
+name = "graph_benches"
+harness = false
