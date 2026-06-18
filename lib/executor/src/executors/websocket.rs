@@ -20,6 +20,7 @@ pub struct WsSubgraphExecutor {
     subgraph_name: String,
     endpoint: http::Uri,
     tls_config: Option<Arc<rustls::ClientConfig>>,
+    buffer_capacity: usize,
 }
 
 impl WsSubgraphExecutor {
@@ -27,11 +28,13 @@ impl WsSubgraphExecutor {
         subgraph_name: String,
         endpoint: http::Uri,
         tls_config: Option<Arc<rustls::ClientConfig>>,
+        buffer_capacity: usize,
     ) -> Self {
         Self {
             subgraph_name,
             endpoint,
             tls_config,
+            buffer_capacity,
         }
     }
 }
@@ -125,7 +128,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     > {
         // buffer decouples the emitting subgraph from slow downstream consumers, dropping
         // messages under backpressure instead of throttling the subgraph
-        let (tx, rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(1);
+        let (tx, rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
+            self.buffer_capacity,
+        );
 
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();

@@ -736,6 +736,7 @@ impl SubgraphExecutorMap {
                     // we use the new constructed ws_endpoint_uri here
                     ws_endpoint_uri,
                     ws_tls_config,
+                    self.config.subscriptions.subgraph_buffer_capacity,
                 )
                 .to_boxed_arc();
 

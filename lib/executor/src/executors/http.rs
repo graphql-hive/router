@@ -518,6 +518,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         SubgraphExecutorError,
     > {
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        let buffer_capacity = self.config.subscriptions.subgraph_buffer_capacity;
         let body = build_request_body(&execution_request)?;
 
         let mut req = hyper::Request::builder()
@@ -617,7 +618,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // messages under backpressure instead of throttling the subgraph
             Ok(subscription_buffer::buffered(
                 mapped,
-                1,
+                buffer_capacity,
                 self.subgraph_name.clone(),
                 self.endpoint.to_string(),
             ))
@@ -650,7 +651,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // messages under backpressure instead of throttling the subgraph
             Ok(subscription_buffer::buffered(
                 mapped,
-                1,
+                buffer_capacity,
                 self.subgraph_name.clone(),
                 self.endpoint.to_string(),
             ))
