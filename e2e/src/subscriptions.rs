@@ -1865,7 +1865,7 @@ mod subscriptions_e2e_tests {
 
         assert!(res.status().is_success());
 
-        // read one event to confirm the ws subgraph subscription is established
+        // read one event to confirm the subgraph subscription is established
         let _ = res.next().await.expect("expected at least one chunk");
 
         assert_eq!(
