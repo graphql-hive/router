@@ -1881,7 +1881,7 @@ mod subscriptions_e2e_tests {
         assert_eq!(
             subgraphs.active_subscriptions(),
             1,
-            "Subgraph ws subscription was killed on backpressure instead of dropping the message"
+            "Subgraph subscription was killed on backpressure instead of dropping the message"
         );
 
         drop(res);
