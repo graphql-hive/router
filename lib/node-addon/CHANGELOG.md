@@ -1,4 +1,14 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.34 (2026-06-18)
+
+### Fixes
+
+#### Improve handling of unions
+
+The query planner improves handling of union types whose members vary between subgraphs. Previously, the planner always computed an intersection of union members, ignoring subgraph-specific members.
+
+Fixes [#1098](https://github.com/graphql-hive/router/issues/1098)
+
 ## 0.0.33 (2026-06-17)
 
 ### Fixes

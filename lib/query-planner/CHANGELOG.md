@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.10.1 (2026-06-18)
+
+### Fixes
+
+#### Improve handling of unions
+
+The query planner improves handling of union types whose members vary between subgraphs. Previously, the planner always computed an intersection of union members, ignoring subgraph-specific members.
+
+Fixes [#1098](https://github.com/graphql-hive/router/issues/1098)
+
 ## 2.10.0 (2026-06-17)
 
 ### Features
