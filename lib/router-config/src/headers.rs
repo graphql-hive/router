@@ -343,28 +343,11 @@ pub struct RequestPropagateRule {
 
 /// How to merge response header values from multiple subgraphs.
 ///
-/// - `First`: keep the first value encountered, ignore the rest.
-/// - `Last`: overwrite with the last value encountered (**default**).
-/// - `Append`: collect all values; for most headers they are comma-joined into
-///   a single field. For `NEVER_JOIN_HEADERS` (e.g. `Set-Cookie`) they are
-///   emitted as separate header fields.
+/// For never-join headers (e.g. `Set-Cookie`), the router always emits multiple
+/// header fields regardless of the algorithm.
 ///
-/// **`Cache-Control` and `append`:** When `append` is used on a `cache-control`
-/// propagate rule, the router collects every value from every subgraph and then
-/// applies a **restrictive merge** before sending the response to the client:
-/// - `no-store`, `no-cache`, or `private` from any subgraph poisons the result.
-/// - `max-age` takes the minimum across all values.
-/// - `public` is only kept if every collected value carries it.
-/// - `must-revalidate` is set if any value carries it.
-/// - A subgraph graphql or execution error, or mutation, always forces `no-store, no-cache, must-revalidate`
-///   regardless of collected values.
-///
-/// Using `first` or `last` on `cache-control` discards all but one subgraph value
-/// before the merge runs, which defeats the restrictive semantics. Always use
-/// `append` for `cache-control` propagation.
-///
-/// **Note:** For never-join headers (e.g. `Set-Cookie`), the router always
-/// emits multiple header fields, regardless of the algorithm.
+/// Using `first` or `last` on `cache-control` is a **compile-time error**.
+/// See [`AggregationAlgo::Append`] for the cache-control merge semantics.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum AggregationAlgo {
@@ -372,19 +355,37 @@ pub enum AggregationAlgo {
     First,
     /// Overwrite with the last value encountered.
     Last,
-    /// Collect all values. For most headers they are comma-joined. For
-    /// `cache-control` specifically, a restrictive merge is applied after
-    /// all subgraph responses have been collected (see `AggregationAlgo` docs).
+    /// Collect all values. For most headers they are comma-joined into a single
+    /// field. For never-join headers (e.g. `Set-Cookie`) they are emitted as
+    /// separate header fields.
+    ///
+    /// **`cache-control` special case:** Instead of comma-joining, the router
+    /// applies a restrictive merge across all subgraph values:
+    /// - `no-store`, `no-cache`, or `private` from any subgraph poisons the result.
+    /// - `max-age` takes the minimum across all subgraphs that provide it.
+    /// - `public` is only kept if every subgraph carries it.
+    /// - `must-revalidate` is set if any subgraph carries it.
+    ///
+    /// The following conditions force `no-store, no-cache, must-revalidate`
+    /// regardless of subgraph values:
+    /// - Any subgraph executor error (network failure, bad status, etc.)
+    /// - Any GraphQL-level error in a subgraph response (`errors` array non-empty)
+    /// - The operation is a mutation
+    ///
+    /// If no subgraph sends `Cache-Control` and no `default` is configured,
+    /// the router emits `no-store` as a safe fallback.
     Append,
 }
 
 /// Propagate headers from subgraph responses to the final client response.
 ///
-/// **Behavior**
 /// - If multiple subgraphs return the header, values are merged using `algorithm`.
 ///   Never-join headers are **never** comma-joined.
 /// - If **no** subgraph returns a match, `default` (if set) is emitted.
 /// - If `rename` is set, the outgoing header uses the new name.
+///
+/// For `cache-control` propagation, `algorithm` must be `append`. See
+/// [`AggregationAlgo::Append`] for the full merge semantics.
 ///
 /// ### Examples
 /// ```yaml
@@ -403,6 +404,11 @@ pub enum AggregationAlgo {
 ///   named: x-backend
 ///   algorithm: append
 ///   default: unknown
+///
+/// # Propagate cache-control with restrictive merge across all subgraphs
+/// propagate:
+///   named: cache-control
+///   algorithm: append
 /// ```
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 pub struct ResponsePropagateRule {
