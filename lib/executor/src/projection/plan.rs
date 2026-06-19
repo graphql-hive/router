@@ -666,7 +666,12 @@ impl FieldProjectionPlan {
         if let Some(new_only) = new_only {
             let mut new_only_plan = plan_to_merge;
             new_only_plan.parent_type_guard = Some(new_only);
-            Self::merge_plan(field_selections, new_only_plan, parent_type_name, schema_metadata);
+            Self::merge_plan(
+                field_selections,
+                new_only_plan,
+                parent_type_name,
+                schema_metadata,
+            );
         }
     }
 
@@ -920,7 +925,12 @@ impl FieldProjectionPlan {
             }
         };
 
-        Self::merge_plan(field_selections, new_plan, parent_type_name, schema_metadata);
+        Self::merge_plan(
+            field_selections,
+            new_plan,
+            parent_type_name,
+            schema_metadata,
+        );
     }
 
     fn process_inline_fragment(
@@ -966,7 +976,12 @@ impl FieldProjectionPlan {
             }
 
             for selection in inline_fragment_selections {
-                Self::merge_plan(field_selections, selection, parent_type_name, schema_metadata);
+                Self::merge_plan(
+                    field_selections,
+                    selection,
+                    parent_type_name,
+                    schema_metadata,
+                );
             }
         }
     }
