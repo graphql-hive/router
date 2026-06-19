@@ -1,4 +1,5 @@
 use ahash::HashSet;
+use std::borrow::Cow;
 use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
 use std::sync::Arc;
 use tracing::warn;
@@ -98,6 +99,20 @@ impl TypeCondition {
         }
     }
 
+    /// Whether two conditions share at least one possible type, without allocating
+    /// (unlike `intersect`, which builds the intersection set).
+    pub fn intersects(&self, other: &TypeCondition) -> bool {
+        use TypeCondition::*;
+        match (self, other) {
+            (Exact(a), Exact(b)) => a == b,
+            (OneOf(set), Exact(t)) | (Exact(t), OneOf(set)) => set.contains(t),
+            (OneOf(a), OneOf(b)) => {
+                let (small, big) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+                small.iter().any(|t| big.contains(t))
+            }
+        }
+    }
+
     /// A condition that can never match (`OneOf({})`, produced by `intersect` for disjoint
     /// conditions).
     pub fn is_empty(&self) -> bool {
@@ -136,20 +151,20 @@ impl TypeCondition {
 fn type_guards_overlap(a: &Option<TypeCondition>, b: &Option<TypeCondition>) -> bool {
     match (a, b) {
         (None, _) | (_, None) => true,
-        (Some(a), Some(b)) => !a.clone().intersect(b.clone()).is_empty(),
+        (Some(a), Some(b)) => a.intersects(b),
     }
 }
 
 /// Resolves an implicit `None` ("any type") guard on an abstract parent to a concrete
 /// `OneOf` of its object members, so it can be scope-split. Returns the guard unchanged when
 /// it's already explicit, and `None` for concrete parents (where `None` means just that type).
-fn resolve_implicit_guard(
-    guard: &Option<TypeCondition>,
+fn resolve_implicit_guard<'a>(
+    guard: &'a Option<TypeCondition>,
     parent_type_name: &str,
     schema_metadata: &SchemaMetadata,
-) -> Option<TypeCondition> {
+) -> Option<Cow<'a, TypeCondition>> {
     match guard {
-        Some(guard) => Some(guard.clone()),
+        Some(guard) => Some(Cow::Borrowed(guard)),
         None => {
             if schema_metadata.is_interface_type(parent_type_name)
                 || schema_metadata.is_union_type(parent_type_name)
@@ -160,7 +175,7 @@ fn resolve_implicit_guard(
                     .into_iter()
                     .filter(|type_name| schema_metadata.is_object_type(type_name))
                     .collect();
-                TypeCondition::from_types(members)
+                TypeCondition::from_types(members).map(Cow::Owned)
             } else {
                 None
             }
@@ -593,8 +608,8 @@ impl FieldProjectionPlan {
                 Self::split_overlapping_plans(
                     field_selections,
                     idx,
-                    existing.clone(),
-                    new.clone(),
+                    existing.clone().into_owned(),
+                    new.clone().into_owned(),
                     plan_to_merge,
                     parent_type_name,
                     schema_metadata,
@@ -639,8 +654,16 @@ impl FieldProjectionPlan {
         // The original existing entry seeds both the shared scope and its own exclusive scope.
         let existing = field_selections.remove(idx);
 
+        // Carve out the existing-only scope first (clone only when it's non-empty); the
+        // original `existing` then moves into the shared scope without a further clone.
+        let existing_only_plan = existing_only.map(|scope| {
+            let mut plan = existing.clone();
+            plan.parent_type_guard = Some(scope);
+            plan
+        });
+
         // Shared types: existing selection + new selection.
-        let mut shared = existing.clone();
+        let mut shared = existing;
         shared.parent_type_guard = Some(intersection);
         Self::merge_into(
             &mut shared,
@@ -651,10 +674,8 @@ impl FieldProjectionPlan {
             schema_metadata,
         );
 
-        match existing_only {
-            Some(existing_only) => {
-                let mut existing_only_plan = existing;
-                existing_only_plan.parent_type_guard = Some(existing_only);
+        match existing_only_plan {
+            Some(existing_only_plan) => {
                 field_selections.insert(idx, existing_only_plan);
                 field_selections.insert(idx + 1, shared);
             }
