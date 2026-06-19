@@ -561,6 +561,12 @@ async fn execute_query_plan_with_data<'exec>(
         &mut exec_ctx.response_headers_aggregator,
         // force no-store for mutations and errors (execution or graphql errors)
         opts.operation_type_name == "Mutation" || !errors.is_empty(),
+        // response_storage.len() counts subgraphs that returned bytes, which is
+        // exactly what we need: a plugin hook can short-circuit with a bytes-less
+        // SubgraphResponse, but in that case it also produces no cache-control header,
+        // so both sides of the comparison in finalize stay in sync - that fetch is
+        // invisible to both counters and cancels out (is safe to ignore)
+        exec_ctx.response_storage.len(),
     );
 
     opts.response_header_sink

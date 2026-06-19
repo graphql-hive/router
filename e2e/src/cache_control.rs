@@ -465,10 +465,11 @@ mod cache_control_e2e_tests {
         assert_eq!(res.status(), 200);
 
         let cc = cache_control(&res).unwrap_or_default();
+        assert!(!cc.contains("public"), "didnt expect public cache-control");
         assert!(
-            !cc.contains("public"),
-            "didnt expect cache-control public, but got: {cc}"
-        );
+            cc.contains("max-age=200"),
+            "expected max-age=200 from products but got: {cc}"
+        )
     }
 
     // scenario 9: subgraph-level insert rule overrides what the subgraph sends

@@ -17,6 +17,10 @@ impl ResponsesStorage {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.responses.len()
+    }
+
     pub fn add_response(&mut self, response: Bytes) {
         self.responses.push(response);
     }

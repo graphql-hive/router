@@ -147,9 +147,11 @@ fn to_header_value(p: &CacheControl) -> String {
 /// 2. max-age - the minimum of all present `max-age` values is kept. A subgraph that
 ///    omits `max-age` entirely does not pull the min down; it is simply ignored for
 ///    this field, letting a shorter age set by another subgraph win.
-/// 3. public - preserved only when every subgraph that sent `Cache-Control` also sent
-///    `public`. A single subgraph that omits it is enough to strip `public` from the
-///    result.
+/// 3. public - preserved only when every subgraph that returned a response also sent
+///    `public`. A subgraph that returned bytes but omitted `Cache-Control` entirely is
+///    counted through `total_responses` (the number of all subgraphs whose response
+///    counts) and is enough to strip `public` from the result, because silence is
+///    not consent.
 /// 4. must-revalidate - set if any subgraph sets it (logical OR). Cleared on poison.
 ///
 /// The merged result is serialised back to a `HeaderValue` and re-inserted into the
@@ -159,7 +161,11 @@ fn to_header_value(p: &CacheControl) -> String {
 /// If every collected value was unparseable (e.g. non-UTF-8 bytes) or empty the fold
 /// produces no `acc` and the `Cache-Control` header is removed from the aggregator.
 /// This avoids forwarding potentially unsafe or malformed caching directives.
-pub fn finalize(aggregator: &mut ResponseHeaderAggregator, force_no_store: bool) {
+pub fn finalize(
+    aggregator: &mut ResponseHeaderAggregator,
+    force_no_store: bool,
+    total_responses: usize,
+) {
     let Some((_, values)) = aggregator.entries.get(&http::header::CACHE_CONTROL) else {
         // there's no cache-control headers anywhere, so nothing to merge or poison - just leave it absent
         return;
@@ -183,7 +189,12 @@ pub fn finalize(aggregator: &mut ResponseHeaderAggregator, force_no_store: bool)
         }
     }
 
-    if let Some(merged) = acc {
+    if let Some(mut merged) = acc {
+        // a silent subgraph (no cache-control header at all) did not assert public,
+        // so public cannot hold when not every contacted subgraph sent it
+        if total_responses > values.len() {
+            merged.is_public = false;
+        }
         let serialized = to_header_value(&merged);
         // safety: to_header_value only produces ASCII
         let value = HeaderValue::from_str(&serialized).expect("to_header_value produced non-ASCII");
@@ -661,7 +672,7 @@ mod tests {
     #[test]
     fn finalize_force_no_store_forces_no_store() {
         let mut agg = make_aggregator(&["public, max-age=300"]);
-        finalize(&mut agg, true);
+        finalize(&mut agg, true, 1);
         assert_eq!(
             cc_value(&agg).as_deref(),
             Some("no-store, no-cache, must-revalidate")
@@ -671,21 +682,21 @@ mod tests {
     #[test]
     fn finalize_merges_two_appended_values() {
         let mut agg = make_aggregator(&["public, max-age=300", "public, max-age=60"]);
-        finalize(&mut agg, false);
+        finalize(&mut agg, false, 2);
         assert_eq!(cc_value(&agg).as_deref(), Some("public, max-age=60"));
     }
 
     #[test]
     fn finalize_private_collapses_to_no_store() {
         let mut agg = make_aggregator(&["private"]);
-        finalize(&mut agg, false);
+        finalize(&mut agg, false, 1);
         assert_eq!(cc_value(&agg).as_deref(), Some("no-store, no-cache"));
     }
 
     #[test]
     fn finalize_absent_entry_no_error_leaves_absent() {
         let mut agg = ResponseHeaderAggregator::default();
-        finalize(&mut agg, false);
+        finalize(&mut agg, false, 0);
         assert!(agg.entries.get(&http::header::CACHE_CONTROL).is_none());
     }
 
@@ -693,7 +704,7 @@ mod tests {
     #[test]
     fn finalize_empty_string_removes_header() {
         let mut agg = make_aggregator(&[""]);
-        finalize(&mut agg, false);
+        finalize(&mut agg, false, 1);
         assert_eq!(cc_value(&agg).as_deref(), None);
     }
 
@@ -707,35 +718,48 @@ mod tests {
             &invalid,
             HeaderAggregationStrategy::Append,
         );
-        finalize(&mut agg, false);
+        finalize(&mut agg, false, 1);
         assert_eq!(cc_value(&agg).as_deref(), None);
     }
 
     #[test]
     fn finalize_unrecognized_value_removes_header() {
         let mut agg = make_aggregator(&["bogus-directive"]);
-        finalize(&mut agg, false);
+        finalize(&mut agg, false, 1);
         assert_eq!(cc_value(&agg).as_deref(), None);
     }
 
     #[test]
     fn finalize_single_unrecognized_directive_removes_header() {
         let mut agg = make_aggregator(&["public, max-age=300, huh"]);
-        finalize(&mut agg, false);
+        finalize(&mut agg, false, 1);
         assert_eq!(cc_value(&agg).as_deref(), None);
     }
 
     #[test]
     fn finalize_malformed_max_age_removes_header() {
         let mut agg = make_aggregator(&["public, max-age=woof"]);
-        finalize(&mut agg, false);
+        finalize(&mut agg, false, 1);
         assert_eq!(cc_value(&agg).as_deref(), None);
     }
 
     #[test]
     fn finalize_absent_entry_with_force_no_store_absent() {
         let mut agg = ResponseHeaderAggregator::default();
-        finalize(&mut agg, true);
+        finalize(&mut agg, true, 0);
         assert!(agg.entries.get(&http::header::CACHE_CONTROL).is_none());
+    }
+
+    #[test]
+    fn finalize_public_stripped_when_silent_subgraph() {
+        // one subgraph sent public, one sent nothing - public must not survive
+        let mut agg = make_aggregator(&["public, max-age=200"]);
+        finalize(&mut agg, false, 2);
+        let cc = cc_value(&agg).unwrap_or_default();
+        assert!(!cc.contains("public"), "expected no public, got: {cc}");
+        assert!(
+            cc.contains("max-age=200"),
+            "expected max-age=200, got: {cc}"
+        );
     }
 }
