@@ -92,33 +92,26 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
                     rule.default.as_ref(),
                 )?;
 
+                // named path has no exclude at runtime, so exclude can only
+                // negate a regex match, never a named match
+                let named_includes_cache_control = spec
+                    .header_names
+                    .iter()
+                    .any(|n| n.as_str() == "cache-control");
+                let regex_includes_cache_control = spec
+                    .include_regex
+                    .as_ref()
+                    .is_some_and(|re| re.is_match("cache-control"));
+                let regex_excludes_cache_control = spec
+                    .exclude_regex
+                    .as_ref()
+                    .is_some_and(|re| re.is_match("cache-control"));
+                let cache_control_will_propagate = named_includes_cache_control
+                    || (regex_includes_cache_control && !regex_excludes_cache_control);
+                if !matches!(rule.algorithm, config::AggregationAlgo::Append)
+                    && cache_control_will_propagate
                 {
-                    // TODO: I thought about putting this in a function, but it'll be
-                    // just one function - is it ok if this stays inlined?
-
-                    // check runs after materialize_match_spec so we can test the
-                    // compiled regex against "cache-control" directly. exclude is
-                    // respected: if it matches cache-control too, the rule won't touch
-                    // it at runtime so no error is raised.
-                    let cache_control_excluded = spec
-                        .exclude_regex
-                        .as_ref()
-                        .is_some_and(|re| re.is_match("cache-control"));
-                    let cache_control_is_named = spec
-                        .header_names
-                        .iter()
-                        .any(|n| n.as_str() == "cache-control");
-                    let cache_control_is_matched = spec
-                        .include_regex
-                        .as_ref()
-                        .is_some_and(|re| re.is_match("cache-control"));
-                    let cache_control_matched = !cache_control_excluded
-                        && (cache_control_is_named || cache_control_is_matched);
-                    if !matches!(rule.algorithm, config::AggregationAlgo::Append)
-                        && cache_control_matched
-                    {
-                        return Err(HeaderRuleCompileError::CacheControlRequiresAppend);
-                    }
+                    return Err(HeaderRuleCompileError::CacheControlRequiresAppend);
                 }
 
                 if !spec.header_names.is_empty() {
@@ -519,6 +512,33 @@ mod tests {
                     "expected CacheControlRequiresAppend for pattern={pattern:?} algo={algo:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_cache_control_named_with_exclude_is_still_compile_error() {
+        // exclude only applies to the regex path at runtime, so it must not
+        // suppress the error for a named: cache-control rule
+        for algo in [
+            config::AggregationAlgo::First,
+            config::AggregationAlgo::Last,
+        ] {
+            let rule = config::ResponseHeaderRule::Propagate(config::ResponsePropagateRule {
+                spec: config::MatchSpec {
+                    named: Some(config::OneOrMany::One("cache-control".to_string())),
+                    matching: None,
+                    exclude: Some(vec!["cache-control".to_string()]),
+                },
+                rename: None,
+                default: None,
+                algorithm: algo,
+            });
+            let mut actions = Vec::new();
+            let err = rule.compile(&mut actions).unwrap_err();
+            assert!(
+                matches!(err, HeaderRuleCompileError::CacheControlRequiresAppend),
+                "expected CacheControlRequiresAppend for {algo:?}"
+            );
         }
     }
 
