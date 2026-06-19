@@ -373,7 +373,7 @@ pub enum AggregationAlgo {
     /// - The operation is a mutation
     ///
     /// If no subgraph sends `Cache-Control` and no `default` is configured,
-    /// the router emits `no-store` as a safe fallback.
+    /// the router leaves the header absent from the client response.
     Append,
 }
 
