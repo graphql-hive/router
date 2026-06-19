@@ -1,11 +1,11 @@
 #[cfg(test)]
-mod cache_control;
-#[cfg(test)]
 mod authorization_directives_filter;
 #[cfg(test)]
 mod authorization_directives_reject;
 #[cfg(test)]
 mod body_limit;
+#[cfg(test)]
+mod cache_control;
 #[cfg(test)]
 mod circuit_breaker;
 #[cfg(test)]
