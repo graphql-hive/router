@@ -1,5 +1,6 @@
 use crate::headers::{plan::HeaderAggregationStrategy, response::ResponseHeaderAggregator};
 use http::HeaderValue;
+use tracing::warn;
 
 #[derive(Clone, Default)]
 struct ParsedCacheControl {
@@ -175,12 +176,18 @@ pub fn finalize(aggregator: &mut ResponseHeaderAggregator, force_no_store: bool)
     }
 
     if let Some(merged) = acc {
-        let value = HeaderValue::from_str(&to_header_value(&merged))
-            .unwrap_or_else(|_| HeaderValue::from_static("no-store"));
+        let serialized = to_header_value(&merged);
+        // safety: to_header_value only produces ASCII
+        let value = HeaderValue::from_str(&serialized).expect("to_header_value produced non-ASCII");
         aggregator.entries.insert(
             http::header::CACHE_CONTROL,
             (HeaderAggregationStrategy::Last, vec![value]),
         );
+    } else {
+        // no valid values found, but there were cache-control headers
+        // do the safe thing and graceful thing - completely omit the header
+        warn!("no valid cache-control values found, removing header");
+        aggregator.entries.remove(&http::header::CACHE_CONTROL);
     }
 }
 
@@ -681,6 +688,36 @@ mod tests {
         let mut agg = ResponseHeaderAggregator::default();
         finalize(&mut agg, false);
         assert!(agg.entries.get(&http::header::CACHE_CONTROL).is_none());
+    }
+
+    // empty string: parse() returns None, acc stays None, entry left unchanged
+    #[test]
+    fn finalize_empty_string_removes_header() {
+        let mut agg = make_aggregator(&[""]);
+        finalize(&mut agg, false);
+        assert_eq!(cc_value(&agg).as_deref(), None);
+    }
+
+    // non-UTF-8: to_str() fails, acc stays None, entry left unchanged
+    #[test]
+    fn finalize_invalid_utf8_removes_header() {
+        let mut agg = ResponseHeaderAggregator::default();
+        let invalid = http::HeaderValue::from_bytes(&[0xFF, 0xFE]).unwrap();
+        agg.write(
+            &http::header::CACHE_CONTROL,
+            &invalid,
+            HeaderAggregationStrategy::Append,
+        );
+        finalize(&mut agg, false);
+        assert_eq!(cc_value(&agg).as_deref(), None);
+    }
+
+    // unrecognized directive: parse() returns Some(default), serializes to no-store
+    #[test]
+    fn finalize_unrecognized_directive_removes_header() {
+        let mut agg = make_aggregator(&["bogus-directive"]);
+        finalize(&mut agg, false);
+        assert_eq!(cc_value(&agg).as_deref(), None);
     }
 
     #[test]
