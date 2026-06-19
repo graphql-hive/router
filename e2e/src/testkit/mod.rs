@@ -380,19 +380,29 @@ async fn handle_on_request(
     };
 
     if let Some(new_resp) = on_request(req) {
-        // response intercepted, return it and stop
-        let mut response = axum::response::Response::builder()
-            .status(new_resp.status)
-            .body(if let Some(body) = new_resp.body {
-                axum::body::Body::from(body)
-            } else {
-                axum::body::Body::empty()
-            })
-            .unwrap();
-        *response.headers_mut() = new_resp.headers;
-        return response;
+        if let Some(body) = new_resp.body {
+            // short-circuit the request and respond with this body and the configured headers
+            let mut response = axum::response::Response::builder()
+                .status(new_resp.status)
+                .body(axum::body::Body::from(body))
+                .unwrap();
+            *response.headers_mut() = new_resp.headers;
+            return response;
+        }
+
+        // no body provided, use body of the subgraph but change the status and headers
+        let rebuilt_body = axum::body::Body::from(body_bytes);
+        let rebuilt = axum::extract::Request::from_parts(parts, rebuilt_body);
+        let mut subgraph_resp = next.run(rebuilt).await;
+        for (name, value) in new_resp.headers {
+            if let Some(name) = name {
+                subgraph_resp.headers_mut().insert(name, value);
+            }
+        }
+        return subgraph_resp;
     }
 
+    // no override, just pass through the original request
     let rebuilt_body = axum::body::Body::from(body_bytes);
     let request = axum::extract::Request::from_parts(parts, rebuilt_body);
     next.run(request).await
