@@ -85,6 +85,22 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
         match self {
             config::ResponseHeaderRule::Propagate(rule) => {
                 let aggregation_strategy = rule.algorithm.into();
+
+                if !matches!(rule.algorithm, config::AggregationAlgo::Append) {
+                    let names_include_cache_control = match &rule.spec.named {
+                        Some(config::OneOrMany::One(n)) => {
+                            n.to_ascii_lowercase() == "cache-control"
+                        }
+                        Some(config::OneOrMany::Many(ns)) => {
+                            ns.iter().any(|n| n.to_ascii_lowercase() == "cache-control")
+                        }
+                        None => false,
+                    };
+                    if names_include_cache_control {
+                        return Err(HeaderRuleCompileError::CacheControlRequiresAppend);
+                    }
+                }
+
                 let spec = materialize_match_spec(
                     &rule.spec,
                     rule.rename.as_ref(),
@@ -438,5 +454,47 @@ mod tests {
             }
             _ => panic!("Expected PropagateNamed"),
         }
+    }
+
+    #[test]
+    fn test_cache_control_propagate_first_is_compile_error() {
+        for algo in [
+            config::AggregationAlgo::First,
+            config::AggregationAlgo::Last,
+        ] {
+            let rule = config::ResponseHeaderRule::Propagate(config::ResponsePropagateRule {
+                spec: config::MatchSpec {
+                    named: Some(config::OneOrMany::One("cache-control".to_string())),
+                    matching: None,
+                    exclude: None,
+                },
+                rename: None,
+                default: None,
+                algorithm: algo,
+            });
+            let mut actions = Vec::new();
+            let err = rule.compile(&mut actions).unwrap_err();
+            assert!(
+                matches!(err, HeaderRuleCompileError::CacheControlRequiresAppend),
+                "expected CacheControlRequiresAppend for {algo:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cache_control_propagate_append_is_ok() {
+        let rule = config::ResponseHeaderRule::Propagate(config::ResponsePropagateRule {
+            spec: config::MatchSpec {
+                named: Some(config::OneOrMany::One("Cache-Control".to_string())),
+                matching: None,
+                exclude: None,
+            },
+            rename: None,
+            default: None,
+            algorithm: config::AggregationAlgo::Append,
+        });
+        let mut actions = Vec::new();
+        rule.compile(&mut actions).unwrap();
+        assert_eq!(actions.len(), 1);
     }
 }
