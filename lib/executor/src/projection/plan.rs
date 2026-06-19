@@ -103,6 +103,31 @@ impl TypeCondition {
     pub fn is_empty(&self) -> bool {
         matches!(self, TypeCondition::OneOf(types) if types.is_empty())
     }
+
+    /// The types in `self` that are not in `other`. `None` when the result is empty.
+    pub fn difference(&self, other: &TypeCondition) -> Option<TypeCondition> {
+        let mut types: HashSet<String> = match self {
+            TypeCondition::Exact(t) => HashSet::from_iter([t.clone()]),
+            TypeCondition::OneOf(types) => types.clone(),
+        };
+        match other {
+            TypeCondition::Exact(t) => {
+                types.remove(t);
+            }
+            TypeCondition::OneOf(other) => types.retain(|t| !other.contains(t)),
+        }
+        Self::from_types(types)
+    }
+
+    /// Builds the minimal condition for a set of types (`Exact` for one, `OneOf` for many,
+    /// `None` for empty).
+    fn from_types(mut types: HashSet<String>) -> Option<TypeCondition> {
+        match types.len() {
+            0 => None,
+            1 => types.drain().next().map(TypeCondition::Exact),
+            _ => Some(TypeCondition::OneOf(types)),
+        }
+    }
 }
 
 /// Whether two field type guards can apply to the same object. `None` ("any type") overlaps
@@ -112,6 +137,34 @@ fn type_guards_overlap(a: &Option<TypeCondition>, b: &Option<TypeCondition>) -> 
     match (a, b) {
         (None, _) | (_, None) => true,
         (Some(a), Some(b)) => !a.clone().intersect(b.clone()).is_empty(),
+    }
+}
+
+/// Resolves an implicit `None` ("any type") guard on an abstract parent to a concrete
+/// `OneOf` of its object members, so it can be scope-split. Returns the guard unchanged when
+/// it's already explicit, and `None` for concrete parents (where `None` means just that type).
+fn resolve_implicit_guard(
+    guard: &Option<TypeCondition>,
+    parent_type_name: &str,
+    schema_metadata: &SchemaMetadata,
+) -> Option<TypeCondition> {
+    match guard {
+        Some(guard) => Some(guard.clone()),
+        None => {
+            if schema_metadata.is_interface_type(parent_type_name)
+                || schema_metadata.is_union_type(parent_type_name)
+            {
+                let members: HashSet<String> = schema_metadata
+                    .possible_types
+                    .get_possible_types(parent_type_name)
+                    .into_iter()
+                    .filter(|type_name| schema_metadata.is_object_type(type_name))
+                    .collect();
+                TypeCondition::from_types(members)
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -266,6 +319,7 @@ impl FieldProjectionPlan {
                         inline_fragment,
                         &mut field_selections,
                         schema_metadata,
+                        parent_type_name,
                         parent_condition,
                     );
                 }
@@ -505,44 +559,135 @@ impl FieldProjectionPlan {
     fn merge_plan(
         field_selections: &mut Vec<FieldProjectionPlan>,
         plan_to_merge: FieldProjectionPlan,
+        parent_type_name: &str,
+        schema_metadata: &SchemaMetadata,
     ) {
-        // Only merge into an existing field with the same response key when their type
-        // guards can apply to the same object. Fields under disjoint guards (e.g. different
-        // union members) keep their own per-type selection set and stay separate — at
-        // projection time only the guard-matching one is written, so the output still has a
-        // single key.
-        let existing_plan = field_selections.iter_mut().find(|plan| {
+        // Find an existing field with the same response key whose type guard can apply to the
+        // same object (overlaps). Fields under disjoint guards (e.g. different union members)
+        // stay as separate entries — at projection time only the guard-matching one is
+        // written, so the output still has a single key.
+        let Some(idx) = field_selections.iter().position(|plan| {
             plan.response_key == plan_to_merge.response_key
                 && type_guards_overlap(&plan.parent_type_guard, &plan_to_merge.parent_type_guard)
-        });
-        let Some(existing_plan) = existing_plan else {
+        }) else {
             field_selections.push(plan_to_merge);
             return;
         };
 
-        // Capture guards before merging, needed for condition association
-        let existing_guard = existing_plan.parent_type_guard.clone();
+        let existing_guard = field_selections[idx].parent_type_guard.clone();
         let new_guard = plan_to_merge.parent_type_guard.clone();
 
-        // Merge type guards using OR semantics (union of when to include the field)
-        // - None means "applies to all types" (no type restriction)
-        // - Some(guard) means "applies only to specific types"
-        existing_plan.parent_type_guard = match (
-            existing_plan.parent_type_guard.take(),
-            plan_to_merge.parent_type_guard,
-        ) {
-            (None, _) | (_, None) => None, // None (all types) subsumes any specific guard
+        // A field selected directly on an abstract parent has a `None` ("any type") guard. When
+        // it collides with a type-specific selection of the same key, resolve `None` to the
+        // parent's concrete members so the two can be scope-split. This is conflict-driven:
+        // a `None` field with no differently-guarded sibling never reaches here and keeps `None`.
+        let existing_scope =
+            resolve_implicit_guard(&existing_guard, parent_type_name, schema_metadata);
+        let new_scope = resolve_implicit_guard(&new_guard, parent_type_name, schema_metadata);
+
+        // Overlapping but *unequal* guards: the shared types get both selections, but each
+        // guard's exclusive types keep their own — otherwise a child selected under one type
+        // leaks into a sibling. Split into disjoint scopes.
+        if let (Some(existing), Some(new)) = (&existing_scope, &new_scope) {
+            if existing != new {
+                Self::split_overlapping_plans(
+                    field_selections,
+                    idx,
+                    existing.clone(),
+                    new.clone(),
+                    plan_to_merge,
+                    parent_type_name,
+                    schema_metadata,
+                );
+                return;
+            }
+        }
+
+        // Equal guards, or a `None` guard on a concrete parent: fold into the existing entry,
+        // unioning the guard.
+        field_selections[idx].parent_type_guard = match (existing_guard.clone(), new_guard.clone())
+        {
+            (None, _) | (_, None) => None,
             (Some(left), Some(right)) => Some(left.union(right)),
         };
-
-        existing_plan.conditions = Self::merge_conditions(
+        Self::merge_into(
+            &mut field_selections[idx],
+            plan_to_merge,
             &existing_guard,
-            existing_plan.conditions.take(),
             &new_guard,
-            plan_to_merge.conditions,
+            parent_type_name,
+            schema_metadata,
+        );
+    }
+
+    /// Splits an overlapping pair of same-response-key fields into disjoint scopes: types only
+    /// in the existing guard (its selection), the shared types (both selections merged), and
+    /// types only in the new guard (its selection).
+    fn split_overlapping_plans(
+        field_selections: &mut Vec<FieldProjectionPlan>,
+        idx: usize,
+        existing_guard: TypeCondition,
+        new_guard: TypeCondition,
+        plan_to_merge: FieldProjectionPlan,
+        parent_type_name: &str,
+        schema_metadata: &SchemaMetadata,
+    ) {
+        let intersection = existing_guard.clone().intersect(new_guard.clone());
+        let existing_only = existing_guard.difference(&new_guard);
+        let new_only = new_guard.difference(&existing_guard);
+
+        // The original existing entry seeds both the shared scope and its own exclusive scope.
+        let existing = field_selections.remove(idx);
+
+        // Shared types: existing selection + new selection.
+        let mut shared = existing.clone();
+        shared.parent_type_guard = Some(intersection);
+        Self::merge_into(
+            &mut shared,
+            plan_to_merge.clone(),
+            &Some(existing_guard),
+            &Some(new_guard.clone()),
+            parent_type_name,
+            schema_metadata,
         );
 
-        match (&mut existing_plan.value, plan_to_merge.value) {
+        match existing_only {
+            Some(existing_only) => {
+                let mut existing_only_plan = existing;
+                existing_only_plan.parent_type_guard = Some(existing_only);
+                field_selections.insert(idx, existing_only_plan);
+                field_selections.insert(idx + 1, shared);
+            }
+            // Existing fully covered by the new guard — the shared entry replaces it.
+            None => field_selections.insert(idx, shared),
+        }
+
+        // Types only the new plan covers; may still overlap other entries, so route it back.
+        if let Some(new_only) = new_only {
+            let mut new_only_plan = plan_to_merge;
+            new_only_plan.parent_type_guard = Some(new_only);
+            Self::merge_plan(field_selections, new_only_plan, parent_type_name, schema_metadata);
+        }
+    }
+
+    /// Merges `source`'s conditions and child selections into `target`. The caller owns
+    /// `target`'s `parent_type_guard`; this touches only conditions and the child selections.
+    fn merge_into(
+        target: &mut FieldProjectionPlan,
+        source: FieldProjectionPlan,
+        target_guard: &Option<TypeCondition>,
+        source_guard: &Option<TypeCondition>,
+        parent_type_name: &str,
+        schema_metadata: &SchemaMetadata,
+    ) {
+        target.conditions = Self::merge_conditions(
+            target_guard,
+            target.conditions.take(),
+            source_guard,
+            source.conditions,
+        );
+
+        match (&mut target.value, source.value) {
             (
                 ProjectionValueSource::ResponseData {
                     selections: existing_selections,
@@ -558,9 +703,22 @@ impl FieldProjectionPlan {
                             let new_selections_vec = Arc::try_unwrap(new_selections)
                                 .unwrap_or_else(|arc| (*arc).clone());
 
+                            // The child selections live under this field's output type.
+                            let child_parent_type = schema_metadata
+                                .type_fields
+                                .get(parent_type_name)
+                                .and_then(|fields| fields.get(&target.field_name))
+                                .map(|info| info.output_type_name.as_str())
+                                .unwrap_or(parent_type_name);
+
                             // Recursively merge each child selection.
                             for new_plan in new_selections_vec {
-                                Self::merge_plan(selections_mut, new_plan);
+                                Self::merge_plan(
+                                    selections_mut,
+                                    new_plan,
+                                    child_parent_type,
+                                    schema_metadata,
+                                );
                             }
                         }
                         None => *existing_selections = Some(new_selections),
@@ -573,9 +731,8 @@ impl FieldProjectionPlan {
             _ => {
                 // This case should not be reached during initial plan construction,
                 // as `Null` is only introduced during the authorization step.
-                // If we merge a plan, it's always to combine selections.
                 warn!("Merging plans with `Null` value source is not supported during initial plan construction.");
-                existing_plan.value = ProjectionValueSource::Null;
+                target.value = ProjectionValueSource::Null;
             }
         }
     }
@@ -763,13 +920,14 @@ impl FieldProjectionPlan {
             }
         };
 
-        Self::merge_plan(field_selections, new_plan);
+        Self::merge_plan(field_selections, new_plan, parent_type_name, schema_metadata);
     }
 
     fn process_inline_fragment(
         inline_fragment: &InlineFragmentSelection,
         field_selections: &mut Vec<FieldProjectionPlan>,
         schema_metadata: &SchemaMetadata,
+        parent_type_name: &str,
         parent_condition: &Option<FieldProjectionCondition>,
     ) {
         let inline_fragment_type = &inline_fragment.type_condition;
@@ -808,7 +966,7 @@ impl FieldProjectionPlan {
             }
 
             for selection in inline_fragment_selections {
-                Self::merge_plan(field_selections, selection);
+                Self::merge_plan(field_selections, selection, parent_type_name, schema_metadata);
             }
         }
     }

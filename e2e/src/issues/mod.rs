@@ -2025,8 +2025,6 @@ mod issues_e2e_tests {
     }
 
     #[ntex::test]
-    #[ignore = "Overlapping (not disjoint) type guards need 3-way scope splitting in \
-                merge_plan; the simple disjoint-only fix doesn't cover this yet."]
     /// Overlapping (not disjoint) type guards sharing a response key. `meta` is selected
     /// under `... on Article` (`{ title }`) and under the interface `... on HasMeta`
     /// (`{ wordCount }`); the guards overlap on `Article`. The `Article`-only `title`
@@ -2060,6 +2058,9 @@ mod issues_e2e_tests {
                 r#"{"data":{"search":[
                     {"__typename":"Article","meta":{"title":"T","wordCount":100}},
                     {"__typename":"Video","meta":{"wordCount":50}}
+                ],"searchMeta":[
+                    {"__typename":"Article","meta":{"title":"T","wordCount":100}},
+                    {"__typename":"Video","meta":{"wordCount":50}}
                 ]}}"#,
             )
             .create();
@@ -2072,18 +2073,40 @@ mod issues_e2e_tests {
                     ... on Article { meta { title } }
                     ... on HasMeta { meta { wordCount } }
                   }
+                  searchMeta {
+                    __typename
+                    ... on Article { meta { title } }
+                    ... on HasMeta { meta { wordCount } }
+                  }
                 }"#,
                 None,
                 None,
             )
             .await;
         assert!(res.status().is_success(), "Expected 200 OK");
-        // `Article` gets both fields (it's in both scopes); `Video` gets only `wordCount`
-        // (its interface scope) — `title` does not leak in.
+        // Both fields scope `meta` per concrete type: `Article` (in both the `Article` and
+        // `HasMeta` scopes) gets `{ title, wordCount }`, `Video` (only `HasMeta`) gets just
+        // `{ wordCount }` — `title` never leaks. `searchMeta` (interface parent, where
+        // `... on HasMeta` inlines to an implicit "any type" guard) resolves the same way.
         insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
             "search": [
+              {
+                "__typename": "Article",
+                "meta": {
+                  "title": "T",
+                  "wordCount": 100
+                }
+              },
+              {
+                "__typename": "Video",
+                "meta": {
+                  "wordCount": 50
+                }
+              }
+            ],
+            "searchMeta": [
               {
                 "__typename": "Article",
                 "meta": {

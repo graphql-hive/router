@@ -57,8 +57,16 @@ enum link__Purpose {
 }
 
 type Query @join__type(graph: A) {
-  search: [HasMeta!]! @join__field(graph: A)
+  search: [Search!]! @join__field(graph: A)
+  searchMeta: [HasMeta!]! @join__field(graph: A)
 }
+
+union Search
+  @join__type(graph: A)
+  @join__unionMember(graph: A, member: "Article")
+  @join__unionMember(graph: A, member: "Video") =
+  | Article
+  | Video
 
 interface HasMeta @join__type(graph: A) {
   meta: Meta!
@@ -77,7 +85,6 @@ type Video implements HasMeta
 }
 
 type Meta @join__type(graph: A) {
-  # Non-Null: if leaked into a branch that didn't request it, the missing value bubbles.
   title: String! @join__field(graph: A)
   wordCount: Int @join__field(graph: A)
 }
