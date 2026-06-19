@@ -1870,4 +1870,234 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    async fn union_shared_field_different_selections() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.union-shared-field.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"payloads":[
+                    {"__typename":"ApprovalFlowCreated","order":{"id":"1"}},
+                    {"__typename":"ApprovalFlowCompleted","order":{"id":"2"}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  payloads {
+                    __typename
+                    ... on ApprovalFlowCreated { order { id } }
+                    ... on ApprovalFlowRejected { order { id version orderNumber } }
+                    ... on ApprovalFlowCompleted { order { id } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "payloads": [
+              {
+                "__typename": "ApprovalFlowCreated",
+                "order": {
+                  "id": "1"
+                }
+              },
+              {
+                "__typename": "ApprovalFlowCompleted",
+                "order": {
+                  "id": "2"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/pull/1166
+    ///
+    /// A union (`SearchResult`) whose members share the response key `chain` but select
+    /// different sub-fields per branch: `Collection`/`CurrencyV2` pick `chain { identifier }`
+    /// while `Item` picks `chain { arch }` (and `Chain.arch` is Non-Null). The `arch`
+    /// selection must NOT leak into the `Collection`/`CurrencyV2` projections — otherwise
+    /// its missing value bubbles up (Non-Null) and collapses the response to `data: null`.
+    async fn issue_1166_disjoint_fragments_shared_field() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1166-disjoint-fragments.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"searchUniversal":[
+                    {"__typename":"Collection","chain":{"identifier":"c1"}},
+                    {"__typename":"CurrencyV2","chain":{"identifier":"cur1"}},
+                    {"__typename":"Item","chain":{"arch":"x86"}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  searchUniversal {
+                    __typename
+                    ... on Collection { chain { identifier } }
+                    ... on CurrencyV2 { chain { identifier } }
+                    ... on Item { chain { arch } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "searchUniversal": [
+              {
+                "__typename": "Collection",
+                "chain": {
+                  "identifier": "c1"
+                }
+              },
+              {
+                "__typename": "CurrencyV2",
+                "chain": {
+                  "identifier": "cur1"
+                }
+              },
+              {
+                "__typename": "Item",
+                "chain": {
+                  "arch": "x86"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// Overlapping (not disjoint) type guards sharing a response key. `meta` is selected
+    /// under `... on Article` (`{ title }`) and under the interface `... on HasMeta`
+    /// (`{ wordCount }`); the guards overlap on `Article`. The `Article`-only `title`
+    /// (Non-Null) must NOT leak into the `Video` branch — otherwise its missing value
+    /// bubbles and collapses the response.
+    async fn interface_overlapping_guards_shared_field() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.interface-shared-field.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"search":[
+                    {"__typename":"Article","meta":{"title":"T","wordCount":100}},
+                    {"__typename":"Video","meta":{"wordCount":50}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  search {
+                    __typename
+                    ... on Article { meta { title } }
+                    ... on HasMeta { meta { wordCount } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        // `Article` gets both fields (it's in both scopes); `Video` gets only `wordCount`
+        // (its interface scope) — `title` does not leak in.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "search": [
+              {
+                "__typename": "Article",
+                "meta": {
+                  "title": "T",
+                  "wordCount": 100
+                }
+              },
+              {
+                "__typename": "Video",
+                "meta": {
+                  "wordCount": 50
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
 }
