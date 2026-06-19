@@ -36,20 +36,24 @@ fn parse(header: &str) -> Option<CacheControl> {
             "private" => p.is_private = true,
             "public" => p.is_public = true,
             "max-age" => {
-                if let Some(v) = value {
-                    match v.parse::<u32>() {
-                        Ok(n) => p.max_age = Some(n),
+                let max_age = match value {
+                    Some(v) => match v.parse::<u32>() {
+                        Ok(n) => Some(n),
                         Err(_) => {
-                            tracing::warn!("cache-control max-age has non-numeric value: {v}");
-                            // zero tolerance on malformed cache-control headers
+                            warn!("cache-control max-age has non-numeric value: {v}");
                             return None;
                         }
+                    },
+                    None => {
+                        warn!("cache-control max-age is missing a value");
+                        return None;
                     }
-                }
+                };
+                p.max_age = max_age;
             }
             v => {
                 // one invalid part is enough to stop parsing and discard the header
-                tracing::warn!("cache-control has unrecognized directive: {v}");
+                warn!("cache-control has unrecognized directive: {v}");
                 return None;
             }
         }
