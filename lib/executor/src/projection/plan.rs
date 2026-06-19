@@ -1,5 +1,4 @@
 use ahash::HashSet;
-use indexmap::IndexMap;
 use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
 use std::sync::Arc;
 use tracing::warn;
@@ -97,6 +96,22 @@ impl TypeCondition {
                 }
             }
         }
+    }
+
+    /// A condition that can never match (`OneOf({})`, produced by `intersect` for disjoint
+    /// conditions).
+    pub fn is_empty(&self) -> bool {
+        matches!(self, TypeCondition::OneOf(types) if types.is_empty())
+    }
+}
+
+/// Whether two field type guards can apply to the same object. `None` ("any type") overlaps
+/// everything; two `Some` guards overlap when they share a possible type. Fields under
+/// disjoint guards never co-occur, so they must stay separate rather than be merged.
+fn type_guards_overlap(a: &Option<TypeCondition>, b: &Option<TypeCondition>) -> bool {
+    match (a, b) {
+        (None, _) | (_, None) => true,
+        (Some(a), Some(b)) => !a.clone().intersect(b.clone()).is_empty(),
     }
 }
 
@@ -233,7 +248,7 @@ impl FieldProjectionPlan {
         parent_type_name: &str,
         parent_condition: &Option<FieldProjectionCondition>,
     ) -> Option<Vec<FieldProjectionPlan>> {
-        let mut field_selections: IndexMap<String, FieldProjectionPlan> = IndexMap::new();
+        let mut field_selections: Vec<FieldProjectionPlan> = Vec::new();
 
         for selection_item in &selection_set.items {
             match selection_item {
@@ -266,7 +281,7 @@ impl FieldProjectionPlan {
         if field_selections.is_empty() {
             None
         } else {
-            Some(field_selections.into_values().collect())
+            Some(field_selections)
         }
     }
 
@@ -488,12 +503,20 @@ impl FieldProjectionPlan {
     /// - OR-ing conditions while preserving guard associations
     /// - Recursively merging child selections
     fn merge_plan(
-        field_selections: &mut IndexMap<String, FieldProjectionPlan>,
+        field_selections: &mut Vec<FieldProjectionPlan>,
         plan_to_merge: FieldProjectionPlan,
     ) {
-        let Some(existing_plan) = field_selections.get_mut(&plan_to_merge.response_key) else {
-            // First time seeing this field - just insert it
-            field_selections.insert(plan_to_merge.response_key.clone(), plan_to_merge);
+        // Only merge into an existing field with the same response key when their type
+        // guards can apply to the same object. Fields under disjoint guards (e.g. different
+        // union members) keep their own per-type selection set and stay separate — at
+        // projection time only the guard-matching one is written, so the output still has a
+        // single key.
+        let existing_plan = field_selections.iter_mut().find(|plan| {
+            plan.response_key == plan_to_merge.response_key
+                && type_guards_overlap(&plan.parent_type_guard, &plan_to_merge.parent_type_guard)
+        });
+        let Some(existing_plan) = existing_plan else {
+            field_selections.push(plan_to_merge);
             return;
         };
 
@@ -535,20 +558,10 @@ impl FieldProjectionPlan {
                             let new_selections_vec = Arc::try_unwrap(new_selections)
                                 .unwrap_or_else(|arc| (*arc).clone());
 
-                            // Convert Vec to Map for efficient merging by response_key
-                            let mut selections_map: IndexMap<String, FieldProjectionPlan> =
-                                selections_mut
-                                    .drain(..)
-                                    .map(|plan| (plan.response_key.clone(), plan))
-                                    .collect();
-
-                            // Recursively merge each child selection
+                            // Recursively merge each child selection.
                             for new_plan in new_selections_vec {
-                                Self::merge_plan(&mut selections_map, new_plan);
+                                Self::merge_plan(selections_mut, new_plan);
                             }
-
-                            // Convert back to Vec for efficient iteration during projection
-                            selections_mut.extend(selections_map.into_values());
                         }
                         None => *existing_selections = Some(new_selections),
                     }
@@ -618,7 +631,7 @@ impl FieldProjectionPlan {
 
     fn process_field(
         field: &FieldSelection,
-        field_selections: &mut IndexMap<String, FieldProjectionPlan>,
+        field_selections: &mut Vec<FieldProjectionPlan>,
         schema_metadata: &SchemaMetadata,
         parent_type_name: &str,
         parent_condition: &Option<FieldProjectionCondition>,
@@ -755,7 +768,7 @@ impl FieldProjectionPlan {
 
     fn process_inline_fragment(
         inline_fragment: &InlineFragmentSelection,
-        field_selections: &mut IndexMap<String, FieldProjectionPlan>,
+        field_selections: &mut Vec<FieldProjectionPlan>,
         schema_metadata: &SchemaMetadata,
         parent_condition: &Option<FieldProjectionCondition>,
     ) {
