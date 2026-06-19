@@ -102,8 +102,6 @@ fn to_header_value(p: &CacheControl) -> String {
 
     if p.is_public {
         parts.push("public".to_string());
-    } else if p.is_private {
-        parts.push("private".to_string());
     }
 
     if let Some(age) = p.max_age {
