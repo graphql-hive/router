@@ -21,6 +21,10 @@ impl ResponsesStorage {
         self.responses.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.responses.is_empty()
+    }
+
     pub fn add_response(&mut self, response: Bytes) {
         self.responses.push(response);
     }
