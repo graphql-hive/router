@@ -464,13 +464,10 @@ mod cache_control_e2e_tests {
 
         assert_eq!(res.status(), 200);
 
-        // with append+propagate, only the one value (public, max-age=200) lands in the aggregator
-        // and gets merged. the merge sees only present values so public survives here.
-        // strict consensus (strip public when a subgraph is silent) is out of scope
-        let cc = cache_control(&res).expect("expected cache-control header");
+        let cc = cache_control(&res).unwrap_or_default();
         assert!(
-            cc.contains("max-age=200"),
-            "expected max-age=200 from products but got: {cc}"
+            !cc.contains("public"),
+            "didnt expect cache-control public, but got: {cc}"
         );
     }
 
