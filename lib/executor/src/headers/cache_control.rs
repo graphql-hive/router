@@ -3,7 +3,7 @@ use http::HeaderValue;
 use tracing::warn;
 
 #[derive(Clone, Default)]
-struct ParsedCacheControl {
+struct CacheControl {
     no_store: bool,
     no_cache: bool,
     must_revalidate: bool,
@@ -12,13 +12,13 @@ struct ParsedCacheControl {
     max_age: Option<u32>,
 }
 
-fn parse(header: &str) -> Option<ParsedCacheControl> {
+fn parse(header: &str) -> Option<CacheControl> {
     let trimmed = header.trim();
     if trimmed.is_empty() {
         return None;
     }
 
-    let mut p = ParsedCacheControl::default();
+    let mut p = CacheControl::default();
 
     for part in trimmed.split(',') {
         let part = part.trim();
@@ -40,19 +40,25 @@ fn parse(header: &str) -> Option<ParsedCacheControl> {
                     match v.parse::<u32>() {
                         Ok(n) => p.max_age = Some(n),
                         Err(_) => {
-                            tracing::warn!("cache-control max-age has non-numeric value: {v}")
+                            tracing::warn!("cache-control max-age has non-numeric value: {v}");
+                            // zero tolerance on malformed cache-control headers
+                            return None;
                         }
                     }
                 }
             }
-            _ => {}
+            v => {
+                // one invalid part is enough to stop parsing and discard the header
+                tracing::warn!("cache-control has unrecognized directive: {v}");
+                return None;
+            }
         }
     }
 
     Some(p)
 }
 
-fn merge_into(acc: &mut Option<ParsedCacheControl>, incoming: ParsedCacheControl) {
+fn merge_into(acc: &mut Option<CacheControl>, incoming: CacheControl) {
     let Some(existing) = acc else {
         *acc = Some(incoming);
         return;
@@ -65,7 +71,7 @@ fn merge_into(acc: &mut Option<ParsedCacheControl>, incoming: ParsedCacheControl
         || incoming.no_cache
         || incoming.is_private
     {
-        *existing = ParsedCacheControl {
+        *existing = CacheControl {
             no_store: true,
             no_cache: true,
             ..Default::default()
@@ -83,7 +89,7 @@ fn merge_into(acc: &mut Option<ParsedCacheControl>, incoming: ParsedCacheControl
     };
 }
 
-fn to_header_value(p: &ParsedCacheControl) -> String {
+fn to_header_value(p: &CacheControl) -> String {
     if p.no_store || p.no_cache || p.is_private {
         return "no-store, no-cache".to_string();
     }
@@ -166,7 +172,7 @@ pub fn finalize(aggregator: &mut ResponseHeaderAggregator, force_no_store: bool)
         return;
     }
 
-    let mut acc: Option<ParsedCacheControl> = None;
+    let mut acc: Option<CacheControl> = None;
     for v in values {
         if let Ok(s) = v.to_str() {
             if let Some(parsed) = parse(s) {
@@ -195,7 +201,7 @@ pub fn finalize(aggregator: &mut ResponseHeaderAggregator, force_no_store: bool)
 mod tests {
     use super::*;
 
-    fn merge(a: Option<ParsedCacheControl>, b: ParsedCacheControl) -> ParsedCacheControl {
+    fn merge(a: Option<CacheControl>, b: CacheControl) -> CacheControl {
         let mut acc = a;
         merge_into(&mut acc, b);
         acc.unwrap()
@@ -206,7 +212,7 @@ mod tests {
     fn first_value_adopted() {
         let result = merge(
             None,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(300),
                 ..Default::default()
@@ -222,12 +228,12 @@ mod tests {
     #[test]
     fn incoming_no_store_poisons() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 is_public: true,
                 max_age: Some(300),
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 no_store: true,
                 ..Default::default()
             },
@@ -242,12 +248,12 @@ mod tests {
     #[test]
     fn incoming_no_cache_poisons() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 is_public: true,
                 max_age: Some(60),
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 no_cache: true,
                 ..Default::default()
             },
@@ -261,12 +267,12 @@ mod tests {
     #[test]
     fn incoming_private_poisons() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 is_public: true,
                 max_age: Some(120),
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 is_private: true,
                 ..Default::default()
             },
@@ -281,11 +287,11 @@ mod tests {
     #[test]
     fn existing_no_store_poisons() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 no_store: true,
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(300),
                 ..Default::default()
@@ -300,11 +306,11 @@ mod tests {
     #[test]
     fn existing_private_poisons() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 is_private: true,
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(300),
                 ..Default::default()
@@ -318,11 +324,11 @@ mod tests {
     #[test]
     fn both_no_store() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 no_store: true,
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 no_store: true,
                 ..Default::default()
             },
@@ -335,11 +341,11 @@ mod tests {
     #[test]
     fn max_age_takes_min() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 max_age: Some(500),
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 max_age: Some(300),
                 ..Default::default()
             },
@@ -351,11 +357,11 @@ mod tests {
     #[test]
     fn max_age_takes_min_other_direction() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 max_age: Some(100),
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 max_age: Some(999),
                 ..Default::default()
             },
@@ -367,11 +373,11 @@ mod tests {
     #[test]
     fn max_age_existing_only() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 max_age: Some(200),
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 max_age: None,
                 ..Default::default()
             },
@@ -383,11 +389,11 @@ mod tests {
     #[test]
     fn max_age_incoming_only() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 max_age: None,
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 max_age: Some(60),
                 ..Default::default()
             },
@@ -398,10 +404,7 @@ mod tests {
     // max_age: neither has it
     #[test]
     fn max_age_neither() {
-        let result = merge(
-            Some(ParsedCacheControl::default()),
-            ParsedCacheControl::default(),
-        );
+        let result = merge(Some(CacheControl::default()), CacheControl::default());
         assert_eq!(result.max_age, None);
     }
 
@@ -409,11 +412,11 @@ mod tests {
     #[test]
     fn public_both_public() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 is_public: true,
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 ..Default::default()
             },
@@ -425,11 +428,11 @@ mod tests {
     #[test]
     fn public_stripped_when_incoming_not_public() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 is_public: true,
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 is_public: false,
                 ..Default::default()
             },
@@ -440,10 +443,7 @@ mod tests {
     // public: neither public -> stays false
     #[test]
     fn public_neither() {
-        let result = merge(
-            Some(ParsedCacheControl::default()),
-            ParsedCacheControl::default(),
-        );
+        let result = merge(Some(CacheControl::default()), CacheControl::default());
         assert!(!result.is_public);
     }
 
@@ -451,11 +451,11 @@ mod tests {
     #[test]
     fn must_revalidate_from_incoming() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 must_revalidate: false,
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 must_revalidate: true,
                 ..Default::default()
             },
@@ -466,11 +466,11 @@ mod tests {
     #[test]
     fn must_revalidate_from_existing() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 must_revalidate: true,
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 must_revalidate: false,
                 ..Default::default()
             },
@@ -481,10 +481,7 @@ mod tests {
     // must_revalidate: neither sets it
     #[test]
     fn must_revalidate_neither() {
-        let result = merge(
-            Some(ParsedCacheControl::default()),
-            ParsedCacheControl::default(),
-        );
+        let result = merge(Some(CacheControl::default()), CacheControl::default());
         assert!(!result.must_revalidate);
     }
 
@@ -492,11 +489,11 @@ mod tests {
     #[test]
     fn must_revalidate_cleared_on_poison() {
         let result = merge(
-            Some(ParsedCacheControl {
+            Some(CacheControl {
                 must_revalidate: true,
                 ..Default::default()
             }),
-            ParsedCacheControl {
+            CacheControl {
                 no_store: true,
                 ..Default::default()
             },
@@ -512,7 +509,7 @@ mod tests {
         let mut acc = None;
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(300),
                 ..Default::default()
@@ -520,7 +517,7 @@ mod tests {
         );
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(200),
                 ..Default::default()
@@ -528,7 +525,7 @@ mod tests {
         );
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(500),
                 ..Default::default()
@@ -545,7 +542,7 @@ mod tests {
         let mut acc = None;
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(300),
                 ..Default::default()
@@ -553,7 +550,7 @@ mod tests {
         );
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: false,
                 max_age: Some(100),
                 ..Default::default()
@@ -561,7 +558,7 @@ mod tests {
         );
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(200),
                 ..Default::default()
@@ -578,7 +575,7 @@ mod tests {
         let mut acc = None;
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(300),
                 ..Default::default()
@@ -586,7 +583,7 @@ mod tests {
         );
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(200),
                 ..Default::default()
@@ -594,7 +591,7 @@ mod tests {
         );
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 no_store: true,
                 ..Default::default()
             },
@@ -612,14 +609,14 @@ mod tests {
         let mut acc = None;
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 no_cache: true,
                 ..Default::default()
             },
         );
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(300),
                 ..Default::default()
@@ -627,7 +624,7 @@ mod tests {
         );
         merge_into(
             &mut acc,
-            ParsedCacheControl {
+            CacheControl {
                 is_public: true,
                 max_age: Some(200),
                 ..Default::default()
@@ -712,10 +709,23 @@ mod tests {
         assert_eq!(cc_value(&agg).as_deref(), None);
     }
 
-    // unrecognized directive: parse() returns Some(default), serializes to no-store
     #[test]
-    fn finalize_unrecognized_directive_removes_header() {
+    fn finalize_unrecognized_value_removes_header() {
         let mut agg = make_aggregator(&["bogus-directive"]);
+        finalize(&mut agg, false);
+        assert_eq!(cc_value(&agg).as_deref(), None);
+    }
+
+    #[test]
+    fn finalize_single_unrecognized_directive_removes_header() {
+        let mut agg = make_aggregator(&["public, max-age=300, huh"]);
+        finalize(&mut agg, false);
+        assert_eq!(cc_value(&agg).as_deref(), None);
+    }
+
+    #[test]
+    fn finalize_malformed_max_age_removes_header() {
+        let mut agg = make_aggregator(&["public, max-age=woof"]);
         finalize(&mut agg, false);
         assert_eq!(cc_value(&agg).as_deref(), None);
     }
