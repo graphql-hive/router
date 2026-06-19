@@ -286,7 +286,7 @@ mod cache_control_e2e_tests {
     // scenario 5: no subgraph sends cache-control and no rule configured
     // expected: no cache-control header emitted (no implicit fallback)
     #[ntex::test]
-    async fn no_subgraph_cache_control_emits_no_store() {
+    async fn no_subgraph_cache_control_emits_no_header() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let router = TestRouter::builder()
