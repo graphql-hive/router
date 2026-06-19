@@ -390,6 +390,16 @@ async fn handle_on_request(
             return response;
         }
 
+        if !new_resp.status.is_success() {
+            // no body and non-success status, short-circuit with just the status and headers
+            let mut response = axum::response::Response::builder()
+                .status(new_resp.status)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            *response.headers_mut() = new_resp.headers;
+            return response;
+        }
+
         // no body provided, use body of the subgraph but change the status and headers
         let rebuilt_body = axum::body::Body::from(body_bytes);
         let rebuilt = axum::extract::Request::from_parts(parts, rebuilt_body);
