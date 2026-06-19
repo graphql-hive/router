@@ -1826,4 +1826,128 @@ mod subscriptions_e2e_tests {
             "sub4 should be accepted after the previous slots were freed"
         );
     }
+
+    #[ntex::test]
+    async fn backpressure_http_subgraph_drops_messages_not_subscription() {
+        let subgraphs = TestSubgraphs::builder()
+            // delay will slow down entity resolution, which will fill the
+            // mpsc buffer and trigger the backpressure handling logic because we're emitting every 10ms
+            .with_delay(std::time::Duration::from_millis(30))
+            .build()
+            .start()
+            .await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    subgraph_buffer_capacity: 1
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        use futures::StreamExt;
+
+        // start a high velocity subscription
+        let mut res = router
+            .send_graphql_request(
+                r#"subscription { reviewAddedLooping(intervalInMs: 10) { id product { name } } }"#,
+                None,
+                some_header_map! { http::header::ACCEPT => "text/event-stream" },
+            )
+            .await;
+
+        assert!(res.status().is_success());
+
+        // read one event to confirm the subgraph subscription is established
+        let _ = res.next().await.expect("expected at least one chunk");
+
+        assert_eq!(
+            subgraphs.active_subscriptions(),
+            1,
+            "Expected exactly one active subscription on the subgraph after first event"
+        );
+
+        // the subscription keeps pumping but the router cannot keep up because the subgraphs
+        // are delayed, so the mpsc buffer fills and triggers backpressure handling
+        tokio::time::sleep(std::time::Duration::from_millis(130)).await;
+
+        assert_eq!(
+            subgraphs.active_subscriptions(),
+            1,
+            "Subgraph subscription was killed on backpressure instead of dropping the message"
+        );
+
+        drop(res);
+    }
+
+    #[ntex::test]
+    async fn backpressure_websocket_subgraph_drops_messages_not_subscription() {
+        let subgraphs = TestSubgraphs::builder()
+            // delay will slow down the entity resolution blocking the ws producer, which will fill the
+            // mpsc buffer and trigger the backpressure handling logic because we're emitting every 10ms
+            .with_delay(std::time::Duration::from_millis(30))
+            .build()
+            .start()
+            .await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    subgraph_buffer_capacity: 1
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        use futures::StreamExt;
+
+        // start a high velocity subscription
+        let mut res = router
+            .send_graphql_request(
+                r#"subscription { reviewAddedLooping(intervalInMs: 10) { id product { name } } }"#,
+                None,
+                some_header_map! { http::header::ACCEPT => "text/event-stream" },
+            )
+            .await;
+
+        assert!(res.status().is_success());
+
+        // read one event to confirm the ws subgraph subscription is established
+        let _ = res.next().await.expect("expected at least one chunk");
+
+        assert_eq!(
+            subgraphs.active_subscriptions(),
+            1,
+            "Expected exactly one active subscription on the subgraph after first event"
+        );
+
+        // the subscription keeps pumping but the router cannot keep up because the subgraphs
+        // are delayed, so the mpsc buffer fills and triggers backpressure handling
+        tokio::time::sleep(std::time::Duration::from_millis(130)).await;
+
+        assert_eq!(
+            subgraphs.active_subscriptions(),
+            1,
+            "Subgraph ws subscription was killed on backpressure instead of dropping the message"
+        );
+
+        drop(res);
+    }
 }

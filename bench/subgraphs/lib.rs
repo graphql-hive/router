@@ -6,6 +6,8 @@ pub mod monolith;
 pub mod products;
 pub mod reviews;
 
+use std::sync::{atomic::AtomicUsize, Arc};
+
 use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use axum::{
     extract::Request,
@@ -60,7 +62,7 @@ pub fn start_subgraphs_server(port: Option<u16>) -> (JoinHandle<()>, Sender<()>)
         .map(|v| v.to_string())
         .unwrap_or(std::env::var("PORT").unwrap_or("4200".to_owned()));
 
-    let mut app = subgraphs_app(HTTPStreamingSubscriptionProtocol::default());
+    let (mut app, _) = subgraphs_app(HTTPStreamingSubscriptionProtocol::default());
     app = app.route("/health", get(health_check_handler));
 
     println!("Starting server on http://{}:{}", host, port);
@@ -95,8 +97,11 @@ pub enum HTTPStreamingSubscriptionProtocol {
     SseOnly,
 }
 
-pub fn subgraphs_app(subscriptions_protocol: HTTPStreamingSubscriptionProtocol) -> Router<()> {
-    Router::new()
+pub fn subgraphs_app(
+    subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
+) -> (Router<()>, Arc<AtomicUsize>) {
+    let (reviews_schema, active_subscriptions) = reviews::get_subgraph();
+    let router = Router::new()
         .route(
             "/accounts",
             post_service(GraphQL::new(accounts::get_subgraph())),
@@ -112,12 +117,12 @@ pub fn subgraphs_app(subscriptions_protocol: HTTPStreamingSubscriptionProtocol) 
         )
         .route_service(
             "/reviews/ws",
-            GraphQLSubscription::new(reviews::get_subgraph()),
+            GraphQLSubscription::new(reviews_schema.clone()),
         )
         .route(
             "/reviews",
             post_service(graphql_with_subscriptions::GraphQL::new(
-                reviews::get_subgraph(),
+                reviews_schema,
                 subscriptions_protocol,
             )),
         )
@@ -126,5 +131,6 @@ pub fn subgraphs_app(subscriptions_protocol: HTTPStreamingSubscriptionProtocol) 
             post_service(GraphQL::new(monolith::get_schema())),
         )
         .route_layer(middleware::from_fn(add_subgraph_header))
-        .route_layer(middleware::from_fn(delay_middleware))
+        .route_layer(middleware::from_fn(delay_middleware));
+    (router, active_subscriptions)
 }

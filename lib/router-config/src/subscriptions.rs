@@ -29,6 +29,27 @@ pub struct SubscriptionsConfig {
     /// Defaults to 32.
     #[serde(default = "default_broadcast_capacity")]
     pub broadcast_capacity: usize,
+    /// The capacity of the per-subscription buffer between a subgraph and the router's
+    /// processing pipeline.
+    ///
+    /// When a subscription is established, the router reads events from the subgraph (over
+    /// HTTP streaming or WebSocket) and runs each one through entity resolution before fanning
+    /// it out to listeners. If that processing is slower than the rate at which the subgraph
+    /// emits events, this buffer absorbs the difference so the subgraph is never throttled by
+    /// the router's processing speed.
+    ///
+    /// When the buffer is full, the newest event is dropped (and logged) instead of slowing
+    /// down or tearing down the connection to the subgraph. The subscription stays alive and
+    /// the subgraph keeps emitting unaffected.
+    ///
+    /// A larger capacity gives the router more headroom to catch up during bursts at the cost
+    /// of memory and potentially staler events under sustained backpressure. A smaller capacity
+    /// keeps memory minimal and drops eagerly, which is appropriate when only the latest events
+    /// matter.
+    ///
+    /// Defaults to 1024.
+    #[serde(default = "default_subgraph_buffer_capacity")]
+    pub subgraph_buffer_capacity: usize,
     /// Configuration for subgraphs using the HTTP Callback protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callback: Option<CallbackConfig>,
@@ -84,6 +105,10 @@ pub struct CallbackConfig {
 
 fn default_broadcast_capacity() -> usize {
     32
+}
+
+fn default_subgraph_buffer_capacity() -> usize {
+    1024
 }
 
 fn default_callback_path() -> AbsolutePath {

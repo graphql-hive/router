@@ -7,11 +7,12 @@ use futures::stream::BoxStream;
 use futures_util::StreamExt;
 use ntex::rt;
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::graphql_transport_ws::build_subscribe_payload;
+use crate::executors::subscription_buffer::{drain_into, receiver_stream};
 use crate::executors::websocket_client::{connect, WsClient};
 use crate::response::subgraph_response::SubgraphResponse;
 
@@ -19,6 +20,7 @@ pub struct WsSubgraphExecutor {
     subgraph_name: String,
     endpoint: http::Uri,
     tls_config: Option<Arc<rustls::ClientConfig>>,
+    buffer_capacity: usize,
 }
 
 impl WsSubgraphExecutor {
@@ -26,11 +28,13 @@ impl WsSubgraphExecutor {
         subgraph_name: String,
         endpoint: http::Uri,
         tls_config: Option<Arc<rustls::ClientConfig>>,
+        buffer_capacity: usize,
     ) -> Self {
         Self {
             subgraph_name,
             endpoint,
             tls_config,
+            buffer_capacity,
         }
     }
 }
@@ -122,12 +126,11 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        // all subscriptions emit events into the shared active subscriptions broadcaster
-        // which itself handles back-pressure by dropping old events when the buffer is full,
-        // so we can use a small buffer here
-        // TODO: do we thererefore need to buffer at all?
-        let (tx, mut rx) =
-            mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(16);
+        // buffer decouples the emitting subgraph from slow downstream consumers, dropping
+        // messages under backpressure instead of throttling the subgraph
+        let (tx, rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
+            self.buffer_capacity,
+        );
 
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
@@ -144,8 +147,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // no await intentionally. the task runs the subscription in the background
         // and sends responses through the channel. The spawned future itself stays local
         // to ntex runtime, so it can hold non-Send websocket client state.
-        // this task ends when the websocket stream completes, the client drops the receiver,
-        // or back-pressure fills the channel and we terminate the subscription.
+        // this task ends when the websocket stream completes or the client drops the receiver.
+        // If the channel fills due to back-pressure, the latest event is dropped (with a
+        // warning log) and the subscription continues.
         drop(rt::spawn(async move {
             let connection = match connect(&endpoint, tls_config).await {
                 Ok(conn) => conn,
@@ -174,38 +178,14 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 subgraph_name, endpoint
             );
 
-            let mut stream = client
+            let stream = client
                 .subscribe(subscribe_payload, custom_scalar_paths)
-                .await;
+                .await
+                .map(Ok);
 
-            while let Some(response) = stream.next().await {
-                match tx.try_send(Ok(response)) {
-                    Ok(()) => (),
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        // if the channel is full it means the consuming client is too slow and unable to keep
-                        // up. we terminate the subscription without an error message because it anyways cant
-                        // go through
-                        warn!(
-                            "Client for subgraph {} at {} subscriptions is too slow",
-                            subgraph_name, endpoint
-                        );
-                        break;
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        debug!(
-                            "Client for subgraph {} at {} dropped the receiver",
-                            subgraph_name, endpoint
-                        );
-                        break;
-                    }
-                }
-            }
+            drain_into(stream, tx, &subgraph_name, &endpoint.to_string()).await;
         }));
 
-        Ok(Box::pin(async_stream::stream! {
-            while let Some(response) = rx.recv().await {
-                yield response;
-            }
-        }))
+        Ok(receiver_stream(rx))
     }
 }

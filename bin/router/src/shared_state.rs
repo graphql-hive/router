@@ -22,7 +22,7 @@ use ntex::{http::HeaderMap, util::Bytes};
 use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, sync::Arc};
-use tracing::trace;
+use tracing::warn;
 
 use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
@@ -179,7 +179,7 @@ impl SharedRouterStreamResponse {
                         break;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        trace!(lagged = n, "broadcast receiver lagged, skipping missed messages");
+                        warn!(lagged = n, "Broadcast receiver lagged, dropping message");
                         continue;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {

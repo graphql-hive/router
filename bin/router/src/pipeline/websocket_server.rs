@@ -596,7 +596,7 @@ async fn handle_text_frame(
                                                 break;
                                             }
                                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                                trace!(id = %id_for_loop, lagged = n, "broadcast receiver lagged, skipping missed messages");
+                                                warn!(id = %id_for_loop, lagged = n, "Broadcast receiver lagged, dropping message");
                                                 continue;
                                             }
                                             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
