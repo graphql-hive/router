@@ -345,8 +345,23 @@ pub struct RequestPropagateRule {
 ///
 /// - `First`: keep the first value encountered, ignore the rest.
 /// - `Last`: overwrite with the last value encountered (**default**).
-/// - `Append`: comma-join all values into a single field, **except** for
-///   `NEVER_JOIN_HEADERS` which are always emitted as multiple fields.
+/// - `Append`: collect all values; for most headers they are comma-joined into
+///   a single field. For `NEVER_JOIN_HEADERS` (e.g. `Set-Cookie`) they are
+///   emitted as separate header fields.
+///
+/// **`Cache-Control` and `append`:** When `append` is used on a `cache-control`
+/// propagate rule, the router collects every value from every subgraph and then
+/// applies a **restrictive merge** before sending the response to the client:
+/// - `no-store`, `no-cache`, or `private` from any subgraph poisons the result.
+/// - `max-age` takes the minimum across all values.
+/// - `public` is only kept if every collected value carries it.
+/// - `must-revalidate` is set if any value carries it.
+/// - A subgraph graphql or execution error, or mutation, always forces `no-store, no-cache, must-revalidate`
+///   regardless of collected values.
+///
+/// Using `first` or `last` on `cache-control` discards all but one subgraph value
+/// before the merge runs, which defeats the restrictive semantics. Always use
+/// `append` for `cache-control` propagation.
 ///
 /// **Note:** For never-join headers (e.g. `Set-Cookie`), the router always
 /// emits multiple header fields, regardless of the algorithm.
@@ -357,7 +372,9 @@ pub enum AggregationAlgo {
     First,
     /// Overwrite with the last value encountered.
     Last,
-    /// Append all values into a comma-separated string (list-valued headers).
+    /// Collect all values. For most headers they are comma-joined. For
+    /// `cache-control` specifically, a restrictive merge is applied after
+    /// all subgraph responses have been collected (see `AggregationAlgo` docs).
     Append,
 }
 
@@ -371,9 +388,9 @@ pub enum AggregationAlgo {
 ///
 /// ### Examples
 /// ```yaml
-/// # Forward Cache-Control from whichever subgraph supplies it (last wins)
+/// # Forward X-Request-ID from whichever subgraph supplies it (last wins)
 /// propagate:
-///   named: Cache-Control
+///   named: X-Request-ID
 ///   algorithm: last
 ///
 /// # Combine list-valued headers

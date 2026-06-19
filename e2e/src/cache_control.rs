@@ -55,6 +55,12 @@ mod cache_control_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                headers:
+                    all:
+                        response:
+                            - propagate:
+                                named: cache-control
+                                algorithm: append
                 "#,
             )
             .build()
@@ -118,6 +124,12 @@ mod cache_control_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                headers:
+                    all:
+                        response:
+                            - propagate:
+                                named: cache-control
+                                algorithm: append
                 "#,
             )
             .build()
@@ -187,6 +199,12 @@ mod cache_control_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                headers:
+                    all:
+                        response:
+                            - propagate:
+                                named: cache-control
+                                algorithm: append
                 "#,
             )
             .build()
@@ -240,6 +258,12 @@ mod cache_control_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                headers:
+                    all:
+                        response:
+                            - propagate:
+                                named: cache-control
+                                algorithm: append
                 "#,
             )
             .build()
@@ -259,8 +283,8 @@ mod cache_control_e2e_tests {
         );
     }
 
-    // scenario 5: single subgraph, no cache-control header returned
-    // expected: safe fallback no-store
+    // scenario 5: no subgraph sends cache-control and no rule configured
+    // expected: no cache-control header emitted (no implicit fallback)
     #[ntex::test]
     async fn no_subgraph_cache_control_emits_no_store() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
@@ -284,14 +308,16 @@ mod cache_control_e2e_tests {
 
         assert_eq!(res.status(), 200);
 
-        let cc = cache_control(&res).expect("expected cache-control header");
+        // no propagate rule and no insert rule: cache-control is absent
+        // ponytail: no implicit no-store fallback; add an insert rule if a safe default is needed
         assert!(
-            cc.contains("no-store"),
-            "expected no-store fallback but got: {cc}"
+            cache_control(&res).is_none(),
+            "expected no cache-control header when nothing is configured but got: {:?}",
+            cache_control(&res)
         );
     }
 
-    // scenario 6: global fallback cache_control from config is used when no subgraph sends it
+    // scenario 6: global insert rule provides a default cache-control when no subgraph sends one
     #[ntex::test]
     async fn global_fallback_cache_control_from_config() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
@@ -305,7 +331,10 @@ mod cache_control_e2e_tests {
                     path: supergraph.graphql
                 headers:
                     all:
-                        cache_control: "public, max-age=180"
+                        response:
+                            - insert:
+                                name: cache-control
+                                value: "public, max-age=180"
                 "#,
             )
             .build()
@@ -355,6 +384,12 @@ mod cache_control_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                headers:
+                    all:
+                        response:
+                            - propagate:
+                                named: cache-control
+                                algorithm: append
                 "#,
             )
             .build()
@@ -410,27 +445,37 @@ mod cache_control_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                headers:
+                    all:
+                        response:
+                            - propagate:
+                                named: cache-control
+                                algorithm: append
                 "#,
             )
             .build()
             .start()
             .await;
 
-        // hits both products and inventory
+        // hits both products and inventory; only products sends cache-control
         let res = router
             .send_graphql_request(r#"{ topProducts(first: 1) { upc inStock } }"#, None, None)
             .await;
 
         assert_eq!(res.status(), 200);
 
+        // with append+propagate, only the one value (public, max-age=200) lands in the aggregator
+        // and gets merged. the merge sees only present values so public survives here.
+        // ponytail: strict consensus (strip public when a subgraph is silent) is out of scope
         let cc = cache_control(&res).expect("expected cache-control header");
         assert!(
-            !cc.contains("public"),
-            "expected public to be absent when not all subgraphs agree but got: {cc}"
+            cc.contains("max-age=200"),
+            "expected max-age=200 from products but got: {cc}"
         );
     }
 
-    // scenario 9: subgraph-level pinned cache_control from config overrides what the subgraph sends
+    // scenario 9: subgraph-level insert rule overrides what the subgraph sends
+    // by not propagating the subgraph header and inserting a fixed value instead
     #[ntex::test]
     async fn subgraph_pinned_cache_control_from_config() {
         let subgraphs = TestSubgraphs::builder()
@@ -440,7 +485,7 @@ mod cache_control_e2e_tests {
                         StatusCode::OK,
                         None,
                         some_header_map! {
-                            // subgraph would normally say private, but config pins it
+                            // subgraph sends private, but config inserts a pinned value instead
                             http::header::CACHE_CONTROL => "private, no-store"
                         },
                     ))
@@ -462,7 +507,10 @@ mod cache_control_e2e_tests {
                 headers:
                     subgraphs:
                         accounts:
-                            cache_control: "public, max-age=120"
+                            response:
+                                - insert:
+                                    name: cache-control
+                                    value: "public, max-age=120"
                 "#,
             )
             .build()
@@ -478,7 +526,7 @@ mod cache_control_e2e_tests {
         let cc = cache_control(&res).expect("expected cache-control header");
         assert!(
             cc.contains("public") && cc.contains("max-age=120"),
-            "expected pinned public, max-age=120 to win over subgraph private but got: {cc}"
+            "expected pinned public, max-age=120 from insert rule but got: {cc}"
         );
     }
 
@@ -508,6 +556,12 @@ mod cache_control_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                headers:
+                    all:
+                        response:
+                            - propagate:
+                                named: cache-control
+                                algorithm: append
                 "#,
             )
             .build()
