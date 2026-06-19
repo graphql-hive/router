@@ -309,7 +309,7 @@ mod cache_control_e2e_tests {
         assert_eq!(res.status(), 200);
 
         // no propagate rule and no insert rule: cache-control is absent
-        // ponytail: no implicit no-store fallback; add an insert rule if a safe default is needed
+        // no implicit no-store fallback; add an insert rule if a safe default is needed
         assert!(
             cache_control(&res).is_none(),
             "expected no cache-control header when nothing is configured but got: {:?}",
@@ -466,7 +466,7 @@ mod cache_control_e2e_tests {
 
         // with append+propagate, only the one value (public, max-age=200) lands in the aggregator
         // and gets merged. the merge sees only present values so public survives here.
-        // ponytail: strict consensus (strip public when a subgraph is silent) is out of scope
+        // strict consensus (strip public when a subgraph is silent) is out of scope
         let cc = cache_control(&res).expect("expected cache-control header");
         assert!(
             cc.contains("max-age=200"),
