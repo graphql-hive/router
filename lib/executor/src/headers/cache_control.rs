@@ -156,9 +156,9 @@ fn to_header_value(p: &CacheControl) -> String {
 /// aggregator under `Last` strategy so that any subsequent header-flush loop sees
 /// exactly one value.
 ///
-/// If every collected value was unparseable (e.g. non-UTF-8 bytes) the fold produces no
-/// `acc` and the entry is left unchanged, meaning the last raw value written by the
-/// propagation rules survives as-is.
+/// If every collected value was unparseable (e.g. non-UTF-8 bytes) or empty the fold
+/// produces no `acc` and the `Cache-Control` header is removed from the aggregator.
+/// This avoids forwarding potentially unsafe or malformed caching directives.
 pub fn finalize(aggregator: &mut ResponseHeaderAggregator, force_no_store: bool) {
     let Some((_, values)) = aggregator.entries.get(&http::header::CACHE_CONTROL) else {
         // there's no cache-control headers anywhere, so nothing to merge or poison - just leave it absent
