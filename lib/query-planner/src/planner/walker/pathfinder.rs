@@ -32,7 +32,7 @@ type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
 struct IndirectPathsLookupQueue<'graph> {
     queue: Vec<(
         VisitedGraphs<'graph>,
-        HashSet<TypeAwareSelection>,
+        HashSet<TypeAwareSelection<'graph>>,
         OperationPath<'graph>,
     )>,
 }
@@ -58,7 +58,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
     pub fn add(
         &mut self,
         visited_graphs: VisitedGraphs<'graph>,
-        selections: HashSet<TypeAwareSelection>,
+        selections: HashSet<TypeAwareSelection<'graph>>,
         path: OperationPath<'graph>,
     ) {
         self.queue.push((visited_graphs, selections, path));
@@ -68,7 +68,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         &mut self,
     ) -> Option<(
         VisitedGraphs<'graph>,
-        HashSet<TypeAwareSelection>,
+        HashSet<TypeAwareSelection<'graph>>,
         OperationPath<'graph>,
     )> {
         self.queue.pop()
@@ -102,7 +102,7 @@ impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
 }
 
 struct PathSearch<'graph> {
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
     cancellation_token: &'graph CancellationToken,
     /// Edges currently being checked in this path search.
@@ -112,7 +112,7 @@ struct PathSearch<'graph> {
 
 impl<'graph> PathSearch<'graph> {
     fn new(
-        graph: &'graph Graph,
+        graph: &'graph Graph<'graph>,
         override_context: &'graph PlannerOverrideContext,
         cancellation_token: &'graph CancellationToken,
     ) -> Self {
@@ -130,7 +130,7 @@ impl<'graph> PathSearch<'graph> {
   current_cost = path.cost
 ))]
 pub fn find_indirect_paths<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
@@ -371,7 +371,7 @@ impl<'graph> PathSearch<'graph> {
 }
 
 pub fn find_self_referencing_direct_path<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
     type_name: &'graph str,
@@ -384,7 +384,7 @@ pub fn find_self_referencing_direct_path<'graph>(
     for edge_ref in graph
         .edges_from(path_tail_index)
         .filter(move |e| match e.weight() {
-            Edge::Selfie(t) => t == type_name,
+            Edge::Selfie(t) => *t == type_name,
             _ => false,
         })
     {
@@ -408,7 +408,7 @@ pub fn find_self_referencing_direct_path<'graph>(
     current_cost = path.cost,
 ))]
 pub fn find_direct_paths<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
@@ -512,7 +512,7 @@ impl<'graph> PathSearch<'graph> {
     current_cost = path.cost,
 ))]
 pub fn find_direct_path<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
@@ -526,7 +526,7 @@ pub fn find_direct_path<'graph>(
   edge = edge_ref.weight().display_name(),
 ))]
 pub fn can_satisfy_edge<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
     edge_ref: &EdgeReference<'graph>,
     path: &OperationPath<'graph>,

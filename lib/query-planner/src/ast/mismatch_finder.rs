@@ -37,7 +37,7 @@ impl<'a> SelectionMismatchFinder<'a> {
         let subgraph_state = self
             .supergraph_state
             .subgraphs_state
-            .get(subgraph_name)
+            .get(subgraph_name.0)
             .unwrap();
 
         for (definition_name, selection_set) in selections.iter_selections() {

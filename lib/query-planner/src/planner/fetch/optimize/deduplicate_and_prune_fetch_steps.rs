@@ -9,7 +9,7 @@ use crate::planner::fetch::{
     optimize::utils::is_reachable_via_alternative_upstream_path, state::MultiTypeFetchStep,
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     /// Removes redundant direct dependencies from a FetchStep graph.
     ///
     /// ```text

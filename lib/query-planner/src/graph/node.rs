@@ -1,36 +1,24 @@
-use std::{
-    fmt::{Debug, Display},
-    sync::Arc,
-};
+use std::fmt::{Debug, Display};
 
 use crate::state::supergraph_state::SubgraphName;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct UnionMembersData {
-    /// Represents the type owning the field
-    pub type_name: String,
-    /// Represents the field resolving a union type
-    pub field_name: String,
-    /// Representative member for compatibility with path context before an AbstractMove.
-    pub object_type_name: String,
-    /// Represents all union members reachable for the same field in this subgraph.
-    pub possible_members: Arc<Vec<String>>,
+pub struct UnionMembersData<'a> {
+    pub type_name: &'a str,
+    pub field_name: &'a str,
+    pub object_type_name: &'a str,
+    pub possible_members: std::sync::Arc<Vec<&'a str>>,
     pub provides: Option<u64>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub enum SubgraphTypeSpecialization {
-    /// Node was created due to @provides path.
+pub enum SubgraphTypeSpecialization<'a> {
     Provides(u64),
-    /// Node represents a union member tail for a specific subgraph.
-    ///
-    /// For union-returning field moves, we may need a tail that only exposes the
-    /// members reachable in the current subgraph.
-    UnionMembers(UnionMembersData),
+    UnionMembers(UnionMembersData<'a>),
 }
 
-impl SubgraphTypeSpecialization {
-    pub fn union_members_data(&self) -> Option<&UnionMembersData> {
+impl<'a> SubgraphTypeSpecialization<'a> {
+    pub fn union_members_data(&self) -> Option<&UnionMembersData<'a>> {
         match self {
             SubgraphTypeSpecialization::UnionMembers(data) => Some(data),
             _ => None,
@@ -39,23 +27,22 @@ impl SubgraphTypeSpecialization {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct SubgraphType {
-    pub name: String,
-    pub subgraph: SubgraphName,
+pub struct SubgraphType<'a> {
+    pub name: &'a str,
+    pub subgraph: SubgraphName<'a>,
     pub is_interface_object: bool,
-    pub(crate) specialization: Option<SubgraphTypeSpecialization>,
+    pub(crate) specialization: Option<SubgraphTypeSpecialization<'a>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub enum Node {
-    QueryRoot(String),
-    MutationRoot(String),
-    SubscriptionRoot(String),
-    /// Represent an entity type or a scalar living in a specific subgraph
-    SubgraphType(SubgraphType),
+pub enum Node<'a> {
+    QueryRoot(&'a str),
+    MutationRoot(&'a str),
+    SubscriptionRoot(&'a str),
+    SubgraphType(SubgraphType<'a>),
 }
 
-impl Node {
+impl<'a> Node<'a> {
     pub fn display_name(&self) -> String {
         match self {
             Node::QueryRoot(name) => format!("root({})", name),
@@ -67,8 +54,6 @@ impl Node {
                         format!("{}/{}/{}", st.name, st.subgraph.0, provides_id)
                     }
                     SubgraphTypeSpecialization::UnionMembers(u) => {
-                        // we rely on display_name when it comes to deduplicating nodes (upsert_node),
-                        // that's why the string produced here should "mimic" hashing
                         format!(
                             "{}/{} for {}.{}:{:?}",
                             st.name, st.subgraph.0, u.type_name, u.field_name, u.possible_members
@@ -101,9 +86,9 @@ impl Node {
         }
     }
 
-    pub fn new_node(name: &str, subgraph: SubgraphName, is_interface_object: bool) -> Node {
+    pub fn new_node(name: &'a str, subgraph: SubgraphName<'a>, is_interface_object: bool) -> Node<'a> {
         Node::SubgraphType(SubgraphType {
-            name: name.to_string(),
+            name,
             subgraph,
             is_interface_object,
             specialization: None,
@@ -111,13 +96,13 @@ impl Node {
     }
 
     pub fn new_specialized_node(
-        name: &str,
-        subgraph: SubgraphName,
+        name: &'a str,
+        subgraph: SubgraphName<'a>,
         is_interface_object: bool,
-        specialization: SubgraphTypeSpecialization,
-    ) -> Node {
+        specialization: SubgraphTypeSpecialization<'a>,
+    ) -> Node<'a> {
         Node::SubgraphType(SubgraphType {
-            name: name.to_string(),
+            name,
             subgraph,
             is_interface_object,
             specialization: Some(specialization),
@@ -133,27 +118,27 @@ impl Node {
         }
     }
 
-    pub fn subgraph_type(&self) -> Option<&SubgraphType> {
+    pub fn subgraph_type(&self) -> Option<&SubgraphType<'a>> {
         match self {
             Node::SubgraphType(st) => Some(st),
             _ => None,
         }
     }
 
-    pub fn union_members_data(&self) -> Option<&UnionMembersData> {
+    pub fn union_members_data(&self) -> Option<&UnionMembersData<'a>> {
         self.subgraph_type()
             .and_then(|st| st.specialization.as_ref())
             .and_then(|s| s.union_members_data())
     }
 }
 
-impl Debug for Node {
+impl Debug for Node<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.display_name())
     }
 }
 
-impl Display for Node {
+impl Display for Node<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.display_name())
     }

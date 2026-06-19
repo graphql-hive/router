@@ -18,19 +18,19 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct BatchKey {
+struct BatchKey<'a> {
     kind: FetchStepKind,
-    service_name: SubgraphName,
+    service_name: SubgraphName<'a>,
     normalized_path_hash: u64,
     response_path_len: usize,
     type_condition_layout_hash: u64,
     used_for_requires: bool,
 }
 
-impl BatchKey {
+impl<'a> BatchKey<'a> {
     // Coarse grouping only; can_be_batched_with remains the correctness check.
     fn from_step(
-        step: &FetchStepData<MultiTypeFetchStep>,
+        step: &FetchStepData<'a, MultiTypeFetchStep>,
         normalized_path_hash: u64,
         type_condition_layout_hash: u64,
     ) -> Option<Self> {
@@ -50,15 +50,15 @@ impl BatchKey {
 }
 
 #[derive(Debug)]
-struct SiblingBatchInfo {
+struct SiblingBatchInfo<'a> {
     index: NodeIndex,
     // This is used in a few places in this pass. Compute it once per sibling.
     normalized_path_hash: u64,
     // None means this sibling cannot be part of multi-type batching.
-    batch_key: Option<BatchKey>,
+    batch_key: Option<BatchKey<'a>>,
 }
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     /// Batches sibling entity fetches that only differ by type conditions.
     ///
     /// 1. Find compatible sibling fetches
@@ -92,7 +92,7 @@ impl FetchGraph<MultiTypeFetchStep> {
 
             let sibling_infos = self.sibling_batch_infos(&siblings_indices)?;
 
-            let mut sibling_groups: HashMap<BatchKey, Vec<usize>> = HashMap::new();
+            let mut sibling_groups: HashMap<BatchKey<'a>, Vec<usize>> = HashMap::new();
             for (info_index, info) in sibling_infos.iter().enumerate() {
                 if let Some(batch_key) = info.batch_key.clone() {
                     sibling_groups
@@ -133,7 +133,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     fn sibling_batch_infos(
         &self,
         siblings_indices: &[NodeIndex],
-    ) -> Result<Vec<SiblingBatchInfo>, FetchGraphError> {
+    ) -> Result<Vec<SiblingBatchInfo<'a>>, FetchGraphError> {
         siblings_indices
             .iter()
             .map(|sibling_index| {
@@ -160,7 +160,7 @@ impl FetchGraph<MultiTypeFetchStep> {
 
     fn merge_multi_type_sibling_group(
         &mut self,
-        sibling_infos: &[SiblingBatchInfo],
+        sibling_infos: &[SiblingBatchInfo<'a>],
         sibling_group: &[usize],
         requested_type_condition_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
     ) -> Result<(), FetchGraphError> {
@@ -293,7 +293,7 @@ impl FetchGraph<MultiTypeFetchStep> {
 
     fn requested_type_condition_types_by_position(
         &self,
-        sibling_infos: &[SiblingBatchInfo],
+        sibling_infos: &[SiblingBatchInfo<'a>],
     ) -> Result<HashMap<(u64, usize), BTreeSet<String>>, FetchGraphError> {
         // Key: (path hash without type conditions, type-condition position).
         // Value: all concrete types requested by siblings at that position.
@@ -564,7 +564,7 @@ fn same_path_without_type_conditions(left: &MergePath, right: &MergePath) -> boo
             .filter(|segment| !matches!(segment, Segment::TypeCondition(_, _))))
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData<'_, MultiTypeFetchStep> {
     pub fn can_be_batched_with(&self, other: &Self) -> bool {
         // Both steps must be the same fetch kind.
         if self.kind != other.kind {

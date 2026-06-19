@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     /// When a child has the input identical as the output,
     /// it gets squashed into its parent.
     /// Its children becomes children of the parent.
@@ -88,13 +88,13 @@ impl FetchGraph<MultiTypeFetchStep> {
     }
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData<'_, MultiTypeFetchStep> {
     pub(crate) fn can_merge_passthrough_child(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+        fetch_graph: &FetchGraph<'_, MultiTypeFetchStep>,
     ) -> bool {
         if self_index == other_index {
             return false;
@@ -130,10 +130,10 @@ impl FetchStepData<MultiTypeFetchStep> {
 }
 
 #[instrument(level = "trace", skip_all)]
-fn perform_passthrough_child_merge(
+fn perform_passthrough_child_merge<'a>(
     self_index: NodeIndex,
     other_index: NodeIndex,
-    fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
+    fetch_graph: &mut FetchGraph<'a, MultiTypeFetchStep>,
 ) -> Result<(), FetchGraphError> {
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
     let path = other.response_path.slice_from(me.response_path.len());

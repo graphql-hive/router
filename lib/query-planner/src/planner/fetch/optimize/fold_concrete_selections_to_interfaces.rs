@@ -45,7 +45,7 @@ use crate::{
     },
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn fold_concrete_selections_to_interfaces(
         &mut self,

@@ -66,7 +66,7 @@ impl<'graph> Candidate<'graph> {
     }
 
     #[inline]
-    fn get_tree(&self, graph: &Graph) -> Result<QueryTree, QueryPlanError> {
+    fn get_tree(&self, graph: &Graph<'_>) -> Result<QueryTree, QueryPlanError> {
         Ok(self
             .tree
             .get_or_create(|(p, mp)| QueryTree::from_path(graph, &p, mp))
@@ -111,7 +111,7 @@ fn prepare_alternatives<'graph>(operation: ResolvedOperation<'graph>) -> Vec<Alt
 /// - The merged base tree, if any singletons were found.
 /// - The remaining alternatives, which still have more than one candidate.
 fn merge_singleton_alternatives<'graph>(
-    graph: &Graph,
+    graph: &Graph<'_>,
     per_leaf_alternatives: Vec<Alternatives<'graph>>,
 ) -> Result<(Option<QueryTree>, Vec<Alternatives<'graph>>), QueryPlanError> {
     // Split into singletons (1 candidate) and non-singletons (2+ candidates).
@@ -139,7 +139,7 @@ fn merge_singleton_alternatives<'graph>(
 }
 
 pub fn find_best_combination(
-    graph: &Graph,
+    graph: &Graph<'_>,
     operation: ResolvedOperation,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryTree, QueryPlanError> {
@@ -228,7 +228,7 @@ pub fn find_best_combination(
 /// cost as a full merge followed by a full cost calculation, but it avoids the
 /// expensive temporary merge.
 fn calculate_added_cost_of_merge(
-    graph: &Graph,
+    graph: &Graph<'_>,
     target: &QueryTreeNode,
     source: &QueryTreeNode,
 ) -> u64 {
@@ -242,7 +242,7 @@ fn calculate_added_cost_of_merge(
 }
 
 fn calculate_added_cost_for_node_list(
-    graph: &Graph,
+    graph: &Graph<'_>,
     target_list: &[Rc<QueryTreeNode>],
     source_list: &[Rc<QueryTreeNode>],
     is_requirement: bool,
@@ -267,7 +267,7 @@ fn calculate_added_cost_for_node_list(
 
 /// Calculate the total cost of a query tree node and all its children.
 #[inline(always)]
-fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
+fn calculate_cost_of_tree(graph: &Graph<'_>, node: &QueryTreeNode) -> u64 {
     let mut current_cost = FIELD_COST;
 
     // Add cost for each child node
@@ -289,7 +289,7 @@ fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
 }
 
 #[inline(always)]
-fn edge_cost(graph: &Graph, node: &QueryTreeNode) -> u64 {
+fn edge_cost(graph: &Graph<'_>, node: &QueryTreeNode) -> u64 {
     if node.edge_from_parent.is_some_and(|edge_index| {
         matches!(
             graph.edge(edge_index).expect("edge should exist"),

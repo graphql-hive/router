@@ -13,7 +13,7 @@ pub struct NormalizationContext<'a> {
     pub document: &'a mut query_ast::Document<'static, String>,
     pub supergraph: &'a SupergraphState,
     pub root_types: RootTypes<'a>,
-    pub subgraph_name: Option<&'a String>,
+    pub subgraph_name: Option<&'a str>,
 }
 
 impl<'a> NormalizationContext<'a> {

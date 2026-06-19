@@ -341,22 +341,22 @@ mod tests {
         assert_eq!(supergraph.subgraphs_state.keys().count(), 5);
         assert!(supergraph
             .subgraphs_state
-            .contains_key(&SubgraphName("pandas".to_string())));
+            .contains_key("pandas"));
         assert!(supergraph
             .subgraphs_state
-            .contains_key(&SubgraphName("users".to_string())));
+            .contains_key("users"));
         assert!(supergraph
             .subgraphs_state
-            .contains_key(&SubgraphName("reviews".to_string())));
+            .contains_key("reviews"));
         assert!(supergraph
             .subgraphs_state
-            .contains_key(&SubgraphName("products".to_string())));
+            .contains_key("products"));
         assert!(supergraph
             .subgraphs_state
-            .contains_key(&SubgraphName("inventory".to_string())));
+            .contains_key("inventory"));
 
         let types = supergraph
-            .subgraph_state(&SubgraphName("pandas".to_string()))
+            .subgraph_state(&SubgraphName("pandas".into()))
             .expect("failed to find subgraph")
             .known_subgraph_definitions();
 
@@ -386,7 +386,7 @@ mod tests {
         assert_eq!(panda_type_fields, vec!["favoriteFood", "name"]);
 
         let types = supergraph
-            .subgraph_state(&SubgraphName("users".to_string()))
+            .subgraph_state(&SubgraphName("users".into()))
             .expect("failed to find subgraph")
             .known_subgraph_definitions();
 
@@ -408,7 +408,7 @@ mod tests {
         );
 
         let types = supergraph
-            .subgraph_state(&SubgraphName("reviews".to_string()))
+            .subgraph_state(&SubgraphName("reviews".into()))
             .expect("failed to find subgraph")
             .known_subgraph_definitions();
         assert_eq!(types.len(), 4);
@@ -428,7 +428,7 @@ mod tests {
         );
 
         let types = supergraph
-            .subgraph_state(&SubgraphName("products".to_string()))
+            .subgraph_state(&SubgraphName("products".into()))
             .expect("failed to find subgraph")
             .known_subgraph_definitions();
         assert_eq!(types.len(), 8);
@@ -470,7 +470,7 @@ mod tests {
         );
 
         let types = supergraph
-            .subgraph_state(&SubgraphName("inventory".to_string()))
+            .subgraph_state(&SubgraphName("inventory".into()))
             .expect("failed to find subgraph")
             .known_subgraph_definitions();
 

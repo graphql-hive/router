@@ -49,7 +49,7 @@ type ResolutionStack<'graph, 'op> = Vec<WorkItem<'graph, 'op>>;
 
 #[instrument(level = "trace", skip_all)]
 pub fn walk_operation<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     operation: &'op OperationDefinition,
@@ -109,7 +109,7 @@ pub fn walk_operation<'graph, 'op: 'graph>(
 }
 
 fn process_selection<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     selection_item: &'op SelectionItem,
@@ -163,7 +163,7 @@ fn process_selection<'graph, 'op: 'graph>(
 
 #[instrument(level = "trace", skip_all)]
 fn process_selection_set<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     selection_set: &'op SelectionSet,
@@ -201,7 +201,7 @@ fn process_selection_set<'graph, 'op: 'graph>(
   type_condition = fragment.type_condition,
 ))]
 fn process_inline_fragment<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     fragment: &'op InlineFragmentSelection,
@@ -515,7 +515,7 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
   leaf = field.is_leaf()
 ))]
 fn process_field<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     field: &'op FieldSelection,
@@ -759,7 +759,7 @@ fn field_target_subgraph_ids(
     supergraph: &SupergraphState,
     field: &FieldSelection,
     paths: &[OperationPath<'_>],
-    graph: &Graph,
+    graph: &Graph<'_>,
 ) -> Result<Option<HashSet<String>>, WalkOperationError> {
     let mut parent_type_names = HashSet::new();
 
@@ -780,7 +780,7 @@ fn field_target_subgraph_ids(
 
         for graph_id in field_def.resolvable_in_graphs(parent_def) {
             if let Ok(subgraph_id) = supergraph.resolve_graph_id(&graph_id) {
-                target_subgraph_ids.insert(subgraph_id.0);
+                target_subgraph_ids.insert(subgraph_id.0.to_string());
             }
         }
     }

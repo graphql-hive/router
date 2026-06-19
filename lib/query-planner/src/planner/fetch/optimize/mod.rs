@@ -20,7 +20,7 @@ use crate::{
     utils::cancellation::CancellationToken,
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub fn optimize(
         &mut self,

@@ -19,14 +19,14 @@ use crate::{
 };
 
 #[derive(Clone)]
-struct SiblingGroupKey {
-    service_name: SubgraphName,
+struct SiblingGroupKey<'a> {
+    service_name: SubgraphName<'a>,
     response_path: MergePath,
     condition: Option<Condition>,
     kind: FetchStepKind,
 }
 
-impl PartialEq for SiblingGroupKey {
+impl PartialEq for SiblingGroupKey<'_> {
     fn eq(&self, other: &Self) -> bool {
         // Group by response path shape, not field argument hashes. Argument conflicts are
         // checked by can_merge_siblings before any merge is performed.
@@ -50,9 +50,9 @@ impl PartialEq for SiblingGroupKey {
     }
 }
 
-impl Eq for SiblingGroupKey {}
+impl Eq for SiblingGroupKey<'_> {}
 
-impl Hash for SiblingGroupKey {
+impl Hash for SiblingGroupKey<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.service_name.hash(state);
         for segment in self.response_path.inner.iter() {
@@ -77,7 +77,7 @@ impl Hash for SiblingGroupKey {
     }
 }
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn merge_siblings(&mut self) -> Result<(), FetchGraphError> {
         let root_index = self
@@ -118,7 +118,7 @@ impl FetchGraph<MultiTypeFetchStep> {
         &mut self,
         siblings: &[NodeIndex],
     ) -> Result<(), FetchGraphError> {
-        let mut groups: HashMap<SiblingGroupKey, Vec<NodeIndex>> = HashMap::new();
+        let mut groups: HashMap<SiblingGroupKey<'a>, Vec<NodeIndex>> = HashMap::new();
 
         for &sibling_index in siblings {
             if self.graph.node_weight(sibling_index).is_none() {
@@ -179,13 +179,13 @@ impl FetchGraph<MultiTypeFetchStep> {
     }
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData<'_, MultiTypeFetchStep> {
     pub(crate) fn can_merge_siblings(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+        fetch_graph: &FetchGraph<'_, MultiTypeFetchStep>,
     ) -> bool {
         // First, check if the base conditions for merging are met.
         let can_merge_base = self.can_merge(self_index, other_index, other, fetch_graph);

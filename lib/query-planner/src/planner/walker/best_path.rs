@@ -5,7 +5,7 @@ use crate::graph::Graph;
 use super::{error::WalkOperationError, path::OperationPath};
 
 pub struct BestPathTracker<'graph> {
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     /// A map from subgraph name to the best path and its cost.
     /// BTreeMap instead of HashMap to keep the order of inserted keys deterministic.
     subgraph_to_best_paths: BTreeMap<&'graph str, (Vec<OperationPath<'graph>>, u64)>,
@@ -31,7 +31,7 @@ pub fn find_best_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<Operati
 }
 
 impl<'graph> BestPathTracker<'graph> {
-    pub fn new(graph: &'graph Graph) -> Self {
+    pub fn new(graph: &'graph Graph<'graph>) -> Self {
         Self {
             graph,
             subgraph_to_best_paths: BTreeMap::new(),

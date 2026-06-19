@@ -24,7 +24,7 @@ pub struct SupergraphData {
     /// which includes the list of subgraphs, their relationships, and other relevant information about the supergraph.
     pub metadata: Arc<SchemaMetadata>,
     /// The query planner instance that will be used to generate the query plan for the incoming GraphQL requests based on the supergraph schema.
-    pub planner: Planner,
+    pub planner: Planner<'static>,
     /// The authorization metadata that will be used to authorize the incoming GraphQL requests based on the supergraph schema and the authorization rules defined in the router.
     pub authorization: AuthorizationMetadata,
     /// The map of subgraph executors that will be used to execute the query plan for the incoming GraphQL requests based on the supergraph schema.

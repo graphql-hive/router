@@ -15,17 +15,17 @@ mod graph_tests {
     };
     use std::path::PathBuf;
 
-    fn init_test(supergraph_sdl: &str) -> Graph {
+    fn init_test(supergraph_sdl: &str) -> Graph<'static> {
         let schema = parse_schema(supergraph_sdl);
-        let metadata = SupergraphState::new(&schema);
+        let metadata: &'static _ = Box::leak(Box::new(SupergraphState::new(&schema)));
 
-        Graph::graph_from_supergraph_state(&metadata).expect("failed to create graph")
+        Graph::graph_from_supergraph_state(metadata).expect("failed to create graph")
     }
 
     #[derive(Debug)]
     struct FoundEdges<'a> {
         pub edges: Vec<(EdgeReference<'a>, NodeIndex)>,
-        pub graph: &'a Graph,
+        pub graph: &'a Graph<'a>,
     }
 
     impl FoundEdges<'_> {
@@ -139,7 +139,7 @@ mod graph_tests {
         }
     }
 
-    fn find_node_doesnt_exists(graph: &Graph, node_id: &str) {
+    fn find_node_doesnt_exists(graph: &Graph<'_>, node_id: &str) {
         let node_res = graph.node_display_name_to_index.get(node_id);
 
         assert!(
@@ -149,7 +149,7 @@ mod graph_tests {
         );
     }
 
-    fn find_node<'a>(graph: &'a Graph, node_id: &str) -> (FoundEdges<'a>, FoundEdges<'a>) {
+    fn find_node<'a>(graph: &'a Graph<'a>, node_id: &str) -> (FoundEdges<'a>, FoundEdges<'a>) {
         let node_res = graph.node_display_name_to_index.get(node_id);
 
         assert!(node_res.is_some(), "failed to find node {}", node_id);

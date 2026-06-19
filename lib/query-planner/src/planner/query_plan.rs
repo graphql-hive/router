@@ -26,11 +26,11 @@ mod optimize;
 /// when its in-degree becomes zero.
 pub struct InDegree<'a> {
     state: HashMap<NodeIndex, usize>,
-    fetch_graph: &'a FetchGraph<MultiTypeFetchStep>,
+    fetch_graph: &'a FetchGraph<'a, MultiTypeFetchStep>,
 }
 
 impl<'a> InDegree<'a> {
-    pub fn new(fetch_graph: &'a FetchGraph<MultiTypeFetchStep>) -> Result<Self, QueryPlanError> {
+    pub fn new(fetch_graph: &'a FetchGraph<'a, MultiTypeFetchStep>) -> Result<Self, QueryPlanError> {
         let mut state: HashMap<NodeIndex, usize> = HashMap::new();
         let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
 
@@ -82,8 +82,8 @@ impl<'a> InDegree<'a> {
 pub static QUERY_PLAN_KIND: &str = "QueryPlan";
 
 #[tracing::instrument(level = "trace", skip_all)]
-pub fn build_query_plan_from_fetch_graph(
-    fetch_graph: FetchGraph<MultiTypeFetchStep>,
+pub fn build_query_plan_from_fetch_graph<'a>(
+    fetch_graph: FetchGraph<'a, MultiTypeFetchStep>,
     supergraph: &SupergraphState,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryPlan, QueryPlanError> {

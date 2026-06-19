@@ -8,7 +8,7 @@ use crate::planner::fetch::{
     state::MultiTypeFetchStep,
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn merge_children_with_parents(&mut self) -> Result<(), FetchGraphError> {
         let root_index = self

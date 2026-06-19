@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeSet, HashMap, HashSet},
-    fmt::{Debug, Display},
-};
+use std::{collections::{BTreeSet, HashMap, HashSet}, fmt::{Debug, Display}};
 
 use graphql_tools::parser::query::Directive;
 use graphql_tools::parser::schema as input;
@@ -34,17 +31,23 @@ pub enum SupergraphStateError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SubgraphName(pub String);
+pub struct SubgraphName<'a>(pub &'a str);
 
-impl Display for SubgraphName {
+impl Display for SubgraphName<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl SubgraphName {
+impl SubgraphName<'static> {
     pub fn any() -> Self {
-        Self("*".to_string())
+        Self("*")
+    }
+}
+
+impl<'a> From<&'a str> for SubgraphName<'a> {
+    fn from(s: &'a str) -> Self {
+        Self(s)
     }
 }
 
@@ -172,7 +175,7 @@ pub struct SupergraphState {
     /// A set of all known scalars in this schema, including built-ins
     pub known_scalars: HashSet<String>,
     /// A map from subgraph name to a subgraph state
-    pub subgraphs_state: HashMap<SubgraphName, SubgraphState>,
+    pub subgraphs_state: HashMap<String, SubgraphState>,
     /// A map of (subgraph_name, endpoint) to make it easy to resolve
     pub subgraph_endpoint_map: HashMap<String, String>,
     /// The root entrypoints
@@ -217,25 +220,27 @@ impl SupergraphState {
         for subgraph_id in instance.known_subgraphs.keys() {
             let state = SubgraphState::decompose_from_supergraph(subgraph_id, &instance);
             let subgraph_name = instance.resolve_graph_id(subgraph_id).unwrap();
-            instance.subgraphs_state.insert(subgraph_name, state);
+            instance
+                .subgraphs_state
+                .insert(subgraph_name.0.to_string(), state);
         }
 
         instance
     }
 
-    pub fn resolve_graph_id(&self, graph_id: &str) -> Result<SubgraphName, SupergraphStateError> {
+    pub fn resolve_graph_id(&self, graph_id: &str) -> Result<SubgraphName<'_>, SupergraphStateError> {
         self.known_subgraphs
             .get(graph_id)
-            .map(|subgraph_name| SubgraphName(subgraph_name.clone()))
+            .map(|subgraph_name| SubgraphName(subgraph_name.as_str()))
             .ok_or_else(|| SupergraphStateError::SubgraphNotFound(graph_id.to_string()))
     }
 
     pub fn subgraph_state(
         &self,
-        subgraph_name: &SubgraphName,
+        subgraph_name: &SubgraphName<'_>,
     ) -> Result<&SubgraphState, SupergraphStateError> {
         self.subgraphs_state
-            .get(subgraph_name)
+            .get(subgraph_name.0)
             .ok_or_else(|| SupergraphStateError::SubgraphNotFound(subgraph_name.0.to_string()))
     }
 

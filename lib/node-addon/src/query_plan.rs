@@ -28,7 +28,7 @@ impl From<QueryPlanError> for napi::Error {
 }
 
 pub fn query_plan(
-    planner: &Planner,
+    planner: &Planner<'_>,
     query: &str,
     operation_name: Option<&str>,
     active_labels: HashSet<String>,
@@ -53,7 +53,7 @@ pub fn query_plan(
 }
 
 pub struct QueryPlanTask<'a> {
-    pub planner: &'a Planner,
+    pub planner: &'a Planner<'static>,
     pub query: String,
     pub operation_name: Option<String>,
     pub active_labels: HashSet<String>,

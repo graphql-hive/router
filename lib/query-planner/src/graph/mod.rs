@@ -19,8 +19,7 @@ use crate::{
     federation_spec::FederationRules,
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
-        OperationKind, SubgraphName as StateSubgraphName, SupergraphDefinition, SupergraphField,
-        SupergraphState,
+        OperationKind, SubgraphName, SupergraphDefinition, SupergraphField, SupergraphState,
     },
 };
 use error::GraphError;
@@ -35,34 +34,32 @@ use tracing::{instrument, trace};
 
 use super::graph::{edge::Edge, node::Node};
 
-type InnerGraph = Petgraph<Node, Edge, Directed>;
-
 #[derive(Debug, Hash, PartialEq, Eq)]
-struct SelectionCacheKey {
-    subgraph_id: String,
-    type_name: String,
-    selection: String,
+struct SelectionCacheKey<'a> {
+    subgraph_id: &'a str,
+    type_name: &'a str,
+    selection: &'a str,
 }
 
 #[derive(Debug, Default)]
-struct SelectionCache {
-    keys: FxHashMap<SelectionCacheKey, Arc<TypeAwareSelection>>,
-    requirements: FxHashMap<SelectionCacheKey, Arc<TypeAwareSelection>>,
-    selections: FxHashMap<SelectionCacheKey, Arc<SelectionSet<'static, String>>>,
+struct SelectionCache<'a> {
+    keys: FxHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
+    requirements: FxHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
+    selections: FxHashMap<SelectionCacheKey<'a>, Arc<SelectionSet<'static, String>>>,
 }
 
-impl SelectionCache {
+impl<'a> SelectionCache<'a> {
     fn parse_key(
         &mut self,
-        state: &SupergraphState,
-        subgraph_id: &str,
-        type_name: &str,
-        key: &str,
-    ) -> Arc<TypeAwareSelection> {
+        state: &'a SupergraphState,
+        subgraph_id: &'a str,
+        type_name: &'a str,
+        key: &'a str,
+    ) -> Arc<TypeAwareSelection<'a>> {
         let cache_key = SelectionCacheKey {
-            subgraph_id: subgraph_id.to_string(),
-            type_name: type_name.to_string(),
-            selection: key.to_string(),
+            subgraph_id,
+            type_name,
+            selection: key,
         };
 
         if let Some(selection) = self.keys.get(&cache_key) {
@@ -71,9 +68,9 @@ impl SelectionCache {
 
         let selection = Arc::new(FederationRules::parse_key(
             state,
-            &cache_key.subgraph_id,
-            &cache_key.type_name,
-            &cache_key.selection,
+            cache_key.subgraph_id,
+            type_name,
+            cache_key.selection,
         ));
         self.keys.insert(cache_key, selection.clone());
         selection
@@ -81,15 +78,15 @@ impl SelectionCache {
 
     fn parse_requires(
         &mut self,
-        state: &SupergraphState,
-        subgraph_id: &str,
-        type_name: &str,
-        requires: &str,
-    ) -> Arc<TypeAwareSelection> {
+        state: &'a SupergraphState,
+        subgraph_id: &'a str,
+        type_name: &'a str,
+        requires: &'a str,
+    ) -> Arc<TypeAwareSelection<'a>> {
         let cache_key = SelectionCacheKey {
-            subgraph_id: subgraph_id.to_string(),
-            type_name: type_name.to_string(),
-            selection: requires.to_string(),
+            subgraph_id,
+            type_name,
+            selection: requires,
         };
 
         if let Some(selection) = self.requirements.get(&cache_key) {
@@ -98,7 +95,7 @@ impl SelectionCache {
 
         let selection_set = self.parse_selection(state, subgraph_id, type_name, requires);
         let selection = Arc::new(TypeAwareSelection {
-            type_name: type_name.to_string(),
+            type_name,
             selection_set: selection_set.as_ref().clone().into(),
         });
         self.requirements.insert(cache_key, selection.clone());
@@ -107,25 +104,25 @@ impl SelectionCache {
 
     fn parse_provides(
         &mut self,
-        state: &SupergraphState,
-        subgraph_id: &str,
-        type_name: &str,
-        provides: &str,
+        state: &'a SupergraphState,
+        subgraph_id: &'a str,
+        type_name: &'a str,
+        provides: &'a str,
     ) -> Arc<SelectionSet<'static, String>> {
         self.parse_selection(state, subgraph_id, type_name, provides)
     }
 
     fn parse_selection(
         &mut self,
-        state: &SupergraphState,
-        subgraph_id: &str,
-        type_name: &str,
-        selection: &str,
+        state: &'a SupergraphState,
+        subgraph_id: &'a str,
+        type_name: &'a str,
+        selection: &'a str,
     ) -> Arc<SelectionSet<'static, String>> {
         let cache_key = SelectionCacheKey {
-            subgraph_id: subgraph_id.to_string(),
-            type_name: type_name.to_string(),
-            selection: selection.to_string(),
+            subgraph_id,
+            type_name,
+            selection,
         };
 
         if let Some(selection_set) = self.selections.get(&cache_key) {
@@ -134,9 +131,9 @@ impl SelectionCache {
 
         let selection_set = Arc::new(FederationRules::parse_requires(
             state,
-            &cache_key.subgraph_id,
-            &cache_key.type_name,
-            &cache_key.selection,
+            cache_key.subgraph_id,
+            cache_key.type_name,
+            cache_key.selection,
         ));
         self.selections.insert(cache_key, selection_set.clone());
         selection_set
@@ -144,71 +141,71 @@ impl SelectionCache {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-enum EdgeLookupValue {
-    SubgraphEntrypoint(StateSubgraphName),
-    FieldMove(edge::FieldMove),
-    EntityMove(String),
-    AbstractMove(String),
-    InterfaceObjectTypeMove(String),
+enum EdgeLookupValue<'a> {
+    SubgraphEntrypoint(SubgraphName<'a>),
+    FieldMove(edge::FieldMove<'a>),
+    EntityMove(&'a str),
+    AbstractMove(&'a str),
+    InterfaceObjectTypeMove(&'a str),
 }
 
-impl From<&Edge> for EdgeLookupValue {
-    fn from(edge: &Edge) -> Self {
+impl<'a> From<&Edge<'a>> for EdgeLookupValue<'a> {
+    fn from(edge: &Edge<'a>) -> Self {
         match edge {
             Edge::SubgraphEntrypoint { name, .. } => Self::SubgraphEntrypoint(name.clone()),
             Edge::FieldMove(field_move) => Self::FieldMove((**field_move).clone()),
-            Edge::EntityMove(entity_move) => Self::EntityMove(entity_move.key.clone()),
-            Edge::AbstractMove(name) => Self::AbstractMove(name.clone()),
+            Edge::EntityMove(entity_move) => Self::EntityMove(entity_move.key),
+            Edge::AbstractMove(name) => Self::AbstractMove(name),
             Edge::Selfie(_) => unreachable!("Selfie edges are intentionally not deduplicated"),
             Edge::InterfaceObjectTypeMove(m) => {
-                Self::InterfaceObjectTypeMove(m.object_type_name.clone())
+                Self::InterfaceObjectTypeMove(m.object_type_name)
             }
         }
     }
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-struct EdgeLookupKey {
+struct EdgeLookupKey<'a> {
     head: NodeIndex,
     tail: NodeIndex,
-    value: EdgeLookupValue,
+    value: EdgeLookupValue<'a>,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-struct SubgraphNodeKey {
-    type_name: String,
-    graph_id: String,
+struct SubgraphNodeKey<'a> {
+    type_name: &'a str,
+    graph_id: &'a str,
     is_interface_object: bool,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-enum NodeSpecializationLookupKey {
+enum NodeSpecializationLookupKey<'a> {
     Provides(u64),
     UnionMembers {
-        type_name: String,
-        field_name: String,
-        possible_members: Arc<Vec<String>>,
+        type_name: &'a str,
+        field_name: &'a str,
+        possible_members: Arc<Vec<&'a str>>,
     },
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-enum NodeLookupKey {
-    Root(String),
+enum NodeLookupKey<'a> {
+    Root(&'a str),
     SubgraphType {
-        name: String,
-        subgraph: StateSubgraphName,
-        specialization: Option<NodeSpecializationLookupKey>,
+        name: &'a str,
+        subgraph: SubgraphName<'a>,
+        specialization: Option<NodeSpecializationLookupKey<'a>>,
     },
 }
 
-impl From<&Node> for NodeLookupKey {
-    fn from(node: &Node) -> Self {
+impl<'a> From<&Node<'a>> for NodeLookupKey<'a> {
+    fn from(node: &Node<'a>) -> Self {
         match node {
             Node::QueryRoot(name) | Node::MutationRoot(name) | Node::SubscriptionRoot(name) => {
-                Self::Root(name.clone())
+                Self::Root(*name)
             }
             Node::SubgraphType(subgraph_type) => Self::SubgraphType {
-                name: subgraph_type.name.clone(),
+                name: subgraph_type.name,
                 subgraph: subgraph_type.subgraph.clone(),
                 specialization: subgraph_type.specialization.as_ref().map(|specialization| {
                     match specialization {
@@ -217,9 +214,9 @@ impl From<&Node> for NodeLookupKey {
                         }
                         SubgraphTypeSpecialization::UnionMembers(data) => {
                             NodeSpecializationLookupKey::UnionMembers {
-                                type_name: data.type_name.clone(),
-                                field_name: data.field_name.clone(),
-                                possible_members: data.possible_members.clone(),
+                                type_name: data.type_name,
+                                field_name: data.field_name,
+                                possible_members: Arc::clone(&data.possible_members),
                             }
                         }
                     }
@@ -230,24 +227,23 @@ impl From<&Node> for NodeLookupKey {
 }
 
 #[derive(Default)]
-struct GraphBuildContext {
-    subgraph_names: FxHashMap<String, StateSubgraphName>,
-    subgraph_nodes: FxHashMap<SubgraphNodeKey, NodeIndex>,
+struct GraphBuildContext<'a> {
+    subgraph_names: FxHashMap<&'a str, SubgraphName<'a>>,
+    subgraph_nodes: FxHashMap<SubgraphNodeKey<'a>, NodeIndex>,
 }
 
-impl GraphBuildContext {
+impl<'a> GraphBuildContext<'a> {
     fn resolve_graph_id(
         &mut self,
-        state: &SupergraphState,
-        graph_id: &str,
-    ) -> Result<StateSubgraphName, GraphError> {
+        state: &'a SupergraphState,
+        graph_id: &'a str,
+    ) -> Result<SubgraphName<'a>, GraphError> {
         if let Some(name) = self.subgraph_names.get(graph_id) {
             return Ok(name.clone());
         }
 
         let name = state.resolve_graph_id(graph_id)?;
-        self.subgraph_names
-            .insert(graph_id.to_string(), name.clone());
+        self.subgraph_names.insert(graph_id, name.clone());
         Ok(name)
     }
 }
@@ -255,10 +251,10 @@ impl GraphBuildContext {
 type ImplementingObjects<'a> = FxHashMap<&'a str, Vec<(&'a str, &'a SupergraphDefinition)>>;
 
 type UnionTypeName<'a> = &'a str;
-type SubgraphName<'a> = &'a str;
+type SubgraphKey<'a> = &'a str;
 type UnionMemberTypes<'a> = FxHashSet<&'a str>;
 type UnionRegistyHashMap<'a> =
-    FxHashMap<UnionTypeName<'a>, FxHashMap<SubgraphName<'a>, UnionMemberTypes<'a>>>;
+    FxHashMap<UnionTypeName<'a>, FxHashMap<SubgraphKey<'a>, UnionMemberTypes<'a>>>;
 
 #[derive(Debug, Default)]
 struct UnionDefinitions<'a> {
@@ -274,7 +270,7 @@ impl<'a> UnionDefinitions<'a> {
             .iter()
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Union(_)))
         {
-            let mut in_subgraphs: FxHashMap<SubgraphName<'a>, UnionMemberTypes<'a>> =
+            let mut in_subgraphs: FxHashMap<SubgraphKey<'a>, UnionMemberTypes<'a>> =
                 FxHashMap::default();
 
             for join_member in definition.join_union_members() {
@@ -311,7 +307,7 @@ impl<'a> UnionDefinitions<'a> {
         &self,
         field_def: &'a SupergraphField,
         field_type: &str,
-        graph_id: &str,
+        graph_id: &'a str,
     ) -> UnionMemberTypes<'a> {
         // Collect subgraphs the field was defined in.
         // First, look for join__field(graph:),
@@ -339,27 +335,27 @@ impl<'a> UnionDefinitions<'a> {
 }
 
 #[derive(Debug, Default)]
-pub struct Graph {
-    pub graph: InnerGraph,
+pub struct Graph<'a> {
+    pub graph: Petgraph<Node<'a>, Edge<'a>, Directed>,
     pub query_root: NodeIndex,
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
     pub node_display_name_to_index: HashMap<String, NodeIndex>,
-    node_to_index: FxHashMap<NodeLookupKey, NodeIndex>,
-    edge_index: FxHashMap<EdgeLookupKey, EdgeIndex>,
+    node_to_index: FxHashMap<NodeLookupKey<'a>, NodeIndex>,
+    edge_index: FxHashMap<EdgeLookupKey<'a>, EdgeIndex>,
 }
 
-impl Graph {
+impl<'a> Graph<'a> {
     #[instrument(level = "trace", skip(supergraph_state))]
     pub fn graph_from_supergraph_state(
-        supergraph_state: &SupergraphState,
+        supergraph_state: &'a SupergraphState,
     ) -> Result<Self, GraphError> {
         let (node_capacity, edge_capacity) = Self::estimate_capacity(supergraph_state);
         let mut instance = Graph {
             node_display_name_to_index: HashMap::new(),
             node_to_index: FxHashMap::default(),
             edge_index: FxHashMap::default(),
-            graph: InnerGraph::with_capacity(node_capacity, edge_capacity),
+            graph: Petgraph::with_capacity(node_capacity, edge_capacity),
             ..Default::default()
         };
         instance.node_to_index.reserve(node_capacity);
@@ -420,13 +416,13 @@ impl Graph {
                 .is_some_and(|definition| matches!(definition, SupergraphDefinition::Enum(_)))
     }
 
-    pub fn node(&self, node_index: NodeIndex) -> Result<&Node, GraphError> {
+    pub fn node(&self, node_index: NodeIndex) -> Result<&Node<'a>, GraphError> {
         self.graph
             .node_weight(node_index)
             .ok_or(GraphError::NodeNotFound(node_index))
     }
 
-    pub fn edge(&self, edge_index: EdgeIndex) -> Result<&Edge, GraphError> {
+    pub fn edge(&self, edge_index: EdgeIndex) -> Result<&Edge<'a>, GraphError> {
         self.graph
             .edge_weight(edge_index)
             .ok_or(GraphError::EdgeNotFound(edge_index))
@@ -447,7 +443,7 @@ impl Graph {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_graph(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    fn build_graph(&mut self, state: &'a SupergraphState) -> Result<(), GraphError> {
         trace!(
             "Building graph for supergraph with {} definitions",
             state.definitions.len()
@@ -490,22 +486,22 @@ impl Graph {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_root_nodes(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
-        self.query_root = self.upsert_node(Node::QueryRoot(state.query_type.clone()));
+    fn build_root_nodes(&mut self, state: &'a SupergraphState) -> Result<(), GraphError> {
+        self.query_root = self.upsert_node(Node::QueryRoot(&state.query_type));
         trace!("added root type for queries: {}", state.query_type);
         self.mutation_root = state.mutation_type.as_ref().map(|mutation_type| {
             trace!("added root type for mutations: {}", mutation_type);
-            self.upsert_node(Node::MutationRoot(mutation_type.clone()))
+            self.upsert_node(Node::MutationRoot(mutation_type))
         });
         self.subscription_root = state.subscription_type.as_ref().map(|subscription_type| {
             trace!("added root type for subscriptions: {}", subscription_type);
-            self.upsert_node(Node::SubscriptionRoot(subscription_type.clone()))
+            self.upsert_node(Node::SubscriptionRoot(subscription_type))
         });
 
         Ok(())
     }
 
-    pub fn upsert_node(&mut self, node: Node) -> NodeIndex {
+    pub fn upsert_node(&mut self, node: Node<'a>) -> NodeIndex {
         let lookup_key = NodeLookupKey::from(&node);
         if let Some(index) = self.node_to_index.get(&lookup_key) {
             return *index;
@@ -519,15 +515,15 @@ impl Graph {
 
     fn upsert_subgraph_node(
         &mut self,
-        build_context: &mut GraphBuildContext,
-        state: &SupergraphState,
-        type_name: &str,
-        graph_id: &str,
+        build_context: &mut GraphBuildContext<'a>,
+        state: &'a SupergraphState,
+        type_name: &'a str,
+        graph_id: &'a str,
         is_interface_object: bool,
     ) -> Result<NodeIndex, GraphError> {
         let key = SubgraphNodeKey {
-            type_name: type_name.to_string(),
-            graph_id: graph_id.to_string(),
+            type_name,
+            graph_id,
             is_interface_object,
         };
 
@@ -552,7 +548,7 @@ impl Graph {
         Ok(index)
     }
 
-    pub fn upsert_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge) -> EdgeIndex {
+    pub fn upsert_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge<'a>) -> EdgeIndex {
         if matches!(edge, Edge::Selfie(_)) {
             return self.graph.add_edge(head, tail, edge);
         }
@@ -572,16 +568,16 @@ impl Graph {
         edge_index
     }
 
-    fn push_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge) -> EdgeIndex {
+    fn push_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge<'a>) -> EdgeIndex {
         self.graph.add_edge(head, tail, edge)
     }
 
     #[instrument(level = "trace", skip(self, state, build_context, selection_cache))]
     fn build_entity_reference_edges(
         &mut self,
-        state: &SupergraphState,
-        build_context: &mut GraphBuildContext,
-        selection_cache: &mut SelectionCache,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
+        selection_cache: &mut SelectionCache<'a>,
     ) -> Result<(), GraphError> {
         let mut implementing_objects: ImplementingObjects<'_> = FxHashMap::default();
         for (object_type_name, object_type_definition) in state
@@ -786,8 +782,8 @@ impl Graph {
     #[instrument(level = "trace", skip(self, state, build_context))]
     fn build_interface_implementation_edges(
         &mut self,
-        state: &SupergraphState,
-        build_context: &mut GraphBuildContext,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state
             .definitions
@@ -825,7 +821,7 @@ impl Graph {
                 self.push_edge(
                     head,
                     tail,
-                    Edge::AbstractMove(definition.name().to_string()),
+                    Edge::AbstractMove(definition.name()),
                 );
             }
         }
@@ -833,11 +829,11 @@ impl Graph {
         Ok(())
     }
 
-    pub fn root_query_node(&self) -> &Node {
+    pub fn root_query_node(&self) -> &Node<'a> {
         &self.graph[self.query_root]
     }
 
-    pub fn root_mutation_node(&self) -> Option<&Node> {
+    pub fn root_mutation_node(&self) -> Option<&Node<'a>> {
         if let Some(mutation_root) = self.mutation_root {
             Some(&self.graph[mutation_root])
         } else {
@@ -845,7 +841,7 @@ impl Graph {
         }
     }
 
-    pub fn root_subscription_node(&self) -> Option<&Node> {
+    pub fn root_subscription_node(&self) -> Option<&Node<'a>> {
         if let Some(subscription_root) = self.subscription_root {
             Some(&self.graph[subscription_root])
         } else {
@@ -853,19 +849,19 @@ impl Graph {
         }
     }
 
-    pub fn edges_to(&self, node_index: NodeIndex) -> Edges<'_, Edge, Directed> {
+    pub fn edges_to(&self, node_index: NodeIndex) -> Edges<'_, Edge<'a>, Directed> {
         self.graph.edges_directed(node_index, Direction::Incoming)
     }
 
-    pub fn edges_from(&self, node_index: NodeIndex) -> Edges<'_, Edge, Directed> {
+    pub fn edges_from(&self, node_index: NodeIndex) -> Edges<'_, Edge<'a>, Directed> {
         self.graph.edges_directed(node_index, Direction::Outgoing)
     }
 
     #[instrument(level = "trace", skip(self, state, build_context))]
     fn link_root_edges(
         &mut self,
-        state: &SupergraphState,
-        build_context: &mut GraphBuildContext,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state
             .definitions
@@ -887,7 +883,7 @@ impl Graph {
                                 );
 
                             if is_available {
-                                Some(field_name.to_string())
+                                Some(&**field_name)
                             } else {
                                 None
                             }
@@ -930,9 +926,9 @@ impl Graph {
     #[instrument(level = "trace", skip(self, state, build_context, selection_cache))]
     fn build_field_edges(
         &mut self,
-        state: &SupergraphState,
-        build_context: &mut GraphBuildContext,
-        selection_cache: &mut SelectionCache,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
+        selection_cache: &mut SelectionCache<'a>,
     ) -> Result<(), GraphError> {
         let unions = UnionDefinitions::new(state);
 
@@ -963,7 +959,7 @@ impl Graph {
                 )?;
 
                 if has_resolvable_typename {
-                    let field_name = "__typename".to_string();
+                    let field_name = "__typename";
                     trace!(
                         "[x] Creating owned field move edge '{}.__typename/{}' (type: String)",
                         def_name,
@@ -984,7 +980,7 @@ impl Graph {
                         tail,
                         Edge::create_field_move(
                             field_name,
-                            def_name.clone(),
+                            def_name,
                             true,
                             false,
                             None,
@@ -999,7 +995,7 @@ impl Graph {
                     def_name,
                     graph_id
                 );
-                self.push_edge(head, head, Edge::Selfie(def_name.clone()));
+                self.push_edge(head, head, Edge::Selfie(def_name));
 
                 for (field_name, field_definition) in definition.fields().iter() {
                     let (is_available, maybe_join_field) =
@@ -1024,14 +1020,14 @@ impl Graph {
                     // This prevents the current subgraph from creating a resolvable edge for a field it no longer owns.
                     let overridden_by = field_definition.join_field.iter().find_map(|jf| {
                         if let Some(override_from) = &jf.override_value {
-                            if override_from == &graph_name.0 {
+                            if override_from.as_str() == graph_name.0 {
                                 let overriding_subgraph_name = state
                                     .resolve_graph_id(jf.graph_id.as_ref().expect(
                                         "@override must be on a @join__field with a graph argument",
                                     ))
                                     .unwrap();
                                 return Some((
-                                    overriding_subgraph_name.0,
+                                    overriding_subgraph_name.0.to_string(),
                                     jf.override_label.clone(),
                                 ));
                             }
@@ -1122,13 +1118,12 @@ impl Graph {
                         let possible_members = Arc::new(
                             member_types
                                 .iter()
-                                .map(|member| member.to_string())
+                                .map(|member| *member)
                                 .collect::<Vec<_>>(),
                         );
-                        let representative_member = possible_members
+                        let representative_member = *possible_members
                             .first()
-                            .expect("member_types is not empty")
-                            .clone();
+                            .expect("member_types is not empty");
 
                         trace!(
                             "Handling a field {}.{}/{} resolving a union type {}",
@@ -1143,8 +1138,8 @@ impl Graph {
                             graph_name.clone(),
                             state.is_interface_object_in_subgraph(target_type, graph_id),
                             SubgraphTypeSpecialization::UnionMembers(UnionMembersData {
-                                type_name: def_name.clone(),
-                                field_name: field_name.clone(),
+                                type_name: def_name,
+                                field_name,
                                 object_type_name: representative_member,
                                 possible_members: possible_members.clone(),
                                 provides: None,
@@ -1162,8 +1157,8 @@ impl Graph {
                             tail,
                             typename_tail,
                             Edge::create_field_move(
-                                "__typename".to_string(),
-                                target_type.to_string(),
+                                "__typename",
+                                target_type,
                                 true,
                                 false,
                                 None,
@@ -1182,8 +1177,8 @@ impl Graph {
                             head,
                             tail,
                             Edge::create_field_move(
-                                field_name.clone(),
-                                def_name.clone(),
+                                field_name,
+                                def_name,
                                 state.is_scalar_type(target_type),
                                 field_definition.field_type.is_list(),
                                 None,
@@ -1208,7 +1203,7 @@ impl Graph {
                             self.push_edge(
                                 tail,
                                 abstract_tail,
-                                Edge::AbstractMove(member.to_string()),
+                                Edge::AbstractMove(member),
                             );
                         }
 
@@ -1248,8 +1243,8 @@ impl Graph {
                         head,
                         tail,
                         Edge::create_field_move(
-                            field_name.clone(),
-                            def_name.clone(),
+                            field_name,
+                            def_name,
                             is_leaf,
                             field_definition.field_type.is_list(),
                             maybe_join_field.map(|join_field| match join_field.provides {
@@ -1278,12 +1273,12 @@ impl Graph {
     #[instrument(level = "trace",skip(self, state, build_context, selection_cache, parent_type_def, head), fields(selection_set, parent_type_name = parent_type_def.name()))]
     fn handle_viewed_selection_set(
         &mut self,
-        state: &SupergraphState,
-        build_context: &mut GraphBuildContext,
-        selection_cache: &mut SelectionCache,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
+        selection_cache: &mut SelectionCache<'a>,
         selection_set: &SelectionSet<'static, String>,
-        graph_id: &str,
-        parent_type_def: &SupergraphDefinition,
+        graph_id: &'a str,
+        parent_type_def: &'a SupergraphDefinition,
         head: NodeIndex,
         view_id: u64,
     ) -> Result<(), GraphError> {
@@ -1328,8 +1323,10 @@ impl Graph {
             match selection {
                 Selection::Field(field) => {
                     let is_leaf = field.selection_set.items.is_empty();
-                    let field_in_parent =
-                        parent_type_def.fields().get(&field.name).ok_or_else(|| {
+                    let (field_name, field_in_parent) = parent_type_def
+                        .fields()
+                        .get_key_value(&field.name)
+                        .ok_or_else(|| {
                             GraphError::FieldDefinitionNotFound(
                                 field.name.clone(),
                                 parent_type_def.name().to_string(),
@@ -1355,7 +1352,7 @@ impl Graph {
                     };
 
                     if !is_leaf {
-                        self.upsert_edge(tail, tail, Edge::Selfie(return_type_name.to_string()));
+                        self.upsert_edge(tail, tail, Edge::Selfie(return_type_name));
                     }
 
                     trace!(
@@ -1370,8 +1367,8 @@ impl Graph {
                         head,
                         tail,
                         Edge::create_field_move(
-                            field.name.to_string(),
-                            parent_type_def.name().to_string(),
+                            field_name,
+                            parent_type_def.name(),
                             is_leaf,
                             field_in_parent.field_type.is_list(),
                             None,
@@ -1409,23 +1406,24 @@ impl Graph {
                         state.definitions.get(type_name_from_cond).ok_or_else(|| {
                             GraphError::DefinitionNotFound(type_name_from_cond.to_string())
                         })?;
+                    let canonical_type_name = type_def_from_cond.name();
 
                     // head is either an interface or a union
                     // tail is a type from a type condition (it's an object type - after normalization)
                     let tail = self.upsert_node(Node::new_specialized_node(
-                        type_name_from_cond,
+                        canonical_type_name,
                         build_context.resolve_graph_id(state, graph_id)?,
-                        state.is_interface_object_in_subgraph(type_name_from_cond, graph_id),
+                        state.is_interface_object_in_subgraph(canonical_type_name, graph_id),
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
-                    self.upsert_edge(tail, tail, Edge::Selfie(type_name_from_cond.to_string()));
+                    self.upsert_edge(tail, tail, Edge::Selfie(canonical_type_name));
 
                     // because it's abstract -> object move, add an abstract move edge
                     self.upsert_edge(
                         head,
                         tail,
-                        Edge::AbstractMove(type_name_from_cond.to_string()),
+                        Edge::AbstractMove(canonical_type_name),
                     );
 
                     // use object type (tail) when handling selection sets
@@ -1455,9 +1453,9 @@ impl Graph {
     #[instrument(level = "trace", skip(self, state, build_context, selection_cache))]
     fn build_viewed_field_edges(
         &mut self,
-        state: &SupergraphState,
-        build_context: &mut GraphBuildContext,
-        selection_cache: &mut SelectionCache,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
+        selection_cache: &mut SelectionCache<'a>,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             for join_type in definition.join_types().iter() {
@@ -1512,7 +1510,7 @@ impl Graph {
                                 self.upsert_edge(
                                     tail,
                                     tail,
-                                    Edge::Selfie(return_type_name.to_string()),
+                                    Edge::Selfie(return_type_name),
                                 );
 
                                 trace!(
@@ -1534,8 +1532,8 @@ impl Graph {
                                     head,
                                     tail,
                                     Edge::create_field_move(
-                                        field_name.to_string(),
-                                        def_name.clone(),
+                                        field_name,
+                                        def_name,
                                         state.is_scalar_type(
                                             field_definition.field_type.inner_type(),
                                         ),
@@ -1610,7 +1608,7 @@ impl Graph {
 }
 
 /// Print me with `println!("{}", graph);` to see the graph in DOT/digraph format.
-impl Display for Graph {
+impl Display for Graph<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", Dot::with_config(&self.graph, &[]))
     }

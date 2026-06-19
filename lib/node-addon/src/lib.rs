@@ -15,7 +15,7 @@ use crate::query_plan::{QueryPlanError, QueryPlanTask};
 
 #[napi]
 pub struct QueryPlanner {
-    planner: Planner,
+    planner: Planner<'static>,
     pub consumer_schema: String,
     pub override_labels: Vec<String>,
     pub override_percentages: Vec<f64>,

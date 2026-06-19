@@ -24,6 +24,14 @@ use hive_router_query_planner::utils::parsing::parse_operation;
 use hive_router_query_planner::utils::parsing::parse_schema;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+fn measure_time<F: FnOnce() -> R, R>(name: &str, f: F) -> R {
+    let start = std::time::Instant::now();
+    let result = f();
+    let duration = start.elapsed();
+    println!("{}: {:?}", name, duration);
+    result
+}
+
 fn main() {
     let tree_layer = tracing_tree::HierarchicalLayer::new(2)
         .with_writer(std::io::stdout)
@@ -149,10 +157,10 @@ fn process_consumer_schema(path: &str) {
     println!("{}", consumer_schema.document);
 }
 
-fn process_fetch_graph(
-    supergraph_path: &str,
-    operation_path: &str,
-) -> FetchGraph<MultiTypeFetchStep> {
+fn process_fetch_graph<'a>(
+    supergraph_path: &'a str,
+    operation_path: &'a str,
+) -> FetchGraph<'a, MultiTypeFetchStep> {
     let (graph, query_tree, supergraph_state, operation_kind) =
         process_merged_tree(supergraph_path, operation_path);
 
@@ -175,45 +183,55 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     let override_context = PlannerOverrideContext::default();
     let cancellation_token = CancellationToken::new();
 
-    let best_paths_per_leaf = walk_operation(
-        &graph,
-        &supergraph,
-        &override_context,
-        &operation,
-        &cancellation_token,
-    )
-    .unwrap();
-    let query_tree =
-        find_best_combination(&graph, best_paths_per_leaf, &cancellation_token).unwrap();
-    let fetch_graph = build_fetch_graph_from_query_tree(
-        &graph,
-        &supergraph,
-        &override_context,
-        query_tree,
-        operation
-            .operation_kind
-            .clone()
-            .unwrap_or(OperationKind::Query),
-        &QueryPlannerOptions::default(),
-        &cancellation_token,
-    )
-    .expect("failed to build fetch graph");
+    let now = std::time::Instant::now();
+    let best_paths_per_leaf = measure_time("walk_operation", || {
+        walk_operation(
+            &graph,
+            &supergraph,
+            &override_context,
+            &operation,
+            &cancellation_token,
+        )
+        .unwrap()
+    });
+    let query_tree = measure_time("find_best_combination", || {
+        find_best_combination(&graph, best_paths_per_leaf, &cancellation_token).unwrap()
+    });
+    let fetch_graph = measure_time("build_fetch_graph_from_query_tree", || {
+        build_fetch_graph_from_query_tree(
+            &graph,
+            &supergraph,
+            &override_context,
+            query_tree,
+            operation
+                .operation_kind
+                .clone()
+                .unwrap_or(OperationKind::Query),
+            &QueryPlannerOptions::default(),
+            &cancellation_token,
+        )
+        .expect("failed to build fetch graph")
+    });
+    let qp = measure_time("build_query_plan_from_fetch_graph", || {
+        build_query_plan_from_fetch_graph(fetch_graph, &supergraph, &cancellation_token)
+            .expect("failed to build query plan")
+    });
+    println!("total: {:?}", now.elapsed());
 
-    build_query_plan_from_fetch_graph(fetch_graph, &supergraph, &cancellation_token)
-        .expect("failed to build query plan")
+    qp
 }
 
-fn process_merged_tree(
-    supergraph_path: &str,
-    operation_path: &str,
-) -> (Graph, QueryTree, SupergraphState, OperationKind) {
+fn process_merged_tree<'a>(
+    supergraph_path: &'a str,
+    operation_path: &'a str,
+) -> (Graph<'static>, QueryTree, &'static SupergraphState, OperationKind) {
     let (graph, operation, supergraph_state) =
         load_graph_operation(supergraph_path, operation_path);
     let override_context = PlannerOverrideContext::default();
     let cancellation_token = CancellationToken::new();
     let best_paths_per_leaf = walk_operation(
         &graph,
-        &supergraph_state,
+        supergraph_state,
         &override_context,
         &operation,
         &cancellation_token,
@@ -242,16 +260,23 @@ fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> Operatio
     operation.clone()
 }
 
-fn load_graph_operation(
-    supergraph_path: &str,
-    operation_path: &str,
-) -> (Graph, OperationDefinition, SupergraphState) {
+fn load_graph_operation<'a>(
+    supergraph_path: &'a str,
+    operation_path: &'a str,
+) -> (Graph<'static>, OperationDefinition, &'static SupergraphState) {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
-    let parsed_schema = parse_schema(&supergraph_sdl);
-    let supergraph = SupergraphState::new(&parsed_schema);
-    let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
-    let operation = get_operation(operation_path, &supergraph);
+    let parsed_schema = measure_time("parse_schema", || parse_schema(&supergraph_sdl));
+    let supergraph = measure_time("SupergraphState::new", || {
+        Box::leak(Box::new(SupergraphState::new(&parsed_schema)))
+    });
+    let graph = measure_time("Graph::graph_from_supergraph_state", || {
+        Graph::graph_from_supergraph_state(supergraph)
+    })
+    .expect("failed to create graph");
+    let operation = measure_time("get_operation", || {
+        get_operation(operation_path, supergraph)
+    });
 
     (graph, operation, supergraph)
 }

@@ -687,8 +687,8 @@ fn create_output_operation(
     SubgraphFetchOperation::from_anonymous_operation(document)
 }
 
-impl From<&FetchStepData<MultiTypeFetchStep>> for OperationKind {
-    fn from(step: &FetchStepData<MultiTypeFetchStep>) -> Self {
+impl From<&FetchStepData<'_, MultiTypeFetchStep>> for OperationKind {
+    fn from(step: &FetchStepData<'_, MultiTypeFetchStep>) -> Self {
         match step.input.iter().next().unwrap().0.as_str() {
             "Query" => OperationKind::Query,
             "Mutation" => OperationKind::Mutation,
@@ -706,7 +706,7 @@ impl FetchNode {
         match step.is_entity_call() {
             true => FetchNode {
                 id: step.id,
-                service_name: step.service_name.0.clone(),
+                service_name: step.service_name.0.to_string(),
                 variable_usages: step.variable_usages.clone(),
                 operation_kind: Some(OperationKind::Query),
                 operation: create_output_operation(step, supergraph),
@@ -731,7 +731,7 @@ impl FetchNode {
 
                 FetchNode {
                     id: step.id,
-                    service_name: step.service_name.0.clone(),
+                    service_name: step.service_name.0.to_string(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.into()),
                     operation: SubgraphFetchOperation::from_anonymous_operation(document),

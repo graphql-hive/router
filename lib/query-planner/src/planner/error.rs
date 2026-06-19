@@ -8,7 +8,7 @@ use super::fetch::error::FetchGraphError;
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum QueryPlanError {
     #[error("FetchGraph error: {0}")]
-    FetchGraphFailure(#[from] FetchGraphError),
+    FetchGraphFailure(String),
     #[error("Graph error: {0}")]
     GraphFailure(#[from] GraphError),
     #[error("Root fetch is missing")]
@@ -23,4 +23,10 @@ pub enum QueryPlanError {
     FragmentExpansionFailure(#[from] FragmentExpansionError),
     #[error(transparent)]
     CancellationError(#[from] CancellationError),
+}
+
+impl From<FetchGraphError> for QueryPlanError {
+    fn from(err: FetchGraphError) -> Self {
+        QueryPlanError::FetchGraphFailure(err.to_string())
+    }
 }

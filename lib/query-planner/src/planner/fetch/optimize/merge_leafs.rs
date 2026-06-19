@@ -19,13 +19,13 @@ use crate::{
     state::supergraph_state::SubgraphName,
 };
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData<'_, MultiTypeFetchStep> {
     pub fn can_merge_leafs(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+        fetch_graph: &FetchGraph<'_, MultiTypeFetchStep>,
     ) -> bool {
         if self_index == other_index {
             return false;
@@ -77,8 +77,8 @@ impl FetchStepData<MultiTypeFetchStep> {
 #[derive(Clone)]
 // Coarse grouping to avoid scanning every node pair. can_merge_leafs still validates graph
 // dependencies and argument conflicts before merging.
-struct GroupKey {
-    service_name: SubgraphName,
+struct GroupKey<'a> {
+    service_name: SubgraphName<'a>,
     response_path: MergePath,
     input_types_hash: u64,
     condition: Option<Condition>,
@@ -90,7 +90,7 @@ struct LeafMergeInfo {
     is_leaf: bool,
 }
 
-impl PartialEq for GroupKey {
+impl PartialEq for GroupKey<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.service_name == other.service_name
             && self.response_path == other.response_path
@@ -100,9 +100,9 @@ impl PartialEq for GroupKey {
     }
 }
 
-impl Eq for GroupKey {}
+impl Eq for GroupKey<'_> {}
 
-impl Hash for GroupKey {
+impl Hash for GroupKey<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.service_name.hash(state);
         for segment in self.response_path.inner.iter() {
@@ -129,7 +129,7 @@ impl Hash for GroupKey {
     }
 }
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     /// This optimization is about merging leaf nodes in the fetch nodes with other nodes.
     /// It reduces the number of fetch steps, without degrading the query performance.
@@ -140,7 +140,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     }
 
     fn merge_leaf_groups(&mut self) -> Result<(), FetchGraphError> {
-        let mut groups: HashMap<GroupKey, Vec<LeafMergeInfo>> = HashMap::new();
+        let mut groups: HashMap<GroupKey<'a>, Vec<LeafMergeInfo>> = HashMap::new();
 
         for node_index in self.graph.node_indices() {
             if self.root_index == Some(node_index) {
@@ -202,7 +202,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     }
 }
 
-fn input_types_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
+fn input_types_hash(step: &FetchStepData<'_, MultiTypeFetchStep>) -> u64 {
     let mut hasher = FxHasher::default();
 
     for (type_name, _) in step.input.iter_selections() {
