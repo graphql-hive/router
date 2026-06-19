@@ -15,7 +15,7 @@ pub enum HeaderRuleCompileError {
     #[error("Failed to build regex for header matching. Please check your regex patterns for syntax errors. Reason: {0}")]
     RegexBuild(#[from] Box<BuildError>),
     #[error(
-        "Cache-Control header requires 'algorithm: append'. 'first' and 'last' silently discards all but one subgraph value - this is an issue because a 'private' or 'no-store' from another subgraph can get ignored and the router may forward publicly-cacheable headers for data that must not be cached. 'append' applies a restrictive merge: any no-store/no-cache/private poisons the result, max-age takes the minimum, public requires unanimous agreement."
+        "Cache-Control header requires 'algorithm: append'. 'first' and 'last' silently discard all but one subgraph value - this is an issue because a 'private' or 'no-store' from another subgraph can get ignored and the router may forward publicly-cacheable headers for data that must not be cached. 'append' applies a restrictive merge: any no-store/no-cache/private poisons the result, max-age takes the minimum, public requires unanimous agreement."
     )]
     CacheControlRequiresAppend,
     #[error("Failed to compile VRL expression for header '{0}'. Please check your VRL expression for syntax errors. Diagnostic: {1}")]
