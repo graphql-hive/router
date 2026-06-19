@@ -116,6 +116,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.72 (2026-06-19)
+
+### Fixes
+
+#### Make the subscription subgraph executor buffer capacity configurable
+
+When a subscription is established, the router reads events from the subgraph (over HTTP streaming or WebSocket) and runs each one through entity resolution before fanning it out to listeners. A per-subscription buffer sits between the subgraph and that processing pipeline so the subgraph is never throttled when the router falls behind. When the buffer is full, the newest incoming event is dropped (and logged) instead of slowing down or tearing down the connection to the subgraph.
+
+The size of this buffer is now configurable via `subscriptions.subgraph_buffer_capacity`. A larger capacity gives the router more headroom to absorb bursts at the cost of memory and potentially staler events under sustained backpressure; a smaller capacity keeps memory minimal and drops eagerly. It defaults to `1024`, favoring high throughput.
+
+```yaml
+subscriptions:
+  enabled: true
+  subgraph_buffer_capacity: 1024 # default
+```
+
+#### Decouple HTTP streaming subscriptions from downstream backpressure
+
+When a subscription's events flow through the router, each event is run through entity resolution (fetching the related data from other subgraphs) before being delivered to the client. If that resolution is slow, or the client is slow to consume, the router would previously stop reading from the subscribing subgraph until it caught up. That stall propagates back over the connection and effectively throttles the subgraph's emitter.
+
+HTTP streaming subscriptions (multipart and SSE) now buffer incoming events and drain them from the subgraph at full speed, independent of how fast the router can process them. If the router cannot keep up, the newest incoming event is dropped (and logged) instead of slowing the subgraph.
+
+The subscription stays alive and the subgraph keeps emitting unaffected.
+
+#### Keep WebSocket subgraph subscriptions alive under backpressure
+
+Each subscription event the router receives is run through entity resolution (fetching related data from other subgraphs) before reaching the client. When that resolution has higher latency than the rate at which the subgraph emits events, the router falls behind and backpressure builds up.
+
+The WebSocket subgraph executor now drops individual messages it cannot keep up with instead of tearing down the subscription, keeping the underlying connection to the subgraph open. The dropped messages are logged, and the subgraph continues emitting without being throttled by the router's processing speed.
+
 ## 0.0.71 (2026-06-18)
 
 ### Fixes
