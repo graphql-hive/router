@@ -106,7 +106,50 @@ fn to_header_value(p: &ParsedCacheControl) -> String {
     parts.join(", ")
 }
 
-// TODO: document with extensive comment
+/// Collapse all accumulated `Cache-Control` header values in the aggregator into
+/// a single, restrictively merged value and write it back, replacing whatever was
+/// there before.
+///
+/// After all subgraph responses have been written into the `ResponseHeaderAggregator`
+/// via the normal header propagation rules, `finalize` is called once before the
+/// aggregator is flushed to the client response. At that point `aggregator.entries`
+/// may contain zero, one, or many `Cache-Control` values depending on how many
+/// subgraphs sent the header and whether any response-header rules also propagated it.
+///
+/// If the aggregator contains no `Cache-Control` entry at all (no subgraph sent it an
+/// no propagation rule added it), the function returns immediately without inserting
+/// anything. The header is left absent from the client response.
+///
+/// When `force_no_store` is `true` the caller has determined that caching must be
+/// unconditionally forbidden - for example because the operation is a mutation, a
+/// subgraph returned a GraphQL `errors` array, or a network-level error occurred.
+/// The function overwrites whatever is in the aggregator with
+/// `no-store, no-cache, must-revalidate` and returns. This path also exits early if
+/// no `Cache-Control` entry exists, matching the behaviour of the normal path (we only
+/// emit a header when a subgraph sent one first).
+///
+/// When `force_no_store` is `false` the raw string values stored in the aggregator are
+/// parsed and folded left-to-right with the following policy:
+///
+/// 1. Poison check - if any value contains `no-store`, `no-cache`, or `private`, the
+///    accumulated result is immediately locked to `no-store, no-cache` and all remaining
+///    directives (`public`, `max-age`, `must-revalidate`) are discarded. Further
+///    incoming values cannot "un-poison" this state.
+/// 2. max-age - the minimum of all present `max-age` values is kept. A subgraph that
+///    omits `max-age` entirely does not pull the min down; it is simply ignored for
+///    this field, letting a shorter age set by another subgraph win.
+/// 3. public - preserved only when every subgraph that sent `Cache-Control` also sent
+///    `public`. A single subgraph that omits it is enough to strip `public` from the
+///    result.
+/// 4. must-revalidate - set if any subgraph sets it (logical OR). Cleared on poison.
+///
+/// The merged result is serialised back to a `HeaderValue` and re-inserted into the
+/// aggregator under `Last` strategy so that any subsequent header-flush loop sees
+/// exactly one value.
+///
+/// If every collected value was unparseable (e.g. non-UTF-8 bytes) the fold produces no
+/// `acc` and the entry is left unchanged, meaning the last raw value written by the
+/// propagation rules survives as-is.
 pub fn finalize(aggregator: &mut ResponseHeaderAggregator, force_no_store: bool) {
     let Some((_, values)) = aggregator.entries.get(&http::header::CACHE_CONTROL) else {
         // there's no cache-control headers anywhere, so nothing to merge or poison - just leave it absent
