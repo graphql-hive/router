@@ -83,7 +83,7 @@ fn merge_into(acc: &mut Option<ParsedCacheControl>, incoming: ParsedCacheControl
 }
 
 fn to_header_value(p: &ParsedCacheControl) -> String {
-    if p.no_store || p.no_cache {
+    if p.no_store || p.no_cache || p.is_private {
         return "no-store, no-cache".to_string();
     }
 
