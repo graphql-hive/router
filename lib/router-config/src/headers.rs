@@ -363,7 +363,7 @@ pub enum AggregationAlgo {
     /// applies a restrictive merge across all subgraph values:
     /// - `no-store`, `no-cache`, or `private` from any subgraph poisons the result.
     /// - `max-age` takes the minimum across all subgraphs that provide it.
-    /// - `public` is only kept if every subgraph carries it.
+    /// - `public` is only kept if every provided `Cache-Control` value carries it.
     /// - `must-revalidate` is set if any subgraph carries it.
     ///
     /// The following conditions force `no-store, no-cache, must-revalidate`
