@@ -35,6 +35,7 @@ use tracing::Instrument;
 use crate::execution::client_request_details::OperationDetails;
 use crate::execution::demand_control::DemandControlExecutionContext;
 use crate::execution::operation_name::OperationNameFactory;
+use crate::headers::cache_control;
 use crate::{
     execution::{
         client_request_details::ClientRequestDetails,
@@ -555,6 +556,12 @@ async fn execute_query_plan_with_data<'exec>(
         );
         demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
     }
+
+    cache_control::finalize(
+        &mut exec_ctx.response_headers_aggregator,
+        // force no-store for mutations and errors (execution or graphql errors)
+        opts.operation_type_name == "Mutation" || !errors.is_empty(),
+    );
 
     opts.response_header_sink
         .store(std::mem::take(&mut exec_ctx.response_headers_aggregator));

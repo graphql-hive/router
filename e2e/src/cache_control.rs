@@ -532,7 +532,7 @@ mod cache_control_e2e_tests {
 
     // scenario 10: http execution error (non-200 status) from subgraph forces no-store, no-cache, must-revalidate
     #[ntex::test]
-    async fn subgraph_execution_error_disables_caching() {
+    async fn subgraph_execution_error_disables_caching_even_with_insert() {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|req| {
                 if req.path.contains("products") {
@@ -549,6 +549,8 @@ mod cache_control_e2e_tests {
             .start()
             .await;
 
+        // the subgraph errors with a 500 and sends no cache-control at all.
+        // we insert caching so the aggregator has an entry
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
@@ -559,9 +561,9 @@ mod cache_control_e2e_tests {
                 headers:
                     all:
                         response:
-                            - propagate:
-                                named: cache-control
-                                algorithm: append
+                            - insert:
+                                name: cache-control
+                                value: "public, max-age=300"
                 "#,
             )
             .build()
