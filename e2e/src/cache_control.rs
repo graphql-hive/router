@@ -597,4 +597,125 @@ mod cache_control_e2e_tests {
             "expected no-store, no-cache, must-revalidate on network error but got: {cc}"
         );
     }
+
+    // scenario 11: global propagate with default + subgraph-level insert override
+    //
+    // - accounts sends no cache-control -> global default "public, max-age=180"
+    //   is used
+    // - products sends "public, max-age=300" but the subgraph insert rule pins
+    //   it to "no-cache"
+    // - "no-cache" poisons the merge, so the result is "no-store, no-cache"
+    //   regardless of the default
+    #[ntex::test]
+    async fn global_default_with_subgraph_insert_override() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|req| {
+                if req.path.contains("products") {
+                    Some(ResponseLike::new(
+                        StatusCode::OK,
+                        None,
+                        some_header_map! {
+                            // products sends its own value; the insert rule replaces it
+                            http::header::CACHE_CONTROL => "public, max-age=300"
+                        },
+                    ))
+                } else {
+                    // accounts sends nothing; the global default should fill in
+                    None
+                }
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                headers:
+                    all:
+                        response:
+                            - propagate:
+                                named: cache-control
+                                algorithm: append
+                                default: "public, max-age=180"
+                    subgraphs:
+                        products:
+                            response:
+                                - insert:
+                                    name: cache-control
+                                    value: "no-cache"
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        // topProducts hits products; me hits accounts
+        // use topProducts so products subgraph is definitely involved
+        let res = router
+            .send_graphql_request(
+                r#"{ topProducts(first: 1) { upc name } me { name } }"#,
+                None,
+                None,
+            )
+            .await;
+
+        assert_eq!(res.status(), 200);
+
+        let cc = cache_control(&res).expect("expected cache-control header");
+
+        // products insert rule pins to no-cache, which poisons the merge
+        // no-cache short-circuits the entire result regardless of the accounts default
+        assert!(
+            cc.contains("no-store") && cc.contains("no-cache"),
+            "expected no-store, no-cache from poisoned merge but got: {cc}"
+        );
+        assert!(
+            !cc.contains("max-age"),
+            "expected max-age to be absent after poison but got: {cc}"
+        );
+    }
+
+    // scenario 12: propagate default is used when the subgraph sends no cache-control
+    #[ntex::test]
+    async fn propagate_default_when_subgraph_sends_nothing() {
+        // accounts sends no cache-control header at all
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                headers:
+                    all:
+                        response:
+                            - propagate:
+                                named: cache-control
+                                algorithm: append
+                                default: "public, max-age=180"
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(r#"{ me { name } }"#, None, None)
+            .await;
+
+        assert_eq!(res.status(), 200);
+
+        let cc = cache_control(&res).expect("expected cache-control header from default");
+        assert!(
+            cc.contains("public") && cc.contains("max-age=180"),
+            "expected public, max-age=180 from propagate default but got: {cc}"
+        );
+    }
 }
