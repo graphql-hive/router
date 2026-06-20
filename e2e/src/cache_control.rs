@@ -317,10 +317,27 @@ mod cache_control_e2e_tests {
         );
     }
 
-    // scenario 6: global insert rule provides a default cache-control when no subgraph sends one
+    // scenario 6: global insert cache-control rule
     #[ntex::test]
-    async fn global_fallback_cache_control_from_config() {
-        let subgraphs = TestSubgraphs::builder().build().start().await;
+    async fn global_insert_cache_control_from_config() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|req| {
+                if req.path.contains("accounts") {
+                    // router shouldnt care, we're overriding
+                    Some(ResponseLike::new(
+                        StatusCode::OK,
+                        None,
+                        some_header_map! {
+                            http::header::CACHE_CONTROL => "no-cache"
+                        },
+                    ))
+                } else {
+                    None
+                }
+            })
+            .build()
+            .start()
+            .await;
 
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
