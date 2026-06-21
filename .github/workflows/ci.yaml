@@ -281,7 +281,7 @@ jobs:
     env:
       NODE_NO_WARNINGS: true
       NODE_ENV: production
-      GRAPHQL_DIFF_QUERIES: 500
+      GRAPHQL_DIFF_QUERIES: 250
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: setup rust
