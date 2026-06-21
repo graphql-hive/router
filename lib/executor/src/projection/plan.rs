@@ -2,7 +2,7 @@ use ahash::HashSet;
 use indexmap::IndexMap;
 use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
 use std::sync::Arc;
-use tracing::warn;
+use tracing::{instrument, trace, warn};
 
 use hive_router_query_planner::{
     ast::{
@@ -116,8 +116,7 @@ pub enum ProjectionValueSource {
 /// `value` is the list of possible variants, based on different type guards
 ///
 /// They are kept apart so their nested selections never bleed into one another, and
-/// [`resolve_variants`](FieldProjectionPlan::resolve_variants) later collapses
-/// them into mutually-exclusive per-concrete-type plans.
+/// `resolve_variants` later collapses them into mutually-exclusive per-concrete-type plans.
 type SelectionVariants = IndexMap<String, Vec<FieldProjectionPlan>>;
 
 #[derive(Debug, Clone)]
@@ -133,6 +132,19 @@ pub struct FieldProjectionPlan {
     pub parent_type_guard: Option<TypeCondition>,
     pub conditions: Option<FieldProjectionCondition>,
     pub value: ProjectionValueSource,
+}
+
+fn debug_plans_vec(plans: &[FieldProjectionPlan]) {
+    for (i, plan) in plans.iter().enumerate() {
+        trace!("plan {}:\n{}", i, plan);
+    }
+}
+
+fn debug_plans_map(plans: &SelectionVariants) {
+    for (i, (key, plans)) in plans.iter().enumerate() {
+        trace!("key {}: {}", i, key);
+        debug_plans_vec(plans);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +223,7 @@ impl FieldProjectionCondition {
 }
 
 impl FieldProjectionPlan {
+    #[instrument(level = "trace", skip_all)]
     pub fn from_operation(
         operation: &OperationDefinition,
         schema_metadata: &SchemaMetadata,
@@ -237,6 +250,11 @@ impl FieldProjectionPlan {
         (root_type_name, plans)
     }
 
+    #[instrument(level = "trace", skip_all, fields(
+      selection_set = %selection_set,
+      parent_type_name,
+      parent_condition = ?parent_condition,
+    ))]
     fn from_selection_set(
         selection_set: &SelectionSet,
         schema_metadata: &SchemaMetadata,
@@ -302,11 +320,17 @@ impl FieldProjectionPlan {
     /// have 2 plan records, but rather it will be one record, with multiple type guards.
     ///
     /// This way, at runtime, the `meta` plan will match exactly one variant, based on the concrete `__typename`
+    #[instrument(level = "trace", skip_all, fields(parent_type_name,))]
     fn resolve_variants(
         field_selections: SelectionVariants,
         parent_type_name: &str,
         schema_metadata: &SchemaMetadata,
     ) -> Vec<FieldProjectionPlan> {
+        #[cfg(debug_assertions)]
+        {
+            trace!("input:\n");
+            debug_plans_map(&field_selections);
+        }
         let mut concrete_types: Option<Vec<String>> = None;
         let mut resolved = Vec::new();
 
@@ -340,6 +364,12 @@ impl FieldProjectionPlan {
                 );
                 resolved.extend(merged);
             }
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            trace!("output:\n");
+            debug_plans_vec(&resolved);
         }
 
         resolved
@@ -616,6 +646,7 @@ impl FieldProjectionPlan {
     /// both plans.
     ///
     /// A later process, `resolve_variants` processes the common fields and "bubble" it if possible.
+    #[instrument(level = "trace", skip_all, fields(parent_type_name))]
     fn merge_plan(
         field_selections: &mut SelectionVariants,
         plan_to_merge: FieldProjectionPlan,
@@ -639,6 +670,7 @@ impl FieldProjectionPlan {
     }
 
     /// Merges a plan into an existing one with the same response key and the same type guard
+    #[instrument(level = "trace", skip_all, fields(parent_type_name))]
     fn merge_matching(
         existing_plan: &mut FieldProjectionPlan,
         plan_to_merge: FieldProjectionPlan,
@@ -768,6 +800,12 @@ impl FieldProjectionPlan {
         }
     }
 
+    #[instrument(level = "trace", skip_all, fields(
+      field_name = field.name,
+      field_alias = field.alias.as_deref(),
+      parent_type_name,
+      parent_condition = ?parent_condition,
+    ))]
     fn process_field(
         field: &FieldSelection,
         field_selections: &mut SelectionVariants,
@@ -910,6 +948,12 @@ impl FieldProjectionPlan {
         );
     }
 
+    #[instrument(level = "trace", skip_all, fields(
+      inline_fragment_type = inline_fragment.type_condition,
+      fragment_str = %inline_fragment.selections,
+      parent_type_name,
+      parent_condition = ?parent_condition,
+    ))]
     fn process_inline_fragment(
         inline_fragment: &InlineFragmentSelection,
         field_selections: &mut SelectionVariants,
