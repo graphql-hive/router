@@ -283,9 +283,11 @@ jobs:
       NODE_ENV: production
       GRAPHQL_DIFF_QUERIES: 250
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: setup rust
-        uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1
         with:
@@ -301,7 +303,7 @@ jobs:
           sleep 5
       - name: Run router
         run: |
-          ./target/debug/hive-router &
+          ./target/debug/hive_router &
           echo "$!" > router.pid
           sleep 5
         env:
@@ -317,7 +319,7 @@ jobs:
             http://localhost:4300/graphql \
             http://localhost:4000/graphql \
             bench/schema.graphql
-        timeout-minutes: 30
+        timeout-minutes: 5
       - name: Stop services
         if: always()
         run: |

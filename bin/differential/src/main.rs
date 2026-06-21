@@ -765,7 +765,7 @@ async fn main() {
                 if data1 != data2 || errors1.is_some() != errors2.is_some() {
                     differences += 1;
 
-                    let dir = format!("./failed-tests/case-{}", i);
+                    let dir = format!("./failed-tests/case-{}", i + 1);
                     std::fs::create_dir_all(&dir).expect("to create a directory");
                     std::fs::write(format!("{}/query.graphql", dir), case.document.clone())
                         .expect("to create query.graphql");
