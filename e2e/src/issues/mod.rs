@@ -1870,4 +1870,1245 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    async fn union_shared_field_different_selections() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.union-shared-field.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"payloads":[
+                    {"__typename":"ApprovalFlowCreated","order":{"id":"1"}},
+                    {"__typename":"ApprovalFlowCompleted","order":{"id":"2"}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  payloads {
+                    __typename
+                    ... on ApprovalFlowCreated { order { id } }
+                    ... on ApprovalFlowRejected { order { id version orderNumber } }
+                    ... on ApprovalFlowCompleted { order { id } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "payloads": [
+              {
+                "__typename": "ApprovalFlowCreated",
+                "order": {
+                  "id": "1"
+                }
+              },
+              {
+                "__typename": "ApprovalFlowCompleted",
+                "order": {
+                  "id": "2"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/pull/1166
+    ///
+    /// A union (`SearchResult`) whose members share the response key `chain` but select
+    /// different sub-fields per branch: `Collection`/`CurrencyV2` pick `chain { identifier }`
+    /// while `Item` picks `chain { arch }` (and `Chain.arch` is Non-Null). The `arch`
+    /// selection must NOT leak into the `Collection`/`CurrencyV2` projections — otherwise
+    /// its missing value bubbles up (Non-Null) and collapses the response to `data: null`.
+    async fn issue_1166_disjoint_fragments_shared_field() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1166-disjoint-fragments.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"searchUniversal":[
+                    {"__typename":"Collection","chain":{"identifier":"c1"}},
+                    {"__typename":"CurrencyV2","chain":{"identifier":"cur1"}},
+                    {"__typename":"Item","chain":{"arch":"x86"}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  searchUniversal {
+                    __typename
+                    ... on Collection { chain { identifier } }
+                    ... on CurrencyV2 { chain { identifier } }
+                    ... on Item { chain { arch } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "searchUniversal": [
+              {
+                "__typename": "Collection",
+                "chain": {
+                  "identifier": "c1"
+                }
+              },
+              {
+                "__typename": "CurrencyV2",
+                "chain": {
+                  "identifier": "cur1"
+                }
+              },
+              {
+                "__typename": "Item",
+                "chain": {
+                  "arch": "x86"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// Overlapping (not disjoint) type guards sharing a response key. `meta` is selected
+    /// under `... on Article` (`{ title }`) and under the interface `... on HasMeta`
+    /// (`{ wordCount }`); the guards overlap on `Article`. The `Article`-only `title`
+    /// (Non-Null) must NOT leak into the `Video` branch — otherwise its missing value
+    /// bubbles and collapses the response.
+    async fn interface_overlapping_guards_shared_field() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.interface-shared-field.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"search":[
+                    {"__typename":"Article","meta":{"title":"T","wordCount":100}},
+                    {"__typename":"Video","meta":{"wordCount":50}}
+                ],"searchMeta":[
+                    {"__typename":"Article","meta":{"title":"T","wordCount":100}},
+                    {"__typename":"Video","meta":{"wordCount":50}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  search {
+                    __typename
+                    ... on Article { meta { title } }
+                    ... on HasMeta { meta { wordCount } }
+                  }
+                  searchMeta {
+                    __typename
+                    ... on Article { meta { title } }
+                    ... on HasMeta { meta { wordCount } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        // Both fields scope `meta` per concrete type: `Article` (in both the `Article` and
+        // `HasMeta` scopes) gets `{ title, wordCount }`, `Video` (only `HasMeta`) gets just
+        // `{ wordCount }` — `title` never leaks. `searchMeta` (interface parent, where
+        // `... on HasMeta` inlines to an implicit "any type" guard) resolves the same way.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "search": [
+              {
+                "__typename": "Article",
+                "meta": {
+                  "title": "T",
+                  "wordCount": 100
+                }
+              },
+              {
+                "__typename": "Video",
+                "meta": {
+                  "wordCount": 50
+                }
+              }
+            ],
+            "searchMeta": [
+              {
+                "__typename": "Article",
+                "meta": {
+                  "title": "T",
+                  "wordCount": 100
+                }
+              },
+              {
+                "__typename": "Video",
+                "meta": {
+                  "wordCount": 50
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// Nested abstract types: an interface field (`Book.related: Item`) that itself returns
+    /// an interface, with fragments at both levels. Each level must resolve and scope by the
+    /// concrete `__typename` — the inner `Movie` must get `runtime` (not the sibling
+    /// `... on Book { title }`).
+    async fn nested_abstract_type_resolution() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.nested-abstract.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"items":[
+                    {"__typename":"Book","id":"b1","title":"GoT",
+                     "related":{"__typename":"Movie","id":"m1","runtime":120}},
+                    {"__typename":"Movie","id":"m2","runtime":90}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  items {
+                    __typename
+                    ... on Book {
+                      title
+                      related {
+                        __typename
+                        ... on Book { title }
+                        ... on Movie { runtime }
+                      }
+                    }
+                    ... on Movie { runtime }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "items": [
+              {
+                "__typename": "Book",
+                "title": "GoT",
+                "related": {
+                  "__typename": "Movie",
+                  "runtime": 120
+                }
+              },
+              {
+                "__typename": "Movie",
+                "runtime": 90
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// A fragment that validates as a possible spread but does NOT apply to the runtime type:
+    /// `... on Movie { special }` (`special: String!`) against a `Book` object. Its fields —
+    /// including the Non-Null `special` — must be silently skipped, NOT treated as a missing
+    /// Non-Null that bubbles. The `Book` must survive.
+    async fn fragment_validates_but_does_not_apply() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.nested-abstract.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"items":[
+                    {"__typename":"Book","id":"b1"},
+                    {"__typename":"Movie","id":"m2","special":"x"}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  items {
+                    __typename
+                    id
+                    ... on Movie { special }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        // `Book` doesn't match `... on Movie`, so `special` (Non-Null) is not collected for it
+        // and must not bubble — the `Book` survives with just its interface fields.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "items": [
+              {
+                "__typename": "Book",
+                "id": "b1"
+              },
+              {
+                "__typename": "Movie",
+                "id": "m2",
+                "special": "x"
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// Distributed union: subgraph A owns `feed` and resolves each member's `__typename` + key
+    /// (`id`); subgraph B owns the type-specific fields (`Photo.caption`, `Video.duration`).
+    /// The router must issue per-concrete-type `_entities` fetches to B and merge them back by
+    /// `__typename`, so each member gets exactly its own fields.
+    async fn distributed_union_per_type_entity_fetch() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "a": {
+                    "query": {
+                        "feed": [
+                            { "__typename": "Photo", "id": "p1" },
+                            { "__typename": "Video", "id": "v1" },
+                            { "__typename": "Photo", "id": "p2" }
+                        ]
+                    }
+                },
+                "b": {
+                    "entities": [
+                        { "__typename": "Photo", "id": "p1", "caption": "sunset" },
+                        { "__typename": "Video", "id": "v1", "duration": 120 },
+                        { "__typename": "Photo", "id": "p2", "caption": "beach" }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.distributed-union.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  feed {
+                    __typename
+                    ... on Photo { caption }
+                    ... on Video { duration }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "feed": [
+              {
+                "__typename": "Photo",
+                "caption": "sunset"
+              },
+              {
+                "__typename": "Video",
+                "duration": 120
+              },
+              {
+                "__typename": "Photo",
+                "caption": "beach"
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// Abstract-type entities with a Non-Null field erroring in one member. Subgraph B's
+    /// `_entities` returns `null` for `Photo.caption` (`String!`) on one entity. That `null`
+    /// must bubble up through the Non-Null leaf, collapsing the `Photo`. Because `feedNullable`
+    /// has a nullable element (`[Media]!`), the collapsed member survives as `null` and its
+    /// siblings (including the other `Photo`) remain intact.
+    async fn abstract_entities_nonnull_error_propagation() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "a": {
+                    "query": {
+                        "feedNullable": [
+                            { "__typename": "Photo", "id": "p1" },
+                            { "__typename": "Video", "id": "v1" },
+                            { "__typename": "Photo", "id": "p2" }
+                        ]
+                    }
+                },
+                "b": {
+                    "entities": [
+                        // p1's Non-Null `caption` comes back `null` -> the Photo collapses.
+                        { "__typename": "Photo", "id": "p1", "caption": null },
+                        { "__typename": "Video", "id": "v1", "duration": 120 },
+                        { "__typename": "Photo", "id": "p2", "caption": "beach" }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.distributed-union.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  feedNullable {
+                    __typename
+                    ... on Photo { caption }
+                    ... on Video { duration }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        // p1's `null` caption bubbles to the Photo; nullable list element keeps it as `null`.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "feedNullable": [
+              null,
+              {
+                "__typename": "Video",
+                "duration": 120
+              },
+              {
+                "__typename": "Photo",
+                "caption": "beach"
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// A2: a shared aliased response key (`v`) that maps to a DIFFERENT source field per
+    /// concrete type (`Book.title` vs `Movie.special`). The fields share a response shape
+    /// (both `String!`), which `FieldsInSetCanMerge` requires, but resolve from different
+    /// sources; the projection must emit `v` from the right source for each object.
+    async fn abstract_aliased_shared_field_per_type() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.nested-abstract.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // The router aliases both source fields to `v` in the subgraph query
+        // (`... on Book { v: title } ... on Movie { v: special }`), so the subgraph
+        // response is keyed by the alias `v`.
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"items":[
+                    {"__typename":"Book","v":"GoT"},
+                    {"__typename":"Movie","v":"Imax"}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  items {
+                    __typename
+                    ... on Book { v: title }
+                    ... on Movie { v: special }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "items": [
+              {
+                "__typename": "Book",
+                "v": "GoT"
+              },
+              {
+                "__typename": "Movie",
+                "v": "Imax"
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// A4: an interface field (`Item.id`) selected directly on the abstract type, combined with
+    /// concrete-only fields in fragments. The directly-selected field applies to every member;
+    /// the fragment fields scope to their concrete type.
+    async fn abstract_direct_interface_field_with_concrete_fragments() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "a": {
+                    "query": {
+                        "items": [
+                            { "__typename": "Book", "id": "b1", "title": "GoT" },
+                            { "__typename": "Movie", "id": "m1", "runtime": 90 }
+                        ]
+                    }
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.nested-abstract.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  items {
+                    id
+                    ... on Book { title }
+                    ... on Movie { runtime }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "items": [
+              {
+                "id": "b1",
+                "title": "GoT"
+              },
+              {
+                "id": "m1",
+                "runtime": 90
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// A5: a fragment whose type condition matches NONE of the runtime objects. All items are
+    /// `Book`, but only a `... on Movie` fragment carries selections — it must contribute
+    /// nothing, leaving each `Book` with just its directly-selected fields.
+    async fn abstract_fragment_matches_zero_objects() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "a": {
+                    "query": {
+                        "items": [
+                            { "__typename": "Book", "id": "b1", "title": "A" },
+                            { "__typename": "Book", "id": "b2", "title": "B" }
+                        ]
+                    }
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.nested-abstract.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  items {
+                    __typename
+                    id
+                    ... on Movie { runtime }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "items": [
+              {
+                "__typename": "Book",
+                "id": "b1"
+              },
+              {
+                "__typename": "Book",
+                "id": "b2"
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// A6: `@skip`/`@include` under an abstract type. A skipped Non-Null field (`Book.title`,
+    /// `String!`) must NOT be treated as a missing required value — it is simply removed, and
+    /// the `Book` must survive. An excluded fragment (`... on Movie @include(if: false)`)
+    /// contributes nothing.
+    async fn abstract_skip_include_no_overbubble() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "a": {
+                    "query": {
+                        "items": [
+                            { "__typename": "Book", "id": "b1", "title": "GoT" },
+                            { "__typename": "Movie", "id": "m1", "runtime": 90 }
+                        ]
+                    }
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.nested-abstract.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"query($skip: Boolean!, $inc: Boolean!) {
+                  items {
+                    __typename
+                    id
+                    ... on Book { title @skip(if: $skip) }
+                    ... on Movie @include(if: $inc) { runtime }
+                  }
+                }"#,
+                Some(sonic_rs::json!({ "skip": true, "inc": false })),
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        // `title` is skipped (no bubbling despite `String!`); the `Movie` fragment is excluded.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "items": [
+              {
+                "__typename": "Book",
+                "id": "b1"
+              },
+              {
+                "__typename": "Movie",
+                "id": "m1"
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// B1: a Non-Null abstract list element (`feed: [Media!]!`) whose member fully collapses.
+    /// Subgraph B returns `null` for `Photo.caption` (`String!`); the `null` bubbles to the
+    /// `Photo`, but the element is Non-Null and so is the list, so it bubbles all the way to
+    /// `data: null`.
+    async fn abstract_nonnull_list_element_collapse_to_data_null() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "a": {
+                    "query": {
+                        "feed": [
+                            { "__typename": "Photo", "id": "p1" },
+                            { "__typename": "Video", "id": "v1" }
+                        ]
+                    }
+                },
+                "b": {
+                    "entities": [
+                        { "__typename": "Photo", "id": "p1", "caption": null },
+                        { "__typename": "Video", "id": "v1", "duration": 120 }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.distributed-union.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  feed {
+                    __typename
+                    ... on Photo { caption }
+                    ... on Video { duration }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": null
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// B2: a subgraph field error whose `path` runs through an abstract LIST element
+    /// (`searchMeta[1].meta.wordCount`). The router must preserve the path — including the
+    /// numeric list index and the concrete-type field keys — in the merged response.
+    async fn error_path_through_abstract_list_element() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.interface-shared-field.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"searchMeta":[
+                    {"__typename":"Article","meta":{"wordCount":100}},
+                    {"__typename":"Video","meta":{"wordCount":null}}
+                ]},"errors":[{"message":"wordCount failed","path":["searchMeta",1,"meta","wordCount"]}]}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  searchMeta {
+                    __typename
+                    meta { wordCount }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "searchMeta": [
+              {
+                "__typename": "Article",
+                "meta": {
+                  "wordCount": 100
+                }
+              },
+              {
+                "__typename": "Video",
+                "meta": {
+                  "wordCount": null
+                }
+              }
+            ]
+          },
+          "errors": [
+            {
+              "message": "wordCount failed",
+              "path": [
+                "searchMeta",
+                1,
+                "meta",
+                "wordCount"
+              ],
+              "extensions": {
+                "code": "DOWNSTREAM_SERVICE_ERROR",
+                "serviceName": "a"
+              }
+            }
+          ]
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// B3: partial `data` + `errors` together. One union member's nullable field
+    /// (`Order.version`) errors; the `null` stays put (nullable), so `data` keeps the full
+    /// shape AND an `errors` entry is present — `data` is NOT collapsed.
+    async fn partial_data_with_errors_on_abstract() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.union-shared-field.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"payloads":[
+                    {"__typename":"ApprovalFlowCreated","order":{"id":"1","version":5}},
+                    {"__typename":"ApprovalFlowCompleted","order":{"id":"2","version":null}}
+                ]},"errors":[{"message":"version failed","path":["payloads",1,"order","version"]}]}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  payloads {
+                    __typename
+                    ... on ApprovalFlowCreated { order { id version } }
+                    ... on ApprovalFlowCompleted { order { id version } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "payloads": [
+              {
+                "__typename": "ApprovalFlowCreated",
+                "order": {
+                  "id": "1",
+                  "version": 5
+                }
+              },
+              {
+                "__typename": "ApprovalFlowCompleted",
+                "order": {
+                  "id": "2",
+                  "version": null
+                }
+              }
+            ]
+          },
+          "errors": [
+            {
+              "message": "version failed",
+              "path": [
+                "payloads",
+                1,
+                "order",
+                "version"
+              ],
+              "extensions": {
+                "code": "DOWNSTREAM_SERVICE_ERROR",
+                "serviceName": "a"
+              }
+            }
+          ]
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// B4: `@skip`/`@include` removing a Non-Null field at the root. A skipped Non-Null field
+    /// is removed from the operation entirely and must NOT be treated as a missing required
+    /// value — `data` must keep the rest of the selection.
+    async fn skip_nonnull_root_field_no_overbubble() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "a": {
+                    "query": {
+                        "items": [
+                            { "__typename": "Book", "id": "b1", "title": "GoT" }
+                        ]
+                    }
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.nested-abstract.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"query($skip: Boolean!) {
+                  items {
+                    id
+                    ... on Book { title @skip(if: $skip) }
+                  }
+                }"#,
+                Some(sonic_rs::json!({ "skip": true })),
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "items": [
+              {
+                "id": "b1"
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// Nested abstract overlap: a field (`detail`) is selected BOTH directly on an
+    /// interface (`Thing.detail`) and inside a concrete fragment (`... on Gadget`),
+    /// and `detail`'s own type (`Detail`) is abstract. For a `Gadget`, the two
+    /// `detail` selections merge, and their child `meta` collides as
+    /// `meta(any) { a }` + `meta(RichDetail) { b }`. That overlap must be re-resolved
+    /// per concrete `Detail` type, otherwise a `RichDetail` object matches both and
+    /// `meta` is projected twice (and `b` leaks). The `Widget` (no `... on Gadget`)
+    /// keeps only the interface-level `meta { a }`, even when its `detail` is a
+    /// `RichDetail` — proving the `b` selection stays scoped to the `Gadget` branch.
+    async fn nested_abstract_overlap_reresolves_merged_children() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.nested-abstract-overlap.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      a:
+                        url: "http://{host}/a"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let _a = server
+            .mock("POST", "/a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"things":[
+                    {"__typename":"Gadget","detail":{"__typename":"RichDetail","meta":{"a":"A1","b":"B1"}}},
+                    {"__typename":"Gadget","detail":{"__typename":"BasicDetail","meta":{"a":"A2"}}},
+                    {"__typename":"Widget","detail":{"__typename":"RichDetail","meta":{"a":"A3","b":"B3"}}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  things {
+                    detail { meta { a } }
+                    ... on Gadget { detail { ... on RichDetail { meta { b } } } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        // Gadget+RichDetail: interface `meta { a }` merges with the Gadget/RichDetail
+        // `meta { b }` -> `{ a, b }` (one `meta`, not two). Gadget+BasicDetail: only
+        // `{ a }`. Widget+RichDetail: only `{ a }` — `b` never leaks past the `Gadget`
+        // branch even though the runtime `detail` is a `RichDetail`.
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "things": [
+              {
+                "detail": {
+                  "meta": {
+                    "a": "A1",
+                    "b": "B1"
+                  }
+                }
+              },
+              {
+                "detail": {
+                  "meta": {
+                    "a": "A2"
+                  }
+                }
+              },
+              {
+                "detail": {
+                  "meta": {
+                    "a": "A3"
+                  }
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
 }

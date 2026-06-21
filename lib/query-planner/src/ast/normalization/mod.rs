@@ -2515,4 +2515,115 @@ mod tests {
         "#
         );
     }
+
+    // #[test]
+    // fn multiple_directives_and_conditions_and_fragments() {
+    //     let schema = parse_schema(
+    //         r#"
+    //         enum WeightUnit {
+    //           KG
+    //           LB
+    //           G
+    //         }
+
+    //         interface Node {
+    //           id: ID!
+    //         }
+
+    //         interface Animal implements Node {
+    //           id: ID!
+    //           name: String!
+    //         }
+
+    //         interface Pet implements Animal & Node {
+    //           id: ID!
+    //           name: String!
+    //           bestFriend: Animal
+    //           weight(unit: WeightUnit = KG): Float
+    //         }
+
+    //         type Dog implements Pet & Animal & Node {
+    //           id: ID!
+    //           name: String!
+    //           bestFriend: Animal
+    //           weight(unit: WeightUnit = KG): Float
+    //           nickname: String
+    //           tags: [String!]
+    //         }
+
+    //         type Cat implements Pet & Animal & Node {
+    //           id: ID!
+    //           name: String!
+    //           bestFriend: Cat # covariant override
+    //           weight(unit: WeightUnit = KG): Float
+    //           age: Int
+    //           tags: [String!]
+    //         }
+
+    //         type Robot implements Node {
+    //           id: ID!
+    //           model: String!
+    //           weight(unit: WeightUnit = KG): Float
+    //         }
+
+    //         union SearchResult = Dog | Cat | Robot
+
+    //         type Owner implements Node {
+    //           id: ID!
+    //           name: String!
+    //           pets: [Pet!]!
+    //           primaryPet: Pet
+    //         }
+
+    //         type Query {
+    //           pet: Pet
+    //           animal: Animal
+    //           node: Node
+    //           search: SearchResult
+    //           searchMany: [SearchResult!]!
+    //           pets: [Pet!]!
+    //           owner: Owner
+    //         }
+    //         "#,
+    //     );
+    //     let supergraph = SupergraphState::new(&schema);
+
+    //     insta::assert_snapshot!(
+    //         pretty_query(
+    //             normalize_operation(
+    //                 &supergraph,
+    //                 &parse_query(
+    //                     r#"
+    //                     query SpreadDirective($withName: Boolean!, $deep: Boolean!) {
+    //                       node {
+    //                         id
+    //                         ...AnimalBits
+    //                         ... on Dog @skip(if: $deep) { id }
+    //                       }
+    //                     }
+
+    //                     fragment AnimalBits on Animal {
+    //                       name
+    //                       ... on Dog { nickname }
+    //                     }
+    //                     "#,
+    //                 )
+    //                 .expect("to parse"),
+    //                 None,
+    //             )
+    //             .expect("to normalize")
+    //             .to_string()
+    //         ),
+    //         @r###"
+    //     query SpreadDirective($withName: Boolean!, $deep: Boolean!) {
+    //       node {
+    //         id
+    //         ... on Dog @skip(if: $deep) {
+    //           nickname
+    //         }
+    //       }
+    //     }
+    //     "###
+    //     );
+    // }
 }

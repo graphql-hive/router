@@ -2,7 +2,7 @@ use ahash::HashSet;
 use indexmap::IndexMap;
 use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
 use std::sync::Arc;
-use tracing::warn;
+use tracing::{instrument, warn};
 
 use hive_router_query_planner::{
     ast::{
@@ -110,6 +110,15 @@ pub enum ProjectionValueSource {
     Null,
 }
 
+/// Selections collected while building a plan, grouped by response key.
+///
+/// `key` is the field name
+/// `value` is the list of possible variants, based on different type guards
+///
+/// They are kept apart so their nested selections never bleed into one another, and
+/// `resolve_variants` later collapses them into mutually-exclusive per-concrete-type plans.
+type SelectionVariants = IndexMap<String, Vec<FieldProjectionPlan>>;
+
 #[derive(Debug, Clone)]
 pub struct FieldProjectionPlan {
     pub field_name: String,
@@ -123,6 +132,21 @@ pub struct FieldProjectionPlan {
     pub parent_type_guard: Option<TypeCondition>,
     pub conditions: Option<FieldProjectionCondition>,
     pub value: ProjectionValueSource,
+}
+
+#[cfg(debug_assertions)]
+fn debug_plans_vec(plans: &[FieldProjectionPlan]) {
+    for (i, plan) in plans.iter().enumerate() {
+        tracing::trace!("plan {}:\n{}", i, plan);
+    }
+}
+
+#[cfg(debug_assertions)]
+fn debug_plans_map(plans: &SelectionVariants) {
+    for (i, (key, plans)) in plans.iter().enumerate() {
+        tracing::trace!("key {}: {}", i, key);
+        debug_plans_vec(plans);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +225,7 @@ impl FieldProjectionCondition {
 }
 
 impl FieldProjectionPlan {
+    #[instrument(level = "trace", skip_all)]
     pub fn from_operation(
         operation: &OperationDefinition,
         schema_metadata: &SchemaMetadata,
@@ -227,13 +252,18 @@ impl FieldProjectionPlan {
         (root_type_name, plans)
     }
 
+    #[instrument(level = "trace", skip_all, fields(
+      selection_set = %selection_set,
+      parent_type_name,
+      parent_condition = ?parent_condition,
+    ))]
     fn from_selection_set(
         selection_set: &SelectionSet,
         schema_metadata: &SchemaMetadata,
         parent_type_name: &str,
         parent_condition: &Option<FieldProjectionCondition>,
     ) -> Option<Vec<FieldProjectionPlan>> {
-        let mut field_selections: IndexMap<String, FieldProjectionPlan> = IndexMap::new();
+        let mut field_selections = SelectionVariants::new();
 
         for selection_item in &selection_set.items {
             match selection_item {
@@ -251,6 +281,7 @@ impl FieldProjectionPlan {
                         inline_fragment,
                         &mut field_selections,
                         schema_metadata,
+                        parent_type_name,
                         parent_condition,
                     );
                 }
@@ -264,9 +295,137 @@ impl FieldProjectionPlan {
         }
 
         if field_selections.is_empty() {
+            return None;
+        }
+
+        let resolved = Self::resolve_variants(field_selections, parent_type_name, schema_metadata);
+
+        if resolved.is_empty() {
             None
         } else {
-            Some(field_selections.into_values().collect())
+            Some(resolved)
+        }
+    }
+
+    /// Collapses each response key's variants into the final selections.
+    ///
+    /// A response key may be selected for multiple parent type with
+    /// different nested selections:
+    ///
+    /// `... on Article { meta { title } }`
+    /// `... on Video { meta { wordCount } }`
+    ///
+    /// `merge_plan` keeps those as separate selections so their nested selections
+    /// never "bleed" into one another.
+    ///
+    /// The end goal here is to merged the variants, so a field `meta` will not
+    /// have 2 plan records, but rather it will be one record, with multiple type guards.
+    ///
+    /// This way, at runtime, the `meta` plan will match exactly one variant, based on the concrete `__typename`
+    #[instrument(level = "trace", skip_all, fields(parent_type_name,))]
+    fn resolve_variants(
+        field_selections: SelectionVariants,
+        parent_type_name: &str,
+        schema_metadata: &SchemaMetadata,
+    ) -> Vec<FieldProjectionPlan> {
+        #[cfg(debug_assertions)]
+        {
+            tracing::trace!("input:\n");
+            debug_plans_map(&field_selections);
+        }
+        let mut concrete_types: Option<Vec<String>> = None;
+        let mut resolved = Vec::new();
+
+        for (_, variants) in field_selections {
+            let already_exclusive = variants.len() == 1
+                || variants
+                    .iter()
+                    .all(|v| matches!(v.parent_type_guard, Some(TypeCondition::Exact(_))));
+            if already_exclusive {
+                resolved.extend(variants);
+                continue;
+            }
+
+            let concrete_types = concrete_types.get_or_insert_with(|| {
+                let mut types: Vec<String> = schema_metadata
+                    .possible_types
+                    .get_possible_types(parent_type_name)
+                    .into_iter()
+                    .filter(|t| schema_metadata.is_object_type(t))
+                    .collect();
+                types.sort();
+                types
+            });
+
+            for concrete_type in concrete_types.iter() {
+                let merged = Self::merge_variants_for_type(
+                    &variants,
+                    concrete_type,
+                    parent_type_name,
+                    schema_metadata,
+                );
+                resolved.extend(merged);
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            tracing::trace!("output:\n");
+            debug_plans_vec(&resolved);
+        }
+
+        resolved
+    }
+
+    /// Merges every variant whose guard matches `concrete_type` into a single
+    /// plan scoped to `Exact(concrete_type)`. Returns `None` when no variant
+    /// applies to that type.
+    fn merge_variants_for_type(
+        variants: &[FieldProjectionPlan],
+        concrete_type: &str,
+        parent_type_name: &str,
+        schema_metadata: &SchemaMetadata,
+    ) -> Option<FieldProjectionPlan> {
+        let mut merged: Option<FieldProjectionPlan> = None;
+        for variant in variants {
+            let matches = variant
+                .parent_type_guard
+                .as_ref()
+                .is_none_or(|guard| guard.matches(concrete_type));
+            if !matches {
+                continue;
+            }
+            let mut scoped = variant.clone();
+            scoped.parent_type_guard = Some(TypeCondition::Exact(concrete_type.to_string()));
+            match &mut merged {
+                None => merged = Some(scoped),
+                Some(existing) => {
+                    Self::merge_matching(existing, scoped, parent_type_name, schema_metadata)
+                }
+            }
+        }
+        merged
+    }
+
+    fn field_output_type<'a>(
+        schema_metadata: &'a SchemaMetadata,
+        parent_type_name: &'a str,
+        guard: &'a Option<TypeCondition>,
+        field_name: &str,
+    ) -> Option<&'a str> {
+        if field_name == TYPENAME_FIELD_NAME {
+            return None;
+        }
+        let lookup = |candidate: &str| {
+            schema_metadata
+                .type_fields
+                .get(candidate)
+                .and_then(|fields| fields.get(field_name))
+                .map(|info| info.output_type_name.as_str())
+        };
+        match guard {
+            Some(guard) => Self::type_names_from(guard).into_iter().find_map(lookup),
+            None => lookup(parent_type_name),
         }
     }
 
@@ -482,42 +641,60 @@ impl FieldProjectionPlan {
         Self::or_optional(left, right)
     }
 
-    /// When the same field appears in multiple fragments,
-    /// this function combines them into a single plan by:
-    /// - Unioning type guards (e.g., Book + Magazine = OneOf(Book, Magazine))
-    /// - OR-ing conditions while preserving guard associations
-    /// - Recursively merging child selections
+    /// Adds a plan to the selection map. Selections are grouped by response key,
+    /// and within a key kept as separate variants per parent type guard.
+    ///
+    /// `merge_plan` will add a common-field (a field that's relevant to multiple plans) to
+    /// both plans.
+    ///
+    /// A later process, `resolve_variants` processes the common fields and "bubble" it if possible.
+    #[instrument(level = "trace", skip_all, fields(parent_type_name))]
     fn merge_plan(
-        field_selections: &mut IndexMap<String, FieldProjectionPlan>,
+        field_selections: &mut SelectionVariants,
         plan_to_merge: FieldProjectionPlan,
+        parent_type_name: &str,
+        schema_metadata: &SchemaMetadata,
     ) {
-        let Some(existing_plan) = field_selections.get_mut(&plan_to_merge.response_key) else {
-            // First time seeing this field - just insert it
-            field_selections.insert(plan_to_merge.response_key.clone(), plan_to_merge);
+        let Some(variants) = field_selections.get_mut(plan_to_merge.response_key.as_str()) else {
+            field_selections.insert(plan_to_merge.response_key.clone(), vec![plan_to_merge]);
             return;
         };
 
-        // Capture guards before merging, needed for condition association
-        let existing_guard = existing_plan.parent_type_guard.clone();
-        let new_guard = plan_to_merge.parent_type_guard.clone();
+        match variants
+            .iter_mut()
+            .find(|v| v.parent_type_guard == plan_to_merge.parent_type_guard)
+        {
+            Some(existing) => {
+                Self::merge_matching(existing, plan_to_merge, parent_type_name, schema_metadata)
+            }
+            None => variants.push(plan_to_merge),
+        }
+    }
 
-        // Merge type guards using OR semantics (union of when to include the field)
-        // - None means "applies to all types" (no type restriction)
-        // - Some(guard) means "applies only to specific types"
-        existing_plan.parent_type_guard = match (
-            existing_plan.parent_type_guard.take(),
-            plan_to_merge.parent_type_guard,
-        ) {
-            (None, _) | (_, None) => None, // None (all types) subsumes any specific guard
-            (Some(left), Some(right)) => Some(left.union(right)),
-        };
-
+    /// Merges a plan into an existing one with the same response key and the same type guard
+    #[instrument(level = "trace", skip_all, fields(parent_type_name))]
+    fn merge_matching(
+        existing_plan: &mut FieldProjectionPlan,
+        plan_to_merge: FieldProjectionPlan,
+        parent_type_name: &str,
+        schema_metadata: &SchemaMetadata,
+    ) {
+        // Same guard on both sides, so there is nothing to union here.
         existing_plan.conditions = Self::merge_conditions(
-            &existing_guard,
+            &existing_plan.parent_type_guard,
             existing_plan.conditions.take(),
-            &new_guard,
+            &existing_plan.parent_type_guard,
             plan_to_merge.conditions,
         );
+
+        // Children live one level down, under this field's output type.
+        let child_parent_type = Self::field_output_type(
+            schema_metadata,
+            parent_type_name,
+            &existing_plan.parent_type_guard,
+            &existing_plan.field_name,
+        )
+        .unwrap_or(parent_type_name);
 
         match (&mut existing_plan.value, plan_to_merge.value) {
             (
@@ -535,20 +712,29 @@ impl FieldProjectionPlan {
                             let new_selections_vec = Arc::try_unwrap(new_selections)
                                 .unwrap_or_else(|arc| (*arc).clone());
 
-                            // Convert Vec to Map for efficient merging by response_key
-                            let mut selections_map: IndexMap<String, FieldProjectionPlan> =
-                                selections_mut
-                                    .drain(..)
-                                    .map(|plan| (plan.response_key.clone(), plan))
-                                    .collect();
-
-                            // Recursively merge each child selection
+                            // Merge children, keeping variants per guard separate.
+                            let mut child_selections = SelectionVariants::new();
+                            for child in selections_mut.drain(..) {
+                                child_selections
+                                    .entry(child.response_key.clone())
+                                    .or_default()
+                                    .push(child);
+                            }
                             for new_plan in new_selections_vec {
-                                Self::merge_plan(&mut selections_map, new_plan);
+                                Self::merge_plan(
+                                    &mut child_selections,
+                                    new_plan,
+                                    child_parent_type,
+                                    schema_metadata,
+                                );
                             }
 
-                            // Convert back to Vec for efficient iteration during projection
-                            selections_mut.extend(selections_map.into_values());
+                            // Re-resolve in case merging introduced overlapping variants.
+                            selections_mut.extend(Self::resolve_variants(
+                                child_selections,
+                                child_parent_type,
+                                schema_metadata,
+                            ));
                         }
                         None => *existing_selections = Some(new_selections),
                     }
@@ -616,9 +802,15 @@ impl FieldProjectionPlan {
         }
     }
 
+    #[instrument(level = "trace", skip_all, fields(
+      field_name = field.name,
+      field_alias = field.alias.as_deref(),
+      parent_type_name,
+      parent_condition = ?parent_condition,
+    ))]
     fn process_field(
         field: &FieldSelection,
-        field_selections: &mut IndexMap<String, FieldProjectionPlan>,
+        field_selections: &mut SelectionVariants,
         schema_metadata: &SchemaMetadata,
         parent_type_name: &str,
         parent_condition: &Option<FieldProjectionCondition>,
@@ -750,13 +942,25 @@ impl FieldProjectionPlan {
             }
         };
 
-        Self::merge_plan(field_selections, new_plan);
+        Self::merge_plan(
+            field_selections,
+            new_plan,
+            parent_type_name,
+            schema_metadata,
+        );
     }
 
+    #[instrument(level = "trace", skip_all, fields(
+      inline_fragment_type = inline_fragment.type_condition,
+      fragment_str = %inline_fragment.selections,
+      parent_type_name,
+      parent_condition = ?parent_condition,
+    ))]
     fn process_inline_fragment(
         inline_fragment: &InlineFragmentSelection,
-        field_selections: &mut IndexMap<String, FieldProjectionPlan>,
+        field_selections: &mut SelectionVariants,
         schema_metadata: &SchemaMetadata,
+        parent_type_name: &str,
         parent_condition: &Option<FieldProjectionCondition>,
     ) {
         let inline_fragment_type = &inline_fragment.type_condition;
@@ -795,7 +999,12 @@ impl FieldProjectionPlan {
             }
 
             for selection in inline_fragment_selections {
-                Self::merge_plan(field_selections, selection);
+                Self::merge_plan(
+                    field_selections,
+                    selection,
+                    parent_type_name,
+                    schema_metadata,
+                );
             }
         }
     }
@@ -836,13 +1045,16 @@ impl Display for TypeCondition {
             TypeCondition::Exact(type_name) => write!(f, "Exact({})", type_name),
             TypeCondition::OneOf(types) => {
                 write!(f, "OneOf(")?;
-                let types_vec: Vec<_> = types.iter().collect();
+                let mut types_vec: Vec<_> = types.iter().collect();
+                types_vec.sort(); // for consistent output
+
                 for (i, type_name) in types_vec.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{}", type_name)?;
                 }
+
                 write!(f, ")")
             }
         }
@@ -930,4 +1142,457 @@ impl PrettyDisplay for FieldProjectionPlan {
         writeln!(f, "{}}}", indent)?;
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FieldProjectionPlan;
+    use crate::introspection::schema::SchemaWithMetadata;
+    use hive_router_query_planner::{
+        ast::normalization::normalize_operation,
+        consumer_schema::ConsumerSchema,
+        state::supergraph_state::SupergraphState,
+        utils::parsing::{parse_operation, parse_schema},
+    };
+
+    const SCHEMA_1: &str = r#"
+        type Query {
+            search: [SearchResult!]!
+            feed: [Content!]!
+            concrete: ConcreteType
+        }
+
+        type ConcreteType {
+            id: ID!
+            test: String!
+            someEnum: SomeEnum
+            inner: InnerType
+        }
+
+        enum SomeEnum {
+            TEST
+        }
+
+        type InnerType {
+            inner: Boolean
+        }
+
+        union SearchResult = Article | Video
+
+        interface Content {
+            id: ID!
+            meta: Meta!
+        }
+
+        type Article implements Content {
+            id: ID!
+            meta: Meta!
+            headline: String!
+        }
+
+        type Video implements Content {
+            id: ID!
+            meta: Meta!
+            duration: Int!
+        }
+
+        type Photo implements Content {
+            id: ID!
+            meta: Meta!
+        }
+
+        type Meta {
+            title: String
+            wordCount: Int!
+            arch: String!
+        }
+    "#;
+
+    fn plan(schema: &str, query: &str) -> String {
+        let supergraph = parse_schema(schema);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+
+        let operation = parse_operation(query);
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let normalized =
+            normalize_operation(&supergraph_state, &operation, None).expect("failed to normalize");
+        println!("{}", normalized.operation);
+        let (_, selections) =
+            FieldProjectionPlan::from_operation(&normalized.operation, &schema_metadata);
+
+        selections
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn simple_concrete_mixed_fields_defs() {
+        insta::assert_snapshot!(plan(SCHEMA_1,
+            r#"{
+                concrete {
+                    id
+                    test
+                    someEnum
+                    inner {
+                        inner
+                    }
+                }
+            }"#
+        ), @r###"
+        concrete: {
+          selections:
+            id: {
+            }
+            test: {
+            }
+            someEnum: {
+              conditions: EnumValues(TEST)
+            }
+            inner: {
+              selections:
+                inner: {
+                }
+            }
+        }
+        "###);
+    }
+
+    #[test]
+    fn inline_fragment_on_concrete_type_with_dups() {
+        insta::assert_snapshot!(plan(SCHEMA_1,
+            r#"{
+                concrete {
+                  ... on ConcreteType {
+                    id
+                    inner {
+                        inner
+                    }
+                  }
+                  test
+                  someEnum
+                  inner {
+                      inner
+                  }
+                }
+            }"#
+        ), @r###"
+        concrete: {
+          selections:
+            id: {
+            }
+            inner: {
+              selections:
+                inner: {
+                }
+            }
+            test: {
+            }
+            someEnum: {
+              conditions: EnumValues(TEST)
+            }
+        }
+        "###);
+    }
+
+    /// #1166: union members select the shared key `meta` with disjoint
+    /// sub-fields.
+    #[test]
+    fn union_disjoint_fragments_kept_per_type() {
+        insta::assert_snapshot!(plan(SCHEMA_1,
+            r#"{
+                search {
+                    __typename
+                    ... on Article { meta { title wordCount } }
+                    ... on Video { meta { title arch } }
+                }
+            }"#
+        ), @r###"
+        search: {
+          conditions: FieldType(OneOf(Article, SearchResult, Video))
+          selections:
+            __typename: {
+            }
+            meta: {
+              type guard: Exact(Article)
+              selections:
+                title: {
+                }
+                wordCount: {
+                }
+            }
+            meta: {
+              type guard: Exact(Video)
+              selections:
+                title: {
+                }
+                arch: {
+                }
+            }
+        }
+        "###);
+    }
+
+    /// An "unguarded" selection (no concrete type) of `meta` (on the `Content` interface) overlaps a
+    /// guarded one (`... on Article`).
+    ///
+    /// The overlap is split per concrete type:
+    /// `Article` -> merges both
+    /// `Video`/`Photo` keep only the shared field
+    #[test]
+    fn interface_overlapping_guard_splits_per_type() {
+        insta::assert_snapshot!(plan(SCHEMA_1,
+            r#"{
+                feed {
+                    meta { title }
+                    ... on Article { meta { wordCount } }
+                }
+            }"#
+        ), @r###"
+        feed: {
+          conditions: FieldType(OneOf(Article, Content, Photo, Video))
+          selections:
+            meta: {
+              type guard: Exact(Article)
+              selections:
+                title: {
+                }
+                wordCount: {
+                }
+            }
+            meta: {
+              type guard: Exact(Photo)
+              selections:
+                title: {
+                }
+            }
+            meta: {
+              type guard: Exact(Video)
+              selections:
+                title: {
+                }
+            }
+        }
+        "###);
+    }
+
+    /// Same key, same guard, same selection from two fragments collapses back
+    /// into a single plan (no duplications).
+    ///
+    /// DOTAN: Added this because I was concered that doing split/merge of the plans based of type,
+    /// might end up with duplicate projections, now that it's no longer a single one.
+    #[test]
+    fn same_guard_fragments_merge_into_one() {
+        insta::assert_snapshot!(plan(SCHEMA_1,
+            r#"{
+                search {
+                    ... on Article { meta { title } }
+                    ... on Article { meta { title } }
+                }
+            }"#
+        ), @r###"
+        search: {
+          conditions: FieldType(OneOf(Article, SearchResult, Video))
+          selections:
+            meta: {
+              type guard: Exact(Article)
+              selections:
+                title: {
+                }
+            }
+        }
+        "###);
+    }
+
+    const SCHEMA_2: &str = r#"
+    enum WeightUnit { KG LB G }
+
+    interface Node {
+      id: ID!
+    }
+
+    interface Animal implements Node {
+      id: ID!
+      name: String!
+    }
+
+    interface Pet implements Animal & Node {
+      id: ID!
+      name: String!
+      bestFriend: Animal
+      weight(unit: WeightUnit = KG): Float
+    }
+
+    type Dog implements Pet & Animal & Node {
+      id: ID!
+      name: String!
+      bestFriend: Animal
+      weight(unit: WeightUnit = KG): Float
+      nickname: String
+      tags: [String!]
+    }
+
+    type Cat implements Pet & Animal & Node {
+      id: ID!
+      name: String!
+      bestFriend: Cat                     # covariant override
+      weight(unit: WeightUnit = KG): Float
+      age: Int
+      tags: [String!]
+    }
+
+    type Robot implements Node {
+      id: ID!
+      model: String!
+      weight(unit: WeightUnit = KG): Float
+    }
+
+    union SearchResult = Dog | Cat | Robot
+
+    type Owner implements Node {
+      id: ID!
+      name: String!
+      pets: [Pet!]!
+      primaryPet: Pet
+    }
+
+    type Query {
+      pet: Pet
+      animal: Animal
+      node: Node
+      search: SearchResult
+      searchMany: [SearchResult!]!
+      pets: [Pet!]!
+      owner: Owner
+    }
+    "#;
+
+    /// When the fragment's id merges into the existing id entry, the key keeps the position of its
+    /// first occurrence — it does not move to after nickname.
+    #[test]
+    fn field_order_when_grouping_with_fragments() {
+        let plan = plan(
+            SCHEMA_2,
+            r#"
+        query FieldOrder {
+          animal {
+            name
+            id
+            ... on Dog {
+              id
+              nickname
+            }
+          }
+        }"#,
+        );
+
+        insta::assert_snapshot!(plan, @r###"
+        animal: {
+          conditions: FieldType(OneOf(Animal, Cat, Dog, Pet))
+          selections:
+            name: {
+            }
+            id: {
+              type guard: Exact(Cat)
+            }
+            id: {
+              type guard: Exact(Dog)
+            }
+            nickname: {
+              type guard: Exact(Dog)
+            }
+        }
+        "###);
+    }
+
+    #[test]
+    fn multiple_aliases() {
+        let plan = plan(
+            SCHEMA_2,
+            r#"
+            query AliasFanout {
+              pet {
+                ... on Dog {
+                  kg: weight(unit: KG)
+                  lb: weight(unit: LB)
+                  g:  weight(unit: G)
+                }
+                ... on Cat {
+                  kg: weight(unit: KG)
+                }
+              }
+            }"#,
+        );
+
+        insta::assert_snapshot!(plan, @r###"
+        pet: {
+          conditions: FieldType(OneOf(Cat, Dog, Pet))
+          selections:
+            kg (alias for weight) {
+              type guard: Exact(Dog)
+            }
+            kg (alias for weight) {
+              type guard: Exact(Cat)
+            }
+            lb (alias for weight) {
+              type guard: Exact(Dog)
+            }
+            g (alias for weight) {
+              type guard: Exact(Dog)
+            }
+        }
+        "###);
+    }
+
+    // #[test]
+    // fn nested_redundant_fragments() {
+    //     let plan = plan(
+    //         SCHEMA_2,
+    //         r#"
+    //         query M_IdentityConditions {
+    //           pet {
+    //             ... on Pet {
+    //               ... on Pet {
+    //                 name
+    //                 ... on Animal { id }
+    //               }
+    //             }
+    //           }
+    //         }"#,
+    //     );
+
+    //     insta::assert_snapshot!(plan, @r###"
+    //     pet: {
+    //       conditions: FieldType(OneOf(Cat, Dog, Pet))
+    //       selections:
+    //         name: {
+    //         }
+    //     }
+    //     "###);
+    // }
+
+    // Directive on a named fragment spread, with a field merged across two fragments
+    // #[test]
+    // fn directive_on_named_fragment_spread_with_field_merged_across_two_fragments() {
+    //     let plan = plan(
+    //         SCHEMA_2,
+    //         r#"
+    //         query SpreadDirective($withName: Boolean!, $deep: Boolean!) {
+    //           node {
+    //             id
+    //             ...AnimalBits @include(if: $withName)
+    //             ... on Dog @skip(if: $deep) { nickname }
+    //           }
+    //         }
+
+    //         fragment AnimalBits on Animal {
+    //           name
+    //           ... on Dog { nickname }
+    //         }"#,
+    //     );
+
+    //     insta::assert_snapshot!(plan, @r###""###);
+    // }
 }
