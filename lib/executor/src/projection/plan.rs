@@ -134,12 +134,14 @@ pub struct FieldProjectionPlan {
     pub value: ProjectionValueSource,
 }
 
+#[cfg(debug_assertions)]
 fn debug_plans_vec(plans: &[FieldProjectionPlan]) {
     for (i, plan) in plans.iter().enumerate() {
         trace!("plan {}:\n{}", i, plan);
     }
 }
 
+#[cfg(debug_assertions)]
 fn debug_plans_map(plans: &SelectionVariants) {
     for (i, (key, plans)) in plans.iter().enumerate() {
         trace!("key {}: {}", i, key);
