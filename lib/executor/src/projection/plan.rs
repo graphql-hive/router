@@ -2,7 +2,7 @@ use ahash::HashSet;
 use indexmap::IndexMap;
 use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
 use std::sync::Arc;
-use tracing::{instrument, trace, warn};
+use tracing::{instrument, warn};
 
 use hive_router_query_planner::{
     ast::{
@@ -137,14 +137,14 @@ pub struct FieldProjectionPlan {
 #[cfg(debug_assertions)]
 fn debug_plans_vec(plans: &[FieldProjectionPlan]) {
     for (i, plan) in plans.iter().enumerate() {
-        trace!("plan {}:\n{}", i, plan);
+        tracing::trace!("plan {}:\n{}", i, plan);
     }
 }
 
 #[cfg(debug_assertions)]
 fn debug_plans_map(plans: &SelectionVariants) {
     for (i, (key, plans)) in plans.iter().enumerate() {
-        trace!("key {}: {}", i, key);
+        tracing::trace!("key {}: {}", i, key);
         debug_plans_vec(plans);
     }
 }
@@ -330,7 +330,7 @@ impl FieldProjectionPlan {
     ) -> Vec<FieldProjectionPlan> {
         #[cfg(debug_assertions)]
         {
-            trace!("input:\n");
+            tracing::trace!("input:\n");
             debug_plans_map(&field_selections);
         }
         let mut concrete_types: Option<Vec<String>> = None;
@@ -370,7 +370,7 @@ impl FieldProjectionPlan {
 
         #[cfg(debug_assertions)]
         {
-            trace!("output:\n");
+            tracing::trace!("output:\n");
             debug_plans_vec(&resolved);
         }
 
