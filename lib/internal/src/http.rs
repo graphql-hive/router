@@ -148,10 +148,17 @@ pub fn read_request_body_size(req: &HttpRequest) -> Option<u64> {
 const MAX_DRAIN_BYTES: usize = 64 * 1024;
 
 async fn drain_body_stream(body_stream: &mut web::types::Payload) {
-    let mut drained = 0usize;
+    let mut drained: usize = 0;
+
     while drained < MAX_DRAIN_BYTES {
         match body_stream.try_next().await {
-            Ok(Some(chunk)) => drained += chunk.len(),
+            Ok(Some(chunk)) => {
+                if chunk.is_empty() {
+                    break;
+                }
+
+                drained = drained.saturating_add(chunk.len());
+            }
             _ => break,
         }
     }
