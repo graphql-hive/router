@@ -51,6 +51,7 @@ pub async fn execute_plan<'exec>(
     response_header_sink: ResponseHeaderSink,
 ) -> Result<QueryPlanExecutionResult, PipelineError> {
     let execute_span = GraphQLExecuteSpan::new();
+
     let introspection_context = IntrospectionContext {
         query: planned_request
             .normalized_payload
@@ -58,6 +59,7 @@ pub async fn execute_plan<'exec>(
             .clone(),
         schema: Arc::clone(&supergraph.planner.consumer_schema.document),
         metadata: Arc::clone(&supergraph.metadata),
+        variables: planned_request.variable_payload.clone(),
     };
     async {
         let mut extensions = ExecutionResultExtensions::default();
