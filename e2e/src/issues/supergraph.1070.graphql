@@ -1,0 +1,74 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+  @link(url: "https://specs.apollo.dev/inaccessible/v0.2", for: SECURITY)
+{
+  query: Query
+}
+
+directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ARGUMENT_DEFINITION | SCALAR | ENUM | ENUM_VALUE | INPUT_OBJECT | INPUT_FIELD_DEFINITION
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+scalar join__FieldSet
+
+enum join__Graph {
+  SUBGRAPH_A @join__graph(name: "subgraph-a", url: "http://subgraph-a/graphql")
+  SUBGRAPH_B @join__graph(name: "subgraph-b", url: "http://subgraph-b/graphql")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+type ProductOffer
+  @join__type(graph: SUBGRAPH_A)
+{
+  price: Int!
+}
+
+type ProductSearchCriteria
+  @join__type(graph: SUBGRAPH_A, key: "partialCriteria")
+  @join__type(graph: SUBGRAPH_B, key: "partialCriteria")
+  @inaccessible
+{
+  partialCriteria: String!
+  fullCriteria: String! @join__field(graph: SUBGRAPH_A, external: true) @join__field(graph: SUBGRAPH_B)
+}
+
+type ProductSearchResultResponse
+  @join__type(graph: SUBGRAPH_A, key: "searchCriteria { partialCriteria }")
+  @join__type(graph: SUBGRAPH_A, key: "searchCriteria { partialCriteria }", extension: true)
+{
+  searchCriteria: ProductSearchCriteria! @inaccessible
+  bestOffer: ProductOffer! @join__field(graph: SUBGRAPH_A, requires: "searchCriteria {\n  fullCriteria\n}")
+}
+
+type Query
+  @join__type(graph: SUBGRAPH_A)
+  @join__type(graph: SUBGRAPH_B)
+{
+  productSearchResult(partialCriteria: String!): ProductSearchResultResponse! @join__field(graph: SUBGRAPH_A)
+}

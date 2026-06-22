@@ -3111,4 +3111,113 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1070
+    ///
+    /// Entity representations sent to `_entities` must always include `__typename`,
+    /// even when the end-user did not select it. Resolving `bestOffer` (a `@requires`
+    /// field) triggers an `_entities` fetch on `ProductSearchResultResponse`; a real
+    /// subgraph rejects a representation without `__typename` ("the _entities resolver
+    /// tried to load an entity for type 'undefined'"), so the mock mirrors that and
+    /// `bestOffer` (Non-Null) collapses the response when the type name is missing.
+    async fn issue_1070_entity_representation_includes_typename() {
+        use crate::testkit::{RequestLike, ResponseLike};
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|req: RequestLike| {
+                let body: serde_json::Value = serde_json::from_slice(req.body.as_ref()?).ok()?;
+                let query = body.get("query")?.as_str()?;
+                let is_entities = query.contains("_entities");
+
+                let data = match req.path.trim_start_matches('/') {
+                    "subgraph-a" if is_entities => {
+                        let reps = body.pointer("/variables/representations")?.as_array()?;
+                        let entities: Vec<serde_json::Value> = reps
+                            .iter()
+                            .map(|r| {
+                                if r.get("__typename").and_then(|t| t.as_str())
+                                    == Some("ProductSearchResultResponse")
+                                {
+                                    json!({ "__typename": "ProductSearchResultResponse", "bestOffer": { "price": 121 } })
+                                } else {
+                                    json!(null)
+                                }
+                            })
+                            .collect();
+                        json!({ "_entities": entities })
+                    }
+                    "subgraph-a" => json!({
+                        "productSearchResult": {
+                            "__typename": "ProductSearchResultResponse",
+                            "searchCriteria": { "__typename": "ProductSearchCriteria", "partialCriteria": "partialCriteria" }
+                        }
+                    }),
+                    "subgraph-b" => json!({
+                        "_entities": [{ "__typename": "ProductSearchCriteria", "fullCriteria": "full(partialCriteria)" }]
+                    }),
+                    _ => return None,
+                };
+
+                let mut headers = http::HeaderMap::new();
+                headers.insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/json"),
+                );
+                Some(ResponseLike::new(
+                    axum::http::StatusCode::OK,
+                    Some(json!({ "data": data }).to_string()),
+                    Some(headers),
+                ))
+            })
+            .build()
+            .start()
+            .await;
+        let subgraphs_url = subgraphs.url();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1070.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      subgraph-a:
+                        url: "{subgraphs_url}/subgraph-a"
+                      subgraph-b:
+                        url: "{subgraphs_url}/subgraph-b"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"query ReproQuery {
+                  productSearchResult(partialCriteria: "partialCriteria") {
+                    bestOffer {
+                      price
+                    }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "productSearchResult": {
+              "bestOffer": {
+                "price": 121
+              }
+            }
+          }
+        }
+        "#);
+    }
 }
