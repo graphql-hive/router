@@ -143,6 +143,20 @@ pub fn read_request_body_size(req: &HttpRequest) -> Option<u64> {
     req.extensions().get::<RequestBodySize>().map(|size| size.0)
 }
 
+/// Limit for draining a rejected request body. Keeps the connection
+/// reusable for typical over-limit requests without reading the whole thing
+const MAX_DRAIN_BYTES: usize = 64 * 1024;
+
+async fn drain_body_stream(body_stream: &mut web::types::Payload) {
+    let mut drained = 0usize;
+    while drained < MAX_DRAIN_BYTES {
+        match body_stream.try_next().await {
+            Ok(Some(chunk)) => drained += chunk.len(),
+            _ => break,
+        }
+    }
+}
+
 #[inline]
 pub async fn read_body_stream<R: RequestLike>(
     req: &R,
@@ -160,6 +174,17 @@ pub async fn read_body_stream<R: RequestLike>(
                 .map_err(|_| ReadBodyStreamError::InvalidContentLengthHeader)?;
             if content_length > max_size {
                 write_request_body_size(req, content_length as u64);
+
+                // Drain just small amount of the request body before rejecting,
+                // so the server can close the connection cleanly.
+                //
+                // Returning without consuming the body makes ntex reset the socket,
+                // and the client might read that as a socket error instead of the router's 413
+                // response.
+                //
+                // Note: `drain_body_stream` reads only a small amount of the body,
+                // so the client will not be blocked while draining.
+                drain_body_stream(&mut body_stream).await;
                 return Err(ReadBodyStreamError::PayloadTooLargeContentLength(max_size));
             }
             Some(content_length)
