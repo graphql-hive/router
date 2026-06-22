@@ -350,7 +350,7 @@ jobs:
         run: npm run ci:test:graphql-over-http
         working-directory: audits
       - name: Publish Test Results for comparison
-        uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2
+        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2
         if: (!cancelled())
         with:
           check_name: test / graphql-over-http
@@ -384,7 +384,7 @@ jobs:
           path: |
             ./audits/logs/*.log
       - name: Publish Test Results for comparison
-        uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2
+        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2
         if: (!cancelled())
         with:
           check_name: test / federation-audit
