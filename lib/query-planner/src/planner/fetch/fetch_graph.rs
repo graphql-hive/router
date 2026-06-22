@@ -1371,7 +1371,7 @@ fn process_requires_field_edge(
         // If the parent's output resolves a different type, then it's a root type.
         // We can use that as a parent.
         true => parent_fetch_step_index,
-        // If the parent's output resolves the same type, it manes we're in an entity call.
+        // If the parent's output resolves the same type, it means we're in an entity call.
         // We need to move up, as the entity call was created to fetch regular fields of the type
         // (those without @requires).
         //
@@ -1491,6 +1491,10 @@ fn process_requires_field_edge(
         key_to_reenter_at,
         key_to_reenter_subgraph.clone().selection_set,
     )?;
+
+    real_parent_fetch_step
+        .output
+        .add_selection_typename(key_to_reenter_at)?;
 
     fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
 

@@ -27,8 +27,8 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
         Fetch(service: "inventory") {
           {
             products {
-              upc
               __typename
+              upc
             }
           }
         },
@@ -238,8 +238,8 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
         Fetch(service: "inventory") {
           {
             products {
-              upc
               __typename
+              upc
             }
           }
         },
@@ -1148,6 +1148,83 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
               ... on Post {
                 author {
                   id
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+/// related: https://github.com/graphql-hive/router/issues/1070
+///
+/// this test confirms that a re-entry `_entities`
+fn requires_reentry_selects_entity_typename() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          productSearchResult(partialCriteria: "partialCriteria") {
+            bestOffer {
+              price
+            }
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/nested-key-requires-reentry.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "subgraph-a") {
+          {
+            productSearchResult(partialCriteria: "partialCriteria") {
+              __typename
+              searchCriteria {
+                partialCriteria
+                __typename
+              }
+            }
+          }
+        },
+        Flatten(path: "productSearchResult.searchCriteria") {
+          Fetch(service: "subgraph-b") {
+            {
+              ... on ProductSearchCriteria {
+                __typename
+                partialCriteria
+              }
+            } =>
+            {
+              ... on ProductSearchCriteria {
+                fullCriteria
+              }
+            }
+          },
+        },
+        Flatten(path: "productSearchResult") {
+          Fetch(service: "subgraph-a") {
+            {
+              ... on ProductSearchResultResponse {
+                __typename
+                searchCriteria {
+                  fullCriteria
+                  partialCriteria
+                }
+              }
+            } =>
+            {
+              ... on ProductSearchResultResponse {
+                bestOffer {
+                  price
                 }
               }
             }
