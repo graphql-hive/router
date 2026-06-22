@@ -918,8 +918,8 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             test {
-              id
               __typename
+              id
             }
           }
         },
@@ -993,7 +993,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{test{id __typename}}"
+            "operation": "{test{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -1500,8 +1500,8 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             test {
-              id
               __typename
+              id
             }
           }
         },
@@ -1550,7 +1550,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{test{id __typename}}"
+            "operation": "{test{__typename id}}"
           },
           {
             "kind": "Flatten",

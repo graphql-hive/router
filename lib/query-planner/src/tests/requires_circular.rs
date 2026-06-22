@@ -113,8 +113,8 @@ fn requires_circular_2() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             feed {
-              id
               __typename
+              id
             }
           }
         },
