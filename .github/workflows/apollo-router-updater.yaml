@@ -4,7 +4,12 @@ on:
     # Every 2 hours
     - cron: "0 */2 * * *"
   # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Apollo Router version"
+        required: true
+        type: string
 defaults:
   run:
     working-directory: ./apollo-router-workspace
@@ -30,8 +35,24 @@ jobs:
 
       - name: find updates
         id: check
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         run: |
           LATEST_VERSION=$(curl -H "User-Agent: Apollo-Router-Updater" -s -X GET https://crates.io/api/v1/crates/apollo-router | jq -r '.crate.max_version')
+          echo "latest_version=$LATEST_VERSION"
+          echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+
+          CURRENT_VERSION=$(cargo tree -p apollo-router | grep apollo-router | awk '{print $2}' | sed 's/^v//')
+          echo "current_version=$CURRENT_VERSION"
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          NEED_UPDATE=$( [ "$LATEST_VERSION" != "$CURRENT_VERSION" ] && echo 'true' || echo 'false' )
+          echo "update=$NEED_UPDATE"
+          echo "update=$NEED_UPDATE" >> $GITHUB_OUTPUT
+
+      - name: Set version from input
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          LATEST_VERSION="${{ github.event.inputs.version }}"
           echo "latest_version=$LATEST_VERSION"
           echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
 
