@@ -3114,13 +3114,6 @@ mod issues_e2e_tests {
 
     #[ntex::test]
     /// https://github.com/graphql-hive/router/issues/1070
-    ///
-    /// Entity representations sent to `_entities` must always include `__typename`,
-    /// even when the end-user did not select it. Resolving `bestOffer` (a `@requires`
-    /// field) triggers an `_entities` fetch on `ProductSearchResultResponse`; a real
-    /// subgraph rejects a representation without `__typename` ("the _entities resolver
-    /// tried to load an entity for type 'undefined'"), so the mock mirrors that and
-    /// `bestOffer` (Non-Null) collapses the response when the type name is missing.
     async fn issue_1070_entity_representation_includes_typename() {
         use crate::testkit::{RequestLike, ResponseLike};
         use serde_json::json;
