@@ -2516,114 +2516,211 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn multiple_directives_and_conditions_and_fragments() {
-    //     let schema = parse_schema(
-    //         r#"
-    //         enum WeightUnit {
-    //           KG
-    //           LB
-    //           G
-    //         }
+    #[test]
+    fn multiple_directives_and_conditions_and_fragments() {
+        let schema = parse_schema(
+            r#"
+            schema
+                @link(url: "https://specs.apollo.dev/link/v1.0")
+                @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+                query: Query
+            }
 
-    //         interface Node {
-    //           id: ID!
-    //         }
+            directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
 
-    //         interface Animal implements Node {
-    //           id: ID!
-    //           name: String!
-    //         }
+            directive @join__graph(name: String!, url: String!) on ENUM_VALUE
 
-    //         interface Pet implements Animal & Node {
-    //           id: ID!
-    //           name: String!
-    //           bestFriend: Animal
-    //           weight(unit: WeightUnit = KG): Float
-    //         }
+            directive @join__field(
+                graph: join__Graph
+                requires: join__FieldSet
+                provides: join__FieldSet
+                type: String
+                external: Boolean
+                override: String
+                usedOverridden: Boolean
+            ) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
 
-    //         type Dog implements Pet & Animal & Node {
-    //           id: ID!
-    //           name: String!
-    //           bestFriend: Animal
-    //           weight(unit: WeightUnit = KG): Float
-    //           nickname: String
-    //           tags: [String!]
-    //         }
+            directive @join__implements(
+                graph: join__Graph!
+                interface: String!
+            ) repeatable on OBJECT | INTERFACE
 
-    //         type Cat implements Pet & Animal & Node {
-    //           id: ID!
-    //           name: String!
-    //           bestFriend: Cat # covariant override
-    //           weight(unit: WeightUnit = KG): Float
-    //           age: Int
-    //           tags: [String!]
-    //         }
+            directive @join__type(
+                graph: join__Graph!
+                key: join__FieldSet
+                extension: Boolean! = false
+                resolvable: Boolean! = true
+                isInterfaceObject: Boolean! = false
+            ) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
 
-    //         type Robot implements Node {
-    //           id: ID!
-    //           model: String!
-    //           weight(unit: WeightUnit = KG): Float
-    //         }
+            directive @join__unionMember(
+                graph: join__Graph!
+                member: String!
+            ) repeatable on UNION
 
-    //         union SearchResult = Dog | Cat | Robot
+            scalar join__FieldSet
 
-    //         type Owner implements Node {
-    //           id: ID!
-    //           name: String!
-    //           pets: [Pet!]!
-    //           primaryPet: Pet
-    //         }
+            directive @link(
+                url: String
+                as: String
+                for: link__Purpose
+                import: [link__Import]
+            ) repeatable on SCHEMA
 
-    //         type Query {
-    //           pet: Pet
-    //           animal: Animal
-    //           node: Node
-    //           search: SearchResult
-    //           searchMany: [SearchResult!]!
-    //           pets: [Pet!]!
-    //           owner: Owner
-    //         }
-    //         "#,
-    //     );
-    //     let supergraph = SupergraphState::new(&schema);
+            scalar link__Import
 
-    //     insta::assert_snapshot!(
-    //         pretty_query(
-    //             normalize_operation(
-    //                 &supergraph,
-    //                 &parse_query(
-    //                     r#"
-    //                     query SpreadDirective($withName: Boolean!, $deep: Boolean!) {
-    //                       node {
-    //                         id
-    //                         ...AnimalBits
-    //                         ... on Dog @skip(if: $deep) { id }
-    //                       }
-    //                     }
+            enum link__Purpose {
+                """
+                `SECURITY` features provide metadata necessary to securely resolve fields.
+                """
+                SECURITY
 
-    //                     fragment AnimalBits on Animal {
-    //                       name
-    //                       ... on Dog { nickname }
-    //                     }
-    //                     "#,
-    //                 )
-    //                 .expect("to parse"),
-    //                 None,
-    //             )
-    //             .expect("to normalize")
-    //             .to_string()
-    //         ),
-    //         @r###"
-    //     query SpreadDirective($withName: Boolean!, $deep: Boolean!) {
-    //       node {
-    //         id
-    //         ... on Dog @skip(if: $deep) {
-    //           nickname
-    //         }
-    //       }
-    //     }
-    //     "###
-    //     );
-    // }
+                """
+                `EXECUTION` features provide metadata necessary for operation execution.
+                """
+                EXECUTION
+            }
+
+            enum join__Graph {
+                LOCAL @join__graph(name: "local", url: "")
+            }
+
+            type Dog implements Pet & Animal & Node
+                @join__type(graph: LOCAL)
+                @join__implements(graph: LOCAL, interface: "Pet")
+                @join__implements(graph: LOCAL, interface: "Animal")
+                @join__implements(graph: LOCAL, interface: "Node") {
+                id: ID!
+                name: String!
+                bestFriend: Animal
+                weight(unit: WeightUnit = KG): Float
+                nickname: String
+                tags: [String!]
+            }
+
+            type Cat implements Pet & Animal & Node
+                @join__type(graph: LOCAL)
+                @join__implements(graph: LOCAL, interface: "Pet")
+                @join__implements(graph: LOCAL, interface: "Animal")
+                @join__implements(graph: LOCAL, interface: "Node") {
+                id: ID!
+                name: String!
+                bestFriend: Cat
+                weight(unit: WeightUnit = KG): Float
+                age: Int
+                tags: [String!]
+            }
+
+            type Robot implements Node
+                @join__type(graph: LOCAL)
+                @join__implements(graph: LOCAL, interface: "Node") {
+                id: ID!
+                model: String!
+                weight(unit: WeightUnit = KG): Float
+            }
+
+            type Owner implements Node
+                @join__type(graph: LOCAL)
+                @join__implements(graph: LOCAL, interface: "Node") {
+                id: ID!
+                name: String!
+                pets: [Pet!]!
+                primaryPet: Pet
+            }
+
+            type Query @join__type(graph: LOCAL) {
+                pet: Pet
+                animal: Animal
+                node: Node
+                search: SearchResult
+                searchMany: [SearchResult!]!
+                pets: [Pet!]!
+                owner: Owner
+            }
+
+            interface Node @join__type(graph: LOCAL) {
+                id: ID!
+            }
+
+            interface Animal implements Node
+                @join__type(graph: LOCAL)
+                @join__implements(graph: LOCAL, interface: "Node") {
+                id: ID!
+                name: String!
+            }
+
+            interface Pet implements Animal & Node
+                @join__type(graph: LOCAL)
+                @join__implements(graph: LOCAL, interface: "Animal")
+                @join__implements(graph: LOCAL, interface: "Node") {
+                id: ID!
+                name: String!
+                bestFriend: Animal
+                weight(unit: WeightUnit = KG): Float
+            }
+
+            union SearchResult
+                @join__type(graph: LOCAL)
+                @join__unionMember(graph: LOCAL, member: "Dog")
+                @join__unionMember(graph: LOCAL, member: "Cat")
+                @join__unionMember(graph: LOCAL, member: "Robot") =
+                | Dog
+                | Cat
+                | Robot
+
+            enum WeightUnit @join__type(graph: LOCAL) {
+                KG @join__enumValue(graph: LOCAL)
+                LB @join__enumValue(graph: LOCAL)
+                G @join__enumValue(graph: LOCAL)
+            }
+
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query SpreadDirective($withName: Boolean!, $deep: Boolean!) {
+                          node {
+                            id
+                            ...AnimalBits @include(if: $withName)
+                            ... on Dog @skip(if: $deep) { nickname }
+                          }
+                        }
+
+                        fragment AnimalBits on Animal {
+                          name
+                          ... on Dog { nickname }
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @"
+        query SpreadDirective($withName: Boolean!, $deep: Boolean!) {
+          node {
+            id
+            ... on Cat @include(if: $withName) {
+              name
+            }
+            ... on Dog @include(if: $withName) {
+              name
+              nickname
+            }
+            ... on Dog @skip(if: $deep) {
+              nickname
+            }
+          }
+        }
+        "
+        );
+    }
 }

@@ -1156,56 +1156,132 @@ mod tests {
     };
 
     const SCHEMA_1: &str = r#"
-        type Query {
-            search: [SearchResult!]!
-            feed: [Content!]!
-            concrete: ConcreteType
-        }
+    schema
+        @link(url: "https://specs.apollo.dev/link/v1.0")
+        @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+        query: Query
+    }
 
-        type ConcreteType {
-            id: ID!
-            test: String!
-            someEnum: SomeEnum
-            inner: InnerType
-        }
+    directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
 
-        enum SomeEnum {
-            TEST
-        }
+    directive @join__graph(name: String!, url: String!) on ENUM_VALUE
 
-        type InnerType {
-            inner: Boolean
-        }
+    directive @join__field(
+        graph: join__Graph
+        requires: join__FieldSet
+        provides: join__FieldSet
+        type: String
+        external: Boolean
+        override: String
+        usedOverridden: Boolean
+    ) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
 
-        union SearchResult = Article | Video
+    directive @join__implements(
+        graph: join__Graph!
+        interface: String!
+    ) repeatable on OBJECT | INTERFACE
 
-        interface Content {
-            id: ID!
-            meta: Meta!
-        }
+    directive @join__type(
+        graph: join__Graph!
+        key: join__FieldSet
+        extension: Boolean! = false
+        resolvable: Boolean! = true
+        isInterfaceObject: Boolean! = false
+    ) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
 
-        type Article implements Content {
-            id: ID!
-            meta: Meta!
-            headline: String!
-        }
+    directive @join__unionMember(
+        graph: join__Graph!
+        member: String!
+    ) repeatable on UNION
 
-        type Video implements Content {
-            id: ID!
-            meta: Meta!
-            duration: Int!
-        }
+    scalar join__FieldSet
 
-        type Photo implements Content {
-            id: ID!
-            meta: Meta!
-        }
+    directive @link(
+        url: String
+        as: String
+        for: link__Purpose
+        import: [link__Import]
+    ) repeatable on SCHEMA
 
-        type Meta {
-            title: String
-            wordCount: Int!
-            arch: String!
-        }
+    scalar link__Import
+
+    enum link__Purpose {
+        """
+        `SECURITY` features provide metadata necessary to securely resolve fields.
+        """
+        SECURITY
+
+        """
+        `EXECUTION` features provide metadata necessary for operation execution.
+        """
+        EXECUTION
+    }
+
+    enum join__Graph {
+        LOCAL @join__graph(name: "local", url: "")
+    }
+
+    type Query @join__type(graph: LOCAL) {
+        search: [SearchResult!]!
+        feed: [Content!]!
+        concrete: ConcreteType
+    }
+
+    type ConcreteType @join__type(graph: LOCAL) {
+        id: ID!
+        test: String!
+        someEnum: SomeEnum
+        inner: InnerType
+    }
+
+    type InnerType @join__type(graph: LOCAL) {
+        inner: Boolean
+    }
+
+    type Article implements Content
+        @join__type(graph: LOCAL)
+        @join__implements(graph: LOCAL, interface: "Content") {
+        id: ID!
+        meta: Meta!
+        headline: String!
+    }
+
+    type Video implements Content
+        @join__type(graph: LOCAL)
+        @join__implements(graph: LOCAL, interface: "Content") {
+        id: ID!
+        meta: Meta!
+        duration: Int!
+    }
+
+    type Photo implements Content
+        @join__type(graph: LOCAL)
+        @join__implements(graph: LOCAL, interface: "Content") {
+        id: ID!
+        meta: Meta!
+    }
+
+    type Meta @join__type(graph: LOCAL) {
+        title: String
+        wordCount: Int!
+        arch: String!
+    }
+
+    interface Content @join__type(graph: LOCAL) {
+        id: ID!
+        meta: Meta!
+    }
+
+    union SearchResult
+        @join__type(graph: LOCAL)
+        @join__unionMember(graph: LOCAL, member: "Article")
+        @join__unionMember(graph: LOCAL, member: "Video") =
+        | Article
+        | Video
+
+    enum SomeEnum @join__type(graph: LOCAL) {
+        TEST @join__enumValue(graph: LOCAL)
+    }
     "#;
 
     fn plan(schema: &str, query: &str) -> String {
@@ -1407,25 +1483,76 @@ mod tests {
     }
 
     const SCHEMA_2: &str = r#"
-    enum WeightUnit { KG LB G }
-
-    interface Node {
-      id: ID!
+    schema
+      @link(url: "https://specs.apollo.dev/link/v1.0")
+      @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+      query: Query
     }
 
-    interface Animal implements Node {
-      id: ID!
-      name: String!
+    directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+    directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+    directive @join__field(
+      graph: join__Graph
+      requires: join__FieldSet
+      provides: join__FieldSet
+      type: String
+      external: Boolean
+      override: String
+      usedOverridden: Boolean
+    ) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+    directive @join__implements(
+      graph: join__Graph!
+      interface: String!
+    ) repeatable on OBJECT | INTERFACE
+
+    directive @join__type(
+      graph: join__Graph!
+      key: join__FieldSet
+      extension: Boolean! = false
+      resolvable: Boolean! = true
+      isInterfaceObject: Boolean! = false
+    ) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+    directive @join__unionMember(
+      graph: join__Graph!
+      member: String!
+    ) repeatable on UNION
+
+    scalar join__FieldSet
+
+    directive @link(
+      url: String
+      as: String
+      for: link__Purpose
+      import: [link__Import]
+    ) repeatable on SCHEMA
+
+    scalar link__Import
+
+    enum link__Purpose {
+      """
+      `SECURITY` features provide metadata necessary to securely resolve fields.
+      """
+      SECURITY
+
+      """
+      `EXECUTION` features provide metadata necessary for operation execution.
+      """
+      EXECUTION
     }
 
-    interface Pet implements Animal & Node {
-      id: ID!
-      name: String!
-      bestFriend: Animal
-      weight(unit: WeightUnit = KG): Float
+    enum join__Graph {
+      LOCAL @join__graph(name: "local", url: "")
     }
 
-    type Dog implements Pet & Animal & Node {
+    type Dog implements Pet & Animal & Node
+      @join__type(graph: LOCAL)
+      @join__implements(graph: LOCAL, interface: "Pet")
+      @join__implements(graph: LOCAL, interface: "Animal")
+      @join__implements(graph: LOCAL, interface: "Node") {
       id: ID!
       name: String!
       bestFriend: Animal
@@ -1434,31 +1561,37 @@ mod tests {
       tags: [String!]
     }
 
-    type Cat implements Pet & Animal & Node {
+    type Cat implements Pet & Animal & Node
+      @join__type(graph: LOCAL)
+      @join__implements(graph: LOCAL, interface: "Pet")
+      @join__implements(graph: LOCAL, interface: "Animal")
+      @join__implements(graph: LOCAL, interface: "Node") {
       id: ID!
       name: String!
-      bestFriend: Cat                     # covariant override
+      bestFriend: Cat
       weight(unit: WeightUnit = KG): Float
       age: Int
       tags: [String!]
     }
 
-    type Robot implements Node {
+    type Robot implements Node
+      @join__type(graph: LOCAL)
+      @join__implements(graph: LOCAL, interface: "Node") {
       id: ID!
       model: String!
       weight(unit: WeightUnit = KG): Float
     }
 
-    union SearchResult = Dog | Cat | Robot
-
-    type Owner implements Node {
+    type Owner implements Node
+      @join__type(graph: LOCAL)
+      @join__implements(graph: LOCAL, interface: "Node") {
       id: ID!
       name: String!
       pets: [Pet!]!
       primaryPet: Pet
     }
 
-    type Query {
+    type Query @join__type(graph: LOCAL) {
       pet: Pet
       animal: Animal
       node: Node
@@ -1466,6 +1599,42 @@ mod tests {
       searchMany: [SearchResult!]!
       pets: [Pet!]!
       owner: Owner
+    }
+
+    interface Node @join__type(graph: LOCAL) {
+      id: ID!
+    }
+
+    interface Animal implements Node
+      @join__type(graph: LOCAL)
+      @join__implements(graph: LOCAL, interface: "Node") {
+      id: ID!
+      name: String!
+    }
+
+    interface Pet implements Animal & Node
+      @join__type(graph: LOCAL)
+      @join__implements(graph: LOCAL, interface: "Animal")
+      @join__implements(graph: LOCAL, interface: "Node") {
+      id: ID!
+      name: String!
+      bestFriend: Animal
+      weight(unit: WeightUnit = KG): Float
+    }
+
+    union SearchResult
+      @join__type(graph: LOCAL)
+      @join__unionMember(graph: LOCAL, member: "Dog")
+      @join__unionMember(graph: LOCAL, member: "Cat")
+      @join__unionMember(graph: LOCAL, member: "Robot") =
+      | Dog
+      | Cat
+      | Robot
+
+    enum WeightUnit @join__type(graph: LOCAL) {
+      KG @join__enumValue(graph: LOCAL)
+      LB @join__enumValue(graph: LOCAL)
+      G @join__enumValue(graph: LOCAL)
     }
     "#;
 
@@ -1546,53 +1715,78 @@ mod tests {
         "###);
     }
 
-    // #[test]
-    // fn nested_redundant_fragments() {
-    //     let plan = plan(
-    //         SCHEMA_2,
-    //         r#"
-    //         query M_IdentityConditions {
-    //           pet {
-    //             ... on Pet {
-    //               ... on Pet {
-    //                 name
-    //                 ... on Animal { id }
-    //               }
-    //             }
-    //           }
-    //         }"#,
-    //     );
+    #[test]
+    fn nested_redundant_fragments() {
+        let plan = plan(
+            SCHEMA_2,
+            r#"
+            query M_IdentityConditions {
+              pet {
+                ... on Pet {
+                  ... on Pet {
+                    name
+                    ... on Animal { id }
+                  }
+                }
+              }
+            }"#,
+        );
 
-    //     insta::assert_snapshot!(plan, @r###"
-    //     pet: {
-    //       conditions: FieldType(OneOf(Cat, Dog, Pet))
-    //       selections:
-    //         name: {
-    //         }
-    //     }
-    //     "###);
-    // }
+        insta::assert_snapshot!(plan, @"
+        pet: {
+          conditions: FieldType(OneOf(Cat, Dog, Pet))
+          selections:
+            name: {
+            }
+            id: {
+              type guard: Exact(Cat)
+            }
+            id: {
+              type guard: Exact(Dog)
+            }
+        }
+        ");
+    }
 
-    // Directive on a named fragment spread, with a field merged across two fragments
-    // #[test]
-    // fn directive_on_named_fragment_spread_with_field_merged_across_two_fragments() {
-    //     let plan = plan(
-    //         SCHEMA_2,
-    //         r#"
-    //         query SpreadDirective($withName: Boolean!, $deep: Boolean!) {
-    //           node {
-    //             id
-    //             ...AnimalBits @include(if: $withName)
-    //             ... on Dog @skip(if: $deep) { nickname }
-    //           }
-    //         }
+    /// Directive on a named fragment spread, with a field merged across two fragments
+    #[test]
+    fn directive_on_named_fragment_spread_with_field_merged_across_two_fragments() {
+        let plan = plan(
+            SCHEMA_2,
+            r#"
+            query SpreadDirective($withName: Boolean!, $deep: Boolean!) {
+              node {
+                id
+                ...AnimalBits @include(if: $withName)
+                ... on Dog @skip(if: $deep) { nickname }
+              }
+            }
 
-    //         fragment AnimalBits on Animal {
-    //           name
-    //           ... on Dog { nickname }
-    //         }"#,
-    //     );
+            fragment AnimalBits on Animal {
+              name
+              ... on Dog { nickname }
+            }"#,
+        );
 
-    //     insta::assert_snapshot!(plan, @r###""###);
-    // }
+        insta::assert_snapshot!(plan, @"
+        node: {
+          conditions: FieldType(OneOf(Animal, Cat, Dog, Node, Owner, Pet, Robot))
+          selections:
+            id: {
+            }
+            name: {
+              type guard: Exact(Cat)
+              conditions: Include(if: $withName)
+            }
+            name: {
+              type guard: Exact(Dog)
+              conditions: Include(if: $withName)
+            }
+            nickname: {
+              type guard: Exact(Dog)
+              conditions: (Include(if: $withName) OR Skip(if: $deep))
+            }
+        }
+        ");
+    }
 }
