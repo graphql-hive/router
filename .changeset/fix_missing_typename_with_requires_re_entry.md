@@ -2,6 +2,7 @@
 hive-router-query-planner: patch
 hive-router: patch
 node-addon: patch
+hive-router-plan-executor: patch
 ---
 
 # Fix missing `__typename` with `@requires` re-entry

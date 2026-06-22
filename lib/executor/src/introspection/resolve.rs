@@ -14,7 +14,9 @@ use hive_router_query_planner::ast::{
     value::Value as AstValue,
 };
 use hive_router_query_planner::state::supergraph_state::OperationKind;
+use sonic_rs::JsonValueTrait;
 
+use crate::execution::plan::CoerceVariablesPayload;
 use crate::introspection::schema::SchemaMetadata;
 use crate::response::value::Value;
 
@@ -22,6 +24,29 @@ pub struct IntrospectionContext {
     pub query: Option<Arc<OperationDefinition>>,
     pub schema: Arc<Document>,
     pub metadata: Arc<SchemaMetadata>,
+    pub variables: Arc<CoerceVariablesPayload>,
+}
+
+fn resolve_boolean_variable(
+    var_name: &str,
+    variables: &Arc<CoerceVariablesPayload>,
+) -> Option<bool> {
+    variables
+        .variables_map
+        .as_ref()
+        .and_then(|map| map.get(var_name))
+        .and_then(|value| value.as_bool())
+}
+
+fn resolve_str_variable<'a>(
+    var_name: &str,
+    variables: &'a Arc<CoerceVariablesPayload>,
+) -> Option<&'a str> {
+    variables
+        .variables_map
+        .as_ref()
+        .and_then(|map| map.get(var_name))
+        .and_then(|value| value.as_str())
 }
 
 fn get_deprecation_reason(directives: &[Directive]) -> Option<&str> {
@@ -284,12 +309,12 @@ fn resolve_type_definition_selections<'exec>(
                             .arguments
                             .as_ref()
                             .and_then(|a| a.get_argument("includeDeprecated"))
-                            .and_then(|v| {
-                                if let AstValue::Boolean(b) = v {
-                                    Some(*b)
-                                } else {
-                                    None
+                            .and_then(|v| match v {
+                                AstValue::Boolean(b) => Some(*b),
+                                AstValue::Variable(var_name) => {
+                                    resolve_boolean_variable(var_name.as_str(), &ctx.variables)
                                 }
+                                _ => None,
                             })
                             .unwrap_or(false);
 
@@ -341,12 +366,12 @@ fn resolve_type_definition_selections<'exec>(
                             .arguments
                             .as_ref()
                             .and_then(|a| a.get_argument("includeDeprecated"))
-                            .and_then(|v| {
-                                if let AstValue::Boolean(b) = v {
-                                    Some(*b)
-                                } else {
-                                    None
+                            .and_then(|v| match v {
+                                AstValue::Boolean(b) => Some(*b),
+                                AstValue::Variable(var_name) => {
+                                    resolve_boolean_variable(var_name.as_str(), &ctx.variables)
                                 }
+                                _ => None,
                             })
                             .unwrap_or(false);
 
@@ -619,13 +644,28 @@ fn resolve_root_introspection_selections<'exec>(
                 "__schema" => resolve_schema_field(field, ctx),
                 "__type" => {
                     if let Some(args) = &field.arguments {
-                        if let Some(AstValue::String(type_name)) = args.get_argument("name") {
-                            ctx.schema.type_by_name(type_name).map_or(Value::Null, |t| {
-                                resolve_type_definition(t, &field.selections, ctx)
-                            })
-                        } else {
-                            Value::Null
-                        }
+                        let type_value = match args.get_argument("name") {
+                            Some(AstValue::String(type_name)) => {
+                                ctx.schema.type_by_name(type_name).map_or(Value::Null, |t| {
+                                    resolve_type_definition(t, &field.selections, ctx)
+                                })
+                            }
+                            Some(AstValue::Variable(var_name)) => {
+                                if let Some(var_value) =
+                                    resolve_str_variable(var_name.as_str(), &ctx.variables)
+                                {
+                                    ctx.schema.type_by_name(var_value).map_or(Value::Null, |t| {
+                                        resolve_type_definition(t, &field.selections, ctx)
+                                    })
+                                } else {
+                                    Value::Null
+                                }
+                            }
+
+                            _ => Value::Null,
+                        };
+
+                        type_value
                     } else {
                         Value::Null
                     }
